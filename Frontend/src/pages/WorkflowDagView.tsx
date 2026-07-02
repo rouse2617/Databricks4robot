@@ -25,17 +25,19 @@ import "@xyflow/react/dist/style.css";
 import "./WorkflowDagView.css";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
 import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
+import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
 import { WorkflowDagNode, type WorkflowDagNodeData } from "./WorkflowDagNode";
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 240;
-const DAG_NODE_HEIGHT = 92;
+const DAG_NODE_HEIGHT = 112;
 const DAG_RANK_DIR = "LR" as const;
-const DAG_NODE_GAP = 72;
+const DAG_NODE_GAP = 40;
 const DAG_FIT_MIN_ZOOM = 0.72;
 const DAG_FIT_MAX_ZOOM = 1;
 
 const nodeTypes = { workflowStep: WorkflowDagNode };
+const edgeTypes = {};
 
 function getProgressPercent(progress: string | undefined): number | null {
 	if (!progress) return null;
@@ -106,6 +108,11 @@ export function buildDagElements(
 	workflowEdges: WorkflowDagEdge[] | undefined,
 	selectedNodeId: string | null,
 	nodeSearch: string,
+	onNodeAction?: (
+		node: WorkflowNodeStatus,
+		action: WorkflowDagNodeAction,
+	) => void,
+	pipelineLabels?: Map<string, string>,
 ): {
 	nodes: WorkflowDagNodeType[];
 	edges: RFEdge[];
@@ -114,7 +121,10 @@ export function buildDagElements(
 	const normalizedSearch = nodeSearch.trim().toLowerCase();
 	const visibleNodes = displayableNodes.filter((node) => {
 		if (normalizedSearch.length === 0) return true;
-		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(
+			node,
+			pipelineLabels,
+		).toLowerCase();
 		return (
 			displayText.includes(normalizedSearch) ||
 			node.name.toLowerCase().includes(normalizedSearch)
@@ -184,7 +194,7 @@ export function buildDagElements(
 	graph.setGraph({
 		rankdir: DAG_RANK_DIR,
 		nodesep: DAG_NODE_GAP,
-		ranksep: 80,
+		ranksep: 28,
 		marginx: 20,
 		marginy: 20,
 	});
@@ -208,7 +218,10 @@ export function buildDagElements(
 			: index * (DAG_NODE_WIDTH + DAG_NODE_GAP);
 		const layoutY = hasLayout ? dagreNode.y : 0;
 		const isSelected = node.id === selectedNodeId;
-		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(
+			node,
+			pipelineLabels,
+		).toLowerCase();
 		const matchesSearch =
 			normalizedSearch.length === 0 ||
 			displayText.includes(normalizedSearch) ||
@@ -232,6 +245,8 @@ export function buildDagElements(
 				selected: isSelected,
 				dimmed,
 				progressPercent,
+				pipelineLabels,
+				onAction: onNodeAction,
 			},
 			sourcePosition: Position.Right,
 			targetPosition: Position.Left,
@@ -246,7 +261,13 @@ interface WorkflowDagViewProps {
 	workflowEdges?: WorkflowDagEdge[];
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
+	onNodeAction?: (
+		node: WorkflowNodeStatus,
+		action: WorkflowDagNodeAction,
+	) => void;
 	emptyMessage?: string;
+	workflowStatus?: string;
+	pipelineLabels?: Map<string, string>;
 }
 
 function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
@@ -255,9 +276,12 @@ function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
 	useEffect(() => {
 		if (!graphKey) return;
 		const frame = requestAnimationFrame(() => {
+			const narrow =
+				typeof window !== "undefined" &&
+				window.matchMedia("(max-width: 640px)").matches;
 			void fitView({
-				padding: 0.18,
-				minZoom: DAG_FIT_MIN_ZOOM,
+				padding: narrow ? 0.16 : 0.08,
+				minZoom: narrow ? 0.35 : DAG_FIT_MIN_ZOOM,
 				maxZoom: DAG_FIT_MAX_ZOOM,
 				duration: 200,
 			});
@@ -273,7 +297,10 @@ function WorkflowDagViewInner({
 	workflowEdges,
 	selectedNodeId,
 	onNodeSelect,
+	onNodeAction,
 	emptyMessage,
+	workflowStatus,
+	pipelineLabels,
 }: WorkflowDagViewProps): React.JSX.Element {
 	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNodeType>(
 		[],
@@ -287,10 +314,21 @@ function WorkflowDagViewInner({
 			workflowEdges,
 			selectedNodeId,
 			nodeSearch,
+			onNodeAction,
+			pipelineLabels,
 		);
 		setNodes(nextNodes);
 		setEdges(nextEdges);
-	}, [rawNodes, workflowEdges, selectedNodeId, nodeSearch, setNodes, setEdges]);
+	}, [
+		rawNodes,
+		workflowEdges,
+		selectedNodeId,
+		nodeSearch,
+		onNodeAction,
+		pipelineLabels,
+		setNodes,
+		setEdges,
+	]);
 
 	const onNodeClick = useCallback(
 		(_: MouseEvent, node: WorkflowDagNodeType) => {
@@ -322,11 +360,17 @@ function WorkflowDagViewInner({
 
 	const displayableCount = countDisplayableWorkflowNodes(rawNodes);
 	const showEmptyState = displayableCount === 0;
+	const failedNodes = rawNodes.filter((node) =>
+		["Failed", "Error"].includes(node.phase),
+	);
+	const isFailedWorkflow = ["Failed", "Error"].includes(workflowStatus ?? "");
 
 	return (
 		<div className="workflow-dag-view">
 			<div className="workflow-dag-view__toolbar">
 				<Input.Search
+					id="workflow-dag-node-search"
+					name="workflow-dag-node-search"
 					placeholder="搜索节点..."
 					allowClear
 					value={nodeSearch}
@@ -342,6 +386,7 @@ function WorkflowDagViewInner({
 					nodes={nodes}
 					edges={edges}
 					nodeTypes={nodeTypes}
+					edgeTypes={edgeTypes}
 					onNodesChange={onNodesChange}
 					onEdgesChange={onEdgesChange}
 					onNodeClick={onNodeClick}
@@ -367,14 +412,36 @@ function WorkflowDagViewInner({
 				</ReactFlow>
 				{showEmptyState ? (
 					<div className="workflow-dag-view__empty">
-						<div className="workflow-dag-view__empty-card">
+						<div
+							className={[
+								"workflow-dag-view__empty-card",
+								isFailedWorkflow ? "workflow-dag-view__empty-card--error" : "",
+							]
+								.filter(Boolean)
+								.join(" ")}
+						>
 							<div className="workflow-dag-view__empty-title">
-								暂无可展示的 DAG 节点
+								{isFailedWorkflow
+									? "工作流失败，暂无可展示 DAG"
+									: "暂无可展示的 DAG 节点"}
 							</div>
 							<div>
 								{emptyMessage ||
 									"工作流可能在启动前失败，或所有步骤仍处于隐藏/省略状态。"}
 							</div>
+							{failedNodes.length > 0 ? (
+								<div className="workflow-dag-view__empty-actions">
+									{failedNodes.slice(0, 3).map((node) => (
+										<button
+											key={node.id}
+											type="button"
+											onClick={() => onNodeSelect(node)}
+										>
+											查看失败节点：{getWorkflowNodeDisplayText(node)}
+										</button>
+									))}
+								</div>
+							) : null}
 						</div>
 					</div>
 				) : null}

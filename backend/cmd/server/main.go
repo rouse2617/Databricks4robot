@@ -20,9 +20,12 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -46,6 +49,8 @@ type infra struct {
 	queryFieldReg  *config.QueryFieldRegistry
 	actionLabelReg *config.ActionLabelRegistry
 	workflowClient argo.WorkflowClient
+	podClient      k8s.PodClient
+	execClient     k8s.ExecClient
 }
 
 func (inf *infra) close() {
@@ -87,8 +92,10 @@ type coreHandlers struct {
 	query             *queryH.Handler
 	workflow          *workflowH.Handler
 	pipeline          *pipelineH.Handler
+	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
+		storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
 }
 

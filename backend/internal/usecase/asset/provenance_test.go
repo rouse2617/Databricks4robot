@@ -25,6 +25,15 @@ func (m *provenanceAssetRepo) GetAll(_ context.Context, assetID string) (*models
 	}
 	return nil, ErrNotFound
 }
+func (m *provenanceAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if m.asset != nil && m.asset.AssetID == assetID {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (m *provenanceAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
 func (m *provenanceAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
 func (m *provenanceAssetRepo) SoftDelete(context.Context, string) error       { return nil }

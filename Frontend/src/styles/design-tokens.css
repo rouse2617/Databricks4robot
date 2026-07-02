@@ -162,9 +162,44 @@
 	}
 }
 
-/* Global page padding consistency */
+/* Global page layout — width strategy by page type */
 .page-container {
-	padding: var(--space-6);
+	width: 100%;
+	margin: 0 auto;
+}
+
+.page-container--dashboard {
+	max-width: 1280px;
+}
+
+.page-container--dashboard .ant-row,
+.page-container--dashboard .ant-col,
+.page-container--dashboard .ant-card,
+.page-container--dashboard .ant-card-body,
+.page-container--dashboard .ant-table-wrapper {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.page-container--dashboard .ant-typography {
+	overflow-wrap: anywhere;
+}
+
+.page-container--form {
+	max-width: 960px;
+}
+
+.page-container--table {
+	max-width: none;
+}
+
+.page-container--matrix {
+	max-width: none;
+	min-width: 0;
+}
+
+.page-content-state--loading {
+	padding: 24px 0;
 }
 
 /* Navigation group labels */

@@ -9,7 +9,7 @@
 - [backend/internal/postgres/pipeline_component_repo.go](file://backend/internal/postgres/pipeline_component_repo.go)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
 </cite>
 
 ## Table of Contents
@@ -81,7 +81,7 @@ that define the physical schema. The relevant files are:
   `pipeline_templates` and `pipeline_deployments`.
 - **`backend/migrations/040_pipeline_components.sql`** — creates
   `pipeline_components` and its two indexes.
-- **`backend/migrations/041_pipeline_template_version.sql`** — adds the
+- **`backend/migrations/042_pipeline_template_version.sql`** — adds the
   `version` column to `pipeline_templates`, backfills existing rows, and adds a
   unique `(name, version)` index.
 
@@ -218,7 +218,7 @@ enforced by the database.
 **Diagram sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L5-L26)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L1-L14)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L4-L4)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L4-L4)
 
 **Section sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L1-L26)
@@ -328,7 +328,7 @@ unique index `idx_pipeline_templates_name_version` to guarantee no duplicate
 
 **Section sources**
 - [backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go#L26-L169)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L1-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L1-L18)
 
 ### Pipeline deployment lifecycle
 
@@ -472,7 +472,7 @@ is independent at the schema level.
 
 **Section sources**
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L16-L17)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L18-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L18-L18)
 - [backend/internal/postgres/pipeline_component_repo.go](file://backend/internal/postgres/pipeline_component_repo.go#L156-L193)
 
 ## Troubleshooting Guide
@@ -513,7 +513,7 @@ API response points to an object that bypassed the scan helper.
 **Section sources**
 - [backend/internal/postgres/pipeline_component_repo.go](file://backend/internal/postgres/pipeline_component_repo.go#L32-L119)
 - [backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go#L28-L45)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L17-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L17-L18)
 
 ## Conclusion
 
@@ -599,6 +599,6 @@ Derived struct fields with no dedicated column: `Type`, `Command`, `Args`,
 **Section sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L5-L26)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L1-L17)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L4-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L4-L18)
 - [backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go#L49-L330)
 - [backend/internal/postgres/pipeline_component_repo.go](file://backend/internal/postgres/pipeline_component_repo.go#L122-L247)

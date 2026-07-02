@@ -1,4 +1,7 @@
 const API = "/api/v1";
+const DEV_ACCESS_TOKEN = import.meta.env.DEV
+	? (import.meta.env.VITE_DEV_ACCESS_TOKEN ?? "").trim()
+	: "";
 
 export class ApiError extends Error {
 	code: string;
@@ -17,6 +20,9 @@ export async function request<T>(
 	body?: unknown,
 ): Promise<T> {
 	const headers: Record<string, string> = {};
+	if (DEV_ACCESS_TOKEN) {
+		headers["X-Databrew-Token"] = DEV_ACCESS_TOKEN;
+	}
 	if (body) {
 		headers["Content-Type"] = "application/json";
 	}

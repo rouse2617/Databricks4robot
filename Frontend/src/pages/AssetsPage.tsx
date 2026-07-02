@@ -2,8 +2,22 @@
 // Wires all extracted components to the centralized reducer.
 // Validates: Requirements R1, R7, R13
 
-import { FilterOutlined } from "@ant-design/icons";
-import { Alert, Badge, Button, Drawer, Modal, message, Typography } from "antd";
+import {
+	AppstoreOutlined,
+	FilterOutlined,
+	TableOutlined,
+	UnorderedListOutlined,
+} from "@ant-design/icons";
+import {
+	Alert,
+	Badge,
+	Button,
+	Drawer,
+	Modal,
+	message,
+	Segmented,
+	Typography,
+} from "antd";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ActiveFilterChipsRow from "../components/assets/ActiveFilterChipsRow";
@@ -28,6 +42,7 @@ const CreateDeliveryModal = lazy(
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsHotkeys } from "../hooks/assets/useAssetsHotkeys";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
+import type { ViewMode } from "../lib/assets/assetsDiscoveryTypes";
 import { serializeQueryStateToUrl } from "../lib/assets/assetsDiscoveryUrl";
 import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 
@@ -123,6 +138,19 @@ export default function AssetsPage() {
 	const hasAlgoStatusWarning = resultWarnings.some((w) =>
 		w.includes("algo_status"),
 	);
+	const selectedAssetIds = Array.from(state.selectionState.selectedIds);
+	const canRunPipelineForSelection =
+		state.selectionState.mode === "explicit_rows" &&
+		selectedAssetIds.length > 0;
+	const runPipelineForSelectedAssets = () => {
+		if (!canRunPipelineForSelection) {
+			msg.warning("请先逐行选择要处理的资产，再运行 Pipeline");
+			return;
+		}
+		navigate(
+			`/pipeline?tab=pipelines&asset_ids=${encodeURIComponent(selectedAssetIds.join(","))}`,
+		);
+	};
 
 	return (
 		<div ref={containerRef}>
@@ -425,7 +453,7 @@ export default function AssetsPage() {
 						selectionMode={state.selectionState.mode}
 						totalFiltered={state.resultsState.total}
 						onCreateDelivery={() => setDeliveryModalOpen(true)}
-						onRunAlgo={() => msg.warning("批量触发算法功能开发中，敬请期待")}
+						onRunPipeline={runPipelineForSelectedAssets}
 						onBatchTag={() => setBatchTagModalOpen(true)}
 						onBatchDeleteTag={() => setBatchDeleteTagModalOpen(true)}
 						onExportIds={() => setExportModalOpen(true)}
@@ -433,8 +461,51 @@ export default function AssetsPage() {
 							dispatch({ type: "SELECT_ALL_FILTERED" })
 						}
 						onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
-						disabledRunAlgo
+						disabledRunPipeline={!canRunPipelineForSelection}
 					/>
+					<div
+						style={{
+							display: "flex",
+							justifyContent: "flex-end",
+							marginBottom: 8,
+						}}
+					>
+						<Segmented
+							value={state.queryState.viewMode}
+							options={[
+								{
+									label: (
+										<span>
+											<AppstoreOutlined /> 卡片
+										</span>
+									),
+									value: "card",
+								},
+								{
+									label: (
+										<span>
+											<TableOutlined /> 表格
+										</span>
+									),
+									value: "table",
+								},
+								{
+									label: (
+										<span>
+											<UnorderedListOutlined /> 紧凑
+										</span>
+									),
+									value: "compact",
+								},
+							]}
+							onChange={(value) =>
+								dispatch({
+									type: "SET_VIEW_MODE",
+									payload: { mode: value as ViewMode },
+								})
+							}
+						/>
+					</div>
 					<AssetsResultsPane
 						items={state.resultsState.items}
 						total={state.resultsState.total}
@@ -446,7 +517,7 @@ export default function AssetsPage() {
 						sort={state.queryState.sort}
 						page={state.queryState.page}
 						pageSize={state.queryState.pageSize}
-						viewMode={"card"}
+						viewMode={state.queryState.viewMode}
 						selectedColumns={state.queryState.selectedColumns}
 						selectedIds={state.selectionState.selectedIds}
 						activePreviewId={state.previewState.activeAssetId}
@@ -586,7 +657,7 @@ export default function AssetsPage() {
 				<Suspense fallback={null}>
 					<CreateDeliveryModal
 						open={deliveryModalOpen}
-						assetIds={Array.from(state.selectionState.selectedIds)}
+						assetIds={selectedAssetIds}
 						onClose={() => setDeliveryModalOpen(false)}
 						onSuccess={async (deliveryId) => {
 							setDeliveryModalOpen(false);
@@ -598,7 +669,7 @@ export default function AssetsPage() {
 			) : null}
 			<BatchTagModal
 				open={batchTagModalOpen}
-				assetIds={Array.from(state.selectionState.selectedIds)}
+				assetIds={selectedAssetIds}
 				onClose={() => setBatchTagModalOpen(false)}
 				onComplete={(result) => {
 					setBatchTagModalOpen(false);
@@ -608,7 +679,7 @@ export default function AssetsPage() {
 			/>
 			<BatchDeleteTagModal
 				open={batchDeleteTagModalOpen}
-				assetIds={Array.from(state.selectionState.selectedIds)}
+				assetIds={selectedAssetIds}
 				onClose={() => setBatchDeleteTagModalOpen(false)}
 				onComplete={(result) => {
 					setBatchDeleteTagModalOpen(false);

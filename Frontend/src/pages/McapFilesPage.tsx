@@ -6,10 +6,10 @@ import {
 import {
 	Button,
 	Empty,
+	Grid,
 	Input,
 	Result,
 	Select,
-	Space,
 	Table,
 	Tag,
 	Typography,
@@ -22,14 +22,14 @@ import type { McapFile } from "../api/types";
 import McapDetailDrawer from "../components/mcap/McapDetailDrawer";
 import { extractApiErrorMessage } from "../lib/apiError";
 import { formatDateTime } from "../lib/dateTime";
+import {
+	COLUMN_LABELS,
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../lib/productVocabulary";
 
 const { Title, Text } = Typography;
-
-const ingestColor: Record<string, string> = {
-	pending: "default",
-	summarized: "success",
-	failed: "error",
-};
+const { useBreakpoint } = Grid;
 
 function formatBytes(bytes: number): string {
 	if (!bytes || bytes === 0) return "—";
@@ -42,12 +42,17 @@ function formatBytes(bytes: number): string {
 
 const stateFilterOptions = [
 	{ value: "", label: "全部状态" },
-	{ value: "pending", label: "pending" },
-	{ value: "summarized", label: "summarized" },
-	{ value: "failed", label: "failed" },
+	{ value: "pending", label: "待处理" },
+	{ value: "summarized", label: "已汇总" },
+	{ value: "failed", label: "失败" },
 ];
 
 export default function McapFilesPage() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const focusedMcapFileId = searchParams.get("mcap_file_id")?.trim() ?? "";
 	const [files, setFiles] = useState<McapFile[]>([]);
@@ -150,7 +155,7 @@ export default function McapFilesPage() {
 
 	const columns: ColumnsType<McapFile> = [
 		{
-			title: "MCAP File ID",
+			title: COLUMN_LABELS.mcapFileId,
 			dataIndex: "mcap_file_id",
 			width: 140,
 			render: (id: string) => (
@@ -158,7 +163,7 @@ export default function McapFilesPage() {
 			),
 		},
 		{
-			title: "GCS Path",
+			title: COLUMN_LABELS.gcsPath,
 			dataIndex: "gcs_path",
 			ellipsis: true,
 			responsive: ["md"],
@@ -175,29 +180,31 @@ export default function McapFilesPage() {
 			render: (v: number) => formatBytes(v),
 		},
 		{
-			title: "状态",
+			title: "入库状态",
 			dataIndex: "ingest_state",
 			width: 100,
 			render: (s: string) => (
-				<Tag color={ingestColor[s] ?? "default"}>{s || "—"}</Tag>
+				<Tag color={resolveBusinessStatusTagColor(s)}>
+					{formatBusinessStatusLabel(s)}
+				</Tag>
 			),
 		},
 		{
-			title: "Channels",
+			title: COLUMN_LABELS.channels,
 			dataIndex: "channel_count",
 			width: 90,
 			responsive: ["lg"],
 			render: (v: number) => v || "—",
 		},
 		{
-			title: "Chunks",
+			title: COLUMN_LABELS.chunks,
 			dataIndex: "chunk_count",
 			width: 80,
 			responsive: ["lg"],
 			render: (v: number) => v || "—",
 		},
 		{
-			title: "Owner",
+			title: COLUMN_LABELS.owner,
 			dataIndex: "owner",
 			width: 100,
 			ellipsis: true,
@@ -211,27 +218,50 @@ export default function McapFilesPage() {
 		},
 	];
 
-	// P1 #7: Empty state with guidance
 	const emptyState = (
 		<Empty
 			image={<CloudUploadOutlined style={{ fontSize: 48, color: "#94A3B8" }} />}
 			description={
 				<div>
-					<Text type="secondary">暂无 MCAP 文件记录</Text>
+					<Text type="secondary">暂无 MCAP 文件</Text>
 					<br />
 					<Text type="secondary" style={{ fontSize: 12 }}>
-						通过 SDK 上传 MCAP 文件或调用 POST /api/v1/mcap-files/:id/finalize
-						完成入库
+						可通过 SDK 上传文件，上传完成后系统会自动入库。
+					</Text>
+					<br />
+					<Text type="secondary" style={{ fontSize: 11 }}>
+						开发接入：POST /api/v1/mcap-files/:id/finalize
 					</Text>
 				</div>
 			}
-		/>
+		>
+			<Button icon={<ReloadOutlined />} onClick={() => load(page)}>
+				刷新
+			</Button>
+		</Empty>
 	);
 
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-3">
-				<Title level={4} style={{ margin: 0 }}>
+			<div
+				style={{
+					display: "flex",
+					alignItems: isNarrow ? "stretch" : "center",
+					justifyContent: "space-between",
+					gap: 12,
+					flexWrap: "wrap",
+					marginBottom: 12,
+				}}
+			>
+				<Title
+					level={4}
+					style={{
+						margin: 0,
+						flex: isNarrow ? "1 1 100%" : "0 0 auto",
+						minWidth: 0,
+						whiteSpace: "nowrap",
+					}}
+				>
 					<FileOutlined style={{ marginRight: 8 }} />
 					MCAP 文件
 					<Text
@@ -241,10 +271,20 @@ export default function McapFilesPage() {
 						{loading ? "…" : `(${total})`}
 					</Text>
 				</Title>
-				<Space>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: isNarrow
+							? "minmax(0, 1fr) minmax(0, 1fr)"
+							: "140px 130px auto",
+						gap: 8,
+						width: isNarrow ? "100%" : "auto",
+						minWidth: 0,
+					}}
+				>
 					<Input
 						id="mcap-owner-filter"
-						placeholder="搜索 Owner"
+						placeholder="搜索所属方"
 						value={ownerFilter}
 						onChange={(e) => setOwnerFilter(e.target.value)}
 						onPressEnter={() => {
@@ -255,7 +295,10 @@ export default function McapFilesPage() {
 							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
 						}}
-						style={{ width: 140 }}
+						style={{
+							width: "100%",
+							gridColumn: isNarrow ? "1 / -1" : undefined,
+						}}
 						allowClear
 					/>
 					<Select
@@ -266,13 +309,17 @@ export default function McapFilesPage() {
 							setPage(1);
 						}}
 						options={stateFilterOptions}
-						style={{ width: 130 }}
+						style={{ width: "100%" }}
 						size="middle"
 					/>
-					<Button icon={<ReloadOutlined />} onClick={() => load(page)}>
+					<Button
+						icon={<ReloadOutlined />}
+						onClick={() => load(page)}
+						style={{ width: "100%" }}
+					>
 						刷新
 					</Button>
-				</Space>
+				</div>
 			</div>
 
 			{error ? (

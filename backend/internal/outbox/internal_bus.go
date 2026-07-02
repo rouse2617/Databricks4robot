@@ -21,6 +21,11 @@ import (
 // downstream consumers (asset ES, algo_run ES, delivery eligibility projector,
 // openlineage emitter, …) can each filter the full event stream without
 // stealing events from siblings.
+//
+// Each subscriber holds a private buffered channel; the publisher writes a
+// copy of every event into each channel synchronously. A slow subscriber
+// back-pressures the publisher once its channel fills — intentional, so a
+// stuck handler surfaces immediately rather than silently dropping events.
 type InMemoryBus struct {
 	mu      sync.RWMutex
 	subs    []chan internalMessage
@@ -28,64 +33,50 @@ type InMemoryBus struct {
 }
 
 // NewInMemoryBus creates a fan-out in-process bus. The buffer size applies
-// to each subscriber's channel — a slow subscriber will block the publisher
-// once its channel is full (intentional back-pressure so a stuck handler
-// surfaces immediately rather than silently dropping events).
+// to each subscriber's channel.
 func NewInMemoryBus(buffer int) *InMemoryBus {
 	if buffer <= 0 {
 		buffer = 1024
 	}
+	if buffer < 16 {
+		buffer = 16
+	}
 	return &InMemoryBus{bufSize: buffer}
 }
 
-// SubscribeOrClosed is a convenience for tests and one-shot consumers that
-// don't need explicit unsubscribe semantics. Returns the private channel
-// only; cleanup happens via garbage collection when the bus is dropped.
-func (b *InMemoryBus) SubscribeOrClosed() <-chan internalMessage {
-	ch, _ := b.Subscribe()
-	return ch
-}
-
-// Subscribe registers a new subscriber and returns its private channel plus
-// an unsubscribe function. Each subscriber must call unsubscribe when done so
-// the bus stops fanning out to it and the channel is GC'd.
-func (b *InMemoryBus) Subscribe() (<-chan internalMessage, func()) {
+// subscribe registers a new subscriber channel. Called by NewInternalSubscriber.
+func (b *InMemoryBus) subscribe() chan internalMessage {
 	if b == nil {
-		ch := make(chan internalMessage)
-		close(ch)
-		return ch, func() {}
+		return nil
 	}
 	ch := make(chan internalMessage, b.bufSize)
 	b.mu.Lock()
 	b.subs = append(b.subs, ch)
 	b.mu.Unlock()
-
-	var once sync.Once
-	unsubscribe := func() {
-		once.Do(func() {
-			b.mu.Lock()
-			for i, sub := range b.subs {
-				if sub == ch {
-					b.subs = append(b.subs[:i], b.subs[i+1:]...)
-					break
-				}
-			}
-			b.mu.Unlock()
-			close(ch)
-		})
-	}
-	return ch, unsubscribe
+	return ch
 }
 
-// subscriberCount returns the number of currently registered subscribers.
-// Used for back-pressure and metrics.
-func (b *InMemoryBus) subscriberCount() int {
-	if b == nil {
-		return 0
+// unsubscribe removes a previously-registered channel.
+func (b *InMemoryBus) unsubscribe(ch chan internalMessage) {
+	if b == nil || ch == nil {
+		return
 	}
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return len(b.subs)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, s := range b.subs {
+		if s == ch {
+			b.subs = append(b.subs[:i], b.subs[i+1:]...)
+			return
+		}
+	}
+}
+
+// Run is a no-op kept for API stability; the pre-PR fan-out design does not
+// need a background dispatcher (publish() writes to every subscriber channel
+// synchronously). It exists so older call-sites that launched `go bus.Run(ctx)`
+// keep working without panicking.
+func (b *InMemoryBus) Run(ctx context.Context) {
+	<-ctx.Done()
 }
 
 type internalMessage struct {
@@ -93,11 +84,11 @@ type internalMessage struct {
 	ack  chan error
 }
 
-// publish fans the message out to every subscribed channel. The returned
+// Publish fans the message out to every subscribed channel. The returned
 // receipt resolves only when EVERY subscriber has acked; if any one fails,
 // the receipt's first error is returned and the relay retries the entire
 // event_seq (at-least-once delivery per subscriber).
-func (b *InMemoryBus) publish(ctx context.Context, data []byte) (PublishReceipt, error) {
+func (b *InMemoryBus) Publish(ctx context.Context, data []byte) (PublishReceipt, error) {
 	if b == nil {
 		return nil, errors.New("outbox internal bus is not initialized")
 	}
@@ -153,31 +144,35 @@ func (r fanoutReceipt) Get(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// InternalSubscriber consumes events from a single subscriber channel
-// (obtained from InMemoryBus.Subscribe). It is fully isolated from siblings:
-// events published to the bus while this subscriber was offline are NOT
-// queued for it. Producers must tolerate subscriber re-registration.
+// InternalSubscriber consumes events from an in-process bus. Each subscriber
+// holds its own private channel — the bus fans published events out to every
+// subscriber's channel independently, so the order events are observed by one
+// subscriber is independent of the order observed by any other.
 type InternalSubscriber struct {
-	ch      <-chan internalMessage
+	bus     *InMemoryBus
+	ch      chan internalMessage
 	workers int // <=1 means serial single-handler loop (legacy behaviour).
 }
 
-// NewInternalSubscriber creates a subscriber bound to a single channel.
-// workers controls parallel handlers: routing keys that match orderingKeyFor
-// (asset / mcap / _na) hash to the same worker queue so events for one asset
-// stay ordered.
-func NewInternalSubscriber(ch <-chan internalMessage, workers int) (*InternalSubscriber, error) {
-	if ch == nil {
-		return nil, errors.New("outbox internal subscriber: channel is required")
+// NewInternalSubscriber creates a subscriber for internal bus mode.
+// workers controls parallel handlers: routing keys that match orderingKeyFor (asset / mcap / _na)
+// hash to the same worker queue so events for one asset stay ordered.
+func NewInternalSubscriber(bus *InMemoryBus, workers int) (*InternalSubscriber, error) {
+	if bus == nil {
+		return nil, errors.New("outbox internal subscriber: bus is required")
 	}
 	if workers < 1 {
 		workers = 1
 	}
-	return &InternalSubscriber{ch: ch, workers: workers}, nil
+	return &InternalSubscriber{
+		bus:     bus,
+		ch:      bus.subscribe(),
+		workers: workers,
+	}, nil
 }
 
 func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.Context, []byte) error) error {
-	if s == nil || s.ch == nil {
+	if s == nil || s.bus == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if s.workers <= 1 {
@@ -201,6 +196,7 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 					err := handler(gctx, msg.data)
 					select {
 					case msg.ack <- err:
+						metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 					case <-gctx.Done():
 						return gctx.Err()
 					}
@@ -214,10 +210,8 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg, ok := <-s.ch:
-				if !ok {
-					return nil
-				}
+			case msg := <-s.ch:
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -236,13 +230,12 @@ func (s *InternalSubscriber) receiveSerial(ctx context.Context, handler func(con
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg, ok := <-s.ch:
-			if !ok {
-				return nil
-			}
+		case msg := <-s.ch:
+			metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 			err := handler(ctx, msg.data)
 			select {
 			case msg.ack <- err:
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -250,11 +243,10 @@ func (s *InternalSubscriber) receiveSerial(ctx context.Context, handler func(con
 	}
 }
 
-// ReceiveBatch consumes a single subscriber channel and delivers messages to
-// handler in short-window batches. Per-asset ordering is preserved because
-// the same routing-key dispatch (FNV(asset_id) % workers) used by Receive is
-// applied here too, so every event for a given asset always lands on the
-// same worker.
+// ReceiveBatch consumes the in-process bus and delivers messages to handler in
+// short-window batches. Per-asset ordering is preserved because the same
+// routing-key dispatch (FNV(asset_id) % workers) used by Receive is applied
+// here too, so every event for a given asset always lands on the same worker.
 //
 // Each worker:
 //  1. Blocks on the first message in its queue.
@@ -275,7 +267,7 @@ func (s *InternalSubscriber) ReceiveBatch(
 	waitFor time.Duration,
 	handler func(context.Context, [][]byte) error,
 ) error {
-	if s == nil || s.ch == nil {
+	if s == nil || s.bus == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if handler == nil {
@@ -316,10 +308,8 @@ func (s *InternalSubscriber) ReceiveBatch(
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg, ok := <-s.ch:
-				if !ok {
-					return nil
-				}
+			case msg := <-s.ch:
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -355,14 +345,10 @@ func runBatchWorker(
 		// Block on the first message: a worker that has nothing to do should
 		// not flush an empty batch.
 		var first internalMessage
-		var ok bool
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case first, ok = <-source:
-			if !ok {
-				return nil
-			}
+		case first = <-source:
 		}
 
 		batch := make([]internalMessage, 0, batchSize)
@@ -402,10 +388,7 @@ func drainBatch(
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case m, ok := <-source:
-				if !ok {
-					return nil
-				}
+			case m := <-source:
 				*batch = append(*batch, m)
 			default:
 				return nil
@@ -420,10 +403,7 @@ func drainBatch(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case m, ok := <-source:
-			if !ok {
-				return nil
-			}
+		case m := <-source:
 			*batch = append(*batch, m)
 		case <-timer.C:
 			return nil
@@ -459,6 +439,13 @@ func routingKeyFromPayload(data []byte) string {
 	return "_na"
 }
 
+// Close removes this subscriber from the bus's fan-out list. The subscriber's
+// private channel is not closed; in-flight handlers should observe ctx
+// cancellation instead.
 func (s *InternalSubscriber) Close() error {
+	if s == nil || s.bus == nil {
+		return nil
+	}
+	s.bus.unsubscribe(s.ch)
 	return nil
 }

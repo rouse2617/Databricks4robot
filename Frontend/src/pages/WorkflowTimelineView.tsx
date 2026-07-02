@@ -20,12 +20,14 @@ interface WorkflowTimelineViewProps {
 	nodes: WorkflowNodeStatus[];
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
+	pipelineLabels?: Map<string, string>;
 }
 
 export function WorkflowTimelineView({
 	nodes,
 	selectedNodeId,
 	onNodeSelect,
+	pipelineLabels,
 }: WorkflowTimelineViewProps): React.JSX.Element {
 	const items: TimelineItem[] = filterDisplayableWorkflowNodes(nodes)
 		.filter((node) => node.startedAt)
@@ -34,8 +36,8 @@ export function WorkflowTimelineView({
 			const startB = new Date(b.startedAt as string).getTime();
 			if (startA !== startB) return startA - startB;
 			return (
-				getStepSortKey(getWorkflowNodeDisplayText(a)) -
-				getStepSortKey(getWorkflowNodeDisplayText(b))
+				getStepSortKey(getWorkflowNodeDisplayText(a, pipelineLabels)) -
+				getStepSortKey(getWorkflowNodeDisplayText(b, pipelineLabels))
 			);
 		})
 		.map((node) => ({
@@ -121,10 +123,10 @@ export function WorkflowTimelineView({
 								onClick={() => onNodeSelect(node)}
 								onKeyDown={(event) => handleRowKeyDown(event, node)}
 								aria-pressed={isSelected}
-								title={`${getWorkflowNodeDisplayText(node)} · ${node.phase} · ${durationSec}s`}
+								title={`${getWorkflowNodeDisplayText(node, pipelineLabels)} · ${node.phase} · ${durationSec}s`}
 							>
 								<div className="workflow-timeline-view__label">
-									{getWorkflowNodeDisplayText(node)}
+									{getWorkflowNodeDisplayText(node, pipelineLabels)}
 								</div>
 								<div className="workflow-timeline-view__track">
 									<div

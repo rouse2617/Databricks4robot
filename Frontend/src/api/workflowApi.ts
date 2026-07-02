@@ -3,10 +3,17 @@ import { request } from "./pipelineClient";
 export interface WorkflowSummary {
 	name: string;
 	status: string;
+	message?: string;
+	failureReason?: string;
+	blockingReason?: string;
+	blockingMessage?: string;
 	nodeCount: number;
 	createdAt: string;
+	startedAt?: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
+	estimatedCostUsd?: number | null;
+	totalEstimatedCost?: number | null;
 }
 
 export interface ListWorkflowsParams {
@@ -23,8 +30,15 @@ export interface WorkflowNodeStatus {
 	displayName: string;
 	type?: string;
 	templateName?: string;
+	versionLabel?: string;
+	sourceCommit?: string;
+	image?: string;
 	phase: string;
 	message?: string;
+	cluster?: string;
+	namespace?: string;
+	serviceAccountName?: string;
+	podIp?: string;
 	children?: string[];
 	startedAt?: string;
 	finishedAt?: string;
@@ -32,11 +46,19 @@ export interface WorkflowNodeStatus {
 	progress?: string;
 	hostNodeName?: string;
 	podName?: string;
+	restartCount?: number;
+	containers?: WorkflowNodeContainer[];
+	podConditions?: WorkflowPodCondition[];
+	podEvents?: WorkflowPodEvent[];
+	metrics?: WorkflowPodMetrics;
+	cost?: WorkflowPodCost;
+	estimatedCostUsd?: number;
+	debug?: WorkflowPodDebugCapabilities;
 	outputs?: {
 		parameters?: Array<{ name: string; value?: string }>;
 		artifacts?: Array<{ name: string; path?: string }>;
 		result?: string;
-		exitCode?: number;
+		exitCode?: number | string;
 	};
 	inputs?: {
 		parameters?: Array<{ name: string; value?: string }>;
@@ -48,6 +70,112 @@ export interface WorkflowNodeStatus {
 		key: string;
 		cacheName: string;
 	};
+}
+
+export interface WorkflowNodeContainer {
+	name: string;
+	image?: string;
+	command?: string[];
+	args?: string[];
+	ready?: boolean;
+	restartCount?: number;
+	state?: string;
+	lastState?: string;
+}
+
+export interface WorkflowPodCondition {
+	type: string;
+	status: string;
+	reason?: string;
+	message?: string;
+	lastTransitionTime?: string;
+}
+
+export interface WorkflowPodEvent {
+	type: string;
+	reason: string;
+	message: string;
+	count?: number;
+	firstTimestamp?: string;
+	lastTimestamp?: string;
+}
+
+export interface WorkflowPodMetrics {
+	cpuCores?: number;
+	cpuRequestCores?: number;
+	cpuLimitCores?: number;
+	memoryBytes?: number;
+	memoryRequestBytes?: number;
+	memoryLimitBytes?: number;
+	gpuCount?: number;
+	networkRxBytes?: number;
+	networkTxBytes?: number;
+	storageBytes?: number;
+	sampledAt?: string;
+}
+
+export interface WorkflowResourceValues {
+	cpu?: string;
+	memory?: string;
+	[key: string]: string | undefined;
+}
+
+export interface WorkflowResourceUsageSource {
+	workflow?: string;
+	metrics?: string;
+	spec?: string;
+}
+
+export interface WorkflowPodResourceUsage {
+	pod_name: string;
+	node_id: string;
+	node_name?: string;
+	template_name?: string;
+	observed_at?: string;
+	live_metrics_available?: boolean;
+	requests?: WorkflowResourceValues;
+	limits?: WorkflowResourceValues;
+	resource_duration?: WorkflowResourceValues;
+	cpu_usage?: string;
+	memory_usage?: string;
+	cpu_resource_duration?: string;
+	memory_resource_duration?: string;
+	cpu_request?: string;
+	memory_request?: string;
+	cpu_limit?: string;
+	memory_limit?: string;
+}
+
+export interface WorkflowResourceUsageReport {
+	deployment_id?: string;
+	workflow_name: string;
+	status?: string;
+	observed_at?: string;
+	source?: WorkflowResourceUsageSource;
+	live_metrics_available?: boolean;
+	pods: WorkflowPodResourceUsage[];
+}
+
+export interface WorkflowPodCost {
+	totalCostUsd?: number;
+	cpuCostUsd?: number;
+	memoryCostUsd?: number;
+	gpuCostUsd?: number;
+	storageCostUsd?: number;
+	networkCostUsd?: number;
+	window?: string;
+	provider?: "opencost" | "custom";
+	calculatedAt?: string;
+}
+
+export interface WorkflowPodDebugCapabilities {
+	execEnabled?: boolean;
+	logStreamEnabled?: boolean;
+	metricsEnabled?: boolean;
+	costEnabled?: boolean;
+	reason?: string;
+	allowedCommands?: string[];
+	maxSessionSeconds?: number;
 }
 
 export type WorkflowDagEdgeKind = "runtime" | "dag" | "fallback";
@@ -66,6 +194,7 @@ export interface WorkflowDetail {
 	nodes: WorkflowNodeStatus[];
 	edges?: WorkflowDagEdge[];
 	createdAt: string;
+	startedAt?: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
 	estimatedDuration?: number;
@@ -74,6 +203,62 @@ export interface WorkflowDetail {
 
 export interface WorkflowOperationResponse {
 	message: string;
+}
+
+export interface WorkflowLogTruncation {
+	bounded: boolean;
+	tailLines: number;
+	maxTailLines: number;
+	tailLinesClamped?: boolean;
+	limitBytes: number;
+	maxLimitBytes: number;
+	limitBytesClamped?: boolean;
+	bytesTruncated?: boolean;
+	sinceSeconds?: number;
+	sinceTime?: string;
+}
+
+export interface WorkflowLogPagination {
+	available: boolean;
+	nextCursor?: string | null;
+	reason?: string;
+}
+
+export interface WorkflowLogWindow {
+	mode: "tail" | "since" | "cursor";
+	tailLines?: number;
+	limitBytes?: number;
+	sinceSeconds?: number;
+	sinceTime?: string;
+	previous?: boolean;
+	timestamps?: boolean;
+	scope?: string;
+}
+
+export interface WorkflowLogResponse {
+	workflowName: string;
+	nodeId: string;
+	podName: string;
+	container: string;
+	source: "argo-live";
+	logs: string;
+	lineCount: number;
+	truncated: boolean;
+	nextCursor?: string | null;
+	truncation: WorkflowLogTruncation;
+	pagination?: WorkflowLogPagination;
+	window?: WorkflowLogWindow;
+}
+
+export interface WorkflowLogQuery {
+	tailLines?: number;
+	limitBytes?: number;
+	cursor?: string;
+	container?: string;
+	sinceSeconds?: number;
+	sinceTime?: string;
+	previous?: boolean;
+	timestamps?: boolean;
 }
 
 export function listWorkflows(
@@ -101,15 +286,126 @@ export function getWorkflow(name: string): Promise<WorkflowDetail> {
 export function getWorkflowLogs(
 	name: string,
 	nodeId: string,
-): Promise<{ logs: string }> {
+	params: WorkflowLogQuery = {},
+): Promise<WorkflowLogResponse> {
+	const sp = new URLSearchParams();
+	sp.set("nodeId", nodeId);
+	for (const [key, value] of Object.entries(params)) {
+		if (value === undefined || value === null || value === "") continue;
+		sp.set(key, String(value));
+	}
+	return request("GET", `/workflows/${encodeURIComponent(name)}/logs?${sp}`);
+}
+
+export function getWorkflowLogStreamUrl(
+	name: string,
+	nodeId: string,
+	params: WorkflowLogQuery = {},
+): string {
+	const sp = new URLSearchParams();
+	sp.set("nodeId", nodeId);
+	for (const [key, value] of Object.entries(params)) {
+		if (value === undefined || value === null || value === "") continue;
+		sp.set(key, String(value));
+	}
+	return `/api/v1/workflows/${encodeURIComponent(name)}/logs/stream?${sp}`;
+}
+
+export interface NodePodDiagnostics {
+	cluster?: string;
+	namespace: string;
+	podName: string;
+	podIp?: string;
+	serviceAccountName?: string;
+	restartCount: number;
+	containers: WorkflowNodeContainer[];
+	podConditions: WorkflowPodCondition[];
+	podEvents: WorkflowPodEvent[];
+}
+
+export function getNodePodDiagnostics(
+	workflowName: string,
+	nodeId: string,
+): Promise<NodePodDiagnostics> {
 	return request(
 		"GET",
-		`/workflows/${encodeURIComponent(name)}/logs?nodeId=${encodeURIComponent(nodeId)}`,
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/pod`,
 	);
 }
 
-export function getWorkflowLogStreamUrl(name: string, nodeId: string): string {
-	return `/api/v1/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
+export function getWorkflowNodeResourceUsage(
+	workflowName: string,
+	nodeId: string,
+): Promise<WorkflowResourceUsageReport> {
+	return request(
+		"GET",
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/resources`,
+	);
+}
+
+export interface TerminalSession {
+	id: string;
+	runId?: string;
+	workflowName: string;
+	nodeId: string;
+	podName: string;
+	containerName?: string;
+	executionTargetId?: string;
+	cluster?: string;
+	namespace: string;
+	command: string;
+	status: string;
+	attachUrl?: string;
+	expiresAt: string;
+	createdAt: string;
+	attachedAt?: string;
+	endedAt?: string;
+	errorCode?: string;
+	errorMessage?: string;
+}
+
+export interface CreateTerminalSessionRequest {
+	containerName?: string;
+	command: string;
+}
+
+export function createTerminalSession(
+	workflowName: string,
+	nodeId: string,
+	body: CreateTerminalSessionRequest,
+): Promise<TerminalSession> {
+	return request(
+		"POST",
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/terminal-sessions`,
+		body,
+	);
+}
+
+export function getTerminalSession(
+	sessionId: string,
+): Promise<TerminalSession> {
+	return request(
+		"GET",
+		`/pod-terminal/sessions/${encodeURIComponent(sessionId)}`,
+	);
+}
+
+export function terminateTerminalSession(
+	sessionId: string,
+): Promise<TerminalSession> {
+	return request(
+		"POST",
+		`/pod-terminal/sessions/${encodeURIComponent(sessionId)}/terminate`,
+		{},
+	);
+}
+
+export function getTerminalAttachUrl(attachUrl: string): string {
+	if (attachUrl.startsWith("ws://") || attachUrl.startsWith("wss://")) {
+		return attachUrl;
+	}
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	return `${protocol}//${window.location.host}${attachUrl}`;
 }
 
 function postWorkflowOperation(

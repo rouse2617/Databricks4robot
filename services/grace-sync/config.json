@@ -1,0 +1,19 @@
+{
+  "_comment": "All values can be overridden by environment variables. See README for the full list of GRACE_*, DATABREW_*, PIPELINE_*, SYNC_* env vars.",
+  "grace": {
+    "api_url": "https://dev.cyber-grace.pages.dev/api",
+    "username": "grace-service-dev"
+  },
+  "databrew": {
+    "api_url": "https://cyber-databrew-dev.cyberorigin.ai/api/v1"
+  },
+  "pipeline": {
+    "template_id": "",
+    "target_id": ""
+  },
+  "sync": {
+    "page_size": 1000,
+    "step_key": "transcode_algo_input",
+    "lookback_hours": 1
+  }
+}

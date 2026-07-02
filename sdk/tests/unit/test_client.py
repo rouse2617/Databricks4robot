@@ -119,7 +119,7 @@ class TestClientLazyLoading:
         client = CyberDatabrewClient(http_client=mock_http_client)
         for name in ("assets", "storage", "delivery", "algo_runs", "search",
                      "queries", "customers", "lakehouse", "events", "registry",
-                     "audit", "pipeline_components"):
+                     "audit", "pipeline_configs", "pipeline_components", "runs"):
             assert hasattr(client, name), f"missing {name}"
 
 

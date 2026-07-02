@@ -5,8 +5,8 @@ export default function Home(): null {
   const location = useLocation();
 
   useEffect(() => {
-    // Redirect /doc/ to /doc/intro (first doc page)
-    window.location.href = '/doc/intro';
+    // Redirect /doc/ to /doc/overview (first doc page)
+    window.location.href = '/doc/overview';
   }, [location]);
 
   return null;

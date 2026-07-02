@@ -5,4 +5,5 @@ kind: Kustomization
 resources:
   - configmap.yaml
   - deployment.yaml
+  - runtime-config-rbac.yaml
   - service.yaml

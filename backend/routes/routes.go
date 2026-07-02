@@ -1,3 +1,4 @@
+// Package routes wires HTTP handlers and middleware for the DataBrew API server.
 package routes
 
 import (
@@ -28,10 +29,13 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
@@ -61,13 +65,18 @@ func RegisterAll(
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
 	pipelineHandler *pipelineH.Handler,
+	pipelineConfigHandler *pipelineConfigH.Handler,
 	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
 	workflowHandler *workflowH.Handler,
 	backfillHandler *backfillH.Handler,
+	storageHandler *storageH.Handler,
 ) {
-	// Suppress unused warnings for handlers whose routes are not yet wired.
-	_, _, _ = customerHandler, deliveryRuleHandler, auditHandler
+	// Suppress unused warnings for handler params that don't have route
+	// registrations wired yet (routes are registered in follow-up PRs).
+	_, _, _, _ = algoRunHandler, pipelineHandler, pipelineConfigHandler, pipelineComponentHandler
+	_ = workflowHandler
+	_ = storageHandler
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -110,32 +119,33 @@ func RegisterAll(
 				Email string `json:"email"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+				httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "email is required", map[string]any{"error": err.Error()})
 				return
 			}
 			email := strings.TrimSpace(strings.ToLower(req.Email))
 			if email == "" || !strings.Contains(email, "@") {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "valid email is required"})
+				httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "valid email is required", nil)
 				return
 			}
 
 			domain := email[strings.LastIndex(email, "@")+1:]
 			if cfg.AllowedDomain == "" || domain != cfg.AllowedDomain {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "email domain not allowed"})
+				httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "email domain not allowed")
 				return
 			}
 
 			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+				httpresp.Internal(c, "failed to sign token")
 				return
 			}
 			c.SetSameSite(http.SameSiteLaxMode)
 			c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{
 				"authenticated": true,
-				"email":         email,
-				"role":          "user",
+				"token":        jwtToken,
+				"email":        email,
+				"role":         "user",
 			})
 		})
 
@@ -162,27 +172,43 @@ func RegisterAll(
 			Token string `json:"token"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "token is required", map[string]any{"error": err.Error()})
 			return
 		}
 		token := strings.TrimSpace(req.Token)
 		if token == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "token is required", nil)
 			return
 		}
 		if token != cfg.DatabrewToken {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "invalid token")
 			return
 		}
 		jwtToken, err := auth.SignToken(cfg.JWTSecret, "legacy", "admin", 24*time.Hour)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+			httpresp.Internal(c, "failed to sign token")
 			return
 		}
 		c.SetSameSite(http.SameSiteLaxMode)
 		c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 		c.JSON(http.StatusOK, gin.H{"authenticated": true})
 	})
+
+	if pipelineComponentHandler != nil {
+		releaseIngest := r.Group("/api/v1", pipelineComponentH.ReleaseIngestAuth(cfg.ComponentReleaseIngestToken, cfg.DatabrewToken, cfg.JWTSecret))
+		if cbMiddleware != nil {
+			releaseIngest.Use(cbMiddleware)
+		}
+		releaseIngest.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
+	}
+
+	if workflowHandler != nil {
+		terminalAttach := r.Group("/api/v1")
+		if cbMiddleware != nil {
+			terminalAttach.Use(cbMiddleware)
+		}
+		terminalAttach.GET("/pod-terminal/sessions/:id/attach", workflowHandler.AttachTerminalSession)
+	}
 
 	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 	if cbMiddleware != nil {
@@ -198,6 +224,7 @@ func RegisterAll(
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
+		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", assetHandler.UpsertTag)
@@ -209,6 +236,7 @@ func RegisterAll(
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
+		api.GET("/events/stream", assetHandler.HandleGlobalEventsStream)
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
@@ -233,6 +261,25 @@ func RegisterAll(
 		api.GET("/deliveries/:id", deliveryHandler.Get)
 		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
+		api.POST("/deliveries/draft", deliveryHandler.HandleDraft)
+		api.POST("/deliveries/:id/items", deliveryHandler.HandleAddItems)
+		api.POST("/deliveries/:id/commit", deliveryHandler.HandleCommitC2)
+		api.POST("/deliveries/:id/cancel", deliveryHandler.HandleCancel)
+		api.POST("/deliveries/:id/retry", deliveryHandler.HandleRetry)
+		api.POST("/deliveries/:id/ack", deliveryHandler.HandleAck)
+
+		if deliveryRuleHandler != nil {
+			api.POST("/delivery-rules", deliveryRuleHandler.Create)
+			api.GET("/delivery-rules", deliveryRuleHandler.List)
+		}
+
+		// Customer CRUD
+		if customerHandler != nil {
+			api.POST("/customers", customerHandler.Create)
+			api.GET("/customers", customerHandler.List)
+			api.GET("/customers/:customer_id", customerHandler.Get)
+			api.PATCH("/customers/:customer_id", customerHandler.Update)
+		}
 
 		// Registry endpoints (read-only, from YAML config)
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
@@ -243,8 +290,13 @@ func RegisterAll(
 
 		// Search endpoints (Elasticsearch-backed)
 		if searchHandler != nil {
+			api.GET("/search/assets", searchHandler.SearchAssets)
 			api.GET("/search/sync-status", searchHandler.SyncStatus)
 			api.GET("/search/sync-progress", searchHandler.SyncProgress)
+		}
+
+		if auditHandler != nil {
+			api.GET("/audit/search", auditHandler.HandleAuditSearch)
 		}
 
 		if lakehouseHandler != nil {
@@ -313,12 +365,59 @@ func RegisterAll(
 		// Pipeline (Argo Workflows) — templates, deploy, deployments
 		api.POST("/pipelines", pipelineHandler.SaveTemplate)
 		api.GET("/pipelines", pipelineHandler.ListTemplates)
+		api.GET("/pipelines/stats", pipelineHandler.GetStats)
 		api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
+		api.PUT("/pipelines/:id", pipelineHandler.UpdatePipeline)
 		api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
 		api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
+		api.PATCH("/pipelines/:id/active-version", pipelineHandler.SetActiveVersion)
+		api.POST("/pipelines/:id/promote", pipelineHandler.Promote)
 		api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
+		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
+		api.POST("/execution-targets", pipelineHandler.CreateExecutionTarget)
+		api.PUT("/execution-targets/:id", pipelineHandler.UpdateExecutionTarget)
+		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)
+		api.GET("/resource-quotas", workflowHandler.ListResourceQuotas)
+		api.GET("/pipeline/runtime-mounts", pipelineHandler.ListRuntimeMounts)
+		api.POST("/runs", pipelineHandler.CreateRun)
+		api.POST("/runs/template/:id", pipelineHandler.CreateRunByTemplate)
+		api.GET("/runs", pipelineHandler.ListRuns)
+		api.POST("/runs/batch", pipelineHandler.CreateBatchRun)
+		api.POST("/runs/batch/:batchId/stop", pipelineHandler.StopBatchRun)
+		api.GET("/runs/batch/:batchId", pipelineHandler.GetBatchStatus)
+		api.GET("/runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
+		api.GET("/runs/by-workflow/:workflowName", pipelineHandler.GetRunByWorkflowName)
+		api.GET("/runs/:id", pipelineHandler.GetRun)
+		api.GET("/runs/:id/events", pipelineHandler.ListRunEvents)
+		api.GET("/runs/:id/nodes", pipelineHandler.ListRunNodes)
+		api.GET("/runs/:id/asset-nodes", pipelineHandler.ListRunAssetNodes)
+		api.GET("/runs/:id/cost-summary", pipelineHandler.GetRunCostSummary)
+		api.GET("/runs/:id/inputs", pipelineHandler.ListRunInputs)
+		api.GET("/runs/:id/outputs", pipelineHandler.ListRunOutputs)
+		api.GET("/runs/:id/children", pipelineHandler.ListRunChildren)
+		api.GET("/runs/:id/runtime", pipelineHandler.GetRunRuntime)
+		api.POST("/runs/:id/retry", pipelineHandler.RetryRunRuntime)
+		api.POST("/runs/:id/resubmit", pipelineHandler.ResubmitRun)
+		api.POST("/runs/:id/rerun", pipelineHandler.RerunRun)
+		api.POST("/runs/:id/stop", pipelineHandler.StopRun)
+		api.POST("/runs/:id/suspend", pipelineHandler.SuspendRun)
+		api.POST("/runs/:id/resume", pipelineHandler.ResumeRun)
+		api.POST("/runs/:id/terminate", pipelineHandler.TerminateRun)
+		api.DELETE("/runs/:id", pipelineHandler.DeleteRun)
+		api.POST("/pipeline-runs", pipelineHandler.CreateRun)
+		api.POST("/pipeline-runs/template/:id", pipelineHandler.CreateRunByTemplate)
+		api.GET("/pipeline-runs", pipelineHandler.ListRuns)
+		api.GET("/pipeline-runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
+		api.GET("/pipeline-runs/by-workflow/:workflowName", pipelineHandler.GetRunByWorkflowName)
+		api.GET("/pipeline-runs/:id", pipelineHandler.GetRun)
+		api.GET("/pipeline-runs/:id/events", pipelineHandler.ListRunEvents)
+		api.GET("/pipeline-runs/:id/asset-nodes", pipelineHandler.ListRunAssetNodes)
+		api.GET("/pipeline-runs/:id/cost-summary", pipelineHandler.GetRunCostSummary)
+		api.POST("/pipeline-runs/:id/retry", pipelineHandler.RetryRun)
+		api.POST("/pipeline-runs/:id/stop", pipelineHandler.StopRun)
+		api.DELETE("/pipeline-runs/:id", pipelineHandler.DeleteRun)
 		api.GET("/deployments", pipelineHandler.ListDeployments)
 		api.GET("/deployments/:id", pipelineHandler.GetDeployment)
 		api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
@@ -330,28 +429,69 @@ func RegisterAll(
 		api.GET("/assets/:id/pipeline-lineage", pipelineHandler.GetLineage)
 
 		// Pipeline component registry
+		if pipelineConfigHandler != nil {
+			api.POST("/pipeline-configs", pipelineConfigHandler.Create)
+			api.GET("/pipeline-configs", pipelineConfigHandler.List)
+			api.GET("/pipeline-configs/:id", pipelineConfigHandler.Get)
+			api.PUT("/pipeline-configs/:id", pipelineConfigHandler.Update)
+			api.POST("/pipeline-configs/:id/versions", pipelineConfigHandler.CreateVersion)
+			api.GET("/pipeline-configs/:id/versions/:version", pipelineConfigHandler.GetVersion)
+			api.PUT("/pipeline-configs/:id/versions/:version/status", pipelineConfigHandler.UpdateVersionStatus)
+			api.PUT("/pipeline-configs/:id/versions/:version", pipelineConfigHandler.UpdateVersionContent)
+			api.POST("/pipeline-configs/:id/deprecate", pipelineConfigHandler.Deprecate)
+		}
+
 		if pipelineComponentHandler != nil {
 			api.POST("/pipeline-components", pipelineComponentHandler.CreateComponent)
 			api.GET("/pipeline-components", pipelineComponentHandler.ListComponents)
 			api.GET("/pipeline-components/:id", pipelineComponentHandler.GetComponent)
 			api.PUT("/pipeline-components/:id", pipelineComponentHandler.UpdateComponent)
 			api.DELETE("/pipeline-components/:id", pipelineComponentHandler.DeleteComponent)
+			api.GET("/pipeline-component-releases", pipelineComponentHandler.ListReleases)
+			api.GET("/pipeline-component-releases/:id", pipelineComponentHandler.GetRelease)
 		}
 
 		// Workflow monitoring
 		api.GET("/workflows", workflowHandler.ListWorkflows)
 		api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
-			api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
+		api.GET("/workflows/:name/logs/stream", workflowHandler.StreamWorkflowLogs)
+		api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
+		api.GET("/workflows/:name/resources", pipelineHandler.GetWorkflowResourceUsage)
+		api.GET("/workflows/:name/nodes/:nodeId/resources", pipelineHandler.GetWorkflowNodeResourceUsage)
+		api.GET("/workflows/:name/nodes/:nodeId/pod", workflowHandler.GetNodePodDiagnostics)
+		api.POST("/workflows/:name/nodes/:nodeId/terminal-sessions", workflowHandler.CreateTerminalSession)
+		api.GET("/pod-terminal/sessions/:id", workflowHandler.GetTerminalSession)
+		api.POST("/pod-terminal/sessions/:id/terminate", workflowHandler.TerminateTerminalSession)
 		api.GET("/workflows/:name", workflowHandler.GetWorkflow)
+		api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
+		api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
+		api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)
+		api.POST("/workflows/:name/stop", workflowHandler.StopWorkflow)
+		api.POST("/workflows/:name/resume", workflowHandler.ResumeWorkflow)
+		api.POST("/workflows/:name/terminate", workflowHandler.TerminateWorkflow)
+		api.DELETE("/workflows/:name", workflowHandler.DeleteWorkflow)
 
 		// Backfill jobs
 		if backfillHandler != nil {
 			api.POST("/backfill", backfillHandler.CreateJob)
+			api.POST("/backfill/validate-assets", backfillHandler.ValidateAssets)
 			api.GET("/backfill", backfillHandler.ListJobs)
 			api.GET("/backfill/:id", backfillHandler.GetJob)
+			api.GET("/backfill/:id/node-summary", backfillHandler.GetNodeSummary)
+			api.GET("/backfill/:id/node-failures", backfillHandler.ListNodeFailures)
+			api.GET("/backfill/:id/attempts", backfillHandler.GetItemAttempts)
 			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
 			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
+			api.POST("/backfill/:id/rerun", backfillHandler.Rerun)
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
+			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
+			api.POST("/backfill/results", backfillHandler.UploadResult)
+		}
+
+		// Storage (GCS signed URL proxy + source resolver)
+		if storageHandler != nil {
+			api.POST("/storage/resolve", storageHandler.Resolve)
+			api.POST("/storage/sign-url", storageHandler.SignURL)
 		}
 
 		if queryHandler != nil {

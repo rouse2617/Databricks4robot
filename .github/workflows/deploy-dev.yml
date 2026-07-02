@@ -1,0 +1,212 @@
+name: deploy-dev
+
+# Consolidated dev deploy: backend + mcap-preview.
+# Frontend dev is deployed by Cloudflare GitHub App integration, not GHA.
+# Only the jobs whose paths changed actually run.
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "backend/**"
+      - "deploy/cloudrun/backend-dev.sh"
+      - "services/mcap-preview/**"
+      - "deploy/cloudrun/mcap-preview-dev.sh"
+      - ".github/workflows/deploy-dev.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  VM_HOST: 136.119.82.209
+  VM_USER: rick
+  REPO_DIR: /home/rick/cyber-databrew
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      mcap: ${{ steps.filter.outputs.mcap }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'deploy/cloudrun/backend-dev.sh'
+              - '.github/workflows/deploy-dev.yml'
+            mcap:
+              - 'services/mcap-preview/**'
+              - 'deploy/cloudrun/mcap-preview-dev.sh'
+              - '.github/workflows/deploy-dev.yml'
+
+  # ─── Backend ────────────────────────────────────────────────────────────────
+  deploy-backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    name: Build & Deploy backend → Cloud Run dev
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-backend-dev
+      cancel-in-progress: true
+    env:
+      IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest
+      CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:buildcache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy/cloudrun/backend-dev.sh
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/234851712830/locations/global/workloadIdentityPools/github-actions-pool-v2/providers/github-provider
+          service_account: cyber-databrew-gha@green-valley-442103.iam.gserviceaccount.com
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build & push image on VM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          AR_TOKEN=$(gcloud auth print-access-token)
+          CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+
+          ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
+          set -euo pipefail
+
+          echo "--- [1/3] sync code: commit $COMMIT_SHA ---"
+          if [ -d ${{ env.REPO_DIR }}/.git ]; then
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL" 2>/dev/null
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin dev -q
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
+          else
+            git clone --depth=1 --branch dev "$CLONE_URL" ${{ env.REPO_DIR }} -q
+          fi
+          echo "    code ready: \$(git -C ${{ env.REPO_DIR }} log -1 --oneline)"
+
+          echo "--- [2/3] docker login ---"
+          echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev 2>&1 | grep -v "^$"
+
+          echo "--- [3/3] build & push ---"
+          if docker buildx inspect databrew-builder &>/dev/null; then
+            echo "    builder warm — skipping registry cache pull"
+            docker buildx use databrew-builder
+            CACHE_ARGS="--cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          else
+            echo "    builder cold — pulling registry cache"
+            docker buildx create --driver docker-container --use --name databrew-builder
+            CACHE_ARGS="--cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
+          docker buildx build \
+            --progress=auto \
+            --platform=linux/amd64 \
+            \$CACHE_ARGS \
+            -f ${{ env.REPO_DIR }}/backend/Dockerfile \
+            -t ${{ env.IMAGE }} \
+            --push \
+            ${{ env.REPO_DIR }}/backend
+          echo "    pushed: ${{ env.IMAGE }}"
+          ENDSSH
+
+      - name: Deploy to Cloud Run dev
+        run: |
+          IMAGE=${{ env.IMAGE }} \
+          USE_EXISTING_IMAGE=true \
+          SOURCE_K8S_ENV=false \
+          bash deploy/cloudrun/backend-dev.sh
+
+  # ─── MCAP Preview ───────────────────────────────────────────────────────────
+  deploy-mcap:
+    needs: changes
+    if: needs.changes.outputs.mcap == 'true'
+    name: Build & Deploy mcap-preview → Cloud Run dev
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-mcap-preview-dev
+      cancel-in-progress: true
+    env:
+      IMAGE: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/mcap-preview:dev-latest
+      CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/mcap-preview:buildcache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy/cloudrun/mcap-preview-dev.sh
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/234851712830/locations/global/workloadIdentityPools/github-actions-pool-v2/providers/github-provider
+          service_account: cyber-databrew-gha@green-valley-442103.iam.gserviceaccount.com
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build & push image on VM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          AR_TOKEN=$(gcloud auth print-access-token)
+          CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+
+          ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
+          set -euo pipefail
+
+          echo "--- [1/3] sync code: commit $COMMIT_SHA ---"
+          if [ -d ${{ env.REPO_DIR }}/.git ]; then
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL" 2>/dev/null
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin dev -q
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
+          else
+            git clone --depth=1 --branch dev "$CLONE_URL" ${{ env.REPO_DIR }} -q
+          fi
+          echo "    code ready: \$(git -C ${{ env.REPO_DIR }} log -1 --oneline)"
+
+          echo "--- [2/3] docker login ---"
+          echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev 2>&1 | grep -v "^$"
+
+          echo "--- [3/3] build & push ---"
+          if docker buildx inspect databrew-mcap-builder &>/dev/null; then
+            echo "    builder warm — skipping registry cache pull"
+            docker buildx use databrew-mcap-builder
+            CACHE_ARGS="--cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          else
+            echo "    builder cold — pulling registry cache"
+            docker buildx create --driver docker-container --use --name databrew-mcap-builder
+            CACHE_ARGS="--cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
+          docker buildx build \
+            --progress=auto \
+            --platform=linux/amd64 \
+            \$CACHE_ARGS \
+            -f ${{ env.REPO_DIR }}/services/mcap-preview/Dockerfile \
+            -t ${{ env.IMAGE }} \
+            --push \
+            ${{ env.REPO_DIR }}/services/mcap-preview
+          echo "    pushed: ${{ env.IMAGE }}"
+          ENDSSH
+
+      - name: Deploy to Cloud Run dev
+        run: |
+          IMAGE=${{ env.IMAGE }} \
+          bash deploy/cloudrun/mcap-preview-dev.sh

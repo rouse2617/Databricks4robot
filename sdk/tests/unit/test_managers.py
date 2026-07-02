@@ -282,9 +282,36 @@ class TestWorkflowManager:
 
     def test_logs(self, client):
         respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "logs": "hello",
+                    "pagination": {"available": False, "nextCursor": None},
+                    "window": {"mode": "tail", "scope": "bounded-live-window"},
+                },
+            )
+        )
+        assert client.workflows.logs("wf1", "n1")["logs"] == "hello"
+
+    def test_logs_with_window_params(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
             return_value=httpx.Response(200, json={"logs": "hello"})
         )
-        assert client.workflows.logs("wf1", "n1") == {"logs": "hello"}
+        client.workflows.logs(
+            "wf1",
+            "n1",
+            tail_lines=50,
+            limit_bytes=65536,
+            container="main",
+            timestamps=True,
+        )
+
+        request = route.calls.last.request
+        assert request.url.params["nodeId"] == "n1"
+        assert request.url.params["tailLines"] == "50"
+        assert request.url.params["limitBytes"] == "65536"
+        assert request.url.params["container"] == "main"
+        assert request.url.params["timestamps"] == "true"
 
     def test_operations(self, client):
         for operation in ("retry", "resubmit", "suspend", "resume", "terminate"):
@@ -298,6 +325,361 @@ class TestWorkflowManager:
             return_value=httpx.Response(200, json={"message": "ok"})
         )
         assert client.workflows.delete("wf1") == {"message": "ok"}
+
+
+# =========================================================================
+# PipelineManager
+# =========================================================================
+
+class TestPipelineManager:
+    def test_list_execution_targets(self, client):
+        respx.get(f"{BASE_URL}/api/v1/execution-targets").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "default"}]})
+        )
+        result = client.pipelines.list_execution_targets()
+        assert result["items"][0]["id"] == "default"
+
+    def test_list_runtime_mounts(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline/runtime-mounts").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "secrets": [],
+                    "storage": [
+                        {
+                            "id": "scratch-emptydir",
+                            "kind": "emptyDir",
+                            "defaultMountPath": "/workspace/scratch",
+                        }
+                    ],
+                },
+            )
+        )
+        result = client.pipelines.list_runtime_mounts()
+        assert result["storage"][0]["id"] == "scratch-emptydir"
+
+    def test_deploy_template_with_assets_and_target(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/deploy/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "dep-1"})
+        )
+        result = client.pipelines.deploy_template(
+            "tmpl-1",
+            asset_ids=["SDKT0202"],
+            target_id="default",
+            name="asset-run",
+        )
+        assert result["id"] == "dep-1"
+        assert route.calls.last.request.read()
+        assert route.calls.last.request.url.path == "/api/v1/deploy/template/tmpl-1"
+
+    def test_create_run(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-runs").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.pipelines.create_run(
+            {"name": "pipe", "nodes": [], "edges": []},
+            asset_ids=["asset-1"],
+            target_id="default",
+            name="run-name",
+        )
+        assert result["id"] == "run-1"
+        body = route.calls.last.request.read()
+        assert b'"pipeline"' in body
+        assert route.calls.last.request.url.path == "/api/v1/pipeline-runs"
+
+    def test_create_run_from_template(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-runs/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.pipelines.create_run_from_template("tmpl-1", asset_ids=["asset-1"])
+        assert result["id"] == "run-1"
+        assert route.calls.last.request.url.path == "/api/v1/pipeline-runs/template/tmpl-1"
+
+    def test_pipeline_run_crud_actions(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/watcher/status").mock(
+            return_value=httpx.Response(200, json={"id": "default", "healthy": True})
+        )
+        events_route = respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/events").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "evt-1"}], "total": 1})
+        )
+        asset_nodes_route = respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/asset-nodes").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "an-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/cost-summary").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "costSource": "not_available"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pipeline-runs/run-1/retry").mock(
+            return_value=httpx.Response(201, json={"id": "run-2"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pipeline-runs/run-1/stop").mock(
+            return_value=httpx.Response(200, json={"message": "pipeline run stopped"})
+        )
+        respx.delete(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
+            return_value=httpx.Response(204)
+        )
+        assert client.pipelines.list_runs() == {"items": []}
+        assert client.pipelines.get_run("run-1")["id"] == "run-1"
+        assert client.pipelines.get_run_watcher_status()["healthy"] is True
+        assert client.pipelines.list_run_events(
+            "run-1",
+            limit=50,
+            subject_type="node",
+            event_type="node_failed",
+            status="Failed",
+            q="image",
+        )["items"][0]["id"] == "evt-1"
+        assert dict(events_route.calls.last.request.url.params) == {
+            "limit": "50",
+            "subjectType": "node",
+            "eventType": "node_failed",
+            "status": "Failed",
+            "q": "image",
+        }
+        assert client.pipelines.list_run_asset_nodes(
+            "run-1",
+            limit=20,
+            asset_id="asset-1",
+            order_by="cost",
+        )["items"][0]["id"] == "an-1"
+        assert dict(asset_nodes_route.calls.last.request.url.params) == {
+            "limit": "20",
+            "assetId": "asset-1",
+            "orderBy": "cost",
+        }
+        assert client.pipelines.get_run_cost_summary("run-1")["runId"] == "run-1"
+        assert client.pipelines.retry_run("run-1")["id"] == "run-2"
+        assert client.pipelines.stop_run("run-1")["message"] == "pipeline run stopped"
+        assert client.pipelines.delete_run("run-1") == {}
+
+    def test_pod_terminal_session_helpers(self, client):
+        create_route = respx.post(
+            f"{BASE_URL}/api/v1/workflows/wf-1/nodes/node-1/terminal-sessions"
+        ).mock(return_value=httpx.Response(201, json={"id": "sess-1", "status": "created"}))
+        respx.get(f"{BASE_URL}/api/v1/pod-terminal/sessions/sess-1").mock(
+            return_value=httpx.Response(200, json={"id": "sess-1", "status": "created"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pod-terminal/sessions/sess-1/terminate").mock(
+            return_value=httpx.Response(200, json={"id": "sess-1", "status": "terminated"})
+        )
+
+        created = client.pipelines.create_pod_terminal_session(
+            "wf-1",
+            "node-1",
+            command="pwd",
+            container_name="main",
+        )
+        assert created["id"] == "sess-1"
+        body = create_route.calls.last.request.read()
+        assert b'"command":"pwd"' in body
+        assert b'"containerName":"main"' in body
+        assert client.pipelines.get_pod_terminal_session("sess-1")["status"] == "created"
+        assert (
+            client.pipelines.terminate_pod_terminal_session("sess-1")["status"]
+            == "terminated"
+        )
+        assert (
+            client.pipelines.pod_terminal_attach_path("sess-1", "tok")
+            == "/api/v1/pod-terminal/sessions/sess-1/attach?token=tok"
+        )
+
+    def test_list_deployments(self, client):
+        respx.get(f"{BASE_URL}/api/v1/deployments").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.pipelines.list_deployments() == {"items": []}
+
+
+# =========================================================================
+# RunManager
+# =========================================================================
+
+class TestRunManager:
+    def test_create_from_template_uses_run_api(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/runs/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.runs.create_from_template(
+            "tmpl-1",
+            asset_ids=["asset-1"],
+            target_id="gpu-l4",
+            version=3,
+        )
+        assert result["id"] == "run-1"
+        assert route.calls.last.request.url.path == "/api/v1/runs/template/tmpl-1"
+        body = route.calls.last.request.read()
+        assert b'"asset_ids":["asset-1"]' in body
+        assert b'"target_id":"gpu-l4"' in body
+        assert b'"version":3' in body
+
+    def test_list_get_and_resolve_by_workflow(self, client):
+        list_route = respx.get(f"{BASE_URL}/api/v1/runs").mock(
+            return_value=httpx.Response(200, json={"items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/by-workflow/wf-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        assert client.runs.list(
+            view="summary",
+            exclude_batch=True,
+            q="daily-ingest-template",
+            page=1,
+        )["total"] == 0
+        assert dict(list_route.calls.last.request.url.params) == {
+            "view": "summary",
+            "excludeBatch": "true",
+            "q": "daily-ingest-template",
+            "page": "1",
+        }
+        assert client.runs.get("run-1")["id"] == "run-1"
+        assert client.runs.get_by_workflow("wf-1")["id"] == "run-1"
+
+    def test_run_subresources_and_runtime_operations(self, client):
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/events").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "evt-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/nodes").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "node-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/asset-nodes").mock(
+            return_value=httpx.Response(200, json={"items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/cost-summary").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1"})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/inputs").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/outputs").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/children").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "runId": "run-1",
+                    "items": [],
+                    "relations": [],
+                    "summary": {
+                        "total": 0,
+                        "statuses": {},
+                        "aggregateStatus": "Pending",
+                        "activeCount": 0,
+                        "terminalCount": 0,
+                        "succeededCount": 0,
+                        "failedCount": 0,
+                        "cancelledCount": 0,
+                        "pendingCount": 0,
+                        "runningCount": 0,
+                        "suspendedCount": 0,
+                    },
+                    "total": 0,
+                },
+            )
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/runtime").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "runtime": {"runtimeType": "argo"}})
+        )
+        for operation in ("retry", "resubmit", "rerun", "stop", "suspend", "resume", "terminate"):
+            respx.post(f"{BASE_URL}/api/v1/runs/run-1/{operation}").mock(
+                return_value=httpx.Response(200, json={"message": "ok", "id": "run-1"})
+            )
+        respx.delete(f"{BASE_URL}/api/v1/runs/run-1").mock(return_value=httpx.Response(204))
+
+        assert client.runs.events("run-1", limit=10)["items"][0]["id"] == "evt-1"
+        assert client.runs.nodes("run-1")["items"][0]["id"] == "node-1"
+        assert client.runs.asset_nodes("run-1")["total"] == 0
+        assert client.runs.cost_summary("run-1")["runId"] == "run-1"
+        assert client.runs.inputs("run-1")["total"] == 0
+        assert client.runs.outputs("run-1")["total"] == 0
+        children = client.runs.children("run-1")
+        assert children["total"] == 0
+        assert children["summary"]["aggregateStatus"] == "Pending"
+        assert client.runs.runtime("run-1")["runtime"]["runtimeType"] == "argo"
+        assert client.runs.retry("run-1")["id"] == "run-1"
+        assert client.runs.resubmit("run-1")["id"] == "run-1"
+        assert client.runs.rerun("run-1")["id"] == "run-1"
+        assert client.runs.stop("run-1")["message"] == "ok"
+        assert client.runs.suspend("run-1")["message"] == "ok"
+        assert client.runs.resume("run-1")["message"] == "ok"
+        assert client.runs.terminate("run-1")["message"] == "ok"
+        assert client.runs.delete("run-1") == {}
+
+
+# =========================================================================
+# PipelineConfigManager
+# =========================================================================
+
+class TestPipelineConfigManager:
+    def test_list_and_get(self, client):
+        list_route = respx.get(f"{BASE_URL}/api/v1/pipeline-configs").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.pipeline_configs.list(
+            q="detector",
+            owner="alice@example.com",
+            scope="dev",
+            lifecycle="ready",
+        ) == {"items": []}
+        assert list_route.calls.last.request.url.params["q"] == "detector"
+        assert list_route.calls.last.request.url.params["owner"] == "alice@example.com"
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-configs/cfg1").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "name": "detector.yaml"})
+        )
+        assert client.pipeline_configs.get("cfg1")["id"] == "cfg1"
+
+    def test_create_update_version_and_deprecate(self, client):
+        payload = {
+            "name": "detector.yaml",
+            "lifecycle": "ready",
+            "content": "threshold: 0.82\n",
+        }
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs").mock(
+            return_value=httpx.Response(201, json={"id": "cfg1", **payload})
+        )
+        assert client.pipeline_configs.create(payload)["id"] == "cfg1"
+
+        update_route = respx.put(f"{BASE_URL}/api/v1/pipeline-configs/cfg1").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "description": "updated"})
+        )
+        updated = client.pipeline_configs.update(
+            "cfg1",
+            {
+                "name": "detector.yaml",
+                "description": "updated",
+                "fileType": "yaml",
+                "lifecycle": "ready",
+            },
+        )
+        assert updated["description"] == "updated"
+        assert b'"fileType":"yaml"' in update_route.calls.last.request.read()
+
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/versions").mock(
+            return_value=httpx.Response(201, json={"configId": "cfg1", "version": 2})
+        )
+        assert client.pipeline_configs.create_version(
+            "cfg1",
+            {"status": "ready", "content": "threshold: 0.90\n"},
+        )["version"] == 2
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/versions/2").mock(
+            return_value=httpx.Response(200, json={"configId": "cfg1", "version": 2, "content": "threshold: 0.90\n"})
+        )
+        assert client.pipeline_configs.get_version("cfg1", 2)["content"].startswith("threshold")
+
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/deprecate").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "lifecycle": "deprecated"})
+        )
+        assert client.pipeline_configs.deprecate("cfg1")["lifecycle"] == "deprecated"
 
 
 # =========================================================================
@@ -341,6 +723,41 @@ class TestPipelineComponentManager:
             return_value=httpx.Response(204)
         )
         assert client.pipeline_components.delete("c1") == {}
+
+    def test_component_releases(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline-component-releases").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "r1"}]})
+        )
+        assert client.pipeline_components.list_releases(
+            q="hand",
+            component_id="hand-detect-yolov26m",
+            status="ready",
+            selectable=True,
+        ) == {"items": [{"id": "r1"}]}
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-component-releases/r1").mock(
+            return_value=httpx.Response(200, json={"id": "r1", "releaseLabel": "main-abc123"})
+        )
+        assert client.pipeline_components.get_release("r1")["id"] == "r1"
+
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-component-releases/sync").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "r1"}]})
+        )
+        payload = [{"componentId": "hand-detect-yolov26m", "releaseLabel": "main-abc123"}]
+        assert client.pipeline_components.sync_releases(
+            payload,
+            source={
+                "provider": "cloud-build",
+                "refType": "branch",
+                "commit": "abc123",
+            },
+        ) == {"items": [{"id": "r1"}]}
+        body = route.calls.last.request.read()
+        assert (
+            b'"source":{"provider":"cloud-build","refType":"branch",'
+            b'"commit":"abc123"}'
+        ) in body
+        assert b'"items":[{"componentId":"hand-detect-yolov26m"' in body
 
 
 # =========================================================================

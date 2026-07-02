@@ -18,6 +18,18 @@ const (
 )
 
 // StaticTokenAuth is a Phase 0 placeholder.
+
+// GetUserEmail extracts the authenticated user's email from the Gin context.
+// Returns "legacy" when no email is set (backward compat for token auth).
+func GetUserEmail(c *gin.Context) string {
+	if email, ok := c.Get(CtxKeyEmail); ok {
+		if s, ok := email.(string); ok && s != "" {
+			return s
+		}
+	}
+	return "legacy"
+}
+
 func StaticTokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		got := c.GetHeader("X-Databrew-Token")

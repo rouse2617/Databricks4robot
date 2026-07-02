@@ -110,7 +110,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		tmpl, err := uc.SaveTemplate(ctx, "test-pipe", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "test-pipe", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -141,7 +141,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, err := uc.SaveTemplate(ctx, "multi-ver", pipe)
+		t1, err := uc.SaveTemplate(ctx, "multi-ver", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("first save: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestSaveTemplate(t *testing.T) {
 			t.Fatalf("expected version 1, got %d", t1.Version)
 		}
 
-		t2, err := uc.SaveTemplate(ctx, "multi-ver", pipe)
+		t2, err := uc.SaveTemplate(ctx, "multi-ver", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("second save: %v", err)
 		}
@@ -166,12 +166,107 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		tmpl, err := uc.SaveTemplate(ctx, "empty", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "empty", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if tmpl.NodeCount != 0 {
 			t.Fatalf("expected nodeCount 0, got %d", tmpl.NodeCount)
+		}
+	})
+
+	t.Run("rejects duplicate fan-in target input", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		pipe := map[string]interface{}{
+			"name": "bad-fanin",
+			"nodes": []interface{}{
+				map[string]interface{}{
+					"id": "a",
+					"component": map[string]interface{}{
+						"name":    "a",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo a > /tmp/outputs/output"},
+						},
+					},
+					"outputs": []interface{}{map[string]interface{}{"name": "output", "type": "string"}},
+				},
+				map[string]interface{}{
+					"id": "b",
+					"component": map[string]interface{}{
+						"name":    "b",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo b > /tmp/outputs/output"},
+						},
+					},
+					"outputs": []interface{}{map[string]interface{}{"name": "output", "type": "string"}},
+				},
+				map[string]interface{}{
+					"id": "join",
+					"component": map[string]interface{}{
+						"name":    "join",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo join"},
+						},
+					},
+					"inputs": []interface{}{map[string]interface{}{"name": "input", "type": "string"}},
+				},
+			},
+			"edges": []interface{}{
+				map[string]interface{}{"source": "a.output", "target": "join.input"},
+				map[string]interface{}{"source": "b.output", "target": "join.input"},
+			},
+		}
+
+		_, err := uc.SaveTemplate(ctx, "bad-fanin", pipe, "dev", "legacy")
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("expected ErrInvalidArgument, got %v", err)
+		}
+	})
+
+	t.Run("normalizes duplicated shell args before saving", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		pipe := map[string]interface{}{
+			"name": "normalize-shell",
+			"nodes": []interface{}{
+				map[string]interface{}{
+					"id": "step-1",
+					"component": map[string]interface{}{
+						"name":    "a",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "sh", "value": "sh"},
+							map[string]interface{}{"name": "-c", "value": "-c"},
+							map[string]interface{}{"name": "script", "value": "echo ok"},
+						},
+					},
+				},
+			},
+			"edges": []interface{}{},
+		}
+
+		tmpl, err := uc.SaveTemplate(ctx, "normalize-shell", pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		nodes, ok := tmpl.Pipeline["nodes"].([]interface{})
+		if !ok || len(nodes) != 1 {
+			t.Fatalf("nodes = %#v", tmpl.Pipeline["nodes"])
+		}
+		component := nodes[0].(map[string]interface{})["component"].(map[string]interface{})
+		args := component["args"].([]interface{})
+		if len(args) != 1 {
+			t.Fatalf("args = %#v, want one script arg", args)
+		}
+		value := args[0].(map[string]interface{})["value"]
+		if value != "echo ok" {
+			t.Fatalf("arg value = %#v, want echo ok", value)
 		}
 	})
 }
@@ -195,7 +290,7 @@ func TestTemplateCRUD(t *testing.T) {
 	pipe := map[string]interface{}{
 		"name": "crud-test", "nodes": []interface{}{}, "edges": []interface{}{},
 	}
-	tmpl, err := uc.SaveTemplate(ctx, "crud-test", pipe)
+	tmpl, err := uc.SaveTemplate(ctx, "crud-test", pipe, "dev", "legacy")
 	if err != nil {
 		t.Fatalf("SaveTemplate: %v", err)
 	}
@@ -213,7 +308,7 @@ func TestTemplateCRUD(t *testing.T) {
 	}
 
 	// DeleteTemplate.
-	if err := uc.DeleteTemplate(ctx, tmpl.ID); err != nil {
+	if err := uc.DeleteTemplate(ctx, tmpl.ID, ""); err != nil {
 		t.Fatalf("DeleteTemplate: %v", err)
 	}
 
@@ -224,6 +319,49 @@ func TestTemplateCRUD(t *testing.T) {
 	}
 	if deleted != nil {
 		t.Fatal("expected nil after delete")
+	}
+}
+
+func TestDeleteTemplateRemovesAssociatedDeployments(t *testing.T) {
+	ctx := context.Background()
+	templateRepo := &mockTemplateRepo{byID: make(map[string]*models.PipelineTemplate)}
+	deploymentRepo := &mockDeploymentRepo{}
+	uc := &Usecase{
+		templateRepo:   templateRepo,
+		deploymentRepo: deploymentRepo,
+		assetRepo:      newMockAssetRepo(),
+		wfClient:       &mockWorkflowClient{},
+	}
+	pipe := map[string]interface{}{
+		"name": "delete-with-deployments",
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "step-1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+		},
+		"edges": []interface{}{},
+	}
+	tmpl, err := uc.SaveTemplate(ctx, "delete-with-deployments", pipe, "dev", "legacy")
+	if err != nil {
+		t.Fatalf("SaveTemplate: %v", err)
+	}
+	dep, err := uc.DeployByTemplateID(ctx, tmpl.ID, "", nil)
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep.TemplateID == nil || *dep.TemplateID != tmpl.ID {
+		t.Fatalf("expected deployment templateID %q, got %v", tmpl.ID, dep.TemplateID)
+	}
+
+	if err := uc.DeleteTemplate(ctx, tmpl.ID, ""); err != nil {
+		t.Fatalf("DeleteTemplate: %v", err)
+	}
+	if got, err := uc.GetTemplate(ctx, tmpl.ID); err != nil || got != nil {
+		t.Fatalf("expected deleted template, got template=%v err=%v", got, err)
+	}
+	if got, err := deploymentRepo.FindByID(ctx, dep.ID); err != nil || got != nil {
+		t.Fatalf("expected deleted deployment, got deployment=%v err=%v", got, err)
+	}
+	if len(deploymentRepo.saved) != 0 {
+		t.Fatalf("expected no saved deployments, got %d", len(deploymentRepo.saved))
 	}
 }
 
@@ -242,7 +380,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		tmpl, err := uc.SaveTemplate(ctx, "tmpl-deploy", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "tmpl-deploy", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate: %v", err)
 		}
@@ -283,7 +421,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		tmpl, err := uc.SaveTemplate(ctx, "original", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "original", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate: %v", err)
 		}
@@ -294,6 +432,75 @@ func TestDeployByTemplateID(t *testing.T) {
 		}
 		if dep.PipelineName != "custom-name" {
 			t.Fatalf("expected pipeline name 'custom-name', got %q", dep.PipelineName)
+		}
+	})
+
+	t.Run("reuses preallocated run id for batch subtasks", func(t *testing.T) {
+		repo := newMockAssetRepo()
+		uc := newUsecase(repo)
+		pipe := map[string]interface{}{
+			"name": "batch-tmpl",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		tmpl, err := uc.SaveTemplate(ctx, "batch-tmpl", pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("SaveTemplate: %v", err)
+		}
+
+		preallocatedID := "preallocated-run-001"
+		dep, err := uc.DeployByTemplateID(ctx, tmpl.ID, "", nil, DeployOptions{
+			BatchJobID:        "batch-job-001",
+			PreallocatedRunID: preallocatedID,
+		})
+		if err != nil {
+			t.Fatalf("DeployByTemplateID: %v", err)
+		}
+		if dep.ID != preallocatedID {
+			t.Fatalf("expected preallocated run id %q, got %q", preallocatedID, dep.ID)
+		}
+	})
+
+	t.Run("deploys requested saved version snapshot", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		v1Pipe := map[string]interface{}{
+			"name": "versioned",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		v1, err := uc.SaveTemplate(ctx, "versioned", v1Pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("SaveTemplate v1: %v", err)
+		}
+		v2Pipe := map[string]interface{}{
+			"name": "versioned",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+				map[string]interface{}{"id": "s2", "component": map[string]interface{}{"name": "b", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		v2, err := uc.SaveTemplate(ctx, "versioned", v2Pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("SaveTemplate v2: %v", err)
+		}
+
+		dep, err := uc.DeployByTemplateID(ctx, v2.ID, "", nil, DeployOptions{TemplateVersion: 1})
+		if err != nil {
+			t.Fatalf("DeployByTemplateID: %v", err)
+		}
+		if dep.TemplateID == nil || *dep.TemplateID != v1.ID {
+			t.Fatalf("expected v1 templateID %q, got %v", v1.ID, dep.TemplateID)
+		}
+		if dep.TemplateVersion == nil || *dep.TemplateVersion != 1 {
+			t.Fatalf("expected template version 1, got %v", dep.TemplateVersion)
+		}
+		if dep.NodeCount != 1 {
+			t.Fatalf("expected v1 node count 1, got %d", dep.NodeCount)
 		}
 	})
 }
@@ -425,6 +632,35 @@ func TestDeploymentCRUD(t *testing.T) {
 		}
 		if got.ID != dep.ID {
 			t.Fatalf("expected ID %q, got %q", dep.ID, got.ID)
+		}
+	})
+
+	t.Run("get preserves scope and owner", func(t *testing.T) {
+		repo := newMockAssetRepo()
+		uc := newUsecase(repo)
+		pipe := map[string]interface{}{
+			"name": "scope-test", "nodes": []interface{}{}, "edges": []interface{}{},
+		}
+		dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{Owner: "test@example.com"})
+		if err != nil {
+			t.Fatalf("Deploy: %v", err)
+		}
+		if dep.Scope != "dev" {
+			t.Fatalf("expected scope dev, got %q", dep.Scope)
+		}
+		if dep.Owner != "test@example.com" {
+			t.Fatalf("expected owner test@example.com, got %q", dep.Owner)
+		}
+
+		got, err := uc.GetDeployment(ctx, dep.ID)
+		if err != nil {
+			t.Fatalf("GetDeployment: %v", err)
+		}
+		if got.Scope != "dev" {
+			t.Fatalf("expected persisted scope dev, got %q", got.Scope)
+		}
+		if got.Owner != "test@example.com" {
+			t.Fatalf("expected persisted owner test@example.com, got %q", got.Owner)
 		}
 	})
 
@@ -696,8 +932,8 @@ func TestDiffTemplates(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		t1, _ := uc.SaveTemplate(ctx, "diff-test", pipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-test", pipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-test", pipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-test", pipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -742,8 +978,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-add", basePipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-add", extendedPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-add", basePipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-add", extendedPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -773,8 +1009,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-rem", fullPipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-rem", reducedPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-rem", fullPipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-rem", reducedPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -803,8 +1039,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-mod", oldPipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-mod", newPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-mod", oldPipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-mod", newPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -837,8 +1073,8 @@ func TestDiffTemplates(t *testing.T) {
 			},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-edge", noEdge)
-		t2, _ := uc.SaveTemplate(ctx, "diff-edge", withEdge)
+		t1, _ := uc.SaveTemplate(ctx, "diff-edge", noEdge, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-edge", withEdge, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -858,7 +1094,7 @@ func TestDiffTemplates(t *testing.T) {
 		pipe := map[string]interface{}{
 			"name": "err", "nodes": []interface{}{}, "edges": []interface{}{},
 		}
-		t1, _ := uc.SaveTemplate(ctx, "err", pipe)
+		t1, _ := uc.SaveTemplate(ctx, "err", pipe, "dev", "legacy")
 
 		_, err := uc.DiffTemplates(ctx, t1.ID, "nonexistent")
 		if err == nil {

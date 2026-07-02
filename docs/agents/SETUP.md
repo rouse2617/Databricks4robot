@@ -27,11 +27,6 @@
 
 - [ ] `.agents/skills/` exists (`tdd`, `diagnose`, …). Optional local lock: `./skills-lock.json` (gitignored; see [`SKILLS.md`](SKILLS.md))
 - If missing: `npx skills@latest add mattpocock/skills --agent <cursor|codex|...> -y --copy` (match the user's IDE)
-- [ ] **In-repo doc skills are surfaced to Claude Code via a local symlink** (`.claude/` is gitignored, so the adapter is per-machine). If `.claude/skills` is missing, recreate it — it must reference the source of truth in `docs/`, never duplicate it:
-
-  ```bash
-  ln -sfn ../docs/agents/skills .claude/skills   # run from repo root
-  ```
 
 ### OpenSpec（仓库内文档，无需安装 CLI）
 

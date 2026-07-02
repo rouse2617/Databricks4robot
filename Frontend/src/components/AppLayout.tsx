@@ -7,32 +7,44 @@ import {
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
 	LogoutOutlined,
+	MenuFoldOutlined,
+	MenuUnfoldOutlined,
 	RobotOutlined,
 	SendOutlined,
 	SettingOutlined,
 	UnorderedListOutlined,
 	UserOutlined,
+	VideoCameraOutlined,
 } from "@ant-design/icons";
-import { Avatar, Dropdown, Grid, Layout, Menu, Typography } from "antd";
+import {
+	Avatar,
+	Button,
+	Dropdown,
+	Layout,
+	Menu,
+	Tooltip,
+	Typography,
+} from "antd";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { getAppVersionLabel } from "../lib/appVersion";
 import CmdKSearch from "./CmdKSearch";
 
 const { Sider, Content } = Layout;
-const { useBreakpoint } = Grid;
 
 const menuItems = [
 	{ key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
 	{ type: "divider" as const },
 	{ key: "/assets", icon: <DatabaseOutlined />, label: "资产管理" },
+	{ key: "/preview", icon: <VideoCameraOutlined />, label: "视频预览" },
 	{ key: "/mcap-files", icon: <FileOutlined />, label: "MCAP 文件" },
 	{ type: "divider" as const },
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
-	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
+	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "算法运行" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线" },
@@ -56,44 +68,76 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
+	if (pathname.startsWith("/runs")) return "/pipeline";
 	if (pathname.startsWith("/workflows")) return "/pipeline";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
+	if (pathname.startsWith("/preview")) return "/preview";
 	return "/assets";
 }
 
+function isPipelinePagePath(pathname: string): boolean {
+	return (
+		pathname.startsWith("/pipeline") ||
+		pathname.startsWith("/runs") ||
+		pathname.startsWith("/workflows")
+	);
+}
+
 function isFullBleedPage(pathname: string): boolean {
-	return pathname.startsWith("/pipeline");
+	return isPipelinePagePath(pathname) || pathname.startsWith("/preview");
+}
+
+function resolvePageContainerClass(pathname: string): string {
+	if (isFullBleedPage(pathname)) return "";
+	if (pathname.startsWith("/dashboard") || pathname.startsWith("/metrics")) {
+		return "page-container page-container--dashboard";
+	}
+	if (pathname.startsWith("/settings")) {
+		return "page-container page-container--form";
+	}
+	if (pathname.startsWith("/algo") && !pathname.startsWith("/algo-runs")) {
+		return "page-container page-container--matrix";
+	}
+	return "page-container page-container--table";
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { logout } = useAuth();
-	const screens = useBreakpoint();
-	const isMobile = !screens.lg;
 	const siderWidth = 220;
+	const [collapsed, setCollapsed] = useState<boolean>(
+		() => localStorage.getItem("db.sider.collapsed") === "1",
+	);
+	const toggleCollapsed = () => {
+		setCollapsed((prev) => {
+			const next = !prev;
+			localStorage.setItem("db.sider.collapsed", next ? "1" : "0");
+			return next;
+		});
+	};
 	const fullBleed = isFullBleedPage(location.pathname);
+	const pageContainerClass = resolvePageContainerClass(location.pathname);
+	const versionLabel = getAppVersionLabel();
 
-	// Browser restores scroll position on back-nav, no dep needed
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll to top on route changes
 	useEffect(() => {
 		window.scrollTo(0, 0);
-	}, []);
+	}, [location.pathname, location.search]);
 
 	return (
 		<Layout style={{ minHeight: "100vh" }}>
 			<Sider
 				width={siderWidth}
 				breakpoint="lg"
+				collapsed={collapsed}
 				collapsedWidth={0}
+				onBreakpoint={(broken) => setCollapsed(broken)}
 				trigger={null}
+				className="app-sider"
 				style={{
-					overflow: "auto",
-					height: "100vh",
 					position: "fixed",
-					left: 0,
-					top: 0,
-					bottom: 0,
 					zIndex: 100,
 				}}
 			>
@@ -128,25 +172,46 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 				</div>
 
 				{/* nav */}
-				<Menu
-					theme="dark"
-					mode="inline"
-					selectedKeys={[resolveSelectedKey(location.pathname)]}
-					items={menuItems}
-					onClick={({ key }) => navigate(key)}
-				/>
+				<div className="app-nav-wrapper">
+					<Menu
+						theme="dark"
+						mode="inline"
+						selectedKeys={[resolveSelectedKey(location.pathname)]}
+						items={menuItems}
+						onClick={({ key }) => navigate(key)}
+						style={{ background: "transparent", borderRight: 0 }}
+					/>
+				</div>
+
+				<div className="app-user-section">
+					<div className="app-version" title={versionLabel}>
+						{versionLabel}
+					</div>
+				</div>
 			</Sider>
-			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
+			<Layout style={{ marginLeft: collapsed ? 0 : siderWidth }}>
 				<Content style={{ minHeight: "100vh" }}>
 					<div
 						style={{
 							display: "flex",
-							justifyContent: "flex-end",
+							justifyContent: "space-between",
+							alignItems: "center",
 							padding: "12px 24px",
 							background: "#fff",
 							borderBottom: "1px solid #f0f0f0",
 						}}
 					>
+						<Tooltip
+							title={collapsed ? "展开导航栏" : "收起导航栏，扩大工作区"}
+							placement="right"
+						>
+							<Button
+								type="text"
+								aria-label={collapsed ? "展开导航栏" : "收起导航栏"}
+								icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+								onClick={toggleCollapsed}
+							/>
+						</Tooltip>
 						<Dropdown
 							menu={{
 								items: [
@@ -171,6 +236,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						</Dropdown>
 					</div>
 					<div
+						className={fullBleed ? undefined : pageContainerClass}
 						style={{
 							padding: fullBleed ? 0 : 24,
 							minHeight: fullBleed ? 0 : undefined,

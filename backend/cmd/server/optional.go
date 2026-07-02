@@ -155,12 +155,8 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		switch outboxTransport {
 		case "internal":
 			wWorkers, _ := strconv.Atoi(cfg.OutboxInternalSubscriberWorkers)
-			// C3 fix: each subscriber gets its own channel on the fan-out bus
-			// (InMemoryBus.Subscribe). Lifecycle tied to outboxCtx; unsub
-			// closure is kept to prevent GC but never called explicitly.
-			busCh, _ := getInMemoryBus().Subscribe()
 			var err error
-			subscriber, err = outbox.NewInternalSubscriber(busCh, wWorkers)
+			subscriber, err = outbox.NewInternalSubscriber(getInMemoryBus(), wWorkers)
 			if err != nil {
 				slog.Error("outbox internal subscriber init failed", "err", err)
 				os.Exit(1)
@@ -254,33 +250,27 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		switch outboxTransport {
 		case "internal":
 			w, _ := strconv.Atoi(cfg.OutboxInternalSubscriberWorkers)
-			algoCh, _ := getInMemoryBus().Subscribe()
 			var err error
-			algoRunSub, err = outbox.NewInternalSubscriber(algoCh, w)
+			algoRunSub, err = outbox.NewInternalSubscriber(getInMemoryBus(), w)
 			if err != nil {
 				slog.Error("algo_run internal subscriber init failed", "err", err)
 				os.Exit(1)
 			}
 		case "pubsub":
-			algoRunSubID := strings.TrimSpace(cfg.OutboxESAlgoRunSubscription)
-			if algoRunSubID == "" {
-				algoRunSubID = strings.TrimSpace(cfg.OutboxESSubscription) + "-algorun"
-			}
 			var err error
-			algoRunSub, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, algoRunSubID)
+			algoRunSub, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
 			if err != nil {
 				slog.Error("algo_run pubsub subscriber init failed", "err", err)
 				os.Exit(1)
 			}
-			slog.Info("algo_run es subscriber using dedicated subscription", "subscription", algoRunSubID)
 		case "kafka":
 			brokers := splitCSV(cfg.OutboxKafkaBrokers)
 			topic := resolveKafkaTopic()
-			groupID := strings.TrimSpace(cfg.OutboxKafkaAlgoRunGroupID)
+			groupID := strings.TrimSpace(cfg.OutboxKafkaGroupID)
 			var err error
 			algoRunSub, err = outbox.NewKafkaSubscriber(brokers, topic, groupID)
 			if err != nil {
-				slog.Error("algo_run kafka subscriber init failed", "err", err, "topic", topic, "group_id", groupID)
+				slog.Error("algo_run kafka subscriber init failed", "err", err)
 				os.Exit(1)
 			}
 		}
@@ -349,36 +339,27 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		switch outboxTransport {
 		case "internal":
 			w, _ := strconv.Atoi(cfg.OutboxInternalSubscriberWorkers)
-			// C3 fix: own channel on the fan-out bus.
-			delivCh, _ := getInMemoryBus().Subscribe()
 			var err error
-			subscriber, err = outbox.NewInternalSubscriber(delivCh, w)
+			subscriber, err = outbox.NewInternalSubscriber(getInMemoryBus(), w)
 			if err != nil {
 				slog.Error("delivery eligibility projector internal subscriber init failed", "err", err)
 				os.Exit(1)
 			}
 		case "pubsub":
-			// C3 fix: dedicated subscription.
-			delivSubID := strings.TrimSpace(cfg.OutboxESDeliverySubscription)
-			if delivSubID == "" {
-				delivSubID = strings.TrimSpace(cfg.OutboxESSubscription) + "-delivery"
-			}
-			if strings.TrimSpace(cfg.PubSubProject) == "" || delivSubID == "" {
-				slog.Error("delivery eligibility projector pubsub transport requires PUBSUB_PROJECT and OUTBOX_ES_DELIVERY_SUBSCRIPTION (or fallback OUTBOX_ES_SUBSCRIPTION)")
+			if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OutboxESSubscription) == "" {
+				slog.Error("delivery eligibility projector pubsub transport requires PUBSUB_PROJECT and OUTBOX_ES_SUBSCRIPTION")
 				os.Exit(1)
 			}
 			var err error
-			subscriber, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, delivSubID)
+			subscriber, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
 			if err != nil {
 				slog.Error("delivery eligibility projector pubsub subscriber init failed", "err", err)
 				os.Exit(1)
 			}
-			slog.Info("delivery eligibility projector using dedicated subscription", "subscription", delivSubID)
 		case "kafka":
 			brokers := splitCSV(cfg.OutboxKafkaBrokers)
 			topic := resolveKafkaTopic()
-			// C3 fix: dedicated consumer group.
-			groupID := strings.TrimSpace(cfg.OutboxKafkaDeliveryGroupID)
+			groupID := strings.TrimSpace(cfg.OutboxKafkaGroupID)
 			var err error
 			subscriber, err = outbox.NewKafkaSubscriber(brokers, topic, groupID)
 			if err != nil {

@@ -1,0 +1,15 @@
+# Local build outputs and ad-hoc binaries.
+/server
+/bench
+/megaTest
+
+# Local-only config and reports.
+/.env
+/.env.*
+/test_report.md
+/coverage.out
+/coverage.html
+
+# Transient tool/cache directories.
+/.cache/
+/tmp/

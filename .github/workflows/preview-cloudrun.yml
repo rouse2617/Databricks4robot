@@ -1,0 +1,134 @@
+name: Pod Preview
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to deploy. Defaults to the workflow SHA."
+        required: false
+        type: string
+      frontend_mode:
+        description: "Deploy remote frontend, or backend only for local frontend."
+        required: true
+        default: remote
+        type: choice
+        options:
+          - remote
+          - local
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'green-valley-442103' }}
+  GCP_REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  GKE_CLUSTER: ${{ vars.GKE_CLUSTER || 'cyber-clust' }}
+  GKE_LOCATION: ${{ vars.GKE_LOCATION || 'us-central1' }}
+  USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+  PREVIEW_BOOTSTRAP: "false"
+  TEKTON_NAMESPACE: cyber-databrew-dev
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve preview flag
+        id: flag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          INPUT_MODE: ${{ inputs.frontend_mode }}
+          INPUT_SHA: ${{ inputs.commit_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          enabled=false
+          mode="${INPUT_MODE:-remote}"
+          target_sha="${INPUT_SHA:-${EVENT_SHA}}"
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            enabled=true
+          elif grep -qiE '\[preview(:remote)?\]' <<<"${HEAD_MESSAGE}"; then
+            enabled=true
+            mode=remote
+          elif grep -qiE '\[preview:local\]' <<<"${HEAD_MESSAGE}"; then
+            enabled=true
+            mode=local
+          fi
+
+          preview_id="$(printf '%s' "${target_sha}" | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
+
+          echo "enabled=${enabled}" >> "${GITHUB_OUTPUT}"
+          echo "mode=${mode}" >> "${GITHUB_OUTPUT}"
+          echo "target_sha=${target_sha}" >> "${GITHUB_OUTPUT}"
+          echo "preview_id=${preview_id}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${enabled}" != "true" ]]; then
+            echo "Preview skipped. Add [preview], [preview:remote], or [preview:local] to the head commit message, or run this workflow manually."
+          fi
+
+      - name: Checkout preview config
+        if: steps.flag.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.flag.outputs.target_sha }}
+          sparse-checkout: |
+            deploy/preview
+          sparse-checkout-cone-mode: true
+
+      - name: Auth to Google Cloud
+        if: steps.flag.outputs.enabled == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_PREVIEW_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        if: steps.flag.outputs.enabled == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: kubectl,gke-gcloud-auth-plugin
+
+      - name: Get GKE credentials
+        if: steps.flag.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud container clusters get-credentials "${GKE_CLUSTER}" \
+            --region "${GKE_LOCATION}" \
+            --project "${GCP_PROJECT_ID}"
+
+      - name: Run fast GKE/Tekton preview
+        if: steps.flag.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Preview URLs are predictable once the Kubernetes services exist:"
+          echo "frontend: https://cyber-databrew-dev.cyberorigin.ai/preview/${{ steps.flag.outputs.preview_id }}/"
+          echo "backend:  https://cyber-databrew-dev.cyberorigin.ai/preview/${{ steps.flag.outputs.preview_id }}/api"
+
+          bash deploy/preview/fast-preview.sh "${{ steps.flag.outputs.target_sha }}" \
+            --frontend "${{ steps.flag.outputs.mode }}" \
+            --preview-id "${{ steps.flag.outputs.preview_id }}"
+
+      - name: Preview summary
+        if: steps.flag.outputs.enabled == 'true'
+        run: |
+          cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
+          ## Pod preview
+
+          Preview id: \`${{ steps.flag.outputs.preview_id }}\`
+          Frontend mode: \`${{ steps.flag.outputs.mode }}\`
+
+          Frontend:
+          \`https://cyber-databrew-dev.cyberorigin.ai/preview/${{ steps.flag.outputs.preview_id }}/\`
+
+          Backend:
+          \`https://cyber-databrew-dev.cyberorigin.ai/preview/${{ steps.flag.outputs.preview_id }}/api\`
+          EOF

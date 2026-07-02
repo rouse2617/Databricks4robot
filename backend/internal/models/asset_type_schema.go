@@ -25,6 +25,7 @@ func NewSchemaRegistry() *SchemaRegistry {
 	r.register("annotation_result", annotationResultSchemaJSON, validateAnnotationResultMetadata)
 	r.register("ml_model", mlModelSchemaJSON, validateMLModelMetadata)
 	r.register("evaluation_report", evaluationReportSchemaJSON, validateEvaluationReportMetadata)
+	r.register("grace_video", graceVideoSchemaJSON, validateGraceVideoMetadata)
 	return r
 }
 
@@ -196,6 +197,8 @@ func validateAnnotationResultMetadata(metadata map[string]interface{}) error {
 			}
 		}
 	}
+	// quality_score and coverage are declared minimum:0, maximum:1 in the JSON
+	// schema, so enforce the unit-interval bound rather than just "is a number".
 	for _, key := range []string{"quality_score", "coverage"} {
 		if err := optionalUnitNumber(metadata, key); err != nil {
 			return err
@@ -347,4 +350,55 @@ func numberValue(raw interface{}) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
+}
+
+var graceVideoSchemaJSON = json.RawMessage(`{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-databrew.local/schemas/asset-types/grace_video.json",
+  "title": "grace_video asset metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "grace_video_id": { "type": "string" },
+    "video_id": { "type": "string" },
+    "step_key": { "type": "string" },
+    "codec": { "type": "string" },
+    "width": { "type": "integer" },
+    "height": { "type": "integer" },
+    "fps": { "type": "number" },
+    "duration_sec": { "type": "number" },
+    "seg_type": { "type": "string" },
+    "gcs_uri": { "type": "string" },
+    "markers": { "type": "array" }
+  }
+}`)
+
+func validateGraceVideoMetadata(metadata map[string]interface{}) error {
+	for _, key := range []string{"grace_video_id", "video_id", "gcs_uri"} {
+		if err := optionalString(metadata, key); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"width", "height"} {
+		if err := optionalNonNegativeInteger(metadata, key); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"fps", "duration_sec"} {
+		if err := optionalNumber(metadata, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func optionalNumber(metadata map[string]interface{}, key string) error {
+	raw, ok := metadata[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if _, ok := numberValue(raw); !ok {
+		return fmt.Errorf("metadata.%s must be a number", key)
+	}
+	return nil
 }

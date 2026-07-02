@@ -1,0 +1,588 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: __RUN_NAME__
+  namespace: __TEKTON_NAMESPACE__
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    preview: "true"
+    preview-id: __PREVIEW_ID__
+spec:
+  serviceAccountName: __TEKTON_SERVICE_ACCOUNT__
+  podTemplate:
+    nodeSelector:
+      build-pool-tier: warm
+    tolerations:
+      - key: build-pool-tier
+        operator: Equal
+        value: warm
+        effect: NoSchedule
+    securityContext:
+      fsGroup: 65532
+  timeouts:
+    pipeline: 1h0m0s
+    tasks: 45m0s
+  workspaces:
+    - name: source
+      emptyDir: {}
+    - name: github-token
+      secret:
+        secretName: __GITHUB_TOKEN_SECRET__ # pragma: allowlist secret
+  pipelineSpec:
+    workspaces:
+      - name: source
+      - name: github-token
+    results:
+      - name: backend-url
+        value: $(tasks.fast-preview.results.backend-url)
+      - name: frontend-url
+        value: $(tasks.fast-preview.results.frontend-url)
+      - name: backend-service
+        value: $(tasks.fast-preview.results.backend-service)
+      - name: frontend-service
+        value: $(tasks.fast-preview.results.frontend-service)
+    tasks:
+      - name: fast-preview
+        taskSpec:
+          workspaces:
+            - name: source
+            - name: github-token
+          results:
+            - name: backend-url
+            - name: frontend-url
+            - name: backend-service
+            - name: frontend-service
+          steps:
+            - name: fetch-source
+              image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                src="$(workspaces.source.path)/src"
+                token_file="$(workspaces.github-token.path)/token"
+                mkdir -p "${src}"
+
+                preview_id="__PREVIEW_ID__"
+                frontend_mode="__FRONTEND_MODE__"
+                commit_sha="__COMMIT_SHA__"
+                repo_url="__REPO_URL__"
+                repo_path="${repo_url#https://github.com/}"
+                repo_path="${repo_path%.git}"
+                registry_host="__REGION__-docker.pkg.dev"
+                registry_repo="__PROJECT_ID__/__ARTIFACT_REPO__"
+                created_epoch="$(date -u +%s)"
+                expires_epoch="$((created_epoch + __TTL_HOURS__ * 3600))"
+
+                api_service="cdb-pv-${preview_id}-api"
+                web_service="cdb-pv-${preview_id}-web"
+                api_image_name="cyber-databrew-backend"
+                web_image_name="cyber-databrew-frontend"
+                api_cache_image="${registry_host}/${registry_repo}/${api_image_name}:preview-buildcache"
+                web_cache_image="${registry_host}/${registry_repo}/${web_image_name}:preview-buildcache"
+                preview_base_url="__PREVIEW_PUBLIC_BASE_URL__/preview/${preview_id}/"
+                frontend_base_path="./"
+                frontend_api_base_url=""
+                api_url="${preview_base_url%/}/api"
+                web_url="${preview_base_url}"
+
+                fetch_start="$(date -u +%s)"
+                curl -fsSL \
+                  -H "Authorization: Bearer $(cat "${token_file}")" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${repo_path}/tarball/${commit_sha}" \
+                  | tar -xz --strip-components=1 -C "${src}"
+                fetch_end="$(date -u +%s)"
+                echo "TIMING source_archive_seconds=$((fetch_end - fetch_start))"
+
+                hash_paths() {
+                  (
+                    cd "${src}"
+                    for path in "$@"; do
+                      if [[ ! -e "${path}" ]]; then
+                        continue
+                      fi
+                      if [[ -d "${path}" ]]; then
+                        find "${path}" -type f \
+                          ! -path '*/node_modules/*' \
+                          ! -path '*/dist/*' \
+                          ! -path '*/.vite/*' \
+                          ! -name '*.tsbuildinfo' \
+                          -print0
+                      else
+                        printf '%s\0' "${path}"
+                      fi
+                    done \
+                      | LC_ALL=C sort -z \
+                      | while IFS= read -r -d '' file; do
+                          sha256sum "${file}"
+                        done
+                  ) | sha256sum | awk '{print $1}'
+                }
+
+                backend_hash_full="$(hash_paths \
+                  backend/Dockerfile \
+                  backend/.dockerignore \
+                  backend/.env.example \
+                  backend/go.mod \
+                  backend/go.sum \
+                  backend/cmd \
+                  backend/config \
+                  backend/internal \
+                  backend/routes \
+                  backend/schemas \
+                  backend/scripts)"
+                frontend_hash_full="$(hash_paths \
+                  deploy/preview/frontend-runtime.Dockerfile \
+                  Frontend/.dockerignore \
+                  Frontend/index.html \
+                  Frontend/nginx.conf \
+                  Frontend/package.json \
+                  Frontend/package-lock.json \
+                  Frontend/postcss.config.js \
+                  Frontend/public \
+                  Frontend/src \
+                  Frontend/tailwind.config.js \
+                  Frontend/tsconfig.json \
+                  Frontend/tsconfig.preview.json \
+                  Frontend/vite.config.ts)"
+                backend_hash="${backend_hash_full:0:16}"
+                frontend_hash="${frontend_hash_full:0:16}"
+                api_image_tag="preview-b-${backend_hash}"
+                web_image_tag="preview-f-${frontend_hash}"
+                api_image="${registry_host}/${registry_repo}/${api_image_name}:${api_image_tag}"
+                web_image="${registry_host}/${registry_repo}/${web_image_name}:${web_image_tag}"
+                api_workload="cdb-pvc-b-${backend_hash}-api"
+                web_workload="cdb-pvc-f-${frontend_hash}-web"
+
+                {
+                  echo "PREVIEW_ID=${preview_id}"
+                  echo "FRONTEND_MODE=${frontend_mode}"
+                  echo "COMMIT_SHA=${commit_sha}"
+                  echo "REGISTRY_HOST=${registry_host}"
+                  echo "REGISTRY_REPO=${registry_repo}"
+                  echo "API_IMAGE_NAME=${api_image_name}"
+                  echo "WEB_IMAGE_NAME=${web_image_name}"
+                  echo "API_IMAGE_TAG=${api_image_tag}"
+                  echo "WEB_IMAGE_TAG=${web_image_tag}"
+                  echo "BACKEND_CONTENT_HASH=${backend_hash}"
+                  echo "FRONTEND_CONTENT_HASH=${frontend_hash}"
+                  echo "BACKEND_CONTENT_HASH_FULL=${backend_hash_full}"
+                  echo "FRONTEND_CONTENT_HASH_FULL=${frontend_hash_full}"
+                  echo "API_SERVICE=${api_service}"
+                  echo "WEB_SERVICE=${web_service}"
+                  echo "API_WORKLOAD=${api_workload}"
+                  echo "WEB_WORKLOAD=${web_workload}"
+                  echo "API_IMAGE=${api_image}"
+                  echo "WEB_IMAGE=${web_image}"
+                  echo "API_CACHE_IMAGE=${api_cache_image}"
+                  echo "WEB_CACHE_IMAGE=${web_cache_image}"
+                  echo "API_URL=${api_url}"
+                  echo "WEB_URL=${web_url}"
+                  echo "PREVIEW_BASE_URL=${preview_base_url}"
+                  echo "FRONTEND_BASE_PATH=${frontend_base_path}"
+                  echo "FRONTEND_API_BASE_URL=${frontend_api_base_url}"
+                  echo "CREATED_EPOCH=${created_epoch}"
+                  echo "EXPIRES_EPOCH=${expires_epoch}"
+                  echo "TTL_HOURS=__TTL_HOURS__"
+                } | tee "$(workspaces.source.path)/preview.env"
+
+            - name: build-images
+              image: moby/buildkit:v0.20.2
+              env:
+                - name: BUILDKIT_HOST
+                  value: tcp://__PREVIEW_BUILDKITD_DEPLOY__.__PREVIEW_BUILDKITD_NAMESPACE__.svc.cluster.local:1234
+              script: |
+                #!/usr/bin/env sh
+                set -eu
+
+                . "$(workspaces.source.path)/preview.env"
+                src="$(workspaces.source.path)/src"
+                token="$(wget -q -O - \
+                  --header="Metadata-Flavor: Google" \
+                  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                  | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4 || true)"
+                if [ -n "${token}" ]; then
+                  mkdir -p /root/.docker
+                  encoded="$(printf 'oauth2accesstoken:%s' "${token}" | base64 | tr -d '\n')"
+                  printf '{"auths":{"https://__REGION__-docker.pkg.dev":{"auth":"%s"}}}\n' "${encoded}" > /root/.docker/config.json
+                  echo "Registry credentials written"
+                fi
+
+                image_exists() {
+                  image_name="$1"
+                  image_tag="$2"
+                  if [ -z "${token}" ]; then
+                    return 1
+                  fi
+
+                  status="$(wget -q -S -O /dev/null \
+                    --header="Authorization: Bearer ${token}" \
+                    --header="Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+                    "https://${REGISTRY_HOST}/v2/${REGISTRY_REPO}/${image_name}/manifests/${image_tag}" 2>&1 \
+                    | awk '/^  HTTP\// { code=$2 } END { print code }')"
+                  [ "${status}" = "200" ]
+                }
+
+                build_backend() {
+                  if image_exists "${API_IMAGE_NAME}" "${API_IMAGE_TAG}"; then
+                    echo "TIMING backend_image_reused=1"
+                    echo "TIMING backend_buildctl_seconds=0"
+                    return 0
+                  fi
+
+                  start="$(date -u +%s)"
+                  buildctl build \
+                    --frontend dockerfile.v0 \
+                    --opt filename=Dockerfile \
+                    --opt platform=linux/amd64 \
+                    --local context="${src}/backend" \
+                    --local dockerfile="${src}/backend" \
+                    --output "type=image,name=${API_IMAGE},push=true" \
+                    --import-cache "type=registry,ref=${API_CACHE_IMAGE}" \
+                    --export-cache "type=registry,ref=${API_CACHE_IMAGE},mode=max"
+                  end="$(date -u +%s)"
+                  echo "TIMING backend_image_reused=0"
+                  echo "TIMING backend_buildctl_seconds=$((end - start))"
+                }
+
+                build_frontend() {
+                  if [ "${FRONTEND_MODE}" != "remote" ]; then
+                    echo "Skipping frontend image build because FRONTEND_MODE=${FRONTEND_MODE}."
+                    return 0
+                  fi
+                  if image_exists "${WEB_IMAGE_NAME}" "${WEB_IMAGE_TAG}"; then
+                    echo "TIMING frontend_image_reused=1"
+                    echo "TIMING frontend_buildctl_seconds=0"
+                    return 0
+                  fi
+
+                  start="$(date -u +%s)"
+                  buildctl build \
+                    --frontend dockerfile.v0 \
+                    --opt filename=frontend-runtime.Dockerfile \
+                    --opt platform=linux/amd64 \
+                    --opt "build-arg:VITE_APP_VERSION=preview" \
+                    --opt "build-arg:VITE_BUILD_REF=preview" \
+                    --opt "build-arg:VITE_APP_ENV=preview" \
+                    --opt "build-arg:VITE_BASE_PATH=${FRONTEND_BASE_PATH}" \
+                    --opt "build-arg:VITE_API_BASE_URL=${FRONTEND_API_BASE_URL}" \
+                    --local context="${src}" \
+                    --local dockerfile="${src}/deploy/preview" \
+                    --output "type=image,name=${WEB_IMAGE},push=true" \
+                    --import-cache "type=registry,ref=${WEB_CACHE_IMAGE}" \
+                    --export-cache "type=registry,ref=${WEB_CACHE_IMAGE},mode=max"
+                  end="$(date -u +%s)"
+                  echo "TIMING frontend_image_reused=0"
+                  echo "TIMING frontend_buildctl_seconds=$((end - start))"
+                }
+
+                build_backend &
+                backend_pid="$!"
+                build_frontend &
+                frontend_pid="$!"
+                wait "${backend_pid}"
+                wait "${frontend_pid}"
+
+            - name: deploy-previews
+              image: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                source "$(workspaces.source.path)/preview.env"
+                backend_result_file="$(workspaces.source.path)/backend-result.env"
+                frontend_result_file="$(workspaces.source.path)/frontend-result.env"
+
+                deploy_backend() {
+                  deploy_start="$(date -u +%s)"
+                  kubectl apply -f - <<YAML
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: ${API_WORKLOAD}
+                  namespace: __PREVIEW_NAMESPACE__
+                  labels:
+                    app.kubernetes.io/component: backend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    app.kubernetes.io/managed-by: tekton
+                    preview-content: "true"
+                    preview-content-hash: "${BACKEND_CONTENT_HASH}"
+                  annotations:
+                    preview.cyberorigin.ai/content-hash-full: "${BACKEND_CONTENT_HASH_FULL}"
+                    preview.cyberorigin.ai/last-preview-id: "${PREVIEW_ID}"
+                    preview.cyberorigin.ai/source-commit: "${COMMIT_SHA}"
+                spec:
+                  replicas: 1
+                  selector:
+                    matchLabels:
+                      app.kubernetes.io/component: backend
+                      app.kubernetes.io/name: cyber-databrew-preview
+                      preview-content-hash: "${BACKEND_CONTENT_HASH}"
+                  template:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/component: backend
+                        app.kubernetes.io/name: cyber-databrew-preview
+                        app.kubernetes.io/managed-by: tekton
+                        preview-content: "true"
+                        preview-content-hash: "${BACKEND_CONTENT_HASH}"
+                      annotations:
+                        preview.cyberorigin.ai/content-hash-full: "${BACKEND_CONTENT_HASH_FULL}"
+                    spec:
+                      containers:
+                        - name: api
+                          image: ${API_IMAGE}
+                          imagePullPolicy: IfNotPresent
+                          envFrom:
+                            - configMapRef:
+                                name: cyber-databrew-config
+                            - secretRef:
+                                name: cyber-databrew-secrets
+                          env:
+                            - name: ARGO_NAMESPACE
+                              value: cyber-databrew-dev
+                            - name: ARGO_WORKFLOWS_NAMESPACE
+                              value: cyber-databrew-dev
+                            # Preview pods run in-cluster; use the Argo API directly instead of
+                            # the Cloud Run pipeline-ui proxy baked into cyber-databrew-config.
+                            - name: ARGO_BASE_URL
+                              value: ""
+                            - name: ARGO_SERVER_URL
+                              value: http://argo-server.cyber-databrew-dev.svc.cluster.local:2746
+                            - name: OUTBOX_RELAY_ENABLED
+                              value: "false"
+                            - name: OUTBOX_ES_SUBSCRIBER_ENABLED
+                              value: "false"
+                          ports:
+                            - name: http
+                              containerPort: 8080
+                          readinessProbe:
+                            httpGet:
+                              path: /healthz
+                              port: http
+                            initialDelaySeconds: 3
+                            periodSeconds: 5
+                            timeoutSeconds: 2
+                          livenessProbe:
+                            httpGet:
+                              path: /healthz
+                              port: http
+                            initialDelaySeconds: 10
+                            periodSeconds: 10
+                            timeoutSeconds: 2
+                ---
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: ${API_SERVICE}
+                  namespace: __PREVIEW_NAMESPACE__
+                  labels:
+                    app.kubernetes.io/component: backend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    app.kubernetes.io/managed-by: tekton
+                    preview: "true"
+                    preview-id: "${PREVIEW_ID}"
+                    preview-content-hash: "${BACKEND_CONTENT_HASH}"
+                    expires-epoch: "${EXPIRES_EPOCH}"
+                    ttl-hours: "__TTL_HOURS__"
+                  annotations:
+                    preview.cyberorigin.ai/content-workload: "${API_WORKLOAD}"
+                    preview.cyberorigin.ai/content-hash-full: "${BACKEND_CONTENT_HASH_FULL}"
+                    preview.cyberorigin.ai/source-commit: "${COMMIT_SHA}"
+                spec:
+                  type: ClusterIP
+                  selector:
+                    app.kubernetes.io/component: backend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    preview-content-hash: "${BACKEND_CONTENT_HASH}"
+                  ports:
+                    - name: http
+                      port: 80
+                      targetPort: http
+                YAML
+                  kubectl rollout status "deploy/${API_WORKLOAD}" -n "__PREVIEW_NAMESPACE__" --timeout=180s
+                  deploy_end="$(date -u +%s)"
+                  echo "TIMING backend_k8s_deploy_seconds=$((deploy_end - deploy_start))"
+
+                  {
+                    echo "ACTUAL_API_URL=${API_URL}"
+                    echo "API_SERVICE=${API_SERVICE}"
+                    echo "API_WORKLOAD=${API_WORKLOAD}"
+                  } > "${backend_result_file}"
+                }
+
+                deploy_frontend() {
+                  if [[ "${FRONTEND_MODE}" != "remote" ]]; then
+                    echo "Skipping frontend Kubernetes deploy because FRONTEND_MODE=${FRONTEND_MODE}."
+                    {
+                      echo "ACTUAL_WEB_URL=local"
+                      echo "WEB_SERVICE=${WEB_SERVICE}"
+                    } > "${frontend_result_file}"
+                    return 0
+                  fi
+
+                  deploy_start="$(date -u +%s)"
+                  kubectl apply -f - <<YAML
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: ${WEB_WORKLOAD}
+                  namespace: __PREVIEW_NAMESPACE__
+                  labels:
+                    app.kubernetes.io/component: frontend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    app.kubernetes.io/managed-by: tekton
+                    preview-content: "true"
+                    preview-content-hash: "${FRONTEND_CONTENT_HASH}"
+                  annotations:
+                    preview.cyberorigin.ai/content-hash-full: "${FRONTEND_CONTENT_HASH_FULL}"
+                    preview.cyberorigin.ai/last-preview-id: "${PREVIEW_ID}"
+                    preview.cyberorigin.ai/source-commit: "${COMMIT_SHA}"
+                spec:
+                  replicas: 1
+                  selector:
+                    matchLabels:
+                      app.kubernetes.io/component: frontend
+                      app.kubernetes.io/name: cyber-databrew-preview
+                      preview-content-hash: "${FRONTEND_CONTENT_HASH}"
+                  template:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/component: frontend
+                        app.kubernetes.io/name: cyber-databrew-preview
+                        app.kubernetes.io/managed-by: tekton
+                        preview-content: "true"
+                        preview-content-hash: "${FRONTEND_CONTENT_HASH}"
+                      annotations:
+                        preview.cyberorigin.ai/content-hash-full: "${FRONTEND_CONTENT_HASH_FULL}"
+                    spec:
+                      containers:
+                        - name: web
+                          image: ${WEB_IMAGE}
+                          imagePullPolicy: IfNotPresent
+                          env:
+                            - name: MCAP_PREVIEW_UPSTREAM_HOST
+                              value: __MCAP_PREVIEW_HOST__
+                          ports:
+                            - name: http
+                              containerPort: 80
+                          readinessProbe:
+                            httpGet:
+                              path: /
+                              port: http
+                            initialDelaySeconds: 3
+                            periodSeconds: 5
+                            timeoutSeconds: 2
+                          livenessProbe:
+                            httpGet:
+                              path: /
+                              port: http
+                            initialDelaySeconds: 10
+                            periodSeconds: 10
+                            timeoutSeconds: 2
+                ---
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: ${WEB_SERVICE}
+                  namespace: __PREVIEW_NAMESPACE__
+                  labels:
+                    app.kubernetes.io/component: frontend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    app.kubernetes.io/managed-by: tekton
+                    preview: "true"
+                    preview-id: "${PREVIEW_ID}"
+                    preview-content-hash: "${FRONTEND_CONTENT_HASH}"
+                    expires-epoch: "${EXPIRES_EPOCH}"
+                    ttl-hours: "__TTL_HOURS__"
+                  annotations:
+                    preview.cyberorigin.ai/content-workload: "${WEB_WORKLOAD}"
+                    preview.cyberorigin.ai/content-hash-full: "${FRONTEND_CONTENT_HASH_FULL}"
+                    preview.cyberorigin.ai/source-commit: "${COMMIT_SHA}"
+                spec:
+                  type: ClusterIP
+                  selector:
+                    app.kubernetes.io/component: frontend
+                    app.kubernetes.io/name: cyber-databrew-preview
+                    preview-content-hash: "${FRONTEND_CONTENT_HASH}"
+                  ports:
+                    - name: http
+                      port: 80
+                      targetPort: http
+                YAML
+                  kubectl rollout status "deploy/${WEB_WORKLOAD}" -n "__PREVIEW_NAMESPACE__" --timeout=180s
+                  deploy_end="$(date -u +%s)"
+                  echo "TIMING frontend_k8s_deploy_seconds=$((deploy_end - deploy_start))"
+
+                  {
+                    echo "ACTUAL_WEB_URL=${WEB_URL}"
+                    echo "WEB_SERVICE=${WEB_SERVICE}"
+                    echo "WEB_WORKLOAD=${WEB_WORKLOAD}"
+                  } > "${frontend_result_file}"
+                }
+
+                deploy_backend &
+                backend_pid="$!"
+                deploy_frontend &
+                frontend_pid="$!"
+
+                backend_status=0
+                frontend_status=0
+                wait "${backend_pid}" || backend_status="$?"
+                wait "${frontend_pid}" || frontend_status="$?"
+
+                if [[ "${backend_status}" != "0" || "${frontend_status}" != "0" ]]; then
+                  echo "ERROR: deploy failed backend_status=${backend_status} frontend_status=${frontend_status}" >&2
+                  exit 1
+                fi
+
+                cat "${backend_result_file}" "${frontend_result_file}" >> "$(workspaces.source.path)/preview.env"
+
+            - name: result
+              image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                source "$(workspaces.source.path)/preview.env"
+                backend_result_url="${ACTUAL_API_URL:-${API_URL}}"
+                frontend_result_url="local"
+                if [[ "${FRONTEND_MODE}" == "remote" ]]; then
+                  frontend_result_url="${ACTUAL_WEB_URL:-${WEB_URL}}"
+                fi
+                printf '%s' "${backend_result_url}" > "$(results.backend-url.path)"
+                printf '%s' "${frontend_result_url}" > "$(results.frontend-url.path)"
+                printf '%s' "${API_SERVICE}" > "$(results.backend-service.path)"
+                printf '%s' "${WEB_SERVICE}" > "$(results.frontend-service.path)"
+
+                echo ""
+                echo "Fast preview deployment complete"
+                echo "commit/preview: ${PREVIEW_ID}"
+                echo "backend service: ${API_SERVICE}"
+                echo "backend workload: ${API_WORKLOAD}"
+                echo "backend content hash: ${BACKEND_CONTENT_HASH}"
+                echo "backend url: ${backend_result_url}"
+                if [[ "${backend_result_url}" != "${API_URL}" ]]; then
+                  echo "backend deterministic url: ${API_URL}"
+                fi
+                echo "expires epoch: ${EXPIRES_EPOCH}"
+                echo "ttl hours: ${TTL_HOURS}"
+                if [[ "${FRONTEND_MODE}" == "remote" ]]; then
+                  echo "frontend service: ${WEB_SERVICE}"
+                  echo "frontend workload: ${WEB_WORKLOAD}"
+                  echo "frontend content hash: ${FRONTEND_CONTENT_HASH}"
+                  echo "frontend url: ${frontend_result_url}"
+                  if [[ "${frontend_result_url}" != "${WEB_URL}" ]]; then
+                    echo "frontend deterministic url: ${WEB_URL}"
+                  fi
+                else
+                  echo "frontend mode: local"
+                  echo "local command:"
+                  echo "  cd Frontend && VITE_API_BASE_URL=${backend_result_url}/v1 npm run dev"
+                fi
+        workspaces:
+          - name: source
+            workspace: source
+          - name: github-token
+            workspace: github-token

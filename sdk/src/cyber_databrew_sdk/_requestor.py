@@ -58,10 +58,7 @@ class APIRequestor:
         self._client.close()
 
     def _build_url(self, path: str) -> str:
-        # urljoin drops base_url's path prefix when path starts with /,
-        # e.g. urljoin('http://host/prefix', '/api/v1/x') == 'http://host/api/v1/x'.
-        # Strip the leading slash so the prefix is preserved.
-        return urljoin(self._base_url, path.lstrip("/"))
+        return urljoin(self._base_url, path)
 
     def _extract_request_id(self, headers: httpx.Headers) -> str | None:
         return headers.get("X-Request-ID") or headers.get("x-request-id")

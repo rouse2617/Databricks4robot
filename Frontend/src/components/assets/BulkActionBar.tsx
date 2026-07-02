@@ -6,7 +6,7 @@
 import {
 	DeleteOutlined,
 	ExportOutlined,
-	RobotOutlined,
+	ForkOutlined,
 	SendOutlined,
 	TagOutlined,
 } from "@ant-design/icons";
@@ -20,9 +20,9 @@ export interface BulkActionBarProps {
 	selectionMode: SelectionMode;
 	totalFiltered: number;
 	onCreateDelivery: () => void;
-	onRunAlgo: () => void;
-	/** When true, the Run Algo button is rendered as disabled with an explanatory tooltip */
-	disabledRunAlgo?: boolean;
+	onRunPipeline: () => void;
+	/** When true, the Run Pipeline button is rendered as disabled with an explanatory tooltip */
+	disabledRunPipeline?: boolean;
 	onBatchTag: () => void;
 	onBatchDeleteTag?: () => void;
 	onExportIds: () => void;
@@ -35,8 +35,8 @@ export default function BulkActionBar({
 	selectionMode,
 	totalFiltered,
 	onCreateDelivery,
-	onRunAlgo,
-	disabledRunAlgo = false,
+	onRunPipeline,
+	disabledRunPipeline = false,
 	onBatchTag,
 	onBatchDeleteTag,
 	onExportIds,
@@ -47,6 +47,7 @@ export default function BulkActionBar({
 
 	return (
 		<div
+			className="assets-bulk-action-bar"
 			style={{
 				background: "#e6f7ff",
 				border: "1px solid #91d5ff",
@@ -55,55 +56,75 @@ export default function BulkActionBar({
 				marginBottom: 8,
 			}}
 		>
-			<Space size={12} wrap align="center">
-				<Text strong>已选 {selectedCount} 条</Text>
-
-				<Button size="small" icon={<SendOutlined />} onClick={onCreateDelivery}>
-					创建交付
-				</Button>
-				<Tooltip
-					title={disabledRunAlgo ? "批量触发算法功能开发中" : undefined}
-					placement="top"
+			<div className="assets-bulk-action-bar__content">
+				<Text strong className="assets-bulk-action-bar__count">
+					已选 {selectedCount} 条
+				</Text>
+				<Space
+					size={8}
+					wrap
+					align="center"
+					className="assets-bulk-action-bar__actions"
 				>
 					<Button
 						size="small"
-						icon={<RobotOutlined />}
-						onClick={disabledRunAlgo ? undefined : onRunAlgo}
-						disabled={disabledRunAlgo}
+						icon={<SendOutlined />}
+						onClick={onCreateDelivery}
 					>
-						触发算法
+						创建交付
 					</Button>
-				</Tooltip>
-				<Button size="small" icon={<TagOutlined />} onClick={onBatchTag}>
-					批量打 Tag
-				</Button>
-				{onBatchDeleteTag && (
-					<Button
-						size="small"
-						icon={<DeleteOutlined />}
-						onClick={onBatchDeleteTag}
-						danger
+					<Tooltip
+						title={
+							disabledRunPipeline
+								? "当前选择无法直接带入 Pipeline，请改为逐行选择资产"
+								: "用已选资产运行流水线"
+						}
+						placement="top"
 					>
-						删除 Tag
+						<Button
+							size="small"
+							icon={<ForkOutlined />}
+							onClick={disabledRunPipeline ? undefined : onRunPipeline}
+							disabled={disabledRunPipeline}
+						>
+							运行 Pipeline
+						</Button>
+					</Tooltip>
+					<Button size="small" icon={<TagOutlined />} onClick={onBatchTag}>
+						批量打 Tag
 					</Button>
-				)}
-				<Button size="small" icon={<ExportOutlined />} onClick={onExportIds}>
-					导出 ID
-				</Button>
-				<Button size="small" type="link" onClick={onClearSelection}>
-					取消选择
-				</Button>
+					{onBatchDeleteTag && (
+						<Button
+							size="small"
+							icon={<DeleteOutlined />}
+							onClick={onBatchDeleteTag}
+							danger
+						>
+							删除 Tag
+						</Button>
+					)}
+					<Button size="small" icon={<ExportOutlined />} onClick={onExportIds}>
+						导出 ID
+					</Button>
+					<Button size="small" type="link" onClick={onClearSelection}>
+						取消选择
+					</Button>
+				</Space>
 
 				{selectionMode === "explicit_rows" && totalFiltered > selectedCount && (
-					<button
-						type="button"
-						onClick={onSelectAllFiltered}
-						style={{ fontSize: 13 }}
-					>
-						选择全部 {totalFiltered} 条筛选结果
-					</button>
+					<Tooltip title="会把当前筛选命中的所有资产都加入本次批量操作，请确认筛选条件正确。">
+						<Button
+							size="small"
+							type="link"
+							danger={totalFiltered > 1000}
+							onClick={onSelectAllFiltered}
+							className="assets-bulk-action-bar__select-all"
+						>
+							选择全部 {totalFiltered} 条筛选结果
+						</Button>
+					</Tooltip>
 				)}
-			</Space>
+			</div>
 
 			{selectedCount > 100 && (
 				<Alert

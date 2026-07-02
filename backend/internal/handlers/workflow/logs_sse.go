@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,10 +17,133 @@ import (
 
 const defaultWorkflowLogContainer = "main"
 
+const (
+	sseRingBufferSize    = 1000
+	sseRingBufferMaxAge  = 5 * time.Minute
+	sseRingBufferCleanup = 1 * time.Minute
+)
+
+type sseEvent struct {
+	id   int64
+	data string // full SSE frame: "event: log\ndata: {...}\n\n"
+}
+
+type logRingBuffer struct {
+	mu        sync.Mutex
+	buffer    []sseEvent
+	nextID    int64
+	lastWrite time.Time
+	maxSize   int
+}
+
+func newLogRingBuffer(maxSize int) *logRingBuffer {
+	return &logRingBuffer{
+		buffer:    make([]sseEvent, 0, maxSize),
+		maxSize:   maxSize,
+		lastWrite: time.Now(),
+	}
+}
+
+func (rb *logRingBuffer) push(event sseEvent) {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	event.id = rb.nextID
+	rb.nextID++
+	rb.lastWrite = time.Now()
+	if len(rb.buffer) >= rb.maxSize {
+		rb.buffer = rb.buffer[1:]
+	}
+	rb.buffer = append(rb.buffer, event)
+}
+
+func (rb *logRingBuffer) replayAfter(lastID int64) []sseEvent {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	var result []sseEvent
+	for _, ev := range rb.buffer {
+		if ev.id > lastID {
+			result = append(result, ev)
+		}
+	}
+	return result
+}
+
+func (rb *logRingBuffer) age() time.Duration {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	return time.Since(rb.lastWrite)
+}
+
+// ringBufferStore holds ring buffers for active log streams.
+type ringBufferStore struct {
+	mu     sync.Mutex
+	buffers map[string]*logRingBuffer
+}
+
+func newRingBufferStore() *ringBufferStore {
+	s := &ringBufferStore{
+		buffers: make(map[string]*logRingBuffer),
+	}
+	go s.cleanupLoop()
+	return s
+}
+
+func (s *ringBufferStore) getOrCreate(key string) *logRingBuffer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rb, ok := s.buffers[key]; ok {
+		return rb
+	}
+	rb := newLogRingBuffer(sseRingBufferSize)
+	s.buffers[key] = rb
+	return rb
+}
+
+func (s *ringBufferStore) remove(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.buffers, key)
+}
+
+func (s *ringBufferStore) cleanupLoop() {
+	for {
+		time.Sleep(sseRingBufferCleanup)
+		s.mu.Lock()
+		for key, rb := range s.buffers {
+			if rb.age() > sseRingBufferMaxAge {
+				delete(s.buffers, key)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+func writeWorkflowSSEEventRaw(writer io.Writer, id int64, event string, payload any) bool {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	if _, err := fmt.Fprintf(writer, "id: %d\nevent: %s\ndata: %s\n\n", id, event, raw); err != nil {
+		return false
+	}
+	return true
+}
+
+func writeWorkflowSSEEvent(writer io.Writer, event string, payload any) bool {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	if _, err := fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, raw); err != nil {
+		return false
+	}
+	return true
+}
+
 type workflowLogStreamEntry struct {
 	Result struct {
-		Content  string `json:"content"`
-		PodName  string `json:"podName"`
+		Content string `json:"content"`
+		PodName string `json:"podName"`
 	} `json:"result"`
 }
 
@@ -40,23 +165,68 @@ func extractLogLine(raw string) (string, bool) {
 	return strings.TrimSpace(content), true
 }
 
-func writeWorkflowLogSSE(writer io.Writer, line string) bool {
-	if _, err := fmt.Fprintf(writer, "data: %s\n\n", line); err != nil {
+type sseLineEmitter struct {
+	writer  io.Writer
+	podName string
+	ring    *logRingBuffer
+	scanID  int64
+}
+
+func (e *sseLineEmitter) emit(container string, line string, truncated bool, limitBytes int64) bool {
+	e.scanID++
+	payload := gin.H{
+		"podName":   e.podName,
+		"container": container,
+		"line":      line,
+	}
+	if truncated {
+		payload["truncated"] = true
+		payload["limitBytes"] = limitBytes
+	}
+	frame := formatSSEFrame(e.scanID, "log", payload)
+	if e.ring != nil {
+		e.ring.push(sseEvent{data: frame})
+	}
+	if _, err := fmt.Fprint(e.writer, frame); err != nil {
 		return false
 	}
 	return true
+}
+
+func formatSSEFrame(id int64, event string, payload any) string {
+	raw, _ := json.Marshal(payload)
+	return fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", id, event, raw)
 }
 
 func streamWorkflowLogs(
 	c *gin.Context,
 	writer io.Writer,
 	stream io.Reader,
+	podName string,
+	container string,
+	limitBytes int64,
+	ring *logRingBuffer,
 ) bool {
 	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), int(maxWorkflowLogLimitBytes))
 
-	flusher, canFlush := writer.(http.Flusher)
+	emitter := &sseLineEmitter{
+		writer:  writer,
+		podName: podName,
+		ring:    ring,
+	}
 
+	// Initial heartbeat
+	frame := formatSSEFrame(emitter.scanID, "heartbeat", gin.H{})
+	emitter.scanID++
+	if ring != nil {
+		ring.push(sseEvent{data: frame})
+	}
+	if _, err := fmt.Fprint(writer, frame); err != nil {
+		return false
+	}
+
+	var emittedBytes int64
 	for scanner.Scan() {
 		if c.Request.Context().Err() != nil {
 			return false
@@ -75,40 +245,38 @@ func streamWorkflowLogs(
 			if line == "" {
 				continue
 			}
-			if !writeWorkflowLogSSE(writer, line) {
+			lineBytes := int64(len(line))
+			if limitBytes >= 0 && emittedBytes+lineBytes > limitBytes {
+				remaining := limitBytes - emittedBytes
+				if remaining > 0 {
+					line = line[:remaining]
+					if !emitter.emit(container, line, true, limitBytes) {
+						return false
+					}
+				}
+				frame := formatSSEFrame(emitter.scanID+1, "end", gin.H{"reason": "limit-bytes"})
+				fmt.Fprint(writer, frame)
 				return false
 			}
-			if canFlush {
-				flusher.Flush()
+			emittedBytes += lineBytes
+			if !emitter.emit(container, line, false, 0) {
+				return false
 			}
 		}
 	}
-	// Stream exhausted — return false to signal Gin to stop re-invoking.
-	// Returning true on EOF was a bug: it caused an infinite loop (C3 in PR #59).
+	if scanner.Err() != nil {
+		frame := formatSSEFrame(emitter.scanID+1, "end", gin.H{"reason": "stream-error"})
+		fmt.Fprint(writer, frame)
+		return false
+	}
+	frame  = formatSSEFrame(emitter.scanID+1, "end", gin.H{"reason": "stream-complete"})
+	fmt.Fprint(writer, frame)
 	return false
 }
 
-func streamWorkflowLogsText(writer io.Writer, logs string) bool {
-	hasAny := false
-	flusher, canFlush := writer.(http.Flusher)
-	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if line == "" {
-			continue
-		}
-		hasAny = true
-		if !writeWorkflowLogSSE(writer, line) {
-			return false
-		}
-		if canFlush {
-			flusher.Flush()
-		}
-	}
-	return hasAny
-}
-
-// StreamWorkflowLogs handles GET /api/v1/workflows/:name/log/stream?nodeId=xxx
-// This is an SSE endpoint that streams Argo workflow pod logs.
+// StreamWorkflowLogs handles GET /api/v1/workflows/:name/logs/stream?nodeId=xxx
+// This is an SSE endpoint that streams Argo workflow pod logs with id-based
+// sequencing for reconnection support.
 func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	name := strings.TrimSpace(c.Param("name"))
 	nodeID := strings.TrimSpace(c.Query("nodeId"))
@@ -117,48 +285,34 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceFor(c)
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
 
 	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
-		httpresp.Internal(c, err.Error())
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow not found", nil)
 		return
 	}
 
-	_, ok := workflow.Status.Nodes[nodeID]
+	podName, ok := resolveCachedWorkflowPodName(workflow, nodeID)
 	if !ok {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow node not found", nil)
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}
-	podName := nodeID
+
+	opts, _, ok := parseWorkflowLogOptions(c)
+	if !ok {
+		return
+	}
 
 	stream, err := h.wfClient.GetWorkflowLogStream(
 		c.Request.Context(),
 		name,
 		podName,
-		defaultWorkflowLogContainer,
 		namespace,
+		opts,
 	)
 	if err != nil {
-		logs, fallbackErr := h.wfClient.GetWorkflowLogs(
-			c.Request.Context(),
-			name,
-			nodeID,
-			namespace,
-		)
-		if fallbackErr != nil {
-			httpresp.Internal(c, fallbackErr.Error())
-			return
-		}
-
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no")
-
-		c.Stream(func(writer io.Writer) bool {
-			return streamWorkflowLogsText(writer, logs)
-		})
+		httpresp.Internal(c, err.Error())
 		return
 	}
 	defer stream.Close()
@@ -168,7 +322,33 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
+	// Get or create ring buffer for reconnection
+	ringKey := name + "/" + nodeID + "/" + opts.Container
+	ring := h.sseRingBuffers.getOrCreate(ringKey)
+
+	// Handle Last-Event-ID for reconnection
+	lastEventID := c.Query("lastEventId")
+	if lastEventID == "" {
+		lastEventID = c.GetHeader("Last-Event-ID")
+	}
+	if lastEventID != "" {
+		if sinceID, err := strconv.ParseInt(lastEventID, 10, 64); err == nil {
+			events := ring.replayAfter(sinceID)
+			for _, ev := range events {
+				if _, writeErr := fmt.Fprint(c.Writer, ev.data); writeErr != nil {
+					return
+				}
+			}
+		}
+	}
+
 	c.Stream(func(writer io.Writer) bool {
-		return streamWorkflowLogs(c, writer, stream)
+		return streamWorkflowLogs(c, writer, stream, podName, opts.Container, *opts.LimitBytes, ring)
 	})
+
+	// Stream ended — clean up ring buffer after a grace period
+	go func() {
+		time.Sleep(sseRingBufferMaxAge)
+		h.sseRingBuffers.remove(ringKey)
+	}()
 }

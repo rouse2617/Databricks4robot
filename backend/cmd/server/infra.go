@@ -14,6 +14,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -136,6 +137,22 @@ func setupInfra() *infra {
 		"server_url_set", argoCfg.ServerURL != "",
 		"namespace", cfg.ArgoWorkflowsNamespace)
 
+	// ── Optional: Kubernetes Pod diagnostics client ──
+	podClient, err := k8s.NewPodClient("")
+	if err != nil {
+		slog.Warn("k8s pod diagnostics disabled", "err", err)
+		podClient = nil
+	} else {
+		slog.Info("k8s pod diagnostics client configured")
+	}
+	execClient, err := k8s.NewExecClient("")
+	if err != nil {
+		slog.Warn("k8s pod exec disabled", "err", err)
+		execClient = nil
+	} else {
+		slog.Info("k8s pod exec client configured")
+	}
+
 	// ── Optional: Elasticsearch ──
 	var esClient *espkg.Client
 	if cfg.ElasticsearchURL != "" {
@@ -162,5 +179,7 @@ func setupInfra() *infra {
 		queryFieldReg:   queryFieldReg,
 		actionLabelReg:  actionLabelReg,
 		workflowClient:  workflowClient,
+		podClient:       podClient,
+		execClient:      execClient,
 	}
 }

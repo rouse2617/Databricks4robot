@@ -164,7 +164,7 @@ export default function CreateDeliveryModal({
 			cancelText="取消"
 			maskClosable={!submitting}
 			keyboard={!submitting}
-			destroyOnClose
+			destroyOnHidden
 			afterClose={() => {
 				form.resetFields();
 				setManualAssetIdsText("");

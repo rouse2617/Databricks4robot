@@ -43,7 +43,7 @@ Agent 在验证完成前 **不得** `git commit` / `git push`（运行时代码�
 部署前端 dev（在已 build/push 镜像后）：
 
 ```bash
-USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false bash deploy/cloudrun/frontend-dev.sh
+USE_EXISTING_IMAGE=true bash deploy/cloudrun/frontend-dev.sh
 ```
 
 记录 PR 证据：**image tag（git SHA）**、Cloud Run **revision**、服务 URL、验证时间。格式见 [`deploy-before-commit.md`](deploy-before-commit.md#image-tags-and-revision-record)。
@@ -161,10 +161,15 @@ bash scripts/smoke-customers-dev.sh   # 或 api-guide-smoke.sh
 部署 backend dev（在已 build/push 镜像后）：
 
 ```bash
-USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
-  DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password \
+USE_EXISTING_IMAGE=true \
+  IMAGE="us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:<sha>" \
   bash deploy/cloudrun/backend-dev.sh
 ```
+
+`backend-dev.sh` already defaults to the dev Cloud Run DB/VPC/Argo/K8s Pod
+diagnostics wiring. If Pod diagnostics regresses after deploy, first verify the
+Cloud Run revision still has `K8S_API_ENDPOINT`, `K8S_BEARER_TOKEN` Secret
+Manager binding, and `K8S_CA_DATA` Secret Manager binding.
 
 `BASE` 用 `source scripts/dev-backend-env.sh` 解析，不要手抄 URL。
 

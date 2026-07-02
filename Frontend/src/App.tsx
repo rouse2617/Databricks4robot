@@ -28,7 +28,9 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
+const BatchJobDetailPage = lazy(() => import("./pages/BatchJobDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
+const PreviewPage = lazy(() => import("./components/preview/PreviewPage"));
 
 function PageLoader() {
 	return (
@@ -76,10 +78,27 @@ function ProtectedRoutes() {
 						/>
 						<Route
 							path="/workflows"
-							element={<Navigate to="/pipeline?tab=executions" replace />}
+							element={<Navigate to="/runs" replace />}
 						/>
-						<Route path="/workflows/:name" element={<WorkflowDetailPage />} />
+						<Route
+							path="/runs"
+							element={<PipelinePage defaultTab="executions" />}
+						/>
+						<Route
+							path="/workflows/:name"
+							element={<WorkflowDetailPage legacyRoute />}
+						/>
+						<Route path="/runs/:runId" element={<WorkflowDetailPage />} />
+						<Route
+							path="/pipeline/executions/:name"
+							element={<WorkflowDetailPage />}
+						/>
+						<Route
+							path="/pipeline/batch/:id"
+							element={<BatchJobDetailPage />}
+						/>
 						<Route path="/settings" element={<SettingsPage />} />
+						<Route path="/preview" element={<PreviewPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />
 					</Routes>
 				</Suspense>

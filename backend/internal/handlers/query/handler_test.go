@@ -33,9 +33,12 @@ func (r *stubAssetRepo) Get(ctx context.Context, id string) (*models.Asset, erro
 	return r.GetAll(ctx, id)
 }
 func (r *stubAssetRepo) GetAll(context.Context, string) (*models.Asset, error) { return nil, nil }
-func (r *stubAssetRepo) InsertNew(context.Context, *models.Asset) error        { return nil }
-func (r *stubAssetRepo) Set(context.Context, *models.Asset) error              { return nil }
-func (r *stubAssetRepo) SoftDelete(context.Context, string) error              { return nil }
+func (r *stubAssetRepo) FindExistingIDs(context.Context, []string) (map[string]struct{}, error) {
+	return map[string]struct{}{}, nil
+}
+func (r *stubAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
+func (r *stubAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
+func (r *stubAssetRepo) SoftDelete(context.Context, string) error       { return nil }
 func (r *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }

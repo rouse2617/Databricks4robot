@@ -14,10 +14,12 @@ import {
 	Card,
 	Descriptions,
 	Divider,
+	Grid,
 	Tag,
 	Tooltip,
 	Typography,
 } from "antd";
+import { useNavigate } from "react-router-dom";
 import type { Asset } from "../../api/types";
 import {
 	formatDurationSeconds,
@@ -32,6 +34,7 @@ import { countStatuses, parseAlgoEntries } from "../assets/AlgoSummaryCell";
 import PreviewPlayer from "../assets/PreviewPlayer";
 
 const { Text } = Typography;
+const { useBreakpoint } = Grid;
 
 // ─── Props ───
 
@@ -112,17 +115,21 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 
 function PreviewMediaPanel({
 	manifest,
+	asset,
+	isNarrow,
 }: {
 	manifest: PreviewManifest | null;
 	asset: Asset;
+	isNarrow: boolean;
 }) {
+	const navigate = useNavigate();
 	const availability = manifest?.availability ?? "missing";
 	const badge = AVAILABILITY_BADGE[availability];
 	if (manifest?.mode === "mcap") {
 		return (
 			<div
 				style={{
-					flex: "0 0 60%",
+					flex: isNarrow ? "1 1 100%" : "0 0 60%",
 					display: "flex",
 					flexDirection: "column",
 					justifyContent: "center",
@@ -131,7 +138,15 @@ function PreviewMediaPanel({
 				}}
 			>
 				<PreviewPlayer manifest={manifest} />
-				<div style={{ marginTop: 8, textAlign: "center" }}>
+				<div
+					style={{
+						marginTop: 8,
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						gap: 12,
+					}}
+				>
 					<Badge
 						status={badge.status}
 						text={
@@ -140,6 +155,17 @@ function PreviewMediaPanel({
 							</Text>
 						}
 					/>
+					<Button
+						size="small"
+						type="link"
+						icon={<ExpandOutlined />}
+						style={{ padding: 0, fontSize: 12 }}
+						onClick={() =>
+							navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)
+						}
+					>
+						完整预览
+					</Button>
 				</div>
 			</div>
 		);
@@ -153,7 +179,7 @@ function PreviewMediaPanel({
 		return (
 			<div
 				style={{
-					flex: "0 0 60%",
+					flex: isNarrow ? "1 1 100%" : "0 0 60%",
 					display: "flex",
 					flexDirection: "column",
 					justifyContent: "center",
@@ -189,7 +215,7 @@ function PreviewMediaPanel({
 	return (
 		<div
 			style={{
-				flex: "0 0 60%",
+				flex: isNarrow ? "1 1 100%" : "0 0 60%",
 				display: "flex",
 				flexDirection: "column",
 				justifyContent: "center",
@@ -224,11 +250,15 @@ function PreviewMediaPanel({
 						查找相似
 					</Button>
 				</Tooltip>
-				<Tooltip title="Coming in Phase 3">
-					<Button size="small" icon={<ExpandOutlined />} disabled>
-						完整预览
-					</Button>
-				</Tooltip>
+				<Button
+					size="small"
+					icon={<ExpandOutlined />}
+					onClick={() =>
+						navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)
+					}
+				>
+					完整预览
+				</Button>
 			</div>
 		</div>
 	);
@@ -236,7 +266,13 @@ function PreviewMediaPanel({
 
 // ─── Right Panel: Asset Summary ───
 
-function AssetSummaryPanel({ asset }: { asset: Asset }) {
+function AssetSummaryPanel({
+	asset,
+	isNarrow,
+}: {
+	asset: Asset;
+	isNarrow: boolean;
+}) {
 	const priority = asset.tags?.priority;
 	const quality = asset.tags?.quality;
 	const fileCount = asset.files ? Object.keys(asset.files).length : 0;
@@ -244,8 +280,9 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 	return (
 		<div
 			style={{
-				flex: "0 0 40%",
-				paddingLeft: 16,
+				flex: isNarrow ? "1 1 100%" : "0 0 40%",
+				paddingLeft: isNarrow ? 0 : 16,
+				paddingTop: isNarrow ? 16 : 0,
 				display: "flex",
 				flexDirection: "column",
 				justifyContent: "flex-start",
@@ -275,7 +312,12 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 				size="small"
 				styles={{
 					label: { fontSize: 12, color: "#8c8c8c", width: 80 },
-					content: { fontSize: 12 },
+					content: {
+						fontSize: 12,
+						minWidth: 0,
+						overflowWrap: "anywhere",
+						wordBreak: "break-word",
+					},
 				}}
 			>
 				<Descriptions.Item label="Owner">
@@ -306,6 +348,11 @@ export default function AssetPreviewHero({
 	asset,
 	previewManifest,
 }: AssetPreviewHeroProps) {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	return (
 		<Card
 			size="small"
@@ -315,12 +362,17 @@ export default function AssetPreviewHero({
 			<div
 				style={{
 					display: "flex",
+					flexDirection: isNarrow ? "column" : "row",
 					minHeight: 200,
 					gap: 0,
 				}}
 			>
-				<PreviewMediaPanel manifest={previewManifest} asset={asset} />
-				<AssetSummaryPanel asset={asset} />
+				<PreviewMediaPanel
+					manifest={previewManifest}
+					asset={asset}
+					isNarrow={isNarrow}
+				/>
+				<AssetSummaryPanel asset={asset} isNarrow={isNarrow} />
 			</div>
 		</Card>
 	);

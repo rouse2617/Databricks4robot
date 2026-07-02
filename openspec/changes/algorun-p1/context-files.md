@@ -20,4 +20,4 @@ backend/internal/models/asset.go  # Asset model struct
 backend/internal/models/logical_asset.go  # Logical asset model
 
 # Migration reference
-backend/migrations/044_asset_model_p2.sql  # Latest migration (Phase 0)
+backend/migrations/045_asset_model_p2.sql  # Latest migration (Phase 0)

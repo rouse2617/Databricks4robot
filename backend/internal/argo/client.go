@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,12 @@ import (
 
 // ErrNotFound indicates the requested Argo resource does not exist.
 var ErrNotFound = errors.New("argo resource not found")
+
+// ErrUnexpectedNotFound indicates a 404 response that did NOT come from the
+// Argo API server — likely a misconfigured base URL pointing to a non-Argo
+// service (e.g. the DataBrew backend or pipeline UI). Callers MUST NOT treat
+// this as "workflow genuinely not found" and MUST NOT write terminal status.
+var ErrUnexpectedNotFound = errors.New("argo unexpected not found: response is not from Argo API")
 
 // WorkflowClient defines the interface for managing Argo Workflows.
 type WorkflowClient interface {
@@ -30,8 +37,34 @@ type WorkflowClient interface {
 	SuspendWorkflow(ctx context.Context, name, namespace string) error
 	ResumeWorkflow(ctx context.Context, name, namespace string) error
 	TerminateWorkflow(ctx context.Context, name, namespace string) error
-	GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
-	GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
+	GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string, opts WorkflowLogOptions) (WorkflowLogResult, error)
+	GetWorkflowLogStream(ctx context.Context, workflowName, podName, namespace string, opts WorkflowLogOptions) (io.ReadCloser, error)
+}
+
+// WorkflowResubmitResultClient exposes Argo's resubmit response, which contains
+// the newly created workflow object.
+type WorkflowResubmitResultClient interface {
+	ResubmitWorkflowWithResult(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+}
+
+// WorkflowLogOptions contains bounded pod log query options.
+type WorkflowLogOptions struct {
+	Container    string
+	TailLines    *int64
+	LimitBytes   *int64
+	SinceSeconds *int64
+	SinceTime    string
+	Previous     bool
+	Timestamps   bool
+	Follow       bool
+}
+
+// WorkflowLogResult contains parsed log text plus truncation metadata.
+type WorkflowLogResult struct {
+	Logs       string
+	LineCount  int
+	Truncated  bool
+	LimitBytes int64
 }
 
 // Client implements WorkflowClient using the Argo Server REST API.
@@ -100,7 +133,18 @@ func (c *Client) RetryWorkflow(ctx context.Context, name, namespace string) erro
 
 // ResubmitWorkflow resubmits a workflow through Argo Server's resubmit endpoint.
 func (c *Client) ResubmitWorkflow(ctx context.Context, name, namespace string) error {
-	return c.workflowOperation(ctx, name, namespace, "resubmit")
+	_, err := c.ResubmitWorkflowWithResult(ctx, name, namespace)
+	return err
+}
+
+// ResubmitWorkflowWithResult resubmits a workflow and returns the new workflow
+// object created by Argo.
+func (c *Client) ResubmitWorkflowWithResult(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
+	var wf wfv1.Workflow
+	if err := c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/resubmit", nil, map[string]any{}, &wf); err != nil {
+		return nil, err
+	}
+	return &wf, nil
 }
 
 // SuspendWorkflow suspends a workflow through Argo Server's suspend endpoint.
@@ -122,43 +166,81 @@ func (c *Client) workflowOperation(ctx context.Context, name, namespace, operati
 	return c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/"+operation, nil, map[string]any{}, nil)
 }
 
-// GetWorkflowLogs returns logs for a workflow node using Argo Server log streaming.
-func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error) {
-	query := url.Values{}
-	query.Set("logOptions.container", "main")
-	query.Set("podName", nodeId)
-	if nodeId != "" {
-		query.Set("grep", nodeId)
-	}
+// GetWorkflowLogs returns bounded logs for a workflow pod using Argo Server log streaming.
+func (c *Client) GetWorkflowLogs(
+	ctx context.Context,
+	workflowName, podName, namespace string,
+	opts WorkflowLogOptions,
+) (WorkflowLogResult, error) {
+	query := workflowLogQuery(podName, opts)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
 	if err != nil {
-		return "", err
+		return WorkflowLogResult{}, err
 	}
 	defer resp.Body.Close()
 
-	logs, err := parseLogStream(resp.Body)
+	logs, lineCount, truncated, err := parseLogStreamBounded(resp.Body, opts.LimitBytes)
 	if err != nil {
-		return "", fmt.Errorf("parse workflow logs: %w", err)
+		return WorkflowLogResult{}, fmt.Errorf("parse workflow logs: %w", err)
 	}
-	return logs, nil
+	result := WorkflowLogResult{
+		Logs:      logs,
+		LineCount: lineCount,
+		Truncated: truncated,
+	}
+	if opts.LimitBytes != nil {
+		result.LimitBytes = *opts.LimitBytes
+	}
+	return result, nil
 }
 
 // GetWorkflowLogStream returns a live log stream for a specific workflow pod.
 func (c *Client) GetWorkflowLogStream(
 	ctx context.Context,
-	workflowName, podName, container, namespace string,
+	workflowName, podName, namespace string,
+	opts WorkflowLogOptions,
 ) (io.ReadCloser, error) {
-	query := url.Values{}
-	query.Set("podName", podName)
-	query.Set("container", container)
-	query.Set("follow", "true")
+	opts.Follow = true
+	query := workflowLogQuery(podName, opts)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+func workflowLogQuery(podName string, opts WorkflowLogOptions) url.Values {
+	query := url.Values{}
+	query.Set("podName", podName)
+	if opts.Container != "" {
+		query.Set("container", opts.Container)
+		query.Set("logOptions.container", opts.Container)
+	}
+	if opts.TailLines != nil {
+		query.Set("logOptions.tailLines", fmt.Sprintf("%d", *opts.TailLines))
+	}
+	if opts.LimitBytes != nil {
+		query.Set("logOptions.limitBytes", fmt.Sprintf("%d", *opts.LimitBytes))
+	}
+	if opts.SinceSeconds != nil {
+		query.Set("logOptions.sinceSeconds", fmt.Sprintf("%d", *opts.SinceSeconds))
+	}
+	if opts.SinceTime != "" {
+		query.Set("logOptions.sinceTime", opts.SinceTime)
+	}
+	if opts.Previous {
+		query.Set("logOptions.previous", "true")
+	}
+	if opts.Timestamps {
+		query.Set("logOptions.timestamps", "true")
+	}
+	if opts.Follow {
+		query.Set("follow", "true")
+		query.Set("logOptions.follow", "true")
+	}
+	return query
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {
@@ -199,6 +281,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return nil, err
 	}
+		slog.Info("argo_client_request", "method", method, "endpoint", endpoint, "serverURL", c.serverURL)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create argo request: %w", err)
@@ -227,7 +310,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 			message = resp.Status
 		}
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
+			// Distinguish between a genuine Argo API 404 (JSON with gRPC
+			// code=5) and a non-Argo 404 (HTML, plain text, or JSON with
+			// code=404) that indicates a misconfigured base URL.
+			if IsArgo404Response(message) {
+				return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
+			}
+			return nil, fmt.Errorf("%w: body=%q", ErrUnexpectedNotFound, message)
 		}
 		return nil, fmt.Errorf("argo API %s %s failed: %s", method, path, message)
 	}
@@ -263,4 +352,11 @@ func authorizationHeader(token string) string {
 		return token
 	}
 	return "Bearer " + token
+}
+
+// IsArgo404Response returns true when a 404 response body originates from
+// the Argo API server (JSON with gRPC code 5) versus a non-Argo service
+// such as the DataBrew backend (HTML, plain text, or JSON with code 404).
+func IsArgo404Response(body string) bool {
+	return strings.Contains(body, `"code":5`) || strings.Contains(body, `"code": 5`)
 }

@@ -670,3 +670,25 @@ SSE routes are not wired in the read-only route block above.
 
 **Section sources**
 - [backend/internal/argo/client.go](file://backend/internal/argo/client.go#L20-L162)
+
+## 2026-07 Update (PR #270): Log Viewer Rewrite
+
+**Old path removed.** The vendored argo-ui log viewer components under
+`databrew-pipeline/argo-ui/src/workflows/components/workflow-logs-viewer/` (and
+the whole `databrew-pipeline/argo-ui/` subtree) are deleted. The DataBrew backend
+no longer proxies logs through the argo UI; it streams them directly.
+
+**New SSE log endpoint.** A new server-side ring buffer in
+[backend/internal/handlers/workflow/logs_sse.go](file://backend/internal/handlers/workflow/logs_sse.go)
+implements bounded, replayable log streaming. The buffer holds the most recent
+1000 events or 5 minutes (whichever is hit first), with a 1-minute cleanup
+ticker. On reconnect, the client sends the last seen event ID and the server
+replays the buffered tail. Constants are at the top of the file:
+`sseRingBufferSize`, `sseRingBufferMaxAge`, `sseRingBufferCleanup`. The frontend
+`LogPanel` (sibling component in `Frontend/src/components/preview/LogPanel.tsx`)
+is the consumer.
+
+**Why the rewrite.** Replaying after a transient disconnect (browser tab
+background, network blip) means a slow client no longer loses the line that
+appeared during the gap — and the bounded buffer caps memory growth from a
+misbehaving consumer.

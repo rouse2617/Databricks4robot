@@ -1,13 +1,16 @@
-import { type Edge, type Node, SelectType } from "@ant-design/pro-flow";
+import type { Edge, Node } from "@xyflow/react";
 import type {
 	PipelineComponentAPI,
+	PipelineComponentReleaseAPI,
 	PipelineComponentType,
 } from "../../api/pipelineComponentApi";
 import type {
 	Pipeline,
 	PipelineNodeData,
+	Port,
 	RegisteredComponent,
 } from "../../components/pipeline/types";
+import { createPipelineNodeId } from "../../features/pipeline-designer/model/node-id";
 import { formatComponentImage as formatImage } from "../../lib/pipelineComponentDisplay";
 import { normalizeComponentArgs } from "../../lib/pipelineContract";
 
@@ -26,13 +29,57 @@ export function toRecord<T extends { id: string }>(
 export function dedupeComponentsByName(
 	comps: RegisteredComponent[],
 ): RegisteredComponent[] {
-	const seen = new Set<string>();
-	return comps.filter((c) => {
-		const key = c.name.trim().toLowerCase();
-		if (!key || seen.has(key)) return false;
-		seen.add(key);
+	return dedupeComponents(comps);
+}
+
+function componentDedupeKey(comp: RegisteredComponent): string {
+	const componentId = comp.componentId?.trim();
+	if (componentId) return `component:${componentId}`;
+	const id = comp.id?.trim();
+	if (id) return `id:${id}`;
+	return `name:${comp.name.trim().toLowerCase()}`;
+}
+
+function preferRegisteredComponent(
+	candidate: RegisteredComponent,
+	current: RegisteredComponent,
+): boolean {
+	if (
+		candidate.source === "component-release" &&
+		current.source !== "component-release"
+	) {
 		return true;
-	});
+	}
+	if (
+		current.source === "component-release" &&
+		candidate.source !== "component-release"
+	) {
+		return false;
+	}
+	const candidateLabel = candidate.releaseLabel?.trim() ?? "";
+	const currentLabel = current.releaseLabel?.trim() ?? "";
+	if (candidateLabel !== currentLabel) {
+		return candidateLabel.localeCompare(currentLabel) > 0;
+	}
+	return candidate.name.localeCompare(current.name) <= 0;
+}
+
+export function dedupeComponents(
+	comps: RegisteredComponent[],
+): RegisteredComponent[] {
+	const seen = new Map<string, RegisteredComponent>();
+	for (const comp of comps) {
+		const key = componentDedupeKey(comp);
+		const existing = seen.get(key);
+		if (!existing || preferRegisteredComponent(comp, existing)) {
+			seen.set(key, comp);
+		}
+	}
+	return Array.from(seen.values());
+}
+
+export function defaultDeployWorkflowName(now = Date.now()): string {
+	return `pipeline-${now}`;
 }
 
 function normalizeComponentType(
@@ -48,6 +95,26 @@ function normalizeComponentType(
 		default:
 			return "container";
 	}
+}
+
+function normalizePorts(ports: Port[] | undefined, fallback: Port[]): Port[] {
+	if (!ports || ports.length === 0) return fallback;
+	const seen = new Set<string>();
+	const next: Port[] = [];
+	for (const port of ports) {
+		const name = port.name?.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		next.push({
+			name,
+			type: port.type?.trim() || "string",
+			...(port.desc?.trim() ? { desc: port.desc.trim() } : {}),
+			...(port.default_value?.trim()
+				? { default_value: port.default_value.trim() }
+				: {}),
+		});
+	}
+	return next.length > 0 ? next : fallback;
 }
 
 export function uniqSorted(values: string[]): string[] {
@@ -223,11 +290,13 @@ export function apiToRegistered(
 				: [];
 	return {
 		id: api.id,
+		componentId: api.id,
 		name: api.name,
 		type: normalizedType,
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
-		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
+		tag: api.tag,
+		command: api.command ?? (resources.command as string[] | undefined) ?? [],
 		args: normalizeComponentArgs(
 			(api.args && api.args.length > 0
 				? api.args
@@ -236,22 +305,78 @@ export function apiToRegistered(
 					: undefined) as unknown[],
 		),
 		env: envFromObject.length > 0 ? envFromObject : envFromResource,
+		inputPorts: normalizePorts(api.inputPorts, [
+			{ name: "input", type: "asset" },
+		]),
+		outputPorts: normalizePorts(api.outputPorts, [
+			{ name: "output", type: "asset" },
+		]),
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
+		gpu: (resources.gpu as string) ?? "",
+		computeTier: (resources.computeTier as string) ?? "",
 	};
 }
 
-let nodeCounter = 0;
+export function releaseToRegistered(
+	release: PipelineComponentReleaseAPI,
+): RegisteredComponent {
+	const snapshot = release.runtimeSnapshot ?? {
+		image: release.runtimeImage,
+		inputPorts: [],
+		outputPorts: [],
+	};
+	const resources = snapshot.resources ?? {};
+	const sourceRefType = (release.sourceRefType || "").trim().toLowerCase();
+	return {
+		id: release.id,
+		componentId: release.componentId,
+		releaseId: release.id,
+		name: release.displayName || release.taskName,
+		type: "container",
+		source: "component-release",
+		image: snapshot.image || release.runtimeImage,
+		tag: sourceRefType === "tag" ? release.sourceRef : release.imageTag,
+		releaseLabel: release.releaseLabel,
+		sourceCommit: release.sourceCommit,
+		imageUid: release.imageUid,
+		command:
+			snapshot.command ?? (resources.command as string[] | undefined) ?? [],
+		args: normalizeComponentArgs(
+			(snapshot.args && snapshot.args.length > 0
+				? snapshot.args
+				: Array.isArray(resources.args)
+					? resources.args
+					: undefined) as unknown[],
+		),
+		env: snapshot.env
+			? Object.entries(snapshot.env).map(([name, value]) => ({
+					name,
+					value: value || "",
+				}))
+			: undefined,
+		inputPorts: normalizePorts(snapshot.inputPorts, [
+			{ name: "input", type: "asset" },
+		]),
+		outputPorts: normalizePorts(snapshot.outputPorts, [
+			{ name: "output", type: "asset" },
+		]),
+		cpu: (resources.cpu as string) ?? "",
+		memory: (resources.memory as string) ?? "",
+		disk: (resources.disk as string) ?? "",
+		gpu: (resources.gpu as string) ?? "",
+		computeTier: (resources.computeTier as string) ?? "",
+	};
+}
 
 export function createPipelineNode(
 	comp: RegisteredComponent,
 	x: number,
 	y: number,
 ): PipelineFlowNode {
-	nodeCounter += 1;
 	return {
-		id: `step-${nodeCounter}`,
+		id: createPipelineNodeId(),
 		type: "pipelineStep",
 		position: { x, y },
 		data: {
@@ -262,10 +387,21 @@ export function createPipelineNode(
 			command: comp.command,
 			args: comp.args || [],
 			env: comp.env || [],
+			inputPorts: comp.inputPorts || [{ name: "input", type: "asset" }],
+			outputPorts: comp.outputPorts || [{ name: "output", type: "asset" }],
 			cpu: comp.cpu || "",
 			memory: comp.memory || "",
 			disk: comp.disk || "",
-			selectType: SelectType.DEFAULT,
+			gpu: comp.gpu || "",
+			computeTier: comp.computeTier || "",
+			componentId: comp.componentId ?? comp.id,
+			releaseId: comp.releaseId,
+			componentVersionLabel: comp.releaseLabel ?? comp.tag,
 		},
 	};
+}
+
+/** @deprecated legacy counter kept for tests only */
+export function resetLegacyNodeCounterForTests(next = 0) {
+	void next;
 }

@@ -851,12 +851,89 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ---
 
-## 6. Iceberg 表映射
+## 6. Pipeline Run Ledger
+
+### `pipeline_configs` / `pipeline_config_versions`
+
+用途：配置中心的独立资源库。配置不属于组件子对象，组件只描述运行镜像和运行参数；流水线需要配置时引用 `config_id`。当前实现面向“算法同学上传一个配置文件、多版本管理”的场景。
+
+关键字段：
+
+- `pipeline_configs.id`：配置 ID。
+- `name` / `description` / `tags` / `owner` / `scope`：检索和权限字段；用于找得到配置，不表达组件绑定关系。
+- `file_type`：`yaml` / `json`，可由文件名推断。
+- `lifecycle`：`draft` / `ready` / `deprecated`。
+- `current_version`：当前生效版本号。
+- `pipeline_config_versions.version`：配置内递增版本号。
+- `content`：配置文件内容，当前直接存 PostgreSQL；单版本上限 1 MiB。
+- `content_sha256` / `content_size_bytes`：文件指纹和大小，支持审计、去重排查和 UI 展示。
+- `summary` / `author` / `created_at`：版本说明和作者。
+
+约束与索引：
+
+- `pipeline_config_versions(config_id, version)` 唯一，版本不可复写。
+- `pipeline_config_versions.config_id` 使用 `ON DELETE RESTRICT`，避免硬删除配置破坏历史引用。
+- `owner/scope`、`lifecycle` 建索引，支持用户自己的配置列表和部署时选择。
+- 文件内容先存 DB 是刻意取舍：配置文件小、需要事务一致性、需要版本审计；如果后续出现大文件或二进制配置，再迁到对象存储并保留 DB 中的 hash/uri。
+
+### `pipeline_component_releases`
+
+用途：记录由 CI/平台生成的算法 task 构建版本，供 DataBrew UI 选择稳定的组件版本，而不是让用户手填镜像 tag、digest、commit 等底层字段。
+
+关键字段：
+
+- `id`：release 记录 ID。
+- `component_id` / `task_name` / `task_path`：组件和算法 task 身份。
+- `release_label` / `channel`：用户可见版本，例如 `pr-128-abc123`、`main-abc123`、`v0.4.0`。
+- `source_repo` / `source_ref` / `source_commit` / `build_id`：技术来源信息。
+- `image_repo` / `image_tag` / `image_digest` / `runtime_image`：镜像定位信息，`runtime_image` 应优先使用 digest 固化。
+- `status` / `selectable` / `validation_status` / `validation_errors`：DataBrew 可选状态和基础校验结果。
+- `runtime_snapshot`：运行时快照，包括 image、command、args、ports、resources。
+- `technical_metadata`：保留 CI/provider 生成的扩展字段。
+- `last_synced_at`：最近一次同步时间。
+
+约束与索引：
+
+- `(component_id, release_label)` 唯一，避免同一 task 版本重复入库。
+- `task_name`、`status/selectable`、`source_commit` 建索引，支持选择器和排查。
+- Phase 1 允许缺少高级 schema，但缺少 digest、entrypoint 或 resources 的 release 会标记为不可选。
+
+### `pipeline_run_watcher_state`
+
+用途：记录 DataBrew pipeline run watcher 的持久健康状态，判断 run
+ledger 是否仍在同步 Argo 状态。
+
+关键字段：
+
+- `id`：watcher 实例 ID，当前默认 `default`
+- `last_synced_at`
+- `last_scan_started_at`
+- `last_scan_finished_at`
+- `last_success_at`
+- `last_error_at`
+- `active_scan_limit`
+- `last_synced_run_count`
+- `consecutive_failures`
+- `total_scans`
+- `total_errors`
+- `scan_lag_seconds`
+- `last_error`
+- `updated_at`
+
+语义：
+
+- `last_synced_at` / `last_success_at` 表示最近一次成功同步。
+- `consecutive_failures` 和 `total_errors` 用于判断 watcher 是否持续失败。
+- `scan_lag_seconds` 用于 UI 展示账本同步延迟。
+
+---
+
+## 7. Iceberg 表映射
 
 已合并到 [`data-platform-design.md` §5.6.2 / §5.6.4](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB)。本文件只保留 `datasets`、`training_runs`、`catalog_objects` 等 PG 元数据表本身，不再重复 Bronze/Silver/Gold 分层与同步阶段说明。
 
 ---
 
-## 7. 典型问题与推荐查询路径一览
+## 8. 典型问题与推荐查询路径一览
 
 已合并到 [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) 与 [`use-cases.md`](https://www.feishu.cn/wiki/RqiIwqJGAigsM9k2AZecJ4punce)。查询路径的维护粒度更适合放在 API / use case 文档，而不是 schema companion。

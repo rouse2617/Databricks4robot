@@ -7,7 +7,9 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { validateBackfillAssets } from "../../api/batchJobApi";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 import AssetPicker from "./AssetPicker";
@@ -16,6 +18,10 @@ vi.mock("../../api/search", () => ({
 	searchApi: {
 		searchAssets: vi.fn(),
 	},
+}));
+
+vi.mock("../../api/batchJobApi", () => ({
+	validateBackfillAssets: vi.fn(),
 }));
 
 function makeSearchResult(
@@ -88,7 +94,9 @@ describe("AssetPicker", () => {
 	it("shows empty state with hint text when no query and no results", () => {
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
 		expect(
-			screen.getByText("输入关键字搜索资产，不选择则直接部署"),
+			screen.getByText(
+				"输入关键字搜索资产，或批量粘贴 asset ID；粘贴后可直接运行",
+			),
 		).toBeTruthy();
 	});
 
@@ -97,7 +105,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -114,7 +122,7 @@ describe("AssetPicker", () => {
 			expect(searchApi.searchAssets).toHaveBeenCalledWith(
 				{
 					q: "ast",
-					page_size: 50,
+					page_size: 100,
 				},
 				expect.any(AbortSignal),
 			);
@@ -126,12 +134,68 @@ describe("AssetPicker", () => {
 		expect(screen.getByText("model")).toBeTruthy();
 	});
 
+	it("replaces the controlled search value instead of appending stale text", () => {
+		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
+		const input = screen.getByPlaceholderText(
+			"搜索资产（输入 asset_id 或名称）",
+		) as HTMLInputElement;
+
+		fireEvent.change(input, { target: { value: "old-asset" } });
+		expect(input.value).toBe("old-asset");
+
+		fireEvent.change(input, { target: { value: "new-asset" } });
+		expect(input.value).toBe("new-asset");
+	});
+
+	it("resets query and results when resetKey changes", async () => {
+		vi.mocked(searchApi.searchAssets).mockResolvedValue({
+			items: mockResults,
+			total: 2,
+			page: 1,
+			page_size: 100,
+		});
+
+		const { rerender } = render(
+			<AssetPicker
+				selectedIds={[]}
+				onSelectionChange={() => {}}
+				resetKey={1}
+			/>,
+		);
+		const input = screen.getByPlaceholderText(
+			"搜索资产（输入 asset_id 或名称）",
+		) as HTMLInputElement;
+		const searchButton = input.parentElement?.querySelector("button");
+		fireEvent.change(input, { target: { value: "ast" } });
+		if (searchButton) fireEvent.click(searchButton);
+
+		await waitFor(() => {
+			expect(screen.getByText("ast-001")).toBeTruthy();
+		});
+
+		rerender(
+			<AssetPicker
+				selectedIds={[]}
+				onSelectionChange={() => {}}
+				resetKey={2}
+			/>,
+		);
+
+		expect(input.value).toBe("");
+		expect(screen.queryByText("ast-001")).toBeNull();
+		expect(
+			screen.getByText(
+				"输入关键字搜索资产，或批量粘贴 asset ID；粘贴后可直接运行",
+			),
+		).toBeTruthy();
+	});
+
 	it("truncates long storage_uri values", async () => {
 		vi.mocked(searchApi.searchAssets).mockResolvedValue({
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -166,7 +230,7 @@ describe("AssetPicker", () => {
 			],
 			total: 1,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -187,7 +251,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		const onSelectionChange = vi.fn();
@@ -218,12 +282,12 @@ describe("AssetPicker", () => {
 		});
 	});
 
-	it("shows '未找到匹配的资产' when search yields no results", async () => {
+	it("shows '未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴' when search yields no results", async () => {
 		vi.mocked(searchApi.searchAssets).mockResolvedValue({
 			items: [],
 			total: 0,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -235,7 +299,11 @@ describe("AssetPicker", () => {
 		if (searchButton) fireEvent.click(searchButton);
 
 		await waitFor(() => {
-			expect(screen.getByText("未找到匹配的资产")).toBeTruthy();
+			expect(
+				screen.getByText(
+					"未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴",
+				),
+			).toBeTruthy();
 		});
 	});
 
@@ -256,7 +324,11 @@ describe("AssetPicker", () => {
 			expect(searchApi.searchAssets).toHaveBeenCalled();
 			expect(screen.getByText("搜索资产失败，请重试")).toBeTruthy();
 		});
-		expect(screen.queryByText("未找到匹配的资产")).toBeNull();
+		expect(
+			screen.queryByText(
+				"未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴",
+			),
+		).toBeNull();
 	});
 
 	it("accepts custom placeholder and maxHeight props", () => {
@@ -269,5 +341,48 @@ describe("AssetPicker", () => {
 			/>,
 		);
 		expect(screen.getByPlaceholderText("自定义搜索")).toBeTruthy();
+	});
+
+	it("imports bulk paste on blur", () => {
+		const onSelectionChange = vi.fn();
+		render(
+			<AssetPicker selectedIds={[]} onSelectionChange={onSelectionChange} />,
+		);
+
+		fireEvent.click(
+			screen.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）"),
+		);
+		const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+		fireEvent.change(textarea, {
+			target: { value: "a1\na2" },
+		});
+		fireEvent.blur(textarea);
+
+		expect(onSelectionChange).toHaveBeenCalledWith(["a1", "a2"]);
+	});
+
+	it("shows asset catalog validation for selected IDs", async () => {
+		vi.mocked(validateBackfillAssets).mockResolvedValue({
+			registered: ["abc12345"],
+			unknown: ["custom01"],
+		});
+
+		render(
+			<MemoryRouter>
+				<AssetPicker
+					selectedIds={["abc12345", "custom01"]}
+					onSelectionChange={() => {}}
+				/>
+			</MemoryRouter>,
+		);
+
+		await waitFor(() => {
+			expect(validateBackfillAssets).toHaveBeenCalledWith([
+				"abc12345",
+				"custom01",
+			]);
+		});
+		expect(screen.getByText(/目录中已注册 1 个，1 个尚未注册/)).toBeTruthy();
+		expect(screen.getByText(/未注册 ID 仍可创建批次/)).toBeTruthy();
 	});
 });

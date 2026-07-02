@@ -27,7 +27,7 @@ describe("QuickFiltersRow", () => {
 				onRemoveFilter={() => {}}
 			/>,
 		);
-		expect(screen.getByText("Ready")).toBeTruthy();
+		expect(screen.getByText("已就绪")).toBeTruthy();
 		expect(screen.getByText("算法失败")).toBeTruthy();
 		expect(screen.getByText("高优先级")).toBeTruthy();
 		expect(screen.getByText("未交付")).toBeTruthy();

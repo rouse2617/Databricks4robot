@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: preview-buildkitd-cache
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-buildkitd
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    app.kubernetes.io/managed-by: codex
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: preview-buildkitd
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-buildkitd
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    app.kubernetes.io/managed-by: codex
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: preview-buildkitd
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-buildkitd
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    app.kubernetes.io/managed-by: codex
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: preview-buildkitd
+  ports:
+    - name: buildkit
+      port: 1234
+      targetPort: buildkit
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preview-buildkitd
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-buildkitd
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    app.kubernetes.io/managed-by: codex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: preview-buildkitd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: preview-buildkitd
+        app.kubernetes.io/part-of: cyber-databrew-preview
+    spec:
+      serviceAccountName: preview-buildkitd
+      nodeSelector:
+        build-pool-tier: warm
+      tolerations:
+        - key: build-pool-tier
+          operator: Equal
+          value: warm
+          effect: NoSchedule
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:v0.20.2
+          args:
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --oci-worker-gc
+            - --oci-worker-gc-keepstorage
+            - "25769803776"
+          ports:
+            - containerPort: 1234
+              name: buildkit
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - buildctl
+                - --addr=tcp://127.0.0.1:1234
+                - debug
+                - workers
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - buildctl
+                - --addr=tcp://127.0.0.1:1234
+                - debug
+                - workers
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+              ephemeral-storage: 10Gi
+            limits:
+              cpu: "6"
+              memory: 20Gi
+              ephemeral-storage: 30Gi
+          volumeMounts:
+            - name: buildkit-storage
+              mountPath: /var/lib/buildkit
+      volumes:
+        - name: buildkit-storage
+          persistentVolumeClaim:
+            claimName: preview-buildkitd-cache

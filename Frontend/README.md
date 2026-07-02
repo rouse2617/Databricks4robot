@@ -14,8 +14,19 @@
 
 ```bash
 npm install
-npm run dev        # http://127.0.0.1:5176 (local backend :8080)
-npm run dev:remote # same port, API proxy → Cloud Run dev backend
+npm run dev          # http://127.0.0.1:5176 (local backend :8080)
+npm run dev:shared   # local UI + shared GKE dev backend Pod
+npm run dev:preview  # local UI + HEAD preview backend Pod (deploy if missing)
+```
+
+一键脚本（仓库根目录，自动读 K8s token、做 health check）：
+
+```bash
+bash scripts/dev-local.sh              # 共享 dev backend Pod
+bash scripts/dev-local.sh --preview    # HEAD preview Pod（不存在则只 deploy backend）
+bash scripts/dev-local.sh --preview-id <id>
+bash scripts/dev-local.sh --latest     # 用最新的 preview Pod
+bash scripts/dev-local.sh --deploy HEAD  # 先 deploy backend，再开 Vite
 ```
 
 构建生产版本：
@@ -34,6 +45,8 @@ cp .env.example .env
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `VITE_API_BASE_URL` | 后端 API 地址 | `http://localhost:8080` |
+| `VITE_PREVIEW_ID` | preview backend Pod id（`dev:preview` 自动设置） | 空 |
+| `VITE_PREVIEW_HOST` | preview 网关地址 | `https://cyber-databrew-dev.cyberorigin.ai` |
 | `VITE_DEV_ACCESS_TOKEN` | 仅开发环境：自动登录并预填登录页 token | 空 |
 
 ## 页面结构

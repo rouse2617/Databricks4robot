@@ -75,7 +75,7 @@ func (p *Publisher) Publish(ctx context.Context, orderingKey string, data []byte
 		if p.internalBus == nil {
 			return nil, fmt.Errorf("outbox internal publisher: nil bus")
 		}
-		return p.internalBus.publish(ctx, data)
+		return p.internalBus.Publish(ctx, data)
 	default:
 		return nil, fmt.Errorf("outbox publisher: unknown mode %q", p.mode)
 	}

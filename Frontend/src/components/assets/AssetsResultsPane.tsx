@@ -18,6 +18,8 @@ import type {
 	ViewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { formatDateTime } from "../../lib/dateTime";
+import { COLUMN_LABELS } from "../../lib/productVocabulary";
+import { withSelectAllColumn } from "../../lib/tableSelection";
 import AlgoSummaryCell from "./AlgoSummaryCell";
 import AssetsCardView from "./AssetsCardView";
 import ResultsEmptyState from "./ResultsEmptyState";
@@ -93,7 +95,7 @@ function describeSort(sort: string): string {
 
 const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	asset_id: (onRowClick) => ({
-		title: "Asset ID",
+		title: COLUMN_LABELS.assetId,
 		dataIndex: "asset_id",
 		width: 120,
 		fixed: "left" as const,
@@ -116,7 +118,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 				<Tooltip title="复制 Asset ID">
 					<button
 						type="button"
-						className="link-like-button"
+						className="link-like-button row-hover-action"
 						aria-label={`复制 Asset ${id}`}
 						onClick={(e) => {
 							e.stopPropagation();
@@ -130,7 +132,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 		),
 	}),
 	mcap_file_id: (_onRowClick, onMcapClick) => ({
-		title: "MCAP",
+		title: COLUMN_LABELS.mcapShort,
 		dataIndex: "mcap_file_id",
 		width: 100,
 		render: (v: string) => (
@@ -153,7 +155,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 					<Tooltip title="复制 MCAP ID">
 						<button
 							type="button"
-							className="link-like-button"
+							className="link-like-button row-hover-action"
 							aria-label={`复制 MCAP ${v}`}
 							onClick={(e) => {
 								e.stopPropagation();
@@ -239,7 +241,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 		},
 	}),
 	owner: () => ({
-		title: "Owner",
+		title: COLUMN_LABELS.owner,
 		dataIndex: "owner",
 		width: 120,
 		ellipsis: { showTitle: false },
@@ -454,6 +456,7 @@ export default function AssetsResultsPane({
 				dataSource={items}
 				loading={loading}
 				size="small"
+				className={viewMode === "compact" ? "assets-table--compact" : undefined}
 				scroll={{ x: 900 }}
 				rowClassName={(record, index) => {
 					if (record.asset_id === activePreviewId)
@@ -472,7 +475,7 @@ export default function AssetsResultsPane({
 					"aria-selected": selectedIds.has(record.asset_id),
 					tabIndex: 0,
 				})}
-				rowSelection={{
+				rowSelection={withSelectAllColumn<Asset>({
 					selectedRowKeys,
 					onChange: (keys) => {
 						const newKeys = new Set(keys as string[]);
@@ -485,7 +488,7 @@ export default function AssetsResultsPane({
 							if (!newKeys.has(k)) onSelectRow(k);
 						}
 					},
-				}}
+				})}
 				pagination={{
 					current: page,
 					total,

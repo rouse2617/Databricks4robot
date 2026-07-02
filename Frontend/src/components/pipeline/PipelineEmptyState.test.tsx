@@ -9,12 +9,12 @@ describe("PipelineEmptyState", () => {
 		render(
 			<PipelineEmptyState
 				variant="canvas"
-				title="拖入组件开始设计"
-				hint="从左侧拖入步骤"
+				title="添加组件开始设计"
+				hint="从左侧点击或拖拽步骤"
 			/>,
 		);
-		expect(screen.getByText("拖入组件开始设计")).toBeTruthy();
-		expect(screen.getByText("从左侧拖入步骤")).toBeTruthy();
+		expect(screen.getByText("添加组件开始设计")).toBeTruthy();
+		expect(screen.getByText("从左侧点击或拖拽步骤")).toBeTruthy();
 	});
 
 	it("calls action when clicked", () => {

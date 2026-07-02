@@ -1,6 +1,7 @@
 import { PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Collapse, Input, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toAssetStyleId } from "../../lib/idDisplay";
 import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
@@ -8,8 +9,12 @@ const { Text } = Typography;
 interface Props {
 	components: RegisteredComponent[];
 	onChange: (c: RegisteredComponent[]) => void;
-	/** Called when a component is saved (create or update). */
-	onSaveApi?: (comp: RegisteredComponent, isNew: boolean) => Promise<void>;
+	/** Called when a component is saved (create or update). Should return
+	 *  the persisted component — backend assigns a stable ID on create. */
+	onSaveApi?: (
+		comp: RegisteredComponent,
+		isNew: boolean,
+	) => Promise<RegisteredComponent | undefined>;
 	/** Called when a component is deleted. */
 	onDeleteApi?: (id: string) => Promise<void>;
 }
@@ -27,6 +32,8 @@ function blank(): RegisteredComponent {
 		cpu: "",
 		memory: "",
 		disk: "",
+		gpu: "",
+		computeTier: "",
 	};
 }
 
@@ -61,6 +68,7 @@ export function ComponentManager({
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
 	const [commandText, setCommandText] = useState("");
+	const [commandError, setCommandError] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
@@ -108,15 +116,20 @@ export function ComponentManager({
 			setSaving(true);
 			setError(null);
 			try {
+				let savedComponent: RegisteredComponent = c;
 				if (onSaveApi) {
-					await onSaveApi(c, isNew);
+					const res = await onSaveApi(c, isNew);
+					// Capture the persisted ID/fields the backend returns so
+					// subsequent edits/deletes target the real row, not the
+					// temporary blank() ID.
+					if (res) savedComponent = res;
 				}
 
 				let updated: RegisteredComponent[];
 				if (isNew) {
-					updated = [...components, c];
+					updated = [...components, savedComponent];
 				} else {
-					updated = components.map((x) => (x.id === c.id ? c : x));
+					updated = components.map((x) => (x.id === c.id ? savedComponent : x));
 				}
 				onChange(updated);
 				setEditing(null);
@@ -204,6 +217,9 @@ export function ComponentManager({
 											}}
 										>
 											<div className="cm-item-name">{c.name}</div>
+											<div className="cm-item-id" title={`完整 ID: ${c.id}`}>
+												ID: {toAssetStyleId(c.id)}
+											</div>
 											<div className="cm-item-image">{c.image}</div>
 										</button>
 									))}
@@ -245,25 +261,43 @@ export function ComponentManager({
 							<Input
 								id="cm-command"
 								value={commandText}
-								onChange={(e) => setCommandText(e.target.value)}
+								status={commandError ? "error" : undefined}
+								onChange={(e) => {
+									setCommandText(e.target.value);
+									if (commandError) setCommandError(null);
+								}}
 								onBlur={() => {
 									try {
 										const parsed = JSON.parse(commandText);
 										if (Array.isArray(parsed)) {
 											setEditing({ ...editing, command: parsed });
+											setCommandError(null);
+										} else {
+											setCommandError("命令必须是 JSON 数组");
 										}
-									} catch {
-										/* ignore */
+									} catch (err) {
+										setCommandError(
+											err instanceof Error ? err.message : "JSON 解析失败",
+										);
 									}
 								}}
 								placeholder='["sh", "-c"]'
 							/>
+							{commandError && (
+								<Text type="danger" className="cm-field-hint">
+									{commandError}
+								</Text>
+							)}
+							<Text type="secondary" className="cm-field-hint">
+								声明输出的组件需要在运行时写入 /tmp/outputs/output，否则 Argo
+								会将节点标记为失败。
+							</Text>
 						</div>
 						<div className="cm-field">
 							<label htmlFor="cm-cpu">CPU</label>
 							<Input
 								id="cm-cpu"
-								value={editing.cpu}
+								value={editing.cpu ?? ""}
 								onChange={(e) =>
 									setEditing({ ...editing, cpu: e.target.value })
 								}
@@ -274,7 +308,7 @@ export function ComponentManager({
 							<label htmlFor="cm-memory">内存</label>
 							<Input
 								id="cm-memory"
-								value={editing.memory}
+								value={editing.memory ?? ""}
 								onChange={(e) =>
 									setEditing({ ...editing, memory: e.target.value })
 								}
@@ -285,11 +319,33 @@ export function ComponentManager({
 							<label htmlFor="cm-disk">磁盘</label>
 							<Input
 								id="cm-disk"
-								value={editing.disk}
+								value={editing.disk ?? ""}
 								onChange={(e) =>
 									setEditing({ ...editing, disk: e.target.value })
 								}
 								placeholder="1Gi"
+							/>
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-gpu">GPU</label>
+							<Input
+								id="cm-gpu"
+								value={editing.gpu ?? ""}
+								onChange={(e) =>
+									setEditing({ ...editing, gpu: e.target.value })
+								}
+								placeholder="1"
+							/>
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-compute-tier">计算档位</label>
+							<Input
+								id="cm-compute-tier"
+								value={editing.computeTier ?? ""}
+								onChange={(e) =>
+									setEditing({ ...editing, computeTier: e.target.value })
+								}
+								placeholder="gpu-l4"
 							/>
 						</div>
 					</div>

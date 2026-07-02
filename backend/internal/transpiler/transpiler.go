@@ -11,6 +11,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// DefaultTTLSecondsAfterCompletion keeps Argo workflow objects available long
+// enough for operator diagnostics while DataBrew keeps the durable run ledger.
+const DefaultTTLSecondsAfterCompletion int32 = 30 * 24 * 60 * 60
+
 // inputSpec describes one input parameter that comes from an upstream node's output.
 type inputSpec struct {
 	paramName string
@@ -20,9 +24,14 @@ type inputSpec struct {
 
 // Volume represents a named volume that can be mounted.
 type Volume struct {
-	Name       string
-	IsEmptyDir bool
-	PVCName    string
+	Name                   string
+	IsEmptyDir             bool
+	PVCName                string
+	ConfigMapName          string
+	ConfigMapKey           string
+	CSIDriver              string
+	CSISecretProviderClass string
+	ReadOnly               bool
 }
 
 // Options controls how the pipeline is transpiled.
@@ -31,6 +40,8 @@ type Options struct {
 	Namespace             string
 	ServiceAccount        string
 	ImagePullSecrets      []string
+	TemplateNodeSelector  map[string]string
+	TemplateTolerations   []corev1.Toleration
 	TTLSecondsAfter       int32
 	RetryStrategy         *RetryStrategy
 	ActiveDeadlineSeconds int64
@@ -47,11 +58,15 @@ type RetryStrategy struct {
 
 // Transpile converts a Pipeline definition into an Argo Workflow CRD.
 func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
+	NormalizePipeline(p)
+	if err := ValidatePipeline(p); err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &Options{}
 	}
 	if opts.TTLSecondsAfter == 0 {
-		opts.TTLSecondsAfter = 3600
+		opts.TTLSecondsAfter = DefaultTTLSecondsAfterCompletion
 	}
 	name := opts.Name
 	if name == "" {
@@ -105,8 +120,9 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 
 	// Build node input specs: for each node, which input params come from where
 	nodeInputs := buildInputSpecs(p)
+	outputConsumers := buildOutputConsumers(p)
 	nodeTemplates := make(map[string]string)
-	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, opts)
+	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts)
 	if err != nil {
 		return nil, fmt.Errorf("build node templates: %w", err)
 	}
@@ -138,10 +154,25 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 			vol.VolumeSource = corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			}
+		} else if v.CSISecretProviderClass != "" {
+			vol.VolumeSource = corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver:           csiDriver(v.CSIDriver),
+					ReadOnly:         boolPtr(true),
+					VolumeAttributes: map[string]string{"secretProviderClass": v.CSISecretProviderClass},
+				},
+			}
+		} else if v.ConfigMapName != "" {
+			vol.VolumeSource = corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: v.ConfigMapName},
+				},
+			}
 		} else if v.PVCName != "" {
 			vol.VolumeSource = corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: v.PVCName,
+					ReadOnly:  v.ReadOnly,
 				},
 			}
 		}
@@ -161,6 +192,18 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 						Name: vm.Name,
 						VolumeSource: corev1.VolumeSource{
 							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					})
+					seen[vm.Name] = true
+				} else if vm.CSISecretProviderClass != "" {
+					vols = append(vols, corev1.Volume{
+						Name: vm.Name,
+						VolumeSource: corev1.VolumeSource{
+							CSI: &corev1.CSIVolumeSource{
+								Driver:           csiDriver(vm.CSIDriver),
+								ReadOnly:         boolPtr(true),
+								VolumeAttributes: map[string]string{"secretProviderClass": vm.CSISecretProviderClass},
+							},
 						},
 					})
 					seen[vm.Name] = true
@@ -188,6 +231,18 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 		vols = append(vols, corev1.Volume{Name: "temp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 	return vols
+}
+
+func csiDriver(driver string) string {
+	driver = strings.TrimSpace(driver)
+	if driver == "" {
+		return "secrets-store-gke.csi.k8s.io"
+	}
+	return driver
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 // buildInputSpecs collects all input parameter specs from edges and arg.From references.
@@ -258,9 +313,66 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 	return m
 }
 
+func buildOutputConsumers(p *Pipeline) map[string]map[string]bool {
+	m := make(map[string]map[string]bool)
+	mark := func(nodeID, port string) {
+		if nodeID == "" || port == "" {
+			return
+		}
+		if m[nodeID] == nil {
+			m[nodeID] = make(map[string]bool)
+		}
+		m[nodeID][port] = true
+		m[nodeID][safeParamName(port)] = true
+	}
+	for _, edge := range p.Edges {
+		nodeID, port := edge.ResolveSource()
+		mark(nodeID, port)
+	}
+	for _, node := range p.Nodes {
+		for _, arg := range node.Component.Args {
+			refNode, refPort := splitRef(arg.From)
+			mark(refNode, refPort)
+		}
+	}
+	return m
+}
+
+func outputParamDecls(node Node, consumed map[string]bool) []wfv1.Parameter {
+	var outputParams []wfv1.Parameter
+	for _, out := range node.Outputs {
+		if !consumed[out.Name] && !consumed[safeParamName(out.Name)] && !componentWritesOutputPath(node.Component, out.Name) {
+			continue
+		}
+		outputParams = append(outputParams, wfv1.Parameter{
+			Name:      safeParamName(out.Name),
+			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
+		})
+	}
+	return outputParams
+}
+
+func componentWritesOutputPath(c Component, outputName string) bool {
+	path := fmt.Sprintf("/tmp/outputs/%s", outputName)
+	if strings.Contains(c.Source, path) {
+		return true
+	}
+	for _, part := range c.Command {
+		if strings.Contains(part, path) {
+			return true
+		}
+	}
+	for _, arg := range c.Args {
+		if strings.Contains(arg.Value, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildContainerTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
-func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -279,34 +391,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 		},
 	}
 
-	// Resources
-	if node.Component.Resources != nil {
-		res := node.Component.Resources
-		limits := corev1.ResourceList{}
-		requests := corev1.ResourceList{}
-
-		if res.CPU != "" {
-			if q, err := resource.ParseQuantity(res.CPU); err == nil {
-				limits[corev1.ResourceCPU] = q
-				requests[corev1.ResourceCPU] = q
-			}
-		}
-		if res.Memory != "" {
-			if q, err := resource.ParseQuantity(res.Memory); err == nil {
-				limits[corev1.ResourceMemory] = q
-				requests[corev1.ResourceMemory] = q
-			}
-		}
-		if res.Disk != "" {
-			if q, err := resource.ParseQuantity(res.Disk); err == nil {
-				limits[corev1.ResourceEphemeralStorage] = q
-				requests[corev1.ResourceEphemeralStorage] = q
-			}
-		}
-		if len(limits) > 0 || len(requests) > 0 {
-			tmpl.Container.Resources = corev1.ResourceRequirements{Limits: limits, Requests: requests}
-		}
-	}
+	tmpl.Container.Resources = buildK8sResources(node.Component.Resources)
+	applyTemplateSchedulingDefaults(&tmpl, opts)
+	applySchedulingHints(&tmpl, node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -318,13 +405,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 	}
 
 	// Output parameters (captured from file paths)
-	var outputParams []wfv1.Parameter
-	for _, out := range node.Outputs {
-		outputParams = append(outputParams, wfv1.Parameter{
-			Name:      safeParamName(out.Name),
-			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
-		})
-	}
+	outputParams := outputParamDecls(node, consumedOutputs)
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 	}
@@ -335,7 +416,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 		if arg.From != "" {
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		} else if arg.Value != "" {
-			containerArgs = append(containerArgs, arg.Value)
+			containerArgs = append(containerArgs, splitArgValue(arg.Value)...)
 		} else {
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		}
@@ -344,11 +425,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 	// and the container is running a shell command (sh -c).
 	// Typical case: Command=["sh"], Args=[{Value:"-c"}, {Value:"echo ... > /tmp/outputs/output"}]
 	// → containerArgs = ["-c", "echo ..."]
-	if len(outputParams) > 0 && isShellName(node.Component.Command) {
-		if len(containerArgs) >= 2 && containerArgs[0] == "-c" {
-			containerArgs[1] = "mkdir -p /tmp/outputs && " + containerArgs[1]
-		} else if len(containerArgs) == 1 {
-			containerArgs[0] = "mkdir -p /tmp/outputs && " + containerArgs[0]
+	if len(outputParams) > 0 {
+		if scriptArgIndex := shellScriptArgIndex(node.Component.Command, containerArgs); scriptArgIndex >= 0 {
+			containerArgs[scriptArgIndex] = "mkdir -p /tmp/outputs && " + containerArgs[scriptArgIndex]
 		}
 	}
 	tmpl.Container.Args = containerArgs
@@ -382,14 +461,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 		tmpl.Container.VolumeMounts = volMounts
 	}
 	// GlobalEnv (asset IDs, deployment ID, etc.) injected into every container.
-	if len(opts.GlobalEnv) > 0 {
-		for _, env := range opts.GlobalEnv {
-			tmpl.Container.Env = append(tmpl.Container.Env, corev1.EnvVar{
-				Name:  env.Name,
-				Value: env.Value,
-			})
-		}
-	}
+	// Global values override a component env of the same name instead of
+	// emitting duplicate entries, which Kubernetes resolves ambiguously.
+	tmpl.Container.Env = mergeGlobalEnv(tmpl.Container.Env, opts.GlobalEnv)
 
 	// Retry strategy
 	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
@@ -459,10 +533,10 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 // buildAllNodeTemplates recursively builds templates for a list of nodes.
 // For container nodes returns 1 template; for sub-graph nodes returns N+1
 // templates (1 DAG template + N leaf templates for sub-nodes).
-func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, opts *Options) ([]wfv1.Template, error) {
+func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options) ([]wfv1.Template, error) {
 	var all []wfv1.Template
 	for _, node := range nodes {
-		tms, err := buildNodeTemplates(node, inputs[node.ID], opts)
+		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts)
 		if err != nil {
 			return nil, err
 		}
@@ -473,14 +547,14 @@ func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, opts *Op
 
 // buildNodeTemplates returns all templates for a single node.
 // For sub-graph nodes this recursively includes sub-node templates.
-func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) ([]wfv1.Template, error) {
 	if len(node.SubNodes) > 0 {
 		return buildSubGraphTemplates(node, inputs, opts)
 	}
 	if node.Component.Mode == "script" {
-		return []wfv1.Template{*buildScriptTemplate(node, inputs, opts)}, nil
+		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts)}, nil
 	}
-	return []wfv1.Template{*buildContainerTemplate(node, inputs, opts)}, nil
+	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts)}, nil
 }
 
 // buildSubGraphTemplates builds templates for a sub-graph node.
@@ -488,10 +562,11 @@ func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Te
 func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
 	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
 	subInputs := buildInputSpecs(subPipe)
+	subOutputConsumers := buildOutputConsumers(subPipe)
 
 	var templates []wfv1.Template
 	for _, subNode := range node.SubNodes {
-		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], opts)
+		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts)
 		if err != nil {
 			return nil, err
 		}
@@ -516,7 +591,7 @@ func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv
 //   - Argo writes source to a temp file and runs `command < tmpfile`
 //   - Stdout is automatically captured as outputs.result
 //   - File-based output params use valueFrom.path (same as container mode)
-func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -560,34 +635,9 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 		},
 	}
 
-	// Resources
-	if node.Component.Resources != nil {
-		res := node.Component.Resources
-		limits := corev1.ResourceList{}
-		requests := corev1.ResourceList{}
-
-		if res.CPU != "" {
-			if q, err := resource.ParseQuantity(res.CPU); err == nil {
-				limits[corev1.ResourceCPU] = q
-				requests[corev1.ResourceCPU] = q
-			}
-		}
-		if res.Memory != "" {
-			if q, err := resource.ParseQuantity(res.Memory); err == nil {
-				limits[corev1.ResourceMemory] = q
-				requests[corev1.ResourceMemory] = q
-			}
-		}
-		if res.Disk != "" {
-			if q, err := resource.ParseQuantity(res.Disk); err == nil {
-				limits[corev1.ResourceEphemeralStorage] = q
-				requests[corev1.ResourceEphemeralStorage] = q
-			}
-		}
-		if len(limits) > 0 || len(requests) > 0 {
-			tmpl.Script.Resources = corev1.ResourceRequirements{Limits: limits, Requests: requests}
-		}
-	}
+	tmpl.Script.Resources = buildK8sResources(node.Component.Resources)
+	applyTemplateSchedulingDefaults(&tmpl, opts)
+	applySchedulingHints(&tmpl, node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -599,13 +649,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 	}
 
 	// Output parameters (captured from file paths)
-	var outputParams []wfv1.Parameter
-	for _, out := range node.Outputs {
-		outputParams = append(outputParams, wfv1.Parameter{
-			Name:      safeParamName(out.Name),
-			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
-		})
-	}
+	outputParams := outputParamDecls(node, consumedOutputs)
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 		// Auto-create /tmp/outputs/ directory in the script source
@@ -640,15 +684,8 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 		}
 		tmpl.Script.VolumeMounts = volMounts
 	}
-	// GlobalEnv injected into every node.
-	if len(opts.GlobalEnv) > 0 {
-		for _, env := range opts.GlobalEnv {
-			tmpl.Script.Env = append(tmpl.Script.Env, corev1.EnvVar{
-				Name:  env.Name,
-				Value: env.Value,
-			})
-		}
-	}
+	// GlobalEnv injected into every node (override duplicates, see container path).
+	tmpl.Script.Env = mergeGlobalEnv(tmpl.Script.Env, opts.GlobalEnv)
 
 	// Retry strategy
 	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
@@ -669,22 +706,191 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 
 // --- helpers ---
 
-// isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).
-// In Argo container templates, the shell interpreter is typically set as Command and
-// the -c flag + script body are in Args.
-func isShellName(cmd []string) bool {
-	if len(cmd) != 1 {
+// mergeGlobalEnv appends platform-injected global env vars to a container's env
+// list. When a global var shares a name with an existing component env var the
+// global value overrides it in place rather than producing a duplicate entry
+// (Kubernetes resolves duplicate env names ambiguously and warns).
+func mergeGlobalEnv(base []corev1.EnvVar, global []EnvVar) []corev1.EnvVar {
+	if len(global) == 0 {
+		return base
+	}
+	index := make(map[string]int, len(base))
+	for i, e := range base {
+		index[e.Name] = i
+	}
+	for _, env := range global {
+		if i, ok := index[env.Name]; ok {
+			base[i].Value = env.Value
+			continue
+		}
+		base = append(base, corev1.EnvVar{Name: env.Name, Value: env.Value})
+		index[env.Name] = len(base) - 1
+	}
+	return base
+}
+
+func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
+	if res == nil {
+		return corev1.ResourceRequirements{}
+	}
+	limits := corev1.ResourceList{}
+	requests := corev1.ResourceList{}
+
+	if res.CPU != "" {
+		if q, err := resource.ParseQuantity(res.CPU); err == nil {
+			limits[corev1.ResourceCPU] = q
+			requests[corev1.ResourceCPU] = q
+		}
+	}
+	if res.Memory != "" {
+		if q, err := resource.ParseQuantity(res.Memory); err == nil {
+			limits[corev1.ResourceMemory] = q
+			requests[corev1.ResourceMemory] = q
+		}
+	}
+	if res.Disk != "" {
+		if q, err := resource.ParseQuantity(res.Disk); err == nil {
+			limits[corev1.ResourceEphemeralStorage] = q
+			requests[corev1.ResourceEphemeralStorage] = q
+		}
+	}
+	if res.GPU != "" {
+		if q, err := resource.ParseQuantity(res.GPU); err == nil {
+			limits[corev1.ResourceName("nvidia.com/gpu")] = q
+		}
+	}
+	if len(limits) == 0 && len(requests) == 0 {
+		return corev1.ResourceRequirements{}
+	}
+	return corev1.ResourceRequirements{Limits: limits, Requests: requests}
+}
+
+func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
+	if tmpl == nil || !requiresGPU(res) {
+		return
+	}
+	if tmpl.NodeSelector == nil {
+		tmpl.NodeSelector = map[string]string{}
+	}
+	if isL4ComputeTier(res.ComputeTier) {
+		tmpl.NodeSelector["cloud.google.com/gke-accelerator"] = "nvidia-l4"
+	}
+	appendTemplateToleration(tmpl, corev1.Toleration{
+		Key:      "nvidia.com/gpu",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "present",
+		Effect:   corev1.TaintEffectNoSchedule,
+	})
+}
+
+func applyTemplateSchedulingDefaults(tmpl *wfv1.Template, opts *Options) {
+	if tmpl == nil || opts == nil {
+		return
+	}
+	if len(opts.TemplateNodeSelector) > 0 {
+		if tmpl.NodeSelector == nil {
+			tmpl.NodeSelector = map[string]string{}
+		}
+		for key, value := range opts.TemplateNodeSelector {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+				continue
+			}
+			tmpl.NodeSelector[key] = value
+		}
+	}
+	for _, toleration := range opts.TemplateTolerations {
+		if strings.TrimSpace(toleration.Key) == "" && toleration.Operator != corev1.TolerationOpExists {
+			continue
+		}
+		appendTemplateToleration(tmpl, toleration)
+	}
+}
+
+func requiresGPU(res *ResourceRequirements) bool {
+	if res == nil || strings.TrimSpace(res.GPU) == "" {
 		return false
 	}
-	switch cmd[0] {
+	q, err := resource.ParseQuantity(strings.TrimSpace(res.GPU))
+	if err != nil {
+		return false
+	}
+	return q.Sign() > 0
+}
+
+func isL4ComputeTier(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(normalized, "l4")
+}
+
+func appendTemplateToleration(tmpl *wfv1.Template, toleration corev1.Toleration) {
+	for _, existing := range tmpl.Tolerations {
+		if existing.Key == toleration.Key &&
+			existing.Operator == toleration.Operator &&
+			existing.Value == toleration.Value &&
+			existing.Effect == toleration.Effect {
+			return
+		}
+	}
+	tmpl.Tolerations = append(tmpl.Tolerations, toleration)
+}
+
+// isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).
+func isShellBinary(name string) bool {
+	switch name {
 	case "sh", "bash", "dash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/sh", "/usr/bin/bash":
 		return true
 	}
 	return false
 }
 
+// shellScriptArgIndex finds the args entry that contains the shell script body.
+// Argo container templates commonly use either Command=["sh"], Args=["-c", "..."]
+// splitArgValue splits a combined arg value like "--flag=value" or
+// " --flag value" into separate elements so the container runtime passes
+// them as individual argv entries.
+func splitArgValue(raw string) []string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	// "--flag=value" → ["--flag", "value"]
+	if idx := strings.IndexByte(v, '='); idx > 2 && strings.HasPrefix(v, "--") {
+		return []string{v[:idx], v[idx+1:]}
+	}
+	// "--flag value" → ["--flag", "value"]
+	if idx := strings.IndexByte(v, ' '); idx > 2 && strings.HasPrefix(v, "--") {
+		return []string{v[:idx], strings.TrimSpace(v[idx+1:])}
+	}
+	return []string{v}
+}
+
+
+// or Command=["sh", "-c"], Args=["..."].
+func shellScriptArgIndex(cmd []string, args []string) int {
+	if len(cmd) != 1 {
+		if len(cmd) == 2 && isShellBinary(cmd[0]) && cmd[1] == "-c" && len(args) == 1 {
+			return 0
+		}
+		return -1
+	}
+	if !isShellBinary(cmd[0]) {
+		return -1
+	}
+	if len(args) >= 2 && args[0] == "-c" {
+		return 1
+	}
+	if len(args) == 1 {
+		return 0
+	}
+	return -1
+}
+
 func templateName(nodeID string) string {
-	return "step-" + strings.ReplaceAll(nodeID, "_", "-")
+	normalized := strings.ReplaceAll(nodeID, "_", "-")
+	if strings.HasPrefix(normalized, "step-") {
+		return normalized
+	}
+	return "step-" + normalized
 }
 
 func safeParamName(name string) string {

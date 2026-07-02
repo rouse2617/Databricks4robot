@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,10 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -29,6 +32,9 @@ func (r *routeAssetRepo) Get(ctx context.Context, id string) (*models.Asset, err
 }
 func (r *routeAssetRepo) GetAll(context.Context, string) (*models.Asset, error) {
 	return &models.Asset{AssetID: "aaaaaaaa", Tags: map[string]string{}}, nil
+}
+func (r *routeAssetRepo) FindExistingIDs(context.Context, []string) (map[string]struct{}, error) {
+	return map[string]struct{}{"aaaaaaaa": {}}, nil
 }
 func (r *routeAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
 func (r *routeAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
@@ -106,7 +112,7 @@ func (r *routeCustomerRepo) Get(context.Context, string) (*models.Customer, erro
 	return &models.Customer{CustomerID: "c1"}, nil
 }
 func (r *routeCustomerRepo) Update(context.Context, *models.Customer) error { return nil }
-func (r *routeCustomerRepo) Exists(context.Context, string) (bool, error)    { return true, nil }
+func (r *routeCustomerRepo) Exists(context.Context, string) (bool, error)   { return true, nil }
 func (r *routeCustomerRepo) List(ctx context.Context, status, slaTier, region string, limit int, cursor string) ([]*models.Customer, error) {
 	return nil, nil
 }
@@ -120,7 +126,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -193,6 +199,7 @@ func TestRegisterAll(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("blank token expected 400, got %d", w.Code)
 	}
+	assertStandardError(t, w, "INVALID_ARGUMENT")
 
 	// internal route now requires auth (ADMIN_TOKEN or GraceToken fallback)
 	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
@@ -201,6 +208,152 @@ func TestRegisterAll(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 (bind error), got %d", w.Code)
+	}
+
+	assertRoutesRegistered(t, r, []string{
+		"GET /api/v1/assets/:id/events/stream",
+		"GET /api/v1/events/stream",
+		"POST /api/v1/deliveries/draft",
+		"POST /api/v1/deliveries/:id/items",
+		"POST /api/v1/deliveries/:id/commit",
+		"POST /api/v1/deliveries/:id/cancel",
+		"POST /api/v1/deliveries/:id/retry",
+		"POST /api/v1/deliveries/:id/ack",
+	})
+}
+
+func TestPodTerminalAttachRouteUsesAttachTokenBeforeAPIAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
+	workflowHandler := workflowH.New(nil, "default")
+	cfg := &config.Config{DatabrewToken: "dev-token"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, workflowHandler, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pod-terminal/sessions/missing/attach?token=one-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("attach route should rely on one-time token, got API auth 401: %s", w.Body.String())
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected handler-level 404 for missing session, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuditSearchRouteRegisteredWhenHandlerProvided(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
+	cfg := &config.Config{DatabrewToken: "dev-token"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, auditH.New(nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	assertRoutesRegistered(t, r, []string{"GET /api/v1/audit/search"})
+}
+
+func TestAuthRoutes_ReturnStandardErrorEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
+	cfg := &config.Config{DatabrewToken: "dev-token", AllowedDomain: "example.com"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	cases := []struct {
+		name string
+		path string
+		body string
+		code int
+		err  string
+	}{
+		{
+			name: "email login invalid json",
+			path: "/api/v1/auth/email-login",
+			body: `{`,
+			code: http.StatusBadRequest,
+			err:  "INVALID_ARGUMENT",
+		},
+		{
+			name: "email domain rejected",
+			path: "/api/v1/auth/email-login",
+			body: `{"email":"user@other.test"}`,
+			code: http.StatusUnauthorized,
+			err:  "UNAUTHORIZED",
+		},
+		{
+			name: "legacy login blank token",
+			path: "/api/v1/auth/login",
+			body: `{"token":"   "}`,
+			code: http.StatusBadRequest,
+			err:  "INVALID_ARGUMENT",
+		},
+		{
+			name: "legacy login invalid token",
+			path: "/api/v1/auth/login",
+			body: `{"token":"wrong"}`,
+			code: http.StatusUnauthorized,
+			err:  "UNAUTHORIZED",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != tc.code {
+				t.Fatalf("expected %d, got %d: %s", tc.code, w.Code, w.Body.String())
+			}
+			assertStandardError(t, w, tc.err)
+		})
+	}
+}
+
+func assertStandardError(t *testing.T, w *httptest.ResponseRecorder, wantCode string) {
+	t.Helper()
+	var body struct {
+		Code      string         `json:"code"`
+		Message   string         `json:"message"`
+		RequestID string         `json:"request_id"`
+		Details   map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("error body is not JSON: %v; body=%s", err, w.Body.String())
+	}
+	if body.Code != wantCode {
+		t.Fatalf("expected error code %q, got %q; body=%s", wantCode, body.Code, w.Body.String())
+	}
+	if body.Message == "" {
+		t.Fatalf("expected error message; body=%s", w.Body.String())
+	}
+	if body.RequestID == "" {
+		t.Fatalf("expected request_id; body=%s", w.Body.String())
+	}
+}
+
+func assertRoutesRegistered(t *testing.T, r *gin.Engine, want []string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, ri := range r.Routes() {
+		seen[ri.Method+" "+ri.Path] = true
+	}
+	for _, route := range want {
+		if !seen[route] {
+			t.Fatalf("route not registered: %s", route)
+		}
 	}
 }
 
@@ -213,7 +366,7 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
@@ -233,7 +386,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -263,7 +416,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -283,7 +436,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 	actionHandler := actionH.New(nil)
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil, nil, nil)
 
 	want := map[string]bool{
 		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
@@ -311,7 +464,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"dev-token"}`))
 	req.Header.Set("Content-Type", "application/json")

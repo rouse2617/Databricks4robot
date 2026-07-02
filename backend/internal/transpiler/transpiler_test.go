@@ -1,7 +1,11 @@
 package transpiler
 
 import (
+	"strings"
 	"testing"
+
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestTranspileEdgePorts(t *testing.T) {
@@ -14,7 +18,7 @@ func TestTranspileEdgePorts(t *testing.T) {
 					Name:    "a",
 					Image:   "busybox:latest",
 					Command: []string{"sh", "-c"},
-					Args:    []Argument{{Name: "script", Value: "echo a"}},
+					Args:    []Argument{{Name: "script", Value: "echo a > /tmp/outputs/out"}},
 				},
 				Outputs: []Port{{Name: "out", Type: "string"}},
 			},
@@ -41,6 +45,469 @@ func TestTranspileEdgePorts(t *testing.T) {
 	}
 }
 
+func TestTranspileRejectsDuplicateTargetInputs(t *testing.T) {
+	p := &Pipeline{
+		Name: "dup-target",
+		Nodes: []Node{
+			{
+				ID: "a",
+				Component: Component{
+					Name:    "a",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo a > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "b",
+				Component: Component{
+					Name:    "b",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo b > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "join",
+				Component: Component{
+					Name:    "join",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo join"}},
+				},
+				Inputs: []Port{{Name: "input", Type: "string"}},
+			},
+		},
+		Edges: []Edge{
+			{Source: "a.out", Target: "join.input"},
+			{Source: "b.out", Target: "join.input"},
+		},
+	}
+
+	_, err := Transpile(p, &Options{Name: "dup-target"})
+	if err == nil {
+		t.Fatal("expected duplicate target input error")
+	}
+	if !strings.Contains(err.Error(), "join.input") {
+		t.Fatalf("error = %q, want join.input detail", err.Error())
+	}
+}
+
+func TestTranspileAllowsDistinctFanInInputs(t *testing.T) {
+	p := &Pipeline{
+		Name: "distinct-target",
+		Nodes: []Node{
+			{
+				ID: "left",
+				Component: Component{
+					Name:    "left",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo left > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "right",
+				Component: Component{
+					Name:    "right",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo right > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "join",
+				Component: Component{
+					Name:    "join",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo join"}},
+				},
+				Inputs: []Port{{Name: "left", Type: "string"}, {Name: "right", Type: "string"}},
+			},
+		},
+		Edges: []Edge{
+			{Source: "left.out", Target: "join.left"},
+			{Source: "right.out", Target: "join.right"},
+		},
+	}
+
+	if _, err := Transpile(p, &Options{Name: "distinct-target"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pipeline",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:    "gpu",
+				Image:   "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "nvidia-smi"}},
+				Resources: &ResourceRequirements{
+					CPU:         "4000m",
+					Memory:      "16Gi",
+					Disk:        "50Gi",
+					GPU:         "1",
+					ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "gpu-pipeline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu-step" {
+			continue
+		}
+		if tmpl.Container == nil {
+			t.Fatal("expected container template")
+		}
+		gpu := tmpl.Container.Resources.Limits[corev1.ResourceName("nvidia.com/gpu")]
+		if gpu.String() != "1" {
+			t.Fatalf("gpu limit = %q, want 1", gpu.String())
+		}
+		if _, ok := tmpl.Container.Resources.Requests[corev1.ResourceName("nvidia.com/gpu")]; ok {
+			t.Fatal("gpu must not be emitted as a request")
+		}
+		if got := tmpl.NodeSelector["cloud.google.com/gke-accelerator"]; got != "nvidia-l4" {
+			t.Fatalf("gpu node selector = %q, want nvidia-l4", got)
+		}
+		assertTemplateToleration(t, tmpl, "nvidia.com/gpu", "present")
+		disk := tmpl.Container.Resources.Limits[corev1.ResourceEphemeralStorage]
+		if got := disk.String(); got != "50Gi" {
+			t.Fatalf("disk limit = %q, want 50Gi", got)
+		}
+		return
+	}
+	t.Fatal("step-gpu-step template not found")
+}
+
+func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
+	t.Helper()
+	for _, tol := range tmpl.Tolerations {
+		if tol.Key == key && tol.Value == value && tol.Operator == corev1.TolerationOpEqual && tol.Effect == corev1.TaintEffectNoSchedule {
+			return
+		}
+	}
+	t.Fatalf("missing toleration %s=%s in %#v", key, value, tmpl.Tolerations)
+}
+
+func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
+	p := &Pipeline{
+		Name: "target-scheduling",
+		Nodes: []Node{{
+			ID: "step-a",
+			Component: Component{
+				Name:  "worker",
+				Image: "busybox:latest",
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "target-scheduling",
+		TemplateNodeSelector: map[string]string{
+			"workload": "databrew",
+		},
+		TemplateTolerations: []corev1.Toleration{{
+			Key:      "environment",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "dev",
+			Effect:   corev1.TaintEffectNoSchedule,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-a" {
+			continue
+		}
+		if got := tmpl.NodeSelector["workload"]; got != "databrew" {
+			t.Fatalf("node selector = %q, want databrew", got)
+		}
+		assertTemplateToleration(t, tmpl, "environment", "dev")
+		return
+	}
+	t.Fatal("step-a template not found")
+}
+
+func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
+	p := &Pipeline{
+		Name: "secret-mount",
+		Nodes: []Node{{
+			ID: "secret-step",
+			Component: Component{
+				Name:  "secret",
+				Image: "busybox:latest",
+			},
+			VolumeMounts: []VolumeMount{{
+				Name:                   "secret-vol",
+				MountPath:              "/mnt/secrets",
+				ReadOnly:               true,
+				CSISecretProviderClass: "db-secret-provider",
+			}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "secret-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var volume *corev1.Volume
+	for i := range wf.Spec.Volumes {
+		if wf.Spec.Volumes[i].Name == "secret-vol" {
+			volume = &wf.Spec.Volumes[i]
+			break
+		}
+	}
+	if volume == nil || volume.CSI == nil {
+		t.Fatalf("expected CSI volume, got %#v", wf.Spec.Volumes)
+	}
+	if volume.CSI.Driver != "secrets-store-gke.csi.k8s.io" {
+		t.Fatalf("CSI driver = %q", volume.CSI.Driver)
+	}
+	if volume.CSI.VolumeAttributes["secretProviderClass"] != "db-secret-provider" { // pragma: allowlist secret
+		t.Fatalf("CSI attrs = %#v", volume.CSI.VolumeAttributes)
+	}
+	if volume.CSI.ReadOnly == nil || !*volume.CSI.ReadOnly {
+		t.Fatal("expected CSI readOnly true")
+	}
+	var mounted bool
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-secret-step" || tmpl.Container == nil {
+			continue
+		}
+		for _, mount := range tmpl.Container.VolumeMounts {
+			if mount.Name == "secret-vol" && mount.MountPath == "/mnt/secrets" && mount.ReadOnly {
+				mounted = true
+			}
+		}
+	}
+	if !mounted {
+		t.Fatal("expected secret volume mount in node template")
+	}
+}
+
+func TestTranspileEmitsPVCAndEmptyDirRuntimeVolumes(t *testing.T) {
+	p := &Pipeline{
+		Name: "storage-mount",
+		Nodes: []Node{{
+			ID: "storage-step",
+			Component: Component{
+				Name:  "storage",
+				Image: "busybox:latest",
+			},
+			VolumeMounts: []VolumeMount{
+				{Name: "model-pvc", MountPath: "/workspace/models", PVCName: "shared-models", ReadOnly: true},
+				{Name: "scratch", MountPath: "/workspace/scratch", EmptyDir: true},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "storage-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumes := map[string]corev1.Volume{}
+	for _, volume := range wf.Spec.Volumes {
+		volumes[volume.Name] = volume
+	}
+	if volumes["model-pvc"].PersistentVolumeClaim == nil || volumes["model-pvc"].PersistentVolumeClaim.ClaimName != "shared-models" {
+		t.Fatalf("expected shared-models PVC, got %#v", volumes["model-pvc"])
+	}
+	if !volumes["model-pvc"].PersistentVolumeClaim.ReadOnly {
+		t.Fatal("expected PVC readOnly true")
+	}
+	if volumes["scratch"].EmptyDir == nil {
+		t.Fatalf("expected scratch emptyDir, got %#v", volumes["scratch"])
+	}
+}
+
+func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
+	p := &Pipeline{
+		Name: "script-storage-mount",
+		Nodes: []Node{{
+			ID: "script-step",
+			Component: Component{
+				Name:    "script",
+				Image:   "python:3.12-alpine",
+				Mode:    "script",
+				Command: []string{"python"},
+				Source:  "print('ok')",
+			},
+			VolumeMounts: []VolumeMount{{
+				Name:      "scratch",
+				MountPath: "/workspace/scratch",
+				EmptyDir:  true,
+			}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "script-storage-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-script-step" || tmpl.Script == nil {
+			continue
+		}
+		for _, mount := range tmpl.Script.VolumeMounts {
+			if mount.Name == "scratch" && mount.MountPath == "/workspace/scratch" {
+				return
+			}
+		}
+		t.Fatalf("expected script volume mount, got %#v", tmpl.Script.VolumeMounts)
+	}
+	t.Fatal("step-script-step script template not found")
+}
+
+func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
+	p := &Pipeline{
+		Name: "missing-output",
+		Nodes: []Node{
+			{
+				ID: "a",
+				Component: Component{
+					Name:    "a",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo a"}},
+				},
+				Outputs: []Port{{Name: "output", Type: "string"}},
+			},
+			{
+				ID: "b",
+				Component: Component{
+					Name:    "b",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo b"}},
+				},
+				Inputs: []Port{{Name: "input", Type: "string"}},
+			},
+		},
+		Edges: []Edge{{Source: "a.output", Target: "b.input"}},
+	}
+
+	_, err := Transpile(p, &Options{Name: "missing-output"})
+	if err == nil {
+		t.Fatal("expected consumed output file error")
+	}
+	if !strings.Contains(err.Error(), "/tmp/outputs/output") {
+		t.Fatalf("error = %q, want output path detail", err.Error())
+	}
+}
+
+func TestTranspileNormalizesDuplicatedShellArgs(t *testing.T) {
+	p := &Pipeline{
+		Name: "normalized-shell",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args: []Argument{
+					{Name: "sh", Value: "sh"},
+					{Name: "-c", Value: "-c"},
+					{Name: "script", Value: "echo ok"},
+				},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "normalized-shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if got := tmpl.Container.Args; len(got) != 1 || got[0] != "echo ok" {
+				t.Fatalf("args = %#v, want single script body", got)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
+func TestTranspileSkipsUnconsumedOutputFileContract(t *testing.T) {
+	p := &Pipeline{
+		Name: "unconsumed-output",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo ok"}},
+			},
+			Outputs: []Port{{Name: "output", Type: "string"}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "unconsumed-output"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if len(tmpl.Outputs.Parameters) != 0 {
+				t.Fatalf("outputs = %+v, want none for unconsumed output port", tmpl.Outputs.Parameters)
+			}
+			if len(tmpl.Container.Args) > 0 && tmpl.Container.Args[len(tmpl.Container.Args)-1] != "echo ok" {
+				t.Fatalf("container args = %v, want command unchanged", tmpl.Container.Args)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
+func TestTranspileDeclaresOutputWhenCommandWritesOutputFile(t *testing.T) {
+	p := &Pipeline{
+		Name: "file-output",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo ok > /tmp/outputs/output"}},
+			},
+			Outputs: []Port{{Name: "output", Type: "string"}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "file-output"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if len(tmpl.Outputs.Parameters) != 1 || tmpl.Outputs.Parameters[0].Name != "output" {
+				t.Fatalf("outputs = %+v, want output parameter", tmpl.Outputs.Parameters)
+			}
+			if got := tmpl.Container.Args[len(tmpl.Container.Args)-1]; got != "mkdir -p /tmp/outputs && echo ok > /tmp/outputs/output" {
+				t.Fatalf("script arg = %q", got)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
 func TestTranspileDefaultTTL(t *testing.T) {
 	p := &Pipeline{
 		Name: "ttl",
@@ -56,8 +523,8 @@ func TestTranspileDefaultTTL(t *testing.T) {
 	if wf.Spec.TTLStrategy == nil || wf.Spec.TTLStrategy.SecondsAfterCompletion == nil {
 		t.Fatal("expected TTL strategy")
 	}
-	if *wf.Spec.TTLStrategy.SecondsAfterCompletion != 3600 {
-		t.Fatalf("ttl = %d, want 3600", *wf.Spec.TTLStrategy.SecondsAfterCompletion)
+	if *wf.Spec.TTLStrategy.SecondsAfterCompletion != DefaultTTLSecondsAfterCompletion {
+		t.Fatalf("ttl = %d, want %d", *wf.Spec.TTLStrategy.SecondsAfterCompletion, DefaultTTLSecondsAfterCompletion)
 	}
 }
 
@@ -214,19 +681,32 @@ func TestTranspileParallelism(t *testing.T) {
 	}
 }
 
-func TestTranspileParallelismZero(t *testing.T) {
+func TestTranspileUsesCanonicalStepTemplateName(t *testing.T) {
 	p := &Pipeline{
-		Name: "no-parallel-limit",
+		Name: "wf",
 		Nodes: []Node{{
-			ID:        "n1",
-			Component: Component{Name: "n", Image: "busybox:latest"},
+			ID:        "step-1",
+			Component: Component{Name: "sleep", Image: "alpine:3.20", Command: []string{"sh", "-c"}, Args: []Argument{{Name: "cmd", Value: "sleep 1"}}},
 		}},
 	}
-	wf, err := Transpile(p, &Options{Name: "no-parallel"})
+	wf, err := Transpile(p, &Options{Name: "wf-test", Namespace: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wf.Spec.Parallelism != nil {
-		t.Fatal("expected Parallelism to be nil when not set")
+	var dag *wfv1.Template
+	for i := range wf.Spec.Templates {
+		if wf.Spec.Templates[i].Name == "dag" {
+			dag = &wf.Spec.Templates[i]
+			break
+		}
+	}
+	if dag == nil || dag.DAG == nil || len(dag.DAG.Tasks) != 1 {
+		t.Fatalf("expected one DAG task, got %#v", dag)
+	}
+	if dag.DAG.Tasks[0].Name != "step-1" {
+		t.Fatalf("task name = %q, want step-1", dag.DAG.Tasks[0].Name)
+	}
+	if dag.DAG.Tasks[0].Template != "step-1" {
+		t.Fatalf("task template = %q, want step-1", dag.DAG.Tasks[0].Template)
 	}
 }

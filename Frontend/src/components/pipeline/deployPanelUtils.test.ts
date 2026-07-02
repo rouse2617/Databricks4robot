@@ -11,6 +11,7 @@ const template = (
 ): PipelineTemplate => ({
 	id: "id-1",
 	name: "my-pipeline",
+	version: 1,
 	pipeline: { name: "my-pipeline", version: "1", nodes: [], edges: [] },
 	nodeCount: 1,
 	createdAt: "2026-05-27T12:00:00Z",
@@ -28,8 +29,8 @@ describe("deployPanelUtils", () => {
 
 	it("dedupes templates by name keeping the newest", () => {
 		const deduped = dedupeTemplatesByName([
-			template({ id: "old", createdAt: "2026-05-27T10:00:00Z" }),
-			template({ id: "new", createdAt: "2026-05-28T10:00:00Z" }),
+			template({ id: "old", version: 1, createdAt: "2026-05-27T10:00:00Z" }),
+			template({ id: "new", version: 2, createdAt: "2026-05-28T10:00:00Z" }),
 			template({
 				id: "other",
 				name: "other-pipeline",

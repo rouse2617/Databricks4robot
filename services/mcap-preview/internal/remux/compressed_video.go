@@ -70,6 +70,64 @@ func DecodeFoxgloveCompressedVideo(buf []byte) (data []byte, format string, err 
 	return data, format, nil
 }
 
+// DecodeSafariImage extracts raw JPEG bytes from a safari_sdk.protos.Image
+// protobuf message. Message layout (simplified):
+//
+//   message Image {
+//     uint32 width   = 1;   // varint
+//     uint32 height  = 2;   // varint
+//     SubMsg meta    = 3;   // LEN (skipped)
+//     bytes  data    = 4;   // LEN → JPEG payload
+//   }
+//
+// We hand-decode the same way as foxglove.CompressedVideo so the service
+// stays free of protobuf-go / protoc build steps.
+func DecodeSafariImage(buf []byte) (data []byte, width uint32, height uint32, err error) {
+	for len(buf) > 0 {
+		key, n := readVarint(buf)
+		if n <= 0 {
+			return nil, 0, 0, errors.New("safari_image: bad tag varint")
+		}
+		buf = buf[n:]
+		fieldNum := int(key >> 3)
+		wireType := int(key & 0x7)
+
+		switch wireType {
+		case 0: // VARINT → width / height
+			v, n := readVarint(buf)
+			if n <= 0 {
+				return nil, 0, 0, errors.New("safari_image: bad varint")
+			}
+			buf = buf[n:]
+			switch fieldNum {
+			case 1: width = uint32(v)
+			case 2: height = uint32(v)
+			}
+		case 2: // LEN
+			ln, n := readVarint(buf)
+			if n <= 0 {
+				return nil, 0, 0, errors.New("safari_image: bad length varint")
+			}
+			buf = buf[n:]
+			if uint64(len(buf)) < ln {
+				return nil, 0, 0, errors.New("safari_image: short LEN payload")
+			}
+			payload := buf[:ln]
+			buf = buf[ln:]
+			if fieldNum == 4 {
+				data = payload // JPEG bytes
+			}
+			// field 3 (meta sub-message) is silently skipped
+		default:
+			return nil, 0, 0, errors.New("safari_image: unsupported wire type")
+		}
+	}
+	if len(data) == 0 {
+		return nil, 0, 0, errors.New("safari_image: no image data in protobuf")
+	}
+	return data, width, height, nil
+}
+
 // readVarint decodes a protobuf base-128 varint. Returns (value, bytes_consumed).
 // Returns n<=0 on failure.
 func readVarint(buf []byte) (uint64, int) {

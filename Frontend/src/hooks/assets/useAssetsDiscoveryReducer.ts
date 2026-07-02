@@ -264,6 +264,13 @@ export function useAssetsDiscoveryReducer(): [
 	const listKeyRef = useRef(currentListKey);
 	/** Last facets filter key we successfully loaded (excludes page). */
 	const facetsLoadedKeyRef = useRef<string | null>(null);
+	/**
+	 * Authoritative total for the current filters, sourced from the dedicated
+	 * count/facets query. The list query's `total` is unreliable when ES is
+	 * unavailable (it can be smaller than the rows actually returned), so we
+	 * cache the count here and reuse it across page changes.
+	 */
+	const facetsTotalRef = useRef<number | null>(null);
 	const facetsRequestKeyRef = useRef(facetsRequestKey);
 	facetsRequestKeyRef.current = facetsRequestKey;
 	const inFlightRef = useRef(false);
@@ -308,8 +315,19 @@ export function useAssetsDiscoveryReducer(): [
 							assetMatchesAlgoStatusFilter(asset, activeAlgoStatusFilters),
 						)
 					: fetchedItems;
-				// total always uses backend count; frontend fallback only affects current page items.
-				const total: number = data.total ?? 0;
+				// The list query's `total` is unreliable when ES is unavailable
+				// (it can be smaller than the rows actually returned). Prefer the
+				// authoritative count from the facets query when it has loaded for
+				// the current filters, and always floor by the rows on this page so
+				// the UI never shows `total < rows`.
+				const cachedAuthoritativeTotal =
+					facetsLoadedKeyRef.current === facetsKeyAtStart
+						? facetsTotalRef.current
+						: null;
+				const total: number = Math.max(
+					cachedAuthoritativeTotal ?? data.total ?? 0,
+					items.length,
+				);
 				if (cancelled || listKeyRef.current !== currentListKey) {
 					inFlightRef.current = false;
 					return;
@@ -325,7 +343,10 @@ export function useAssetsDiscoveryReducer(): [
 					payload: {
 						items,
 						total,
-						totalApprox: total > 0 && items.length === pageSize,
+						totalApprox:
+							cachedAuthoritativeTotal != null
+								? false
+								: total > 0 && items.length === pageSize,
 						debugPlan: data.debug_plan,
 						warnings,
 					},
@@ -352,14 +373,27 @@ export function useAssetsDiscoveryReducer(): [
 					if (facetsLoadedKeyRef.current === facetsKeyAtStart) {
 						return;
 					}
+					// The count/facets query returns the authoritative total
+					// (postgres count fallback when ES is down). Apply it even when
+					// no aggregation buckets come back (facets === null).
+					const authoritativeTotal =
+						typeof facetData.total === "number" ? facetData.total : null;
 					const aggregations = mapFacetsToAggregations(facetData.facets);
-					if (!aggregations) {
+					if (authoritativeTotal == null && !aggregations) {
 						return;
+					}
+					if (authoritativeTotal != null) {
+						facetsTotalRef.current = authoritativeTotal;
 					}
 					facetsLoadedKeyRef.current = facetsKeyAtStart;
 					dispatch({
 						type: "FACETS_SUCCESS",
-						payload: { aggregations },
+						payload: {
+							...(aggregations ? { aggregations } : {}),
+							...(authoritativeTotal != null
+								? { total: authoritativeTotal }
+								: {}),
+						},
 					});
 				} catch {
 					// Facet sidebar can keep previous counts; list is already shown.

@@ -1,0 +1,270 @@
+# Tasks — CYB-2224
+
+## Context files
+- `backend/internal/transpiler/pipeline.go` — current pipeline DSL and `VolumeMount` model.
+- `backend/internal/transpiler/transpiler.go` — Argo Workflow volume and container/script mount generation.
+- `backend/internal/usecase/pipeline/usecase.go` — deploy path, runtime config resolution, asset env injection, target validation.
+- `backend/internal/handlers/pipeline/handler.go` — deploy handlers and request/response mapping.
+- `Frontend/src/components/pipeline/NodeConfigPanel.tsx` — node editor form surface.
+- `Frontend/src/components/pipeline/types.ts` — canvas node data types.
+- `Frontend/src/lib/pipeline-design/canvas-to-dsl.ts` — canvas to saved DSL conversion.
+- `Frontend/src/lib/pipeline-design/dsl-to-canvas.ts` — saved DSL to canvas conversion.
+- `Frontend/src/pages/WorkflowDetailPage.tsx` — execution detail DAG and node selection state.
+- `Frontend/src/components/pipeline/WorkflowNodeDetailPanel.tsx` — execution node detail drawer.
+- `backend/internal/usecase/pipeline/runtime_mounts.go` — DataBrew-owned runtime mount catalog and deployment-time binding resolver.
+
+## Implementation
+- [x] [backend] Add typed pipeline DSL fields for node secret mounts and storage mounts.
+- [x] [backend] Extend transpiler volume model for SecretProviderClass CSI volumes.
+- [x] [backend] Add unit tests for CSI secret, PVC, emptyDir, container node, and script node manifest output.
+- [x] [backend] Add read-only runtime mount catalog types and resolver.
+- [x] [backend] Add validation for unknown IDs, unsafe mount paths, duplicate volume names, write-mode mismatch, and unsupported target capabilities.
+- [x] [backend] Add `GET /api/v1/pipeline/runtime-mounts`.
+- [x] [backend] Wire deploy/template deploy to resolve node secret/storage bindings before workflow submission.
+- [x] [Frontend] Add runtime mount catalog API client and types.
+- [x] [Frontend] Extend pipeline node data types with secret/storage bindings.
+- [x] [Frontend] Round-trip secret/storage bindings through canvas-to-DSL and DSL-to-canvas.
+- [x] [Frontend] Add NodeConfigPanel sections: Configuration, Secrets, Storage.
+- [x] [Frontend] Keep saved template runtime config references usable when the current UI user cannot read the referenced config details.
+- [x] [Frontend] Use DAG auto-layout when loading saved templates so sequential nodes do not overlap on the designer canvas.
+- [x] [Frontend] Move secret mounts into a collapsed advanced section so normal node editing stays focused on config, storage, env, and resources.
+- [x] [backend] Support generic environment-provided runtime mount catalogs via `PIPELINE_RUNTIME_MOUNT_CATALOG_JSON`, `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, and `PIPELINE_RUNTIME_STORAGE_RESOURCES_JSON`.
+- [x] [Frontend] Show compact node badges for selected secret/storage mounts without exposing low-level details.
+- [x] [Frontend] Show selected node runtime config, secret mounts, storage mounts, and injected env names in the execution detail drawer.
+- [x] [Frontend] Move deprecated pipeline configs out of the default config workspace and into an archive shelf for trace/view/diff only.
+- [x] [Frontend] Add an explicit order-only edge mode for CyberPipe-style pipelines where edges control sequencing without consuming `/tmp/outputs` files.
+- [x] [Frontend] Align execution detail asset-node table names with the DAG/component labels while keeping runtime step IDs as secondary diagnostics.
+- [x] [backend] Revalidate generated component release digests on sync/list/get so short or dummy `sha256` values cannot stay selectable.
+- [x] [Frontend] Surface asset-node runtime messages in the execution detail status column so Pending pods expose reasons such as `InvalidImageName`.
+- [x] [backend] Keep pipeline deploy input as `asset_ids` while allowing UUID-shaped CyberPipe video IDs as compatible external run inputs.
+- [x] [backend] Inject `REQUEST_ID` for every run and `VIDEO_ID` for single-asset/single-video pipeline runs.
+- [x] [backend] Map GPU component resources to Kubernetes GPU scheduling hints, and allow execution targets to provide hidden template scheduling defaults.
+- [x] [Frontend] Render non-canonical execution asset IDs as text instead of broken asset-detail links.
+- [x] [Frontend/backend] Preserve selected execution target when creating batch jobs so each subtask uses the same target namespace, service account, quota policy, and scheduling defaults as direct runs.
+- [x] [infra] Grant the dev backend runtime ConfigMap projection service account create/get/delete access in `video-proc-dev`.
+- [x] [backend] Alias only `CYBERPIPE_NODE=ss_delivery_lerobot` to `tony_delivery_lerobot` during manifest generation for Grace compatibility while preserving node/template IDs.
+- [x] [backend] Project terminal failed/error/expired runs with stale `Running` asset-node rows as node `Error` in batch progress, node summary/failure SQL, and asset-node detail responses.
+- [x] [backend] Keep active scheduler `Unschedulable` Pending nodes as active Pending while the cluster autoscaler can still schedule them; only terminal failed/error/expired runs project those diagnostic nodes as `Error`.
+- [x] [backend] Resolve workflow resource usage and Pod/resource diagnostics from the run/deployment execution target namespace instead of the default Argo namespace.
+- [x] [backend] Populate workflow resource usage request/limit values from the live Argo Workflow spec when the stored manifest cannot round-trip Kubernetes `Quantity` values.
+- [x] [Frontend] Load node-level workflow resource usage in the execution runtime drawer so monitoring shows request/limit and Argo resourceDuration even when live metrics are unavailable.
+- [x] [Frontend] Replace the stale terminal guidance with backend `node.debug` status so the runtime drawer clearly shows whether Pod exec is enabled and why it is disabled.
+- [x] [backend] Refresh batch read models before node summary, node failure, and attempt reads so stale `pipeline_runs` rows cannot make completed child workflows look running or failed.
+- [x] [backend] Resolve batch node summary order from the deployed template version DAG edges before falling back to node array order.
+- [x] [Frontend] Optimize batch detail UX by reducing embedded subtask filters to status/name, tightening the node overview spacing, and removing the full `pipelines?page_size=200` metadata request.
+- [x] [Frontend] Dedupe initial batch detail requests, parallelize job/node-summary loading, and show a real node-summary loading state instead of an empty table.
+- [x] [Frontend] Sort the batch job list by `createdAt` newest first by default and keep the creation-time column user-sortable.
+- [x] [Frontend] Make batch detail polling status-aware: running jobs poll at 5s, paused jobs at 30s, terminal jobs stop polling.
+- [x] [Frontend] Buffer realtime workflow-log SSE lines before React state updates, cap retained client log lines at 5000, and virtualize the log viewer rows.
+- [x] [Frontend] Add a realtime-log connection grace state so EventSource streams that stay open without events show "connected, waiting for log events" instead of remaining stuck on "connecting".
+- [x] [Frontend] Add node runtime terminal controls backed by backend terminal-session APIs, including command selection, WebSocket attach, stdout/stderr append, backend error-code display, and session reopen after exit.
+- [x] [Frontend] Hide the explicit "no estimated cost" warning when billing config is unavailable so node status, logs, Pod diagnostics, and monitoring stay prominent.
+- [x] [scripts] Add `scripts/smoke-pipeline-runtime-baseline-dev.sh` for fixed sleep/terminal, log-spam, and resource-request runtime smoke baselines.
+- [x] [infra] Preserve pipeline scheduling/runtime-mount JSON env overrides when deploying backend dev with `deploy/cloudrun/backend-dev.sh`.
+- [x] [Frontend] Add tests for selecting/clearing secret and storage bindings. Covered by DSL round-trip, node badge unit test, and NodeConfigPanel storage interaction test.
+- [ ] [Frontend] Component release detail displays task directory from `technicalMetadata.taskDir` when `taskPath` is absent.
+- [ ] [Frontend] Component release list distinguishes image tag from digest/hash identity and shows full image metadata in tooltips.
+- [ ] [docs] Record component release CI ingest token as a required backend dev deploy binding.
+
+## API contract sync
+See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.md#api-contract-sync-mandatory).
+
+- [x] `api/openapi.yaml` — add runtime mount catalog path and response schemas.
+- [x] `docs/review/api-guide.md` — add curl example and error behavior.
+- [x] `scripts/api-guide-smoke.sh` — smoke the runtime mount catalog.
+- [x] `openspec/changes/CYB-2224-runtime-mount-resources/specs/pipeline/spec.md` — behavior delta.
+- [x] [Frontend] `Frontend/src/api` runtime mount catalog types and client.
+- [x] SDK client was updated because `pipelines` is already a public SDK manager.
+- [x] `api/openapi.yaml` and `docs/review/api-guide.md` — document `POST /api/v1/backfill` `targetId` for batch execution target propagation.
+
+## Local verification
+- [x] [backend] `go test ./internal/transpiler/...`
+- [x] [backend] `go test ./internal/usecase/pipeline/...`
+- [x] [backend] `go test ./internal/handlers/pipeline/...`
+- [x] [backend] `go test ./...` before deploy.
+- [x] [Frontend] `npx biome check` on touched frontend files.
+- [x] [Frontend] targeted Vitest for pipeline contract and pipeline node display.
+- [x] [Frontend] targeted Vitest for execution detail runtime mount display and workflow-node to pipeline-node mapping.
+- [x] [Frontend] targeted Vitest for Registry Center active/archive config shelf behavior.
+- [x] [Frontend] targeted Vitest for NodeConfigPanel preserving inaccessible saved template config references.
+- [x] [Frontend] targeted Vitest for saved-template canvas auto-layout spacing.
+- [x] [Frontend] targeted Vitest for pipeline order-only edge import/export and run validation.
+- [x] [backend] `go test ./internal/usecase/pipeline_component ./internal/handlers/pipeline_component`.
+- [x] [Frontend] targeted Vitest for execution detail asset-node message display and workflow-node mapping.
+- [x] [Frontend] targeted Vitest for execution detail external video ID rendering.
+- [x] [backend] targeted Go tests for GPU scheduling hints and execution target scheduling defaults.
+- [x] [backend] targeted Go tests for batch job `targetId` persistence and batch subtask execution target resolution.
+- [x] [backend] targeted Go tests for batch node diagnostics preserving Unschedulable/ImagePull messages in run, asset-node, and node-summary views.
+- [x] [backend] targeted Go tests for read-only batch summary lists and explicit `refresh=true` reconciliation.
+- [x] [backend] targeted Go tests for `ss_delivery_lerobot` env aliasing and terminal run active-node projection.
+- [x] [backend] `go test ./internal/batchprogress ./internal/usecase/pipeline ./internal/postgres ./internal/usecase/backfill ./internal/handlers/backfill ./internal/handlers/pipeline`.
+- [x] [backend] `CGO_ENABLED=0 go test ./internal/postgres ./internal/usecase/pipeline ./internal/batchprogress` for active Unschedulable scheduler diagnostics.
+- [x] [backend] `CGO_ENABLED=0 go test ./internal/usecase/pipeline ./internal/postgres ./internal/batchprogress` for workflow resource namespace and live-spec request/limit fallback.
+- [x] [backend] `CGO_ENABLED=0 go test ./...`.
+- [x] [Frontend] targeted Vitest for batch deploy request carrying `targetId`.
+- [x] [Frontend] targeted Vitest for batch detail metadata polling and execution-list filters: `npm run test -- --run src/pages/WorkflowExecutionList.test.tsx src/pages/BatchJobDetailPage.test.tsx src/api/deployPipelineRun.test.ts`.
+- [x] [Frontend] targeted Vitest for batch detail request dedupe/loading and execution-list filters: `npm run test -- --run src/pages/BatchJobDetailPage.test.tsx src/pages/WorkflowExecutionList.test.tsx src/api/deployPipelineRun.test.ts`.
+- [x] [Frontend] targeted Vitest for execution runtime Pod diagnostics, monitoring resource snapshot, and terminal debug policy display: `npm run test -- --run src/components/pipeline/WorkflowNodeDetailPanel.test.tsx`.
+- [x] [Frontend] `npm run build`.
+- [x] [SDK] `uv run pytest tests/unit/test_managers.py -q`.
+- [x] [repo] `git diff --check`.
+- [x] [repo] `pre-commit run --files` on touched files before commit.
+- [x] [Frontend UI/UX] Playwright Chromium full-page local audit after Chrome DevTools MCP returned `Transport closed`: `/tmp/cyb2224-uiux-full-local-final-20260619/report.json` and screenshots under `/tmp/cyb2224-uiux-full-local-final-20260619/`. Covered 20 routes in desktop and 390px mobile viewports: dashboard, assets, asset detail, MCAP files, algo, algo runs/detail, deliveries/detail, registry, metrics, events, settings, pipeline design/list/executions/batch list/components, workflow detail, and batch detail.
+- [x] [Frontend UI/UX] Fixed confirmed mobile/page issues from the full-page audit: MCAP title/filter overflow (`overflowX 24 -> 0`), Events table page overflow (`overflowX 374 -> 0`), Component Registry mobile table replaced by cards (`tableCount 0`, actions visible, offscreen 0), Workflow detail UUID tag clipped/offscreen fixed, Pipeline mobile tabs/cards/minimap overlap fixed, Asset detail and Metrics mobile form/header overflow fixed, Dashboard long KPI/chart blank state improved, and AntD modal `destroyOnClose` console warning removed.
+- [x] [Frontend UI/UX] Targeted browser rechecks after fixes:
+  - `narrow-mcap-files-after-overflow-fix.png`: overflowX 0, console 0, API 0.
+  - `narrow-events-after-overflow-fix.png`: overflowX 0, console 0, API 0.
+  - `narrow-pipeline-components-mobile-cards-final.png`: 12 mobile cards, tableCount 0, visible actions, offscreen 0, console 0, API 0.
+  - `narrow-workflow-detail-after-uuid-fix.png`: workflow summary asset tag constrained within card, overflowX 0, console 0, API 0.
+  - `deliveries-events-after-console-overflow-fix.json`: desktop/mobile deliveries and events all overflowX 0, console 0, API 0, request failures 0.
+- [x] [Frontend] Final local checks for the full-page UI/UX pass: `npx biome check --write ...` on touched UI files passed with existing `pipeline.css` `!important` warnings; `npm run test -- --run src/pages/ComponentManager.test.tsx src/pages/PipelinePage.test.tsx src/pages/WorkflowDetailPage.test.tsx src/pages/BatchJobDetailPage.test.tsx src/components/deliveries/CreateDeliveryModal.test.tsx` passed (5 files, 53 tests); `npm run build` passed with existing CSS minify/chunk-size warnings; `git diff --check` passed.
+- [x] [Frontend UI/UX] Final Registry mobile fix after deployed audit found only `/registry` overflow: local Playwright 390px recheck for the config workspace and platform dictionary tabs passed with `overflowX=0`, console 0, API 0. Evidence: `/tmp/cyb2224-uiux-full-local-final-20260619/narrow390-registry-after-toolbar-fix.json`.
+- [x] [Frontend] Final local checks after the Registry toolbar/table boundary fix: `npx biome check --write src/pages/RegistryCenterPage.tsx` passed; `npm run test -- --run src/pages/ComponentManager.test.tsx src/pages/PipelinePage.test.tsx src/pages/WorkflowDetailPage.test.tsx src/pages/BatchJobDetailPage.test.tsx src/components/deliveries/CreateDeliveryModal.test.tsx` passed (5 files, 53 tests); `npm run build` passed with existing CSS minify/chunk-size warnings; `git diff --check` passed.
+- [x] [repo] Pre-commit after dev verification approval: `pre-commit run --all-files` still failed before hooks due local Homebrew Python 3.14 `pyexpat` import error; scoped fallback `GOPROXY=https://goproxy.cn,direct uv tool run pre-commit run --files $(cat /tmp/cyb2224-scoped-precommit-files.txt)` passed for the 39 intended non-`site/` PR files.
+- [x] [Frontend] 2026-06-20 targeted runtime stability checks: `npx biome check` on touched workflow/batch/log files; `vitest run src/pages/BatchJobList.test.tsx src/pages/useWorkflowDetail.test.tsx src/pages/workflowLogView.test.ts src/components/pipeline/WorkflowNodeDetailPanel.test.tsx src/pages/BatchJobDetailPage.test.tsx src/pages/WorkflowDetailPage.test.tsx` passed (6 files, 56 tests); `tsc -b --pretty false` passed; `npm run build` passed with existing CSS minify/chunk-size warnings; `git diff --check` and `bash -n scripts/smoke-pipeline-runtime-baseline-dev.sh` passed.
+- [x] [Chrome DevTools MCP] 2026-06-20 local UI validation on `http://127.0.0.1:5180`: batch job list at `/pipeline?tab=executions&executionView=batch` shows creation-time default descending order (`18:02:04`, `17:55:31`, `09:27:23`); execution detail `pipeline-1781872251305-7457a0` runtime drawer loads Pod diagnostics and resource request/limit snapshot, shows terminal disabled policy reason, hides the explicit no-estimated-cost warning, and realtime logs leave the indefinite "connecting" state after the grace interval.
+- [x] [repo] Pre-commit after frontend dev verification approval: `pre-commit run --all-files` was blocked before hooks by the local Homebrew Python 3.14 `pyexpat` import error; scoped fallback `GOPROXY=https://goproxy.cn,direct uv tool run pre-commit run --files $(cat /tmp/cyb2224-runtime-stability-files.txt)` passed for the intended non-`site/` runtime-stability files.
+
+## Deploy verification
+- [ ] Apply migrations first if any are introduced; none expected for P0.
+- [x] Deploy backend dev with SHA-tagged image; record image, revision, URL.
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:bbe2509-cyb2224-20260618082338`
+  - Revision: `cyber-databrew-backend-dev-00904-fd2`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:049fad0-cyb2224-release-digest-20260618224454`
+  - Revision: `cyber-databrew-backend-dev-00908-q6q`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:e6e120a-videoid-compat-20260618155644`
+  - Revision: `cyber-databrew-backend-dev-00914-s6q`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:e6e120a-cyb2224-no-fixed-target-cap-20260618164727`
+  - Revision: `cyber-databrew-backend-dev-00916-kxz`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:760f2ac-cyb2224-node-diagnostics-20260619015015`
+  - Revision: `cyber-databrew-backend-dev-00921-5p4`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:0985426-cyb2224-delivery-stepkey-20260618183624`
+  - Revision: `cyber-databrew-backend-dev-00925-lkg`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:0985426-cyb2224-terminal-node-projection-20260618185627`
+  - Revision: `cyber-databrew-backend-dev-00926-xmz`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:0985426-cyb2224-batch-readmodel-ui-20260618192424`
+  - Revision: `cyber-databrew-backend-dev-00929-qjg`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:4264e02-cyb2224-unsched-pending-20260619013702`
+  - Revision: `cyber-databrew-backend-dev-00931-9n5`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:4264e02-cyb2224-resource-namespace-20260619014541`
+  - Revision: `cyber-databrew-backend-dev-00932-kxs`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:4264e02-cyb2224-monitoring-resources-20260619015110`
+  - Revision: `cyber-databrew-backend-dev-00933-sht`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:4264e02-cyb2224-monitoring-resources-20260619015110`
+  - Revision: `cyber-databrew-backend-dev-00934-xb6`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Note: same backend image; refreshed `K8S_BEARER_TOKEN` Secret Manager latest to version `6` and created a new revision so Cloud Run reloads the non-expired token.
+- [x] Deploy frontend dev/CF if frontend code changed; record version/revision.
+  - Cloudflare Worker: `cyber-databrew-dev`
+  - URL: `https://cyber-databrew-dev.cyberorigin.ai`
+  - Wrangler version ID: `b1c732ca-37c5-48bf-b681-86af2f3266d8`
+  - Created: `2026-06-18T08:28:56.013Z`
+  - UI build ref: `vcyb-2224-dev-202606180826-runtime-mounts (feat/CYB-2224-runtime-mount-resources#bbe2509+runtime-mounts)`
+  - Wrangler version ID: `e944c4b7-1ffc-49dc-afe8-eedc6bace54d`
+  - UI build ref: `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+release-digest-message)`
+  - Wrangler version ID: `49cd0b9d-2303-4ee5-9945-86725feeb907`
+  - UI build ref: `ve6e120a (feat/CYB-2224-runtime-mount-resources#e6e120a)`
+  - Cloud Run image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:0985426-cyb2224-batch-ui-20260618194338`
+  - Cloud Run revision: `cyber-databrew-frontend-dev-00380-rgb`
+  - Cloud Run URL: `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app`
+  - UI build ref: `v0985426 (fix/batch-target-id#0985426)`
+  - Cloudflare Worker version ID: `d083bdb8-1483-4bba-9041-dbd557a3a26c`
+  - URL: `https://cyber-databrew-dev.cyberorigin.ai`
+  - UI build ref: `vcyb2224-20260619-config-layout2 (fix/CYB-2224-batch-target-id#4264e02+config-layout2)`
+  - Cloudflare Worker version ID: `477b3b5c-57db-415a-a294-5c494af3a502`
+  - URL: `https://cyber-databrew-dev.cyberorigin.ai`
+  - UI build ref: `vcyb2224-20260619-monitoring-ui2 (fix/CYB-2224-batch-target-id#4264e02+monitoring-ui2)`
+  - Cloudflare Worker version ID: `c389e6b4-7013-4ef6-8002-78ccac96d896`
+  - URL: `https://cyber-databrew-dev.cyberorigin.ai`
+  - UI bundle: `index-DCLSMAI2.js`
+  - Cloud Run image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:4264e02-cyb2224-perf-ui3-20260619033046`
+  - Cloud Run revision: `cyber-databrew-frontend-dev-00384-v6h`
+  - Cloud Run URL: `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app`
+  - Cloud Run bundle: `index-wyujNm7e.js`
+  - Cloud Run image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:4264e02-cyb2224-uiux-final-20260619125630`
+  - Cloud Run revision: `cyber-databrew-frontend-dev-00386-w55`
+  - Cloud Run URL: `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app`
+  - UI build ref: `vcyb2224-20260619125630-uiux-final (fix/CYB-2224-batch-target-id#4264e02+uiux-final)`
+  - Cloudflare Worker version ID: `f630e0f2-84ed-437f-80d0-8c2e7bab4149`
+  - URL: `https://cyber-databrew-dev.cyberorigin.ai`
+- [x] API smoke `GET /api/v1/pipeline/runtime-mounts` on dev.
+- [x] Chrome DevTools MCP: open pipeline designer, bind one secret and one storage mount, save, and verify node badge persists as `密钥 1 / 存储 1`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-designer-secret-storage-badge.png`.
+- [x] Chrome DevTools MCP: deploy a test pipeline and verify no console errors.
+- [x] Chrome DevTools MCP: open execution detail drawer and verify node runtime mount visibility. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/workflow-detail-runtime-mounts.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail drawer shows runtime storage mount and env names. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-runtime-mounts-runtime-tab.png`.
+- [x] Chrome DevTools MCP on CF domain: designer node config loads runtime mount catalog and node badge shows storage count. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-designer-storage-mount-badge.png`.
+- [x] Chrome DevTools MCP on CF domain: Registry Center default config workspace hides archived configs; archive shelf shows only archived records with trace/view/diff actions. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-registry-config-archive-shelf.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node table uses the same friendly component labels as the DAG and keeps `step-node-*` as secondary diagnostics. Worker version `f3861623-58ee-4ecf-91dc-fc50c311e9ed`; UI build ref `v049fad0 (dev#049fad0+workflow-asset-node-name-fix)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-asset-node-name-alignment.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node table maps real `node-*` template IDs to `step-node-*` runtime rows. Worker version `68bd48ac-40a7-4f19-ab76-44cb3aac4043`; UI build ref `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+workflow-asset-node-name-fix2)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-asset-node-name-alignment-fix2.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node status column shows `InvalidImageName` for a Pending main container, making it clear the algorithm step is not actually running. Worker version `e944c4b7-1ffc-49dc-afe8-eedc6bace54d`; UI build ref `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+release-digest-message)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-pending-message.snapshot.txt`; screenshot tool timed out twice, see `decisions.md`.
+- [x] Backend API smoke: `GET /api/v1/pipeline-component-releases?selectable=true&q=hand-detect-yolov26m` returns `{"items":[]}`; direct search shows the historical dummy release revalidated to `validationStatus=failed` with `imageDigest is required and must be sha256:<64 hex>`.
+- [x] Runtime smoke: UI deployed `cyb2178-probe-20260618115702` as `pipeline-1781771851723-ae379d`; run succeeded in 4s and Pod diagnostics showed `Service Account = cyber-databrew-backend-argo`, mounted secret/storage rows, and normal container events. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-runtime-mount-pod-detail-success.png`.
+- [x] Runtime smoke: the actual Pod spec contains `PIPELINE_SECRET_DATABREW_SMOKE_SECRET_PATH`, `PIPELINE_STORAGE_SCRATCH_EMPTYDIR_PATH`, CSI driver `secrets-store-gke.csi.k8s.io`, SecretProviderClass `databrew-dev-runtime-mount-smoke`, and `emptyDir` storage mount.
+- [x] Runtime smoke: verify unbound nodes do not receive another node's secret or storage mount. Dry-run two-node manifest shows `step-node-b` has only `PIPELINE_DEPLOYMENT_ID` and `volumemounts: []`.
+- [x] Runtime negative smoke: unknown mount resource fails before workflow creation with `400 INVALID_ARGUMENT` and message `node node-a runtime secret does-not-exist is not available`.
+- [x] Backend API smoke: `POST /api/v1/deploy?dryRun=true` with `asset_ids=["019dabf3-5685-769f-8ec3-3992767ebe65"]` returns `Preview` and manifest contains `VIDEO_ID`, `REQUEST_ID`, and `ASSET_0_ID`; the same smoke with `asset_ids=["missing-2"]` still returns `400 INVALID_ARGUMENT asset_ids contain unknown assets`.
+- [x] Runtime smoke: `videoid-compat-live-smoke-dcd098` succeeded with run `287b4663-b61f-4e92-95ec-681c3a9f5ff1`; Pod logs showed `VIDEO_ID=019dabf3-5685-769f-8ec3-3992767ebe65`, `REQUEST_ID=287b4663-b61f-4e92-95ec-681c3a9f5ff1`, and `ASSET_0_ID=019dabf3-5685-769f-8ec3-3992767ebe65`.
+- [x] Chrome DevTools MCP on CF domain: execution detail for `videoid-compat-live-smoke-dcd098` shows the UUID input as text, not an `/assets/<uuid>` link; all workflow/run/asset-node/cost APIs returned 200. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-videoid-compat-workflow-detail.png`.
+- [x] Backend API smoke after revision `00916-kxz`: `/readyz` healthy, `/api/v1/pipeline/runtime-mounts` returned configured runtime mounts, and `/api/v1/execution-targets` returned `video-proc-dev` without a hard-coded quota policy.
+- [x] Local UI validation: run the pipeline designer locally, create a batch with the two CyberPipe video IDs, select `video-proc-dev`, and confirm the browser request includes `targetId` and the batch subtasks no longer use the default target CPU ceiling. Evidence: browser-created batch `3224bbdd-121a-40a5-ba7f-568be2b6a69a` request/response stored `filterJson.targetId=a03ad932-397f-4a3b-a3d8-1cfb13a6dd54`.
+- [x] Local UI validation: batch node summary for `4514031e-00ce-454e-869d-87176a57c35b` shows ordered nodes `step-head-tracking` through `step-ss-delivery-lerobot`, marks `step-head-tracking` as `Error: 2`, and the failure drawer lists both video IDs with the Kubernetes `Unschedulable` / `Insufficient ephemeral-storage` message.
+- [x] K8s smoke: `kubectl auth can-i create/delete/get configmaps -n video-proc-dev --as=system:serviceaccount:cyber-databrew-dev:cyber-databrew-backend-argo` returns yes.
+- [x] Backend API smoke after revision `00925-lkg`: `/readyz` returned 200 and `GET /api/v1/backfill/3c365f4a-1392-4685-907c-a766408ca510` returned 200.
+- [x] Backend dry-run smoke after revision `00925-lkg`: `POST /api/v1/deploy?dryRun=true` with `target_id=a03ad932-397f-4a3b-a3d8-1cfb13a6dd54` generated a `video-proc-dev` manifest with `serviceAccountName: workflow-runner`, sequence-only DAG edges, runtime config/secret mounts, `VIDEO_ID` / `REQUEST_ID`, GPU L4 node selector/tolerations, and `step-ss-delivery-lerobot` template env `CYBERPIPE_NODE=tony_delivery_lerobot`.
+- [x] Chrome DevTools MCP local validation: clicked `retry-failed` on batch `3c365f4a-1392-4685-907c-a766408ca510`; new child workflows used the `tony_delivery_lerobot` env alias and both passed `step-head-tracking`. The retry then failed at `step-hand-detection` due cluster scheduling/capacity (`Unschedulable`, insufficient CPU/memory/GPU), not the prior `find_tony_stats` schema error.
+- [x] Chrome DevTools MCP local UI/UX validation: batch detail subtask table fills the 1214px main content width, filter bar is one 32px row, no full `GET /api/v1/pipelines?page_size=200` request is made, and console contains only Vite/React dev messages. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/ui-batch-detail-before.png` and `openspec/changes/CYB-2224-runtime-mount-resources/ui-batch-detail-after.png`.
+- [x] Backend API smoke after revision `00926-xmz`: `/readyz` returned 200, Cloud Run env uses image `0985426-cyb2224-terminal-node-projection-20260618185627`, keeps `PIPELINE_TEMPLATE_TOLERATIONS_JSON` and `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, and does not include `PIPELINE_TARGET_RESOURCE_CEILINGS_JSON`.
+- [x] Backend API smoke after revision `00926-xmz`: batch `3c365f4a-1392-4685-907c-a766408ca510` summary now reports both child runs at `step-hand-detection · Error`; node summary reports `step-hand-detection Error=2, Running=0`; asset-node detail for run `e0fa8796-5564-4ddb-a3a1-4d7d58c7c899` projects the stale `Running` row to `Error` with message `Argo 工作流已被 TTL 清理`.
+- [x] Chrome DevTools MCP local validation after revision `00926-xmz`: batch detail UI shows `step-hand-detection` as 2 failures, 0 running, and both subtask rows show `step-hand-detection · 异常`; subtask table remains 1214px wide, filter row 32px high, no full pipelines request, and console has no errors.
+- [x] K8s runtime smoke: batch `8b476370-d397-4933-967d-3a02d1dc92aa` completed for both target video IDs. Workflows `cyb2224-fixft-024444-a6f5b7` and `cyb2224-fixft-024444-08380e` both reached `Succeeded`; each ran `head_tracking -> hand_detection -> hand_tracking -> find_tony_stats -> ss_delivery_lerobot`.
+- [x] Backend API smoke after revision `00929-qjg`: `/readyz` returned 200; Cloud Run env includes `PIPELINE_TEMPLATE_TOLERATIONS_JSON` and `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, does not include `PIPELINE_TARGET_RESOURCE_CEILINGS_JSON`, and uses image `0985426-cyb2224-batch-readmodel-ui-20260618192424`.
+- [x] Backend API smoke after revision `00929-qjg`: batch `8b476370-d397-4933-967d-3a02d1dc92aa` is `completed` with `completedCount=2`, `failedCount=0`; node summary order is `step-head-tracking`, `step-hand-detection`, `step-hand-tracking`, `step-find-tony-stats`, `step-ss-delivery-lerobot`, each `Succeeded=2`; subtask run summaries and item attempts both return `Succeeded`.
+- [x] Chrome DevTools MCP on Cloud Run dev: batch detail page for `8b476370-d397-4933-967d-3a02d1dc92aa` shows frontend build `v0985426 (fix/batch-target-id#0985426)`, completed status, both video IDs succeeded, node overview in DAG order, and no console errors. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/deploy-verify-batch-detail-20260618.png`.
+- [x] Chrome DevTools MCP performance/layout check on Cloud Run dev: desktop content width is 1694px with no horizontal overflow; mobile-width check has no horizontal overflow; initial load makes one request each for `node-summary`, `backfill/:id`, `pipelines/:id/versions`, and `pipeline-runs`; trace reports LCP 1480ms and CLS 0.01.
+- [x] Backend API smoke after revision `00931-9n5`: `/readyz` returned 200; Cloud Run env keeps `PIPELINE_TEMPLATE_TOLERATIONS_JSON` and `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, does not include `PIPELINE_TARGET_RESOURCE_CEILINGS_JSON`, and uses image `4264e02-cyb2224-unsched-pending-20260619013702`.
+- [x] Backend API smoke after revision `00931-9n5`: batch `c67f512c-2bbc-48d3-8164-6e906a41716c` uses `filterJson.targetId=a03ad932-397f-4a3b-a3d8-1cfb13a6dd54`, remains `running` with `completedCount=0`, `failedCount=0`, and node summary reports `step-head-tracking Succeeded=2`, `step-hand-detection Succeeded=1 Running=1`, `step-hand-tracking Running=2`, with zero `Error`/`Failed` counts.
+- [x] Backend API smoke after revision `00933-sht`: `/readyz` returned 200; `GET /api/v1/workflows/pipeline-1781832426939-386a99/resources` and `GET /api/v1/workflows/pipeline-1781832426939-386a99/nodes/pipeline-1781832426939-386a99-1840058036/resources` returned 200 from namespace `video-proc-dev` and included CPU/Memory request/limit values.
+- [x] Backend API smoke after revision `00933-sht`: `GET /api/v1/workflows/pipeline-1781832426939-386a99/nodes/pipeline-1781832426939-386a99-1840058036/pod` returned namespace `video-proc-dev`, service account `workflow-runner`, container details, and Pod conditions; terminal session creation returns 403 `POD_EXEC_FORBIDDEN` with message `Pod 终端未启用，请在执行目标配置中开启`.
+- [x] Backend API smoke after revision `00933-sht`: batch `c67f512c-2bbc-48d3-8164-6e906a41716c` completed with `failedCount=0`; all five ordered steps reached `Succeeded` for the completed subtask and no `Error`/`Failed` counts were reported.
+- [x] Chrome DevTools MCP on CF domain: pipeline designer for template `aa2ec264-739e-4765-bed4-a4a07e260bd3` loads build `vcyb2224-20260619-config-layout2`, auto-layout spaces the first nodes by 332px for 180px cards, and opening `hand-detect-yolov26m` shows the saved template config reference/version without requesting `/pipeline-configs/d7d3046c-624e-42b8-93ba-51ba8045ff08`; network has no config-detail 404 and console has no errors. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-designer-config-layout2-20260619.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail for `pipeline-1781832426939-386a99` loads build `vcyb2224-20260619-monitoring-ui2`; runtime drawer loads Pod diagnostics and node resource usage with both requests 200, shows `资源规格快照`, CPU `request / limit: 6 / 6`, Memory `request / limit: 16Gi / 16Gi`, and terminal debug status `终端不可用` with reason `Pod 终端未启用，请在执行目标配置中开启`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-runtime-monitoring-terminal-20260619.png`.
+- [x] Frontend Cloud Run dev deploy for runtime stability and batch sorting.
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:48a56fc-cyb2224-runtime-stability-20260620003811`
+  - Latest alias: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest`
+  - Revision: `cyber-databrew-frontend-dev-00390-mlt`
+  - Cloud Run URL: `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app`
+  - Public URL: `https://cyber-databrew-dev.cyberorigin.ai`
+- [x] Chrome DevTools MCP on public dev domain after revision `00390-mlt`: batch job list at `/pipeline?tab=executions&executionView=batch` loads bundle `BatchJobList-C7msNsDN.js` and defaults creation time newest first (`2026-06-19 18:02:04`, `2026-06-19 17:55:31`, `2026-06-19 09:27:23`). Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-batch-list-created-desc-20260620.png`.
+- [x] Chrome DevTools MCP on public dev domain after revision `00390-mlt`: completed batch detail `029687f8-5f43-4288-9bd1-42aa1dbad30d` loads summary/node/current-page run data without terminal-state polling, and execution detail `pipeline-1781832426939-e9e5fe` opens workflow logs, transitions realtime log state to `已结束`, shows resource request/limit snapshot, and displays terminal disabled reason `Pod 终端未启用，请在执行目标配置中开启`; historical Pod lookup 404 is handled as `Pod 诊断数据不可用` while `/resources` returns 200.
+- [x] Playwright Chromium fallback after Chrome DevTools MCP transport closed: all deployed main/detail pages on `https://cyber-databrew-dev.cyberorigin.ai` load authenticated with no console errors. Cold-load LCP/CLS highlights: dashboard `4476ms / 0` with no `vendor-echarts` first-screen request, assets `1128ms / 0`, settings `1192ms / 0.013`, pipeline executions `2276ms / 0`, batch detail `1476ms / 0.016`, pipeline design `1620ms / 0`, asset detail `1840ms / 0`. The only residual issue before the final fix was component registry CLS `0.114`.
+- [x] Frontend CLS fix: component registry now waits for component and release data before rendering the merged table. Targeted test `npm run test -- --run src/pages/ComponentManager.test.tsx` passed with 5 tests; `npx biome check src/pages/ComponentManager.tsx src/pages/ComponentManager.test.tsx` passed; `npm run build` passed with existing CSS/chunk-size warnings.
+- [x] Playwright Chromium fallback after CF Worker `c389e6b4-7013-4ef6-8002-78ccac96d896`: component registry `/pipeline?tab=components` ran 5 cold browser passes with CLS `0` each, LCP range `1124-2172ms`, bundle `index-DCLSMAI2.js`, and console errors `0`.
+- [x] K8s credential smoke: prior Secret Manager `cyber-databrew-dev-k8s-bearer-token` latest decoded to exp `2026-06-19T02:28:36Z`; new version `6` expires `2026-06-21T03:26:12Z`; the new token can `get/list/watch pods` in `video-proc-dev`.
+- [x] Backend API smoke after revision `00934-xb6`: `/readyz` healthy; custom-domain `GET /api/v1/workflows/pipeline-1781832426939-0de239/nodes/pipeline-1781832426939-0de239-385813077/pod` returned `200` with namespace `video-proc-dev`, Pod IP, `Service Account = workflow-runner`, container states, and Pod conditions; node resources returned requests/limits `6 / 6 CPU` and `16Gi / 16Gi memory`; terminal session creation still returns the expected policy `403 POD_EXEC_FORBIDDEN`.
+- [x] Playwright Chromium fallback on CF domain: execution detail for `pipeline-1781832426939-0de239` opens the `step-ss-delivery-lerobot` runtime drawer; Pod diagnostics and node resource requests both returned `200`; UI shows namespace `video-proc-dev`, the selected Pod, service account `workflow-runner`, resource snapshot, and terminal disabled policy with no console errors. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/playwright-workflow-runtime-pod-drawer-20260619.png`.
+- [x] Playwright Chromium fallback after Cloudflare Worker `f630e0f2-84ed-437f-80d0-8c2e7bab4149`: all 40 authenticated business-page checks passed on `https://cyber-databrew-dev.cyberorigin.ai` across desktop and 390px narrow viewports. Covered dashboard, assets/detail, MCAP files, algo runs/detail, deliveries/detail, registry config tab, registry platform tab, metrics, events, pipeline design/pipelines/executions/components, workflow detail, batch detail, and settings. Every business route had `overflowX=0`, console 0, API 0, and build `cyb2224-20260619125630-uiux-final` visible. `/login` was separately observed with expected unauthenticated `/auth/me` 401 and no AppLayout build label. Evidence: `/tmp/cyb2224-uiux-cf-final2-20260619/business-summary.json`, full report `/tmp/cyb2224-uiux-cf-final2-20260619/report.json`, screenshots under `/tmp/cyb2224-uiux-cf-final2-20260619/`.
+- [x] Playwright Chromium fallback on CF domain: workflow detail `pipeline-1781781105566-c598ef` runtime environment panel opens from the node row; Pod diagnostics loaded, monitoring section showed a sane `暂无监控数据` state, terminal section showed `终端不可用` / `Pod exec disabled`, and there were no console/API errors or page overflow. Evidence: `/tmp/cyb2224-uiux-cf-final2-20260619/workflow-detail-runtime-panel.json` and screenshot `/tmp/cyb2224-uiux-cf-final2-20260619/workflow-detail-runtime-panel.png`.
+- [x] Dev terminal enablement: updated execution targets `default` and `video-proc-dev` so `resourceDefaults.terminal.enabled=true` with allowed commands `sh,pwd,ls,env`; backend revision `cyber-databrew-backend-dev-00946-g7x` runs image `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:94fafe5-cyb2224-terminal-main-20260619224243`.
+- [x] Backend terminal smoke after revision `00946-g7x`: `/readyz` healthy; test run `52022179-5641-4209-91ff-92f37cf25488` / workflow `cyb2224-terminal-smoke-224635-f37e7e` created with terminal policy in target snapshot; node debug reported `execEnabled=true`; terminal session `057703d7-5e58-4f7f-b90e-18e0da12d44a` returned `201` with `containerName=main`; WebSocket attach returned `101 Switching Protocols`, status frame `attached`, stdout `"/\n"`, and session ended with no error. The smoke workflow was stopped and finished as `Failed / Stopped with strategy 'Stop'`.
+- [x] Public dev domain terminal smoke: `https://cyber-databrew-dev.cyberorigin.ai` returned both execution targets with `terminal=true`; test run `03fe50a5-4bd1-4c96-bd6c-1115fc2c333e` / workflow `cyb2224-terminal-public-225115-ac0308` reached `execEnabled=true`; terminal session `8181e4e9-d1e9-4a83-931b-9bbacf4138f9` attached over `wss://cyber-databrew-dev.cyberorigin.ai`, returned `101 Switching Protocols`, `attached`, stdout `"/\n"`, and ended without error. The smoke workflow was stopped and k8s reported `Failed / Stopped with strategy 'Stop'`.
+- [x] Backend dev deploy after final `dev` cherry-pick: Cloud Build `fd8e0356-6f0d-4c87-9bee-c86d5a428b2d` built image `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:1043eba-cyb2224-terminal-dev-20260619230926`; Cloud Run revision `cyber-databrew-backend-dev-00947-cnh` serves 100% traffic; `/readyz` returned healthy; env includes `PIPELINE_TEMPLATE_TOLERATIONS_JSON` and `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, and does not include `PIPELINE_TARGET_RESOURCE_CEILINGS_JSON`.
+- [x] Backend terminal smoke after revision `00947-cnh`: public dev domain `GET /api/v1/execution-targets` returned `terminal=true` for `default` and `video-proc-dev`; test run `96a99847-1074-45cb-8965-6767dc922072` / workflow `cyb2224-terminal-final-231444-4c5a9d` reached node `cyb2224-terminal-final-231444-4c5a9d-1988065096` with `execEnabled=true`; terminal sessions defaulted `containerName=main`, attached successfully, returned status frame `attached` plus `env` stdout, and ended with no error. The smoke workflow was stopped and finished as `Failed / Stopped with strategy 'Stop'`.
+- [ ] Chrome DevTools MCP on CF domain: component registry shows `hand-track-stereo-databrew-test` task path, image tag, digest identity, and friendlier version label.
+- [ ] DataBrew sync smoke with `X-Databrew-CI-Token` returns `{"items":[]}` after the backend revision binds `COMPONENT_RELEASE_INGEST_TOKEN` or `DATABREW_CI_INGEST_TOKEN`.
+- [ ] Chrome DevTools MCP on CF domain: designer order-only edge mode exports naked edge refs and no longer shows `/tmp/outputs/output` consumption warnings.
+
+## PR
+- [ ] PR template filled with Linear `CYB-2224` and OpenSpec change-id.
+- [ ] Include deploy record, Chrome MCP evidence, API smoke output, and runtime log evidence.
+- [ ] Do not commit generated `site/` assets unless explicitly requested.

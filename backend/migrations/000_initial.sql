@@ -16,13 +16,10 @@ CREATE FUNCTION event_retention_cleanup(retention_interval interval) RETURNS big
     LANGUAGE plpgsql
     AS $$
 DECLARE
-  deleted_count bigint;
 BEGIN
   DELETE FROM asset_events
   WHERE publish_state IN ('published', 'dlq')
     AND created_at < now() - retention_interval;
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  RETURN deleted_count;
 END;
 $$;
 
@@ -113,7 +110,6 @@ END) STORED,
     project_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    row_version bigint NOT NULL DEFAULT 1,
     external_runtime text,
     external_url text,
     CONSTRAINT algo_runs_algo_kind_check CHECK ((algo_kind = ANY (ARRAY['processing'::text, 'split'::text, 'qa'::text, 'enrichment'::text]))),
@@ -388,7 +384,6 @@ CREATE TABLE customers (
     offboarded_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    row_version bigint DEFAULT 1 NOT NULL,
     CONSTRAINT customers_sla_tier_check CHECK ((sla_tier = ANY (ARRAY['standard'::text, 'premium'::text, 'enterprise'::text]))),
     CONSTRAINT customers_status_check CHECK ((status = ANY (ARRAY['active'::text, 'trial'::text, 'suspended'::text, 'offboarded'::text])))
 );
@@ -477,7 +472,6 @@ CREATE TABLE logical_assets (
     extra jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    row_version bigint DEFAULT 1 NOT NULL,
     CONSTRAINT logical_assets_check CHECK ((total_revisions >= current_revision)),
     CONSTRAINT logical_assets_current_revision_check CHECK ((current_revision >= 1)),
     CONSTRAINT logical_assets_logical_asset_id_check CHECK ((logical_asset_id ~ '^[0-9A-Za-z]{8}$'::text)),

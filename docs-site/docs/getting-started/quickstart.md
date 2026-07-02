@@ -22,58 +22,57 @@ from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(
     token="your-token-here",
-    base_url="https://api-cyber-databrew.cyberorigin.ai",
+    base_url="https://cyber-databrew.cyberorigin.ai",
 )
 ```
 
 也支持通过环境变量配置：
 
 ```bash
-export CYBER_DATABREW_BASE_URL="https://api-cyber-databrew.cyberorigin.ai"
+export CYBER_DATABREW_BASE_URL="https://cyber-databrew.cyberorigin.ai"
 export CYBER_DATABREW_TOKEN="your-token-here"
 ```
 
 ```python
-import os
-from cyber_databrew_sdk import CyberDatabrewClient
-
 # 自动从环境变量读取配置
 client = CyberDatabrewClient()
 ```
 
-## 第三步：获取资产列表
+## 第三步：查询资产
 
 ```python
-# 列出资产（支持过滤、排序、分页）
-assets = client.assets.list_all(page=1, page_size=20)
+# 获取单个资产
+asset = client.assets.get("aset0001")
+print(asset["asset_id"], asset["lifecycle_state"])
 
-for asset in assets:
-    print(f"ID: {asset.asset_id}, Status: {asset.status}")
+# 搜索资产
+result = client.search.assets(q="keyword", page=1, page_size=20)
+for item in result["items"]:
+    print(item["asset_id"], item["asset_type"])
 ```
 
 ## 第四步：创建资产
 
 ```python
-# 创建一条资产记录
-asset = client.assets.create(payload={
-    "mcap_file_id": "file-001",
-    "t_start": 1000000000,
-    "t_end": 2000000000,
+asset = client.assets.create({
+    "mcap_file_id": "mcap0001",
+    "start_timestamp_ns": 1700000000000000000,
+    "end_timestamp_ns": 1700000060000000000,
+    "reviewer": "alice",
+    "owner": "team-a",
 })
-print(f"Created asset: {asset.asset_id}")
+print(f"Created: {asset['asset_id']}")
 ```
 
 ## 第五步：创建交付
 
 ```python
-# 创建一个数据交付
-delivery = client.delivery.create(payload={
-    "customer_id": "cust-001",
-    "items": [
-        {"asset_id": "asset-1", "mcap_file_id": "file-1"},
-    ],
+delivery = client.delivery.create({
+    "asset_ids": ["aset0001", "aset0002"],
+    "customer_id": "acme_corp",
+    "note": "My first delivery",
 })
-print(f"Delivery created: {delivery.delivery_id}")
+print(f"Delivery: {delivery['delivery_id']}, status: {delivery['status']}")
 ```
 
 ## 下一步

@@ -6,12 +6,18 @@ const HIDDEN_LABEL_KEYS = new Set([
 ]);
 
 const LABEL_KEY_ALIASES: Record<string, string> = {
+	"events.argoproj.io/action-timestamp": "事件时间",
+	"events.argoproj.io/sensor": "事件源",
+	"events.argoproj.io/trigger": "触发器",
 	"workflows.argoproj.io/resubmitted-from-workflow": "重提交自",
 };
 
 export function formatWorkflowLabelKey(key: string): string {
 	return (
-		LABEL_KEY_ALIASES[key] ?? key.replace(/^workflows\.argoproj\.io\//, "")
+		LABEL_KEY_ALIASES[key] ??
+		key
+			.replace(/^workflows\.argoproj\.io\//, "")
+			.replace(/^events\.argoproj\.io\//, "")
 	);
 }
 

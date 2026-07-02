@@ -16,18 +16,46 @@ export interface PipelineNodeDef {
 	component: Component;
 	inputs?: Port[];
 	outputs?: Port[];
+	runtimeConfig?: PipelineNodeRuntimeConfig;
+	runtimeSecrets?: PipelineNodeRuntimeSecretMount[];
+	storageMounts?: PipelineNodeRuntimeStorageMount[];
+}
+
+export interface PipelineNodeRuntimeConfig {
+	mode: "saved";
+	configId: string;
+	version: number;
+	fileName?: string;
+	mountPath: string;
+	targetFilename: string;
+	displayName?: string;
+}
+
+export interface PipelineNodeRuntimeSecretMount {
+	resourceId: string;
+	mountPath?: string;
+	displayName?: string;
+}
+
+export interface PipelineNodeRuntimeStorageMount {
+	resourceId: string;
+	mountPath?: string;
+	readOnly?: boolean;
+	displayName?: string;
 }
 
 export interface Component {
 	name: string;
 	image: string;
-	mode?: string;
 	type?: string;
 	source?: string;
 	command?: string[];
 	args?: Argument[];
-	env?: Record<string, string>;
+	env?: Argument[];
 	resources?: ResourceRequirements;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
 }
 
 export interface Argument {
@@ -44,12 +72,16 @@ export interface PipelineEdgeDef {
 export interface Port {
 	name: string;
 	type: string;
+	desc?: string;
+	default_value?: string;
 }
 
 export interface ResourceRequirements {
 	cpu?: string;
 	memory?: string;
 	disk?: string;
+	gpu?: string;
+	computeTier?: string;
 	type?: string;
 	source?: string;
 	env?: Record<string, string>;
@@ -57,30 +89,48 @@ export interface ResourceRequirements {
 
 export interface RegisteredComponent {
 	id: string;
+	componentId?: string;
+	releaseId?: string;
 	name: string;
 	type?: string;
 	source?: string;
 	image: string;
+	tag?: string;
+	releaseLabel?: string;
+	sourceCommit?: string;
+	imageUid?: string;
 	command: string[];
 	args: Argument[];
 	env?: Argument[];
+	inputPorts?: Port[];
+	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
 	disk: string;
+	gpu?: string;
+	computeTier?: string;
 }
 
 export interface PipelineNodeData {
 	label: string;
 	type?: string;
 	source?: string;
-	mode?: string;
-	script?: string;
 	image: string;
 	command: string[];
 	args: Argument[];
 	env?: Argument[];
+	inputPorts?: Port[];
+	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
 	disk: string;
+	gpu?: string;
+	computeTier?: string;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
+	runtimeConfig?: PipelineNodeRuntimeConfig;
+	runtimeSecrets?: PipelineNodeRuntimeSecretMount[];
+	storageMounts?: PipelineNodeRuntimeStorageMount[];
 	[key: string]: unknown;
 }

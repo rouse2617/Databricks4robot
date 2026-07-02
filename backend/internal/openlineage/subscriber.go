@@ -31,10 +31,7 @@ func (s *Subscriber) HandleData(ctx context.Context, data []byte) error {
 	}
 	event, ok, err := s.Builder.Build(ev)
 	if err != nil {
-		// A malformed payload must not become a poison pill:
-		// returning the error NACKs and causes infinite redelivery.
-		slog.Warn("openlineage subscriber: failed to build event, skipping", "err", err)
-		return nil
+		return err
 	}
 	if !ok {
 		slog.Debug("openlineage subscriber: skipping unsupported event", "event_seq", ev.EventSeq, "event_type", ev.EventType)

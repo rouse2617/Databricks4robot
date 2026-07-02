@@ -186,6 +186,19 @@ func (m *mockAssetRepo) GetAll(ctx context.Context, assetID string) (*models.Ass
 	}
 	return nil, nil
 }
+func (m *mockAssetRepo) FindExistingIDs(ctx context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		a, err := m.Get(ctx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		if a != nil {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (m *mockAssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	if m.setFn != nil {
 		return m.setFn(ctx, a)

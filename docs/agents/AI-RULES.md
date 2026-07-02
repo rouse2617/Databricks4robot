@@ -15,7 +15,7 @@ On **every** user message that involves this repo, do the following **before** e
 3. **Linear** — Ensure a Linear Issue exists (`CYB-xxx` in this workspace). Create or link via MCP if the user did not provide one.
 4. **OpenSpec (write artifacts, then stop)** — For any runtime change, create or use `openspec/changes/CYB-{id}-{slug}/` **before** writing application code. Follow [`spec-writing-skill.md`](spec-writing-skill.md) for artifact quality (proposal, tasks, spec delta; feature path also `design.md`). **Checkpoint:** When `proposal.md` + `tasks.md` (+ `design.md` if feature) are ready, **stop** and ask the user to confirm OpenSpec is OK (e.g. 「OpenSpec OK，继续」). **Do not** edit `backend/`, `Frontend/`, `sdk/`, or `dagster/` until they approve. Record their approval in `decisions.md` or a short Linear comment if useful.
 5. **Branch** — Use `fix/CYB-{id}-*`, `feat/CYB-{id}-*`, or `hotfix/CYB-{id}-*` as appropriate (`DAT-*` accepted by CI for legacy). **Always branch from latest `dev`** (`git fetch origin dev && git checkout -b feat/CYB-{id}-… origin/dev`) so parallel CYB work does not conflict. Create the branch when starting OpenSpec or immediately after the OpenSpec checkpoint passes.
-6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes. **New interface methods:** when adding methods to a repository/usecase interface, ALWAYS update ALL test mocks (`*_test.go`) that implement that interface in the SAME commit — do not defer test mock updates. **Wiki sync:** if the diff touches a file documented by a `docs/repo-wiki/manifest.yaml` page (check with `python3 scripts/repo-wiki/wiki_sync.py owners <files>`), update that page in the **same PR** following [`repo-wiki`](skills/repo-wiki/SKILL.md); if no doc update is warranted, add the `wiki-exempt` label. Enforced advisory-only by [`repo-wiki-divergence`](../../.github/workflows/repo-wiki-divergence.yml).
+6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes. **New interface methods:** when adding methods to a repository/usecase interface, ALWAYS update ALL test mocks (`*_test.go`) that implement that interface in the SAME commit — do not defer test mock updates.
 7. **Before commit/push** — Follow [`deploy-before-commit.md`](deploy-before-commit.md) and [`deploy-verification.md`](deploy-verification.md) (canonical dev scripts in **§2.0**). **Dev is manual deploy** — `git push` does not roll Cloud Run; use local `deploy/cloudrun/*-dev.sh` or PR comment `/deploy-cloudrun-dev`. **If the diff touches `Frontend/`:** deploy frontend dev → Agent **must** run **Chrome DevTools MCP**. **Backend/sdk-only:** `source scripts/dev-backend-env.sh` + targeted smoke; `scripts/apply-migration-dev.sh` **before** backend deploy when schema changes.
 8. **PR** — Fill `.github/pull_request_template.md` completely when opening a PR.
 
@@ -192,6 +192,22 @@ Full commands by tier — see [Verification tiers](#verification-tiers).
 | Frontend | `npm run lint` | + `npm run test -- --run` | + `npm run build` |
 | SDK | `uv run ruff check src/` | + `pytest` touched | + `pytest tests/unit/` |
 
+## Local dev backend modes
+
+Use one unified local frontend entry point and choose the backend mode explicitly:
+
+| Mode | Command | Backend target | Use for |
+|------|---------|----------------|---------|
+| Cloud Run dev | `bash scripts/dev-local.sh --cloudrun` | `cyber-databrew-backend-dev` resolved by `scripts/dev-backend-env.sh` | Canonical dev backend parity and deploy-verification-style checks |
+| Shared Pod | `bash scripts/dev-local.sh --shared` | shared GKE service `cyber-databrew-backend` | Local frontend work against the stable shared dev pod |
+| Fast preview Pod | `bash scripts/dev-local.sh --deploy` or `--preview-id <id>` | isolated GKE preview backend under `/preview/<id>/api` | Backend changes that need quick frontend integration without changing Cloud Run dev |
+
+Do not mix these up:
+
+- **Cloud Run dev** is the canonical shared dev deploy target. Use `source scripts/dev-backend-env.sh` or `scripts/dev-local.sh --cloudrun`; do not hand-copy backend URLs.
+- **Fast preview Pod** is commit/HEAD-based and isolated. It is appropriate for quick backend/frontend pairing, but it does not replace Cloud Run dev deploy verification before commit/PR.
+- **Local frontend** should normally stay local in all three modes; only deploy frontend dev when doing required deployed-revision UI verification.
+
 ## Development pitfalls (lessons learned)
 
 Field incidents that should inform future development. Add to this section when a preventable mistake repeats.
@@ -230,6 +246,72 @@ When using Python scripts as an edit-tool workaround (Go tab indentation), the o
 The `end-of-file-fixer` pre-commit hook fails when a file has trailing blank lines after the final newline. Python's `__init__.py`, Go files, and any tracked file are subject to this check. This has failed CI repeatedly.
 
 **Check:** `pre-commit run end-of-file-fixer --all-files` before committing, or manually verify the file ends with a single `\n` (no extra blank lines). When using the Edit/Write tools, ensure the last line of content is not followed by an empty line.
+
+### P8. Argo Server lives in K8s, not Cloud Run — use ARGO_SERVER_URL
+
+**UPDATE (2026-06-24):** K8s auth is now Workload Identity. See above — do NOT use `K8S_BEARER_TOKEN`.
+
+### P9. Cloud Run dev deploy command
+
+```bash
+gcloud run deploy cyber-databrew-backend-dev \
+  --image=us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:dev-latest \
+  --region=us-central1 --project=green-valley-442103 \
+  --service-account=cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com
+```
+**Must include `--service-account`** — omitting it reverts to Compute Engine default SA and breaks K8s WI auth.
+
+### P10. grace_video asset type (UUID asset IDs)
+
+Since 2026-06-24, DataBrew supports UUID-format asset IDs alongside the original 8-char format. The `grace_video` asset type:
+- Uses UUID as `asset_id` (Grace segmentation_id)
+- Does NOT require `mcap_file_id` (schema bypasses it)
+- DB constraints updated: `assets_asset_id_check`, `chk_mcap_file_required`, etc.
+- Migration: `backend/migrations/060_grace_video_asset_id.sql`
+- Trigger: `trg_nullify_empty_mcap` converts empty mcap_file_id to NULL
+- When creating grace_video assets, set `asset_type: "grace_video"` and skip `mcap_file_id`
+Argo Workflows API server runs inside the dev K8s cluster (e.g. `http://10.2.1.211:2746`), NOT on Cloud Run. The Cloud Run service `cyber-databrew-pipeline-ui-dev` is a separate UI proxy, not the Argo API.
+
+**Symptoms of confusion:** `ARGO_BASE_URL` pointing at the Cloud Run pipeline-ui returns `{"code":"UNAUTHORIZED","message":"invalid token: ... unexpected signing method: RS256"}` because that proxy uses different auth (SSO/OIDC) and can't verify K8s SA tokens.
+
+**Check:** On Cloud Run dev backend, `ARGO_SERVER_URL` should be the K8s in-cluster IP (e.g. `http://10.2.1.211:2746`) and `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`. K8s ServiceAccount tokens (RS256) work because the K8s-based Argo server verifies them via TokenReview. Note that `deploy/cloudrun/backend-dev.sh` uses `--env-vars-file`, which overwrites revision environment variables on deploy. Therefore, do not hand-edit Cloud Run Console env vars for backend dev; keep canonical values in the script or pass explicit overrides. **K8s auth for Cloud Run is Workload Identity (since 2026-06-24).** The old static `K8S_BEARER_TOKEN` approach is deprecated — tokens expired every 2 days. Current env:
+```
+K8S_USE_METADATA_TOKEN=true       ← WI enabled, token auto-refreshes
+K8S_AUDIENCE=https://34.59.48.233
+K8S_API_ENDPOINT=https://34.59.48.233
+K8S_CA_DATA  → Secret: cyber-databrew-dev-k8s-ca-data
+```
+**Do NOT remove `K8S_USE_METADATA_TOKEN` or change the SA when redeploying.** SA must be `cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com`. K8s SA `cyber-databrew-backend-argo` has WI binding to this GCP SA. Losing these causes `create runtime config projection: Unauthorized` on every pipeline run.
+
+### Execution targets (Argo namespaces)
+
+DataBrew pipeline runs dispatch to K8s namespaces via execution targets. Current targets:
+
+| Target ID | Namespace | Argo Controller |
+|-----------|-----------|-----------------|
+| `default` | `cyber-databrew-dev` | `argo-workflows-workflow-controller` (shared) |
+| `a03ad932-...` | `video-proc-dev` | `argo-workflows-workflow-controller-video-proc-dev` |
+| `video-proc-prod` | `video-proc-prod` | `argo-workflows-workflow-controller-video-proc-prod` (2026-06-25) |
+
+**video-proc-dev** (16d ago):
+- Deploy: `argo-workflows-workflow-controller-video-proc-dev`
+- SA: `argo-workflow`, `argo-workflows-workflow-controller`, `workflow-runner`
+- Role: `argo-workflows-workflow`, `argo-workflows-workflow-controller`, `cyber-databrew-backend-runtime-config`, `cyber-databrew-resource-capacity-reader`
+
+**video-proc-prod** (2026-06-25):
+- Deploy: `argo-workflows-workflow-controller-video-proc-prod`
+- SA: `argo-workflows-workflow-controller`, `workflow-runner`
+- Role: `argo-workflows-workflow`, `argo-workflows-workflow-controller`, `cyber-databrew-backend-runtime-config`
+- ConfigMap: `argo-workflows-workflow-controller-configmap` (copied from `cyber-databrew-dev`)
+
+**To add a new execution target namespace**, replicate these from an existing one (e.g. `video-proc-dev`):
+1. SA `argo-workflows-workflow-controller` + SA `workflow-runner`
+2. Role `argo-workflows-workflow` + Role `argo-workflows-workflow-controller` + Role `cyber-databrew-backend-runtime-config`
+3. RoleBinding for each Role → corresponding SA
+4. Argo Controller Deployment + ConfigMap (namespaced mode, `--namespaced` flag)
+5. DB: `INSERT INTO execution_targets ...`
+
+**Do NOT create or modify K8s Secrets** without explicit approval. Secret content must come from the user.
 
 ## What NOT to do
 

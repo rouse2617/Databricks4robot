@@ -1,12 +1,51 @@
+import { execSync } from "node:child_process";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+const previewId = (process.env.VITE_PREVIEW_ID ?? "").trim();
+const previewHost = (
+	process.env.VITE_PREVIEW_HOST ?? "https://cyber-databrew-dev.cyberorigin.ai"
+).replace(/\/$/, "");
 const appVersion =
 	process.env.VITE_APP_VERSION || process.env.npm_package_version || "dev";
-const buildRef = process.env.VITE_BUILD_REF || "local";
+const buildRef =
+	(process.env.VITE_BUILD_REF ?? "").trim() ||
+	(previewId ? `preview/${previewId}` : getGitCommit());
+function getGitCommit(): string {
+	try {
+		return execSync("git rev-parse --short HEAD", {
+			encoding: "utf-8",
+			timeout: 3000,
+		}).trim();
+	} catch {
+		return "unknown";
+	}
+}
+
 const DEV_PORT = 5176;
 const DEFAULT_LOCAL_API = "http://localhost:8080";
 const apiProxyTarget = process.env.VITE_API_BASE_URL || DEFAULT_LOCAL_API;
+
+function apiProxyConfig(): import("vite").ProxyOptions {
+	if (previewId) {
+		return {
+			target: previewHost,
+			changeOrigin: true,
+			rewrite: (path) => `/preview/${previewId}/api${path}`,
+		};
+	}
+	return {
+		target: apiProxyTarget,
+		changeOrigin: true,
+	};
+}
+
+function apiProxyLabel(): string {
+	if (previewId) {
+		return `${previewHost}/preview/${previewId}/api`;
+	}
+	return apiProxyTarget;
+}
 
 function packageNameFromModuleId(id: string): string | null {
 	const marker = "/node_modules/";
@@ -31,14 +70,16 @@ function devServerBanner(): import("vite").Plugin {
 					typeof address === "object" && address !== null
 						? address.port
 						: DEV_PORT;
-				const usingRemoteApi = apiProxyTarget !== DEFAULT_LOCAL_API;
+				const usingRemoteApi =
+					apiProxyLabel() !== DEFAULT_LOCAL_API || previewId.length > 0;
 				console.log("");
 				console.log("  DataBrew frontend dev");
 				console.log(`  UI:  http://127.0.0.1:${port}/`);
-				console.log(`  API: ${apiProxyTarget} (via /api proxy)`);
+				console.log(`  API: ${apiProxyLabel()} (via /api proxy)`);
+				console.log(`  Ver: v${appVersion} (${buildRef})`);
 				if (!usingRemoteApi) {
 					console.log(
-						"  Tip: npm run dev:remote — proxy to Cloud Run dev backend (workflows, pipeline, …)",
+						"  Tip: npm run dev:shared / dev:preview — local UI + GKE backend Pod",
 					);
 				}
 				console.log("");
@@ -57,10 +98,15 @@ export default defineConfig({
 		port: DEV_PORT,
 		strictPort: true,
 		proxy: {
-			"/api": {
-				target: apiProxyTarget,
+			"/api/v1/preview": {
+				target:
+					process.env.VITE_MCAP_PREVIEW_URL ??
+					"https://mcap-preview-dev-wtttm6suaq-uc.a.run.app",
 				changeOrigin: true,
+				timeout: 300000,
+				proxyTimeout: 300000,
 			},
+			"/api": apiProxyConfig(),
 		},
 	},
 	build: {

@@ -34,6 +34,7 @@ RESP_BODY=""
 RESP_CODE=""
 PASS=0
 FAIL=0
+PIPELINE_CONFIG_SMOKE_ID=""
 
 ok() { PASS=$((PASS + 1)); echo "  OK  $1"; }
 bad() {
@@ -204,6 +205,68 @@ RESP_BODY=$(echo "$raw" | sed '$d')
 if [[ "$RESP_CODE" == "200" ]]; then ok "GET /healthz"; else bad "GET /healthz"; fi
 
 echo ""
+echo "--- § Pipeline execution targets ---"
+get "execution-targets" "/api/v1/execution-targets"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('id' in i and 'namespace' in i for i in items)" 2>/dev/null; then
+		ok "execution-targets response shape"
+	else
+		bad "execution-targets response shape"
+	fi
+fi
+get "pipeline runtime mounts" "/api/v1/pipeline/runtime-mounts"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); assert isinstance(d.get('secrets', []), list); assert isinstance(d.get('storage', []), list); assert all('id' in i and 'kind' in i and 'defaultMountPath' in i for i in d.get('storage', []))" 2>/dev/null; then
+		ok "pipeline runtime mounts response shape"
+	else
+		bad "pipeline runtime mounts response shape"
+	fi
+fi
+get "pipeline-runs" "/api/v1/pipeline-runs"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('id' in i and 'status' in i and 'workflowName' in i for i in items)" 2>/dev/null; then
+		ok "pipeline-runs response shape"
+	else
+		bad "pipeline-runs response shape"
+	fi
+fi
+get "runs summary with search" "/api/v1/runs?view=summary&q=pipeline&page=1&pageSize=5"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all(('totalEstimatedCost' not in i) or (i.get('totalEstimatedCost') is None) or isinstance(i.get('totalEstimatedCost'), (int,float)) for i in items)" 2>/dev/null; then
+		ok "runs summary search/cost response shape"
+	else
+		bad "runs summary search/cost response shape"
+	fi
+fi
+if [[ -n "${PIPELINE_TEMPLATE_ID:-}" ]]; then
+	inline_run_payload='{"target_id":"default","configSelection":{"mode":"inline","fileName":"runtime-config.yaml","content":"foo: bar\nnested:\n  enabled: true","mountPath":"/workspace/configs","targetFilename":"app-config.yaml"}}'
+	inline_run_body=$(post_json "pipeline run template with inline configSelection" "/api/v1/pipeline-runs/template/${PIPELINE_TEMPLATE_ID}" "$inline_run_payload")
+	if echo "$inline_run_body" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("id"); assert d.get("executionTargetId") == "default"' 2>/dev/null; then
+		ok "pipeline run template inline configSelection response shape"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$inline_run_body"
+		bad "pipeline run template inline configSelection response shape"
+	fi
+	if [[ -n "$PIPELINE_CONFIG_SMOKE_ID" ]]; then
+		saved_run_payload='{"target_id":"default","configSelection":{"mode":"saved","configId":"'"${PIPELINE_CONFIG_SMOKE_ID}"'","version":1,"fileName":"smoke-config.yaml","mountPath":"/workspace/configs","targetFilename":"saved-config.yaml"}}'
+		saved_run_body=$(post_json "pipeline run template with saved configSelection" "/api/v1/pipeline-runs/template/${PIPELINE_TEMPLATE_ID}" "$saved_run_payload")
+		if echo "$saved_run_body" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("id"); assert d.get("executionTargetId") == "default"' 2>/dev/null; then
+			ok "pipeline run template saved configSelection response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$saved_run_body"
+			bad "pipeline run template saved configSelection response shape"
+		fi
+	else
+		echo "  skip pipeline run template saved configSelection — set RUN_WRITES=1 so smoke can create a disposable pipeline config first"
+	fi
+else
+	echo "  skip pipeline run template configSelection smoke — set PIPELINE_TEMPLATE_ID to a disposable template id"
+fi
+expect_code_post "pipeline save duplicate fan-in -> 400" "/api/v1/pipelines" '{"name":"smoke-invalid-fanin","pipeline":{"name":"smoke-invalid-fanin","nodes":[{"id":"a","component":{"name":"a","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo a > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"b","component":{"name":"b","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo b > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"join","component":{"name":"join","image":"busybox"},"inputs":[{"name":"input","type":"string"}]}],"edges":[{"source":"a.output","target":"join.input"},{"source":"b.output","target":"join.input"}]}}}' "400" >/dev/null
+
+echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
 get "lakehouse/status" "/api/v1/lakehouse/status"
 get "lakehouse/tables" "/api/v1/lakehouse/tables"
@@ -237,7 +300,50 @@ expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/
 
 echo ""
 echo "--- § pipeline component registry ---"
+get "pipeline-configs list" "/api/v1/pipeline-configs"
+expect_code_post "pipeline-configs missing content -> 400" "/api/v1/pipeline-configs" '{"name":"smoke-missing-content.yaml","lifecycle":"ready"}' "400" >/dev/null
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	config_name="smoke-config-$(date +%s).yaml"
+	config_body='{"name":"'"${config_name}"'","description":"api guide smoke config","tags":["smoke","pipeline"],"lifecycle":"ready","content":"threshold: 0.82\nwindow: 5\n","summary":"initial smoke version"}'
+	config_created=$(post_json "pipeline-configs create" "/api/v1/pipeline-configs" "$config_body")
+	config_id=$(echo "$config_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+	if [[ -n "$config_id" ]]; then
+		PIPELINE_CONFIG_SMOKE_ID="$config_id"
+		get "pipeline-configs get" "/api/v1/pipeline-configs/${config_id}"
+		get "pipeline-configs get v1 content" "/api/v1/pipeline-configs/${config_id}/versions/1"
+		config_v2_body='{"status":"ready","content":"threshold: 0.90\nwindow: 5\n","summary":"raise threshold"}'
+		config_v2=$(post_json "pipeline-configs create v2" "/api/v1/pipeline-configs/${config_id}/versions" "$config_v2_body")
+		if echo "$config_v2" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("version") == 2 and "content" not in d' 2>/dev/null; then
+			ok "pipeline-configs create v2 response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$config_v2"
+			bad "pipeline-configs create v2 response shape"
+		fi
+		put_json "pipeline-configs update metadata" "/api/v1/pipeline-configs/${config_id}" '{"name":"'"${config_name}"'","description":"updated api guide smoke config","tags":["smoke","updated"],"fileType":"yaml","lifecycle":"ready"}' >/dev/null
+		node_config_pipeline_name="smoke-node-config-$(date +%s)"
+		node_config_pipeline_body='{"name":"'"${node_config_pipeline_name}"'","pipeline":{"name":"'"${node_config_pipeline_name}"'","nodes":[{"id":"configured-step","component":{"name":"configured-step","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo ok"}]},"runtimeConfig":{"mode":"saved","configId":"'"${config_id}"'","version":2,"fileName":"'"${config_name}"'","mountPath":"/workspace/configs","targetFilename":"smoke-config.yaml"},"inputs":[],"outputs":[]}],"edges":[]}}'
+		node_config_template=$(post_json "pipelines create with node runtimeConfig" "/api/v1/pipelines" "$node_config_pipeline_body")
+		if echo "$node_config_template" | python3 -c 'import sys,json; d=json.load(sys.stdin); rc=d.get("pipeline",{}).get("nodes",[{}])[0].get("runtimeConfig",{}); assert d.get("id") and rc.get("configId")' 2>/dev/null; then
+			ok "pipelines create node runtimeConfig response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$node_config_template"
+			bad "pipelines create node runtimeConfig response shape"
+		fi
+		post_json "pipeline-configs deprecate" "/api/v1/pipeline-configs/${config_id}/deprecate" '{}' >/dev/null
+	else
+		RESP_CODE="json"
+		RESP_BODY="$config_created"
+		bad "pipeline-configs create id extraction"
+	fi
+else
+	echo "  skip pipeline config write smoke — set RUN_WRITES=1 to create/update/deprecate disposable config records"
+fi
+
 get "pipeline-components list" "/api/v1/pipeline-components"
+get "pipeline-component-releases list selectable" "/api/v1/pipeline-component-releases?selectable=true"
+expect_code_get "pipeline-component-releases invalid selectable -> 400" "/api/v1/pipeline-component-releases?selectable=maybe" "400" >/dev/null
 expect_code_post "pipeline-components missing image -> 400" "/api/v1/pipeline-components" '{"name":"smoke-missing-image","type":"container"}' "400" >/dev/null
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	component_name="smoke-component-$(date +%s)"
@@ -253,8 +359,30 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 		RESP_BODY="$component_created"
 		bad "pipeline-components create id extraction"
 	fi
+	release_label="main-smoke$(date +%s)"
+	release_commit="abcdef$(date +%s)"
+	release_body='{"source":{"provider":"api-guide-smoke","repo":"CyberOrigin2077/automated-processing-gcloud","ref":"refs/heads/main","refType":"branch","commit":"'"${release_commit}"'","buildId":"smoke-build","trigger":"smoke-trigger"},"items":[{"componentId":"smoke-task","taskName":"smoke-task","taskPath":"tasks/smoke_task","releaseLabel":"'"${release_label}"'","runtimeImage":"registry.example.com/smoke-task@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtimeSnapshot":{"command":["python","src/main.py"],"inputPorts":[{"name":"input","type":"asset"}],"outputPorts":[{"name":"output","type":"asset"}],"resources":{"cpu":"1","memory":"1Gi"}}}]}'
+	release_created=$(post_json "pipeline-component-releases sync" "/api/v1/pipeline-component-releases/sync" "$release_body")
+	release_id=$(echo "$release_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("items",[{}])[0].get("id",""))' 2>/dev/null || true)
+	if [[ -n "$release_id" ]]; then
+		get "pipeline-component-releases get" "/api/v1/pipeline-component-releases/${release_id}"
+		get "pipeline-component-releases search source commit" "/api/v1/pipeline-component-releases?q=${release_commit}"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$release_created"
+		bad "pipeline-component-releases sync id extraction"
+	fi
+	release_unpinned='{"items":[{"componentId":"smoke-unpinned","releaseLabel":"pr-1-abc123","runtimeImage":"registry.example.com/smoke-unpinned:abc123","runtimeSnapshot":{"command":["python","main.py"],"resources":{"cpu":"1"}}}]}'
+	unpinned_resp=$(post_json "pipeline-component-releases missing digest -> unselectable" "/api/v1/pipeline-component-releases/sync" "$release_unpinned")
+	if echo "$unpinned_resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); item=d.get("items",[{}])[0]; assert item.get("selectable") is False and item.get("validationStatus") == "failed"' 2>/dev/null; then
+		ok "pipeline-component-releases missing digest validation"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$unpinned_resp"
+		bad "pipeline-component-releases missing digest validation"
+	fi
 else
-	echo "  skip pipeline-components write smoke — set RUN_WRITES=1 to create/update/delete a disposable component"
+	echo "  skip pipeline component write smoke — set RUN_WRITES=1 to create/update/delete disposable component records"
 fi
 
 echo ""
@@ -279,7 +407,19 @@ if [[ -n "${WORKFLOW_NAME:-}" ]]; then
 	fi
 	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
 	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
-		get "workflow node logs" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}"
+		get "workflow node logs bounded" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}&tailLines=50&limitBytes=65536"
+		if echo "$RESP_BODY" | python3 -c 'import sys,json; data=json.load(sys.stdin); assert data.get("truncation", {}).get("bounded") is True; assert data.get("pagination", {}).get("available") is False; assert data.get("window", {}).get("scope") == "bounded-live-window"; assert "lineCount" in data' 2>/dev/null; then
+			ok "workflow logs bounded metadata"
+		else
+			bad "workflow logs bounded metadata"
+		fi
+		expect_code_get "workflow logs cursor unavailable -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}&cursor=older" "400" >/dev/null
+		raw=$(curl -sS -N --max-time 3 -D - -o /dev/null "${API_HDR[@]}" "${BASE}/api/v1/workflows/${WORKFLOW_NAME}/logs/stream?nodeId=${WORKFLOW_NODE_ID}&tailLines=1&limitBytes=4096" 2>/dev/null || true)
+		if echo "$raw" | grep -qi "Content-Type: text/event-stream"; then
+			ok "workflow logs stream content-type"
+		else
+			bad "workflow logs stream content-type"
+		fi
 	else
 		echo "  skip workflow logs happy path — set WORKFLOW_NODE_ID to exercise GET /workflows/{name}/logs"
 	fi
@@ -311,6 +451,8 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
 	post "POST algo-runs" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" >/dev/null
 	expect_code_post "POST algo-runs duplicate run_id -> 409" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" "409" >/dev/null
+	MISSING_ASSET_RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
+	expect_code_post "POST algo-runs missing input asset -> 400" "/api/v1/algo-runs" "{\"run_id\":\"${MISSING_ASSET_RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\",\"input_asset_ids\":[\"DEAD1536\"]}" "400" >/dev/null
 	get "GET algo-runs/{id}" "/api/v1/algo-runs/${RUN_ID}"
 	post "POST algo-runs start" "/api/v1/algo-runs/${RUN_ID}/start" "{}" >/dev/null
 	get "GET algo-runs affected-assets" "/api/v1/algo-runs/${RUN_ID}/affected-assets"

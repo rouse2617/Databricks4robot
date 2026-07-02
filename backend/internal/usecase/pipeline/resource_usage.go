@@ -16,14 +16,22 @@ type templateResourceSpec struct {
 	MemoryLimit   string
 }
 
-func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string) []PodResourceUsage {
+func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string, observedAt, onlyNodeID string) []PodResourceUsage {
 	if wf == nil {
 		return []PodResourceUsage{}
 	}
 	reqs := templateResourcesFromManifest(manifest)
+	for name, spec := range templateResourcesFromWorkflow(wf) {
+		if _, ok := reqs[name]; !ok || reqs[name].empty() {
+			reqs[name] = spec
+		}
+	}
 	pods := make([]PodResourceUsage, 0)
 	for _, node := range wf.Status.Nodes {
 		if node.Type != wfv1.NodeTypePod {
+			continue
+		}
+		if onlyNodeID != "" && node.ID != onlyNodeID {
 			continue
 		}
 		podName := node.ID
@@ -31,19 +39,41 @@ func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string) []PodResou
 			podName = node.Name
 		}
 		entry := PodResourceUsage{
-			PodName:  podName,
-			NodeName: node.HostNodeName,
+			PodName:              podName,
+			NodeID:               node.ID,
+			NodeName:             node.HostNodeName,
+			TemplateName:         node.TemplateName,
+			ObservedAt:           observedAt,
+			LiveMetricsAvailable: false,
 		}
-		entry.CPUUsage, entry.MemoryUsage = formatResourcesDuration(node.ResourcesDuration)
+		durationCPU, durationMemory := formatResourcesDuration(node.ResourcesDuration)
+		entry.CPUUsage = durationCPU
+		entry.MemoryUsage = durationMemory
+		entry.CPUResourceDuration = durationCPU
+		entry.MemoryResourceDuration = durationMemory
+		entry.ResourceDuration = ResourceValues{CPU: durationCPU, Memory: durationMemory}
 		if spec, ok := reqs[node.TemplateName]; ok {
 			entry.CPURequest = spec.CPURequest
 			entry.MemoryRequest = spec.MemoryRequest
 			entry.CPULimit = spec.CPULimit
 			entry.MemoryLimit = spec.MemoryLimit
+			entry.Requests = ResourceValues{CPU: spec.CPURequest, Memory: spec.MemoryRequest}
+			entry.Limits = ResourceValues{CPU: spec.CPULimit, Memory: spec.MemoryLimit}
 		}
 		pods = append(pods, entry)
 	}
 	return pods
+}
+
+func (spec templateResourceSpec) empty() bool {
+	return spec.CPURequest == "" && spec.MemoryRequest == "" && spec.CPULimit == "" && spec.MemoryLimit == ""
+}
+
+func specSource(manifest *string) string {
+	if manifest == nil || strings.TrimSpace(*manifest) == "" {
+		return "unavailable"
+	}
+	return "stored-manifest"
 }
 
 func formatResourcesDuration(d wfv1.ResourcesDuration) (cpu, mem string) {
@@ -66,6 +96,34 @@ func templateResourcesFromManifest(manifest *string) map[string]templateResource
 	}
 	var wf wfv1.Workflow
 	if err := sigsyaml.Unmarshal([]byte(*manifest), &wf); err != nil {
+		return out
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "" {
+			continue
+		}
+		var res corev1.ResourceRequirements
+		switch {
+		case tmpl.Container != nil:
+			res = tmpl.Container.Resources
+		case tmpl.Script != nil:
+			res = tmpl.Script.Resources
+		default:
+			continue
+		}
+		out[tmpl.Name] = templateResourceSpec{
+			CPURequest:    quantityString(res.Requests[corev1.ResourceCPU]),
+			MemoryRequest: quantityString(res.Requests[corev1.ResourceMemory]),
+			CPULimit:      quantityString(res.Limits[corev1.ResourceCPU]),
+			MemoryLimit:   quantityString(res.Limits[corev1.ResourceMemory]),
+		}
+	}
+	return out
+}
+
+func templateResourcesFromWorkflow(wf *wfv1.Workflow) map[string]templateResourceSpec {
+	out := make(map[string]templateResourceSpec)
+	if wf == nil {
 		return out
 	}
 	for _, tmpl := range wf.Spec.Templates {

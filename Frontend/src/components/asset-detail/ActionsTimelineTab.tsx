@@ -260,7 +260,7 @@ export default function ActionsTimelineTab({
 					form.resetFields();
 					setAllowCustomLabel(false);
 				}}
-				destroyOnClose
+				destroyOnHidden
 			>
 				<Form
 					form={form}

@@ -15,7 +15,7 @@ class SearchManager(BaseManager):
         *,
         q: str | None = None,
         mode: str | None = None,
-        filter: list[str] | None = None,
+        filter: list[str] | None = None,  # noqa: A002 - public SDK keyword
         page: int | None = None,
         page_size: int | None = None,
         lineage_with: str | None = None,

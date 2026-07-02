@@ -82,6 +82,11 @@ services:
       LAKEHOUSE_BQ_CATALOG: "iceberg"
       LAKEHOUSE_BQ_DATASET: "lakehouse_bronze"
       ELASTICSEARCH_URL: "http://elasticsearch:9200"
+      # Local Argo (kind-argo-local) wired via kubectl port-forward.
+      ARGO_SERVER_URL: ${ARGO_SERVER_URL:-http://host.docker.internal:12746}
+      ARGO_TOKEN: ${ARGO_TOKEN:-}
+      ARGO_WORKFLOWS_NAMESPACE: ${ARGO_WORKFLOWS_NAMESPACE:-argo}
+      ARGO_INSECURE_SKIP_VERIFY: "true"
     depends_on:
       pgbouncer:
         condition: service_started

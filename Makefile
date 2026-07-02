@@ -1,4 +1,11 @@
-.PHONY: all dev-up dev-down all-up all-down all-reset-volumes all-logs local-migrate local-dev-seed pg-generate-scale pg-generate-rich iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test test-full smoke smoke-local api-guide-smoke api-guide-smoke-incluster scenario-tags-bulk frontend-test build clean seed-rich verify-rich-seed test-e2e-rich ci-local ci-local-full
+.PHONY: all dev-up dev-down dev-frontend dev-frontend-shared all-up all-down all-reset-volumes all-logs local-migrate local-dev-seed pg-generate-scale pg-generate-rich iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test test-full smoke smoke-local api-guide-smoke api-guide-smoke-incluster scenario-tags-bulk frontend-test build clean seed-rich verify-rich-seed test-e2e-rich ci-local ci-local-full
+
+# ── Local frontend + remote GKE backend (no frontend deploy) ──
+dev-frontend:
+	bash scripts/dev-local.sh --preview
+
+dev-frontend-shared:
+	bash scripts/dev-local.sh --shared
 
 # ── Local infra ──────────────────────────────────────────
 dev-up:

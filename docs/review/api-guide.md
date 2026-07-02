@@ -50,7 +50,7 @@ curl "$BASE/api/v1/asset-types/annotation_result/schema" \
 ## 基础信息
 
 - 基础 URL: `http://localhost:8080`（本地开发）
-- 认证: `/api/v1/*` 默认需要 `X-Databrew-Token`；也支持先走 `POST /api/v1/auth/login` 写入 `databrew_session` cookie，再访问受保护接口
+- 认证: `/api/v1/*` 默认支持 `X-Databrew-Token`；浏览器端使用 `POST /api/v1/auth/email-login` 写入 `databrew_session` JWT cookie，再访问受保护接口；`POST /api/v1/auth/login` 保留给静态 token 会话登录和兼容场景
 - 响应格式: JSON
 - 请求 ID: 每个响应包含 `X-Request-ID` header
 
@@ -60,7 +60,19 @@ export BASE=http://localhost:8080
 export TOKEN=dev-token
 ```
 
-会话登录（可选）：
+邮箱会话登录（浏览器端实际路径）：
+
+```bash
+curl -X POST "$BASE/api/v1/auth/email-login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@cyberorigin.ai"}' \
+  -c /tmp/databrew.cookie
+
+curl "$BASE/api/v1/auth/me" -b /tmp/databrew.cookie
+curl -X POST "$BASE/api/v1/auth/logout" -b /tmp/databrew.cookie
+```
+
+静态 token 会话登录（SDK 兼容 / 调试可选）：
 
 ```bash
 curl -X POST "$BASE/api/v1/auth/login" \
@@ -679,6 +691,7 @@ curl -s -X POST "http://localhost:8080/api/v1/assets/task_001/tasks" \
 ### 2.0 算法运行登记 (`algo_runs`，CYB-1018)
 
 Worker 在批量跑算法前先登记 run，再在 per-asset `start`/`finish` 里带上同一 `run_id`（16 位）。
+如传入 `input_asset_ids`，每个 ID 必须存在且未被软删除；重复或未知 ID 会返回 `400 INVALID_ARGUMENT`，`details.field` 为 `input_asset_ids`。
 
 ```bash
 RUN_ID="R001abc123def456"
@@ -742,6 +755,32 @@ curl -X POST "$BASE/api/v1/algo-runs" \
     \"algo_kind\": \"processing\",
     \"triggered_by\": \"manual:ops\"
   }"
+```
+
+未知或重复 input asset 创建返回 `400`，并在 details 中列出对应 ID：
+
+```bash
+curl -X POST "$BASE/api/v1/algo-runs" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "R1536badasset001",
+    "algo_name": "hand_track",
+    "algo_version": "2.0",
+    "algo_kind": "processing",
+    "triggered_by": "manual:ops",
+    "input_asset_ids": ["DEAD1536"]
+  }'
+
+# 400:
+# {
+#   "code": "INVALID_ARGUMENT",
+#   "message": "input_asset_ids contain unknown assets",
+#   "details": {
+#     "field": "input_asset_ids",
+#     "missing_asset_ids": ["DEAD1536"]
+#   }
+# }
 ```
 
 可取消 `pending/running` run：
@@ -2155,6 +2194,19 @@ curl -X POST "$BASE/api/v1/metrics:search" \
 
 ## 9. 错误码参考
 
+标准 JSON 错误体：
+
+```json
+{
+  "code": "INVALID_ARGUMENT",
+  "message": "invalid request body",
+  "request_id": "req-xxx",
+  "details": {"field": "asset_id"}
+}
+```
+
+`details` 可省略；`request_id` 与响应头 `X-Request-ID` 对应。Python SDK 会将这些字段暴露为 `e.code`、`e.message`、`e.request_id`、`e.details`，并按 HTTP 状态码设置 `e.http_status` 和 typed exception。
+
 | HTTP | Code | 说明 |
 |------|------|------|
 | 400 | `INVALID_ARGUMENT` | 请求格式错误 |
@@ -2233,10 +2285,20 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
     "env": {"MODE": "batch"},
     "inputPorts": [{"name": "input", "type": "asset"}],
     "outputPorts": [{"name": "output", "type": "asset"}],
-    "resources": {"cpu": "500m", "memory": "256Mi"}
+    "resources": {
+      "cpu": "4000m",
+      "memory": "16Gi",
+      "disk": "50Gi",
+      "gpu": "1",
+      "computeTier": "gpu-l4"
+    }
   }'
 # 响应: 201 + Component 对象
 # 必填字段: name, type(container|script|resource|suspend), image
+# resources.gpu 会在部署时映射为 Argo/Kubernetes `limits.nvidia.com/gpu`；
+# resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据。
+# 部署/运行/批量任务下发时，后端会按当前执行目标的资源上限校验 cpu/memory/disk/gpu；
+# 超出 dev 能力会返回 400/invalid argument，提示最大可用规格并拒绝创建 Argo Workflow。
 
 # 获取组件详情
 curl -s "$BASE/api/v1/pipeline-components/<ID>" \
@@ -2259,6 +2321,127 @@ curl -i -X POST "$BASE/api/v1/pipeline-components" \
 # 响应: 400 + 标准错误体
 ```
 
+### 配置中心（ConfigManagement）
+
+配置中心管理用户自己的单文件配置，不属于组件子对象。组件继续只描述运行镜像和运行参数；流水线需要配置时引用 `configId`。配置文件内容保存在 PostgreSQL，单版本内容上限为 1 MiB。
+
+文件内容不可原地改写：查看旧版本时可看到当时的文件内容；编辑任意旧版本应提交为新版本。
+
+```bash
+# 列出当前用户的配置（普通用户默认只看自己的配置；legacy SDK/admin 可传 owner）
+curl -s "$BASE/api/v1/pipeline-configs?q=detector&lifecycle=ready" \
+  -H "X-Databrew-Token: $TOKEN"
+# 响应: {"items": [{...}, ...]}
+
+# 创建配置和第一个文件版本
+curl -X POST "$BASE/api/v1/pipeline-configs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "detector.yaml",
+    "description": "Detector thresholds for validation",
+    "tags": ["vision", "smoke"],
+    "lifecycle": "ready",
+    "content": "threshold: 0.82\nwindow: 5\n",
+    "summary": "initial thresholds"
+  }'
+# 响应: 201 + Config 对象；versions 只返回摘要，不返回 content
+
+# 查看配置详情和版本摘要
+curl -s "$BASE/api/v1/pipeline-configs/<CONFIG_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看 v1 文件内容
+curl -s "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/versions/1" \
+  -H "X-Databrew-Token: $TOKEN"
+# 响应: Version 对象，包含 content
+
+# 编辑文件：创建 v2，不改写 v1
+curl -X POST "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/versions" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "status": "ready",
+    "content": "threshold: 0.90\nwindow: 5\n",
+    "summary": "raise detector threshold"
+  }'
+# 响应: 201 + Version 摘要，content 省略；currentVersion 会推进到 2
+
+# 仅更新元数据，不改文件内容
+curl -X PUT "$BASE/api/v1/pipeline-configs/<CONFIG_ID>" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "detector.yaml",
+    "description": "Detector thresholds for validation",
+    "tags": ["vision", "prod"],
+    "fileType": "yaml",
+    "lifecycle": "ready"
+  }'
+
+# 废弃配置（不硬删除，避免破坏历史流水线复现）
+curl -X POST "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/deprecate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 校验失败示例：缺少文件内容
+curl -i -X POST "$BASE/api/v1/pipeline-configs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"bad.yaml","lifecycle":"ready"}'
+# 响应: 400 + 标准错误体
+```
+
+### 组件版本库（ComponentRelease）
+
+组件版本库记录由 CI/平台生成的 task 构建版本。普通 UI 应查询 `selectable=true`，只展示已经通过基础校验且 digest 固化的版本；repo、commit、image digest 等技术字段放在详情里。
+
+CI 推荐使用专用 `X-Databrew-CI-Token: $DATABREW_CI_INGEST_TOKEN` 调用 sync；管理员/调试工具仍可使用普通 `X-Databrew-Token`。`source` 是 batch 级构建上下文，DataBrew 会把它作为每个 item 的默认 source metadata，并写入 technical metadata。
+
+```bash
+# 平台/CI 同步一个生成版本
+curl -X POST "$BASE/api/v1/pipeline-component-releases/sync" \
+  -H "X-Databrew-CI-Token: $DATABREW_CI_INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "source": {
+      "provider": "cloud-build",
+      "repo": "CyberOrigin2077/automated-processing-gcloud",
+      "ref": "refs/heads/main",
+      "refType": "branch",
+      "commit": "abc1234abc1234abc1234abc1234abc1234abc1234",
+      "buildId": "1e86eab9-9250-41c5-b905-8ff3c6de23af",
+      "trigger": "hand-detect-yolov26m-build-trigger"
+    },
+    "items": [{
+      "componentId": "hand-detect-yolov26m",
+      "taskName": "hand-detect-yolov26m",
+      "taskPath": "tasks/hand_detect_yolov26m",
+      "releaseLabel": "main-abc1234",
+      "runtimeImage": "us-central1-docker.pkg.dev/my-project/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtimeSnapshot": {
+        "command": ["python", "src/main.py"],
+        "inputPorts": [{"name": "input", "type": "asset"}],
+        "outputPorts": [{"name": "output", "type": "asset"}],
+        "resources": {"cpu": "14000m", "memory": "55Gi", "gpu": "1"}
+      }
+    }]
+  }'
+# 响应: {"items":[{...,"channel":"candidate","validationStatus":"passed","selectable":true}]}
+
+# tag 构建可传 `refType=tag`，DataBrew 会归为 `prod`，UI 标识为“线上版本”。
+# commit 构建可传 `refType=commit` 或只传 commit hash，普通用户用 q 搜 commit 即可找到测试版本。
+
+# 普通 UI 列出可选版本
+curl -s "$BASE/api/v1/pipeline-component-releases?selectable=true&q=abc1234" \
+  -H "X-Databrew-Token: $TOKEN"
+# q 支持 component/task/display/release label/source commit/ref/repo/build id/image tag/digest/runtime image。
+
+# 查看技术详情
+curl -s "$BASE/api/v1/pipeline-component-releases/<RELEASE_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# digest 缺失时仍可入库审计，但不会出现在 selectable=true 的正常选择器里
+curl -X POST "$BASE/api/v1/pipeline-component-releases/sync" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"items":[{"componentId":"demo","releaseLabel":"pr-1-abc123","runtimeImage":"registry/demo:abc123","runtimeSnapshot":{"command":["python","main.py"],"resources":{"cpu":"1"}}}]}'
+# 响应: {"items":[{...,"validationStatus":"failed","selectable":false,"validationErrors":["imageDigest is required and must be sha256 pinned"]}]}
+```
+
 ### Pipeline 版本对比（F2.12）
 
 对比两个 pipeline template 版本的 node 和 edge 差异。
@@ -2278,9 +2461,688 @@ curl -s "$BASE/api/v1/pipelines/<ID1>/diff/<ID2>" \
 # 404: template 不存在
 ```
 
-### 查询资源使用量（F5.8）
+### Pipeline 执行目标与资产驱动运行（CYB-1532/CYB-1534）
 
-查询 workflow 各 pod 的 CPU/Mem 实际使用 vs request/limit。
+查询可用执行目标。CYB-1534 后执行目标会落库，默认目标会由 backend 当前 Argo
+namespace 自动 bootstrap；后续可扩展为多个 cluster/namespace/service account。
+
+```bash
+curl -s "$BASE/api/v1/execution-targets" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "default",
+#       "name": "Default Argo target",
+#       "cluster": "default",
+#       "namespace": "cyber-databrew-dev",
+#       "argoServerConfigured": true,
+#       "status": "available",
+#       "isDefault": true
+#     }
+#   ]
+# }
+```
+
+查询可挂载到节点的运行时资源。该接口只返回平台允许的资源目录，不返回 secret
+内容；节点 DSL 只保存 `resourceId`、`mountPath`、`readOnly`，后端在部署时解析为
+SecretProviderClass、PVC 或 emptyDir。
+
+```bash
+curl -s "$BASE/api/v1/pipeline/runtime-mounts" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "secrets": [
+#     {
+#       "id": "platform-db-secrets",
+#       "name": "Platform DB 密钥",
+#       "kind": "secretProviderClass",
+#       "secretProviderClass": "databrew-platform-db-creds", # pragma: allowlist secret
+#       "defaultMountPath": "/mnt/secrets",
+#       "readOnly": true
+#     }
+#   ],
+#   "storage": [
+#     {
+#       "id": "scratch-emptydir",
+#       "name": "临时工作目录",
+#       "kind": "emptyDir",
+#       "defaultMountPath": "/workspace/scratch",
+#       "readOnly": false,
+#       "allowWrite": true
+#     }
+#   ]
+# }
+```
+
+部署时如果节点引用未知 `resourceId`、目标环境不支持该资源、挂载路径不是绝对路径、
+挂载到 `/tmp/outputs` 等保留目录、同节点挂载路径冲突，或只读资源请求写入，接口返回
+`400 INVALID_ARGUMENT`，Workflow 不会提交到 Argo。
+
+如果平台侧 catalog JSON 配置不合法，例如 secret 资源缺少 `secretProviderClass` 或 PVC
+资源缺少 `pvcName`，`GET /api/v1/pipeline/runtime-mounts` 返回 `500`，前端应展示资源加载失败而不是允许用户保存空绑定。
+
+按模板提交 first-class pipeline run。`target_id` 可省略，省略时使用默认执行目标；
+`asset_ids` 可为空，但 UI 应把空资产运行标识为 no-asset run。显式 `asset_ids`
+必须存在且未被软删除；重复或未知 ID 返回 `400 INVALID_ARGUMENT`，`details.field`
+为 `asset_ids`。该接口会同时写入兼容 deployment 记录，旧前端 `/deployments`
+仍可读取。模板保存是快照式版本管理：同名 pipeline 每次保存都会生成新的
+`version`；保存模板前会按运行契约做校验：同一个目标输入端口不能被多个上游同时连接
+（fan-in 需要给 join 节点配置不同输入端口），被下游消费的输出端口必须由生产节点写入
+`/tmp/outputs/<port>`。校验失败返回 `400 INVALID_ARGUMENT`，避免无效 Workflow 提交到
+Argo。列表默认只返回同名模板的最新版本，`/pipelines/<ID>/versions`
+返回该模板名称下的全部历史版本。运行时可传 `version` 选择历史版本；响应会返回
+实际绑定的 `templateId` 与 `templateVersion`。
+
+```bash
+# 保存同名模板两次，会得到 v1 / v2 两个 snapshot。
+curl -X POST "$BASE/api/v1/pipelines" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "daily-ingest",
+    "pipeline": {
+      "name": "daily-ingest",
+      "nodes": [
+        {
+          "id": "step-1",
+          "component": {
+            "name": "echo",
+            "image": "alpine:3.18",
+            "command": ["sh", "-c"],
+            "args": [{"name": "script", "value": "echo ok"}]
+          },
+          "runtimeConfig": {
+            "mode": "saved",
+            "configId": "<PIPELINE_CONFIG_ID>",
+            "version": 1,
+            "fileName": "detector.yaml",
+            "mountPath": "/workspace/configs",
+            "targetFilename": "detector.yaml"
+          },
+          "inputs": [],
+          "outputs": []
+        }
+      ],
+      "edges": []
+    }
+  }'
+
+curl -s "$BASE/api/v1/pipelines/<TEMPLATE_ID>/versions" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {"id": "tpl-v2", "name": "daily-ingest", "version": 2, "nodeCount": 1},
+#     {"id": "tpl-v1", "name": "daily-ingest", "version": 1, "nodeCount": 1}
+#   ]
+# }
+```
+
+`runtimeConfig` 是节点级配置绑定。它引用配置库里已经 ready 的配置版本，并随
+pipeline template snapshot 保存。部署时后端会把该配置挂载到声明它的节点，不会挂到
+其他节点；同一次运行选择的 `asset_ids` 仍作为 run 级上下文注入到所有节点 Pod。
+
+```bash
+curl -X POST "$BASE/api/v1/runs/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_id": "default",
+    "version": 1,
+    "asset_ids": ["SDKT0202", "SDKT0101"]
+  }'
+
+# 响应示例:
+# {
+#   "id": "run-123",
+#   "templateId": "tpl-123",
+#   "templateVersion": 1,
+#   "pipelineName": "asset-pipeline",
+#   "workflowName": "asset-pipeline-a1b2c3",
+#   "executionTargetId": "default",
+#   "status": "Pending",
+#   "assetIds": ["SDKT0202", "SDKT0101"],
+#   "assetCount": 2,
+#   "noAssetRun": false,
+#   "argoNamespace": "cyber-databrew-dev",
+#   "executionTarget": {
+#     "id": "default",
+#     "namespace": "cyber-databrew-dev",
+#     "status": "available"
+#   },
+#   "nodes": []
+# }
+# 400: asset 不存在或 target_id 不支持
+# 404: template 不存在
+# 503: Argo backend 未配置
+```
+
+`configSelection` 仍为可选兼容字段，适合旧调用方或明确需要全局 fallback 的高级场景。
+正常产品模型应优先在 pipeline node 上保存 `runtimeConfig`。存在节点级
+`runtimeConfig` 时，节点自己的配置优先；deploy-level `configSelection` 不会覆盖该节点。
+
+兼容字段存在时，deploy/runtime 会把配置内容投影成一次性 ConfigMap。没有节点级配置的
+旧 pipeline 会在所有 pipeline step 容器里同时注入：
+
+- 挂载文件：`<mountPath>/<targetFilename>`
+- 环境变量：`PIPELINE_CONFIG_PATH`、`PIPELINE_CONFIG_FILENAME`、`PIPELINE_CONFIG_SOURCE`
+- 若来源是平台已保存配置（`mode=saved`），额外包含 `PIPELINE_CONFIG_ID` 与
+  `PIPELINE_CONFIG_VERSION`
+
+三种来源模式：
+
+- `saved`：选择平台已保存配置，需传 `configId`，可选 `version`
+- `upload`：上传本地文件，需传 `fileName + content`
+- `inline`：在线编辑草稿，需传 `fileName + content`
+
+### Run 产品执行 API
+
+`Run` 是 DataBrew 对外的唯一执行实体。`pipeline` 是设计期模板，`workflowName`
+只是 Argo runtime 调试引用；产品链接、批量任务和重试语义都应优先使用 `runId`。
+`/api/v1/pipeline-runs` 仍保留为兼容/debug 入口。
+
+后端通过 Run Kernel 边界承载 `/api/v1/runs`，再由运行时 adapter 对接 Argo 等
+具体执行系统。调用方不需要持有 Argo Workflow 作为产品主键；返回体和错误语义以
+OpenAPI 的 Run 契约为准。
+
+非 dry-run 的 Run 创建同样先进入 Run Kernel，再通过 `RuntimeAdapter.Submit`
+提交具体运行时任务；未配置 adapter 的旧部署仍会回退到 legacy workflow client。
+dry-run 只返回 preview manifest，不创建 runtime job。
+
+创建、查询和解析 Run：
+
+```bash
+# 从模板启动 Run。多个 asset_ids 时可能返回 {items,total}。
+curl -s -X POST "$BASE/api/v1/runs/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_id":"default","asset_ids":["SDKT0202"],"version":1}'
+
+# 直接从 inline pipeline 启动 Run
+curl -s -X POST "$BASE/api/v1/runs" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ad-hoc-run","pipeline":{"nodes":[],"edges":[]},"asset_ids":[]}'
+
+curl -s "$BASE/api/v1/runs?view=summary&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs?view=summary&q=<TEMPLATE_OR_RUN_NAME>&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/watcher/status" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 兼容/调试：由 Argo workflowName 反查 Run
+curl -s "$BASE/api/v1/runs/by-workflow/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+`GET /runs?view=summary` 返回轻量列表行，支持 `q` 按 Run ID、pipeline name、
+workflow name、以及关联的 pipeline template name 做大小写不敏感搜索。列表行会返回
+`templateName`（有模板关联时）和已落库节点成本快照聚合出的 `totalEstimatedCost`。
+没有成本快照的历史 Run 会保持 `totalEstimatedCost: null` / 省略，调用方不能把它当作 0。
+
+Run 子资源：
+
+```bash
+curl -s "$BASE/api/v1/runs/<RUN_ID>/events?limit=100" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/nodes" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/inputs" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/outputs" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/children?page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+`/runs/<RUN_ID>/inputs` 会把 Config 作为 Run 输入展示：deploy-level
+`configSelection` 和 node-level `runtimeConfig` 都返回 `type=config`，
+包含 `configId` / `refVersion`、`fileName`、`mountPath`、`targetFilename`、
+`contentHash` 和可选 `projectionKey`。接口不会返回原始 config content。
+
+Batch / Backfill 在 Runtime OS 中按父 Run + 子 Run 树查看。新建批量任务会尽力创建一个
+`id == backfill_job.id` 的父 Run；子任务 Run 继续通过 `batchJobId` 指向父 Run。
+`/runs/<RUN_ID>/children` 返回兼容的 `items/total/page/pageSize`，并额外包含关系投影和聚合状态。
+该接口支持 `page` / `pageSize` 分页，默认 `page=1&pageSize=20`，`pageSize` 最大 100，
+用于批次详情页的子 Run 预览；完整子任务表格仍应使用 `/runs?batchJobId=...` 分页查询。
+Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy 全量重试创建的新 Run
+会通过 RunEvent ledger 投影为 `rerun_of`、`resubmit_of`、`retry_of`：
+
+```json
+{
+  "runId": "batch-1",
+  "items": [
+    {
+      "id": "run-1",
+      "status": "Error",
+      "batchJobId": "batch-1",
+      "failureReason": "unschedulable",
+      "message": "Unschedulable: 0/12 nodes are available: 2 Insufficient memory."
+    }
+  ],
+  "relations": [
+    {
+      "id": "batch-1:run-1:batch_child",
+      "parentRunId": "batch-1",
+      "childRunId": "run-1",
+      "relationType": "batch_child",
+      "source": "run_kernel"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "statuses": { "Error": 1 },
+    "aggregateStatus": "Error",
+    "activeCount": 0,
+    "terminalCount": 1,
+    "succeededCount": 0,
+    "failedCount": 1,
+    "cancelledCount": 0,
+    "pendingCount": 0,
+    "runningCount": 0,
+    "suspendedCount": 0,
+    "hasFailures": true,
+    "hasBlocking": false,
+    "healthStatus": "failed",
+    "topFailureReasons": [
+      {
+        "reason": "unschedulable",
+        "message": "Unschedulable: 0/12 nodes are available: 2 Insufficient memory.",
+        "count": 1,
+        "exampleRunId": "run-1",
+        "source": "pipeline_runs"
+      }
+    ]
+  },
+  "total": 1
+}
+```
+
+聚合规则是确定性的：存在运行中子 Run 时为 `Running`，存在等待子 Run 时为
+`Pending`；没有 active 子 Run 后，`Error` / `Expired` / `Failed` 会反映失败，
+全部成功才是 `Succeeded`。历史批量任务如果还没有父 Run，`/runs/<id>` 可能仍会 404；
+批量详情页会保留旧 backfill 数据作为兜底。
+
+Run 响应会尽力提供结构化诊断：终态失败使用 `failureReason`，活跃但未推进的 Run 使用
+`blockingReason` / `blockingMessage`。常见 reason 包括 `unschedulable`、
+`resource_incompatible`、`image_startup`、`runtime_not_submitted`、
+`runtime_missing`、`stale_running` 和 `run_failed`。这些字段是从 Run ledger、
+节点快照、资源守卫、Kubernetes/Argo 消息中推导的稳定产品诊断；原始 runtime 细节仍保留在
+`message`、Events 和 Runtime Debug 中。
+
+操作语义：
+
+这些操作是产品 Run 生命周期控制。后端先用 `runId` 读取 DataBrew Run，再解析保存的
+runtime ref（当前为 Argo workflow name / namespace / uid），最后通过 RuntimeAdapter
+调用具体运行时。`/api/v1/workflows/*` 保留为 runtime debug / 兼容入口，不是产品控制主路径。
+
+```bash
+# 原地 runtime retry：复用同一个 Run，不创建新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/retry" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# resubmit：根据已有 Run spec 创建一个新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/resubmit" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# rerun：产品级全量重跑，创建一个 relation=rerun_of 的新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/stop" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/suspend" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/resume" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 删除 Run：会尽力删除 runtime workflow、节点快照和兼容 deployment 记录。
+# 共享 dev smoke 只对不存在的 id 校验 404，避免误删真实执行记录。
+curl -s -X DELETE "$BASE/api/v1/runs/<RUN_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+常见错误：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | 请求体非法、缺少 runtime workflowName、asset/target 不兼容 |
+| `404` | `ASSET_NOT_FOUND` | Run 或模板不存在 |
+| `503` | `SERVICE_UNAVAILABLE` | Argo runtime 未配置或暂不可用 |
+
+`POST /runs/<RUN_ID>/retry` 是 runtime 原地 retry；`POST /runs/<RUN_ID>/resubmit`
+会创建新的 Run 并记录 `resubmit_of`；`POST /runs/<RUN_ID>/rerun`
+是产品级全量重跑，会创建新的 Run 并记录 `rerun_of`。旧兼容入口
+`POST /pipeline-runs/<RUN_ID>/retry` 仍保持“新建一次执行”语义，面向历史调用方保留。
+
+### Pipeline run 兼容 API
+
+查询 first-class run 列表和详情。详情会尽量刷新 Argo phase，并在 workflow
+包含节点状态时返回 `nodes`；每个 pod 节点会带 `logRef`，供前端跳转日志。
+当后端设置 `PRICING_CONFIG_PATH` 且节点存在 Argo `resourcesDuration` 时，
+节点会返回 `estimatedCostUsd`，run 详情会返回 `totalEstimatedCost`。未配置
+pricing、节点无资源耗时或迁移未填充历史数据时，这两个字段会省略或为 `null`，
+接口不会失败。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 404: run 不存在
+```
+
+查询 run 事件时间线。事件由 DataBrew 的 `pipeline_run_events` 账本返回，
+按 `sequence` 正序排列；刷新或 watcher 重启不会重复写入相同状态变化。
+`cursor` 使用上一页返回的 `nextCursor`，`limit` 范围为 1-500。
+常见事件包括 `run_submitted`、`run_scheduled`、`workflow_created`、
+`workflow_observed`、`workflow_phase_changed`、`pod_created`、
+`pod_phase_changed`、`node_started`、`node_succeeded`、`node_failed`、
+`node_error`、`run_completed`、`run_failed`、`run_retry_requested`、
+`run_resubmitted`、`run_rerun_requested`、`run_rerun_created`、`run_rerun_failed`、
+`run_delete_requested`、`run_deleted` 和 `run_delete_failed`。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?limit=100" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "evt-123",
+#       "runId": "run-123",
+#       "workflowName": "asset-pipeline-a1b2c3",
+#       "eventType": "run_submitted",
+#       "subjectType": "run",
+#       "subjectId": "run-123",
+#       "status": "Pending",
+#       "message": "pipeline run submitted",
+#       "sequence": 1,
+#       "occurredAt": "2026-06-03T10:01:00Z",
+#       "observedAt": "2026-06-03T10:01:00Z",
+#       "createdAt": "2026-06-03T10:01:00Z"
+#     },
+#     {
+#       "id": "evt-124",
+#       "runId": "run-123",
+#       "workflowName": "asset-pipeline-a1b2c3",
+#       "eventType": "node_failed",
+#       "subjectType": "node",
+#       "subjectId": "asset-pipeline-a1b2c3-123456",
+#       "status": "Failed",
+#       "message": "image pull failed",
+#       "sequence": 2,
+#       "occurredAt": "2026-06-03T10:03:00Z",
+#       "observedAt": "2026-06-03T10:03:05Z",
+#       "createdAt": "2026-06-03T10:03:05Z"
+#     }
+#   ],
+#   "total": 2
+# }
+
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?subjectType=node&eventType=node_failed" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?status=Failed&q=image" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 400: limit/cursor 非法
+# 404: run 不存在
+```
+
+查询 watcher 健康状态。该状态用于判断 DataBrew run ledger 是否仍在从
+Argo 同步运行状态；当 Argo Workflow 被 TTL 清理后，详情页仍应优先展示
+DataBrew 已落库的 run/node/event 历史。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/watcher/status" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "id": "default",
+#   "lastSyncedAt": "2026-06-03T10:03:10Z",
+#   "lastScanStartedAt": "2026-06-03T10:03:10Z",
+#   "lastScanFinishedAt": "2026-06-03T10:03:11Z",
+#   "lastSuccessAt": "2026-06-03T10:03:11Z",
+#   "activeScanLimit": 100,
+#   "lastSyncedRunCount": 4,
+#   "consecutiveFailures": 0,
+#   "totalScans": 128,
+#   "totalErrors": 1,
+#   "scanLagSeconds": 10,
+#   "healthy": true,
+#   "stale": false,
+#   "updatedAt": "2026-06-03T10:03:11Z"
+# }
+```
+
+查询资产 × 节点明细。当前 P0.2 使用 `run.assetIds × pipeline_run_nodes`
+派生明细；no-asset run 会返回 `assetId=no-asset`。成本字段是估算值，
+`costSource=estimated_resource_duration` 表示来自 Argo resource duration
+和 DataBrew pricing 配置，`not_available` 表示没有足够数据。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/asset-nodes?limit=100&orderBy=cost" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "an-123",
+#       "runId": "run-123",
+#       "assetId": "SDKT0202",
+#       "pipelineNodeId": "step-a",
+#       "status": "Succeeded",
+#       "podName": "asset-pipeline-step-a",
+#       "logRef": "/api/v1/workflows/asset-pipeline/logs?podName=...",
+#       "estimatedCostUsd": 0.0123,
+#       "costSource": "estimated_resource_duration"
+#     }
+#   ],
+#   "total": 1,
+#   "summary": {
+#     "assetCount": 1,
+#     "nodeCount": 1,
+#     "statuses": {"Succeeded": 1},
+#     "totalEstimatedCostUsd": 0.0123,
+#     "costSource": "estimated_resource_duration"
+#   }
+# }
+```
+
+查询 run 级成本汇总。该接口是估算和审计视图，不是 GCP Billing 对账。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/cost-summary" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 404: run 不存在
+```
+
+旧 deployment API 仍可用。它返回兼容字段，并会从 first-class run 投影状态。
+
+```bash
+curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_id": "default",
+    "asset_ids": ["SDKT0202", "SDKT0101"]
+  }'
+
+# 响应会包含兼容 deployment 字段以及运行上下文:
+# {
+#   "id": "dep-123",
+#   "pipelineName": "asset-pipeline",
+#   "workflowName": "asset-pipeline-a1b2c3",
+#   "status": "Pending",
+#   "assetIds": ["SDKT0202", "SDKT0101"],
+#   "assetCount": 2,
+#   "executionTarget": {
+#     "id": "default",
+#     "namespace": "cyber-databrew-dev",
+#     "status": "available"
+#   }
+# }
+# 400: asset 不存在或 target_id 不支持
+# 404: template 不存在
+```
+
+部署记录的 `status` 会尽量跟随 Argo workflow phase。若旧部署记录仍存在但
+Argo Workflow CR 已被 TTL 清理，API 会返回 `Expired`，避免历史记录长期显示
+过期的 `Running`/`Pending` 状态；这类记录可以通过 retry 重新提交。
+
+### Workflow 节点 Pod 诊断（CYB-1559）
+
+DataBrew 通过后端代理读取 GKE/Kubernetes Pod 诊断信息，前端不直接持有
+kubeconfig 或 Kubernetes token。Cloud Run 后端需要配置可访问目标 GKE API 的
+后端凭据和 namespace 级 RBAC，至少允许读取 `pods` 与 `events`。
+
+```bash
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/pod" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "cluster": "dev-gke",
+#   "namespace": "cyber-databrew-dev",
+#   "podName": "my-workflow-step-a-123456",
+#   "podIp": "10.2.3.4",
+#   "serviceAccountName": "workflow",
+#   "restartCount": 1,
+#   "containers": [
+#     {"name": "main", "image": "alpine:3.20", "ready": true, "restartCount": 1, "state": "Running"}
+#   ],
+#   "podConditions": [
+#     {"type": "Ready", "status": "True", "reason": "ContainersReady"}
+#   ],
+#   "podEvents": [
+#     {"type": "Normal", "reason": "Pulled", "message": "container image pulled", "count": 1}
+#   ]
+# }
+```
+
+错误语义：
+
+- `404 WORKFLOW_NOT_FOUND`：Argo workflow 不存在。
+- `404 NODE_NOT_FOUND`：workflow 存在，但节点不存在或不是 Pod 节点。
+- `404 POD_NOT_FOUND`：节点解析出的 Pod 不存在，常见于尚未创建或已 TTL 清理。
+- `403 K8S_FORBIDDEN`：后端 Kubernetes 凭据缺少当前 namespace 的 Pod/Event 读取权限。
+- `503 K8S_UNAVAILABLE`：Cloud Run 到 GKE API 不通，或 Kubernetes client 未配置。
+
+临时 dev bridge 可以使用后端 secret 注入 `K8S_API_ENDPOINT`、
+`K8S_BEARER_TOKEN`、可选 `K8S_CA_FILE` 与 `K8S_CLUSTER_NAME`；长期生产方案
+应使用 GCP identity/RBAC，而不是把长效 token 暴露给浏览器或前端配置。
+
+### Workflow 节点 Pod 终端会话（CYB-1569）
+
+Pod terminal 是后端持有 Kubernetes 凭据的受控调试入口。默认关闭；只有
+pipeline run 的 execution target snapshot 显式配置 terminal policy 后，后端才会
+创建 session；实际开启时通常配置 execution target 的
+`resourceDefaults.terminal`，新建 run 会把它写入 target snapshot。浏览器只拿
+DataBrew session id 和一次性 attach URL，不会拿
+kubeconfig、ServiceAccount token 或 GKE 凭据。
+
+创建会话：
+
+```bash
+curl -s -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/terminal-sessions" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"sh"}'
+
+# 201:
+# {
+#   "id": "7f0d...",
+#   "workflowName": "my-workflow",
+#   "nodeId": "my-workflow-123",
+#   "podName": "my-workflow-step-a-123456",
+#   "namespace": "cyber-databrew-dev",
+#   "command": "sh",
+#   "status": "created",
+#   "attachUrl": "/api/v1/pod-terminal/sessions/7f0d.../attach?token=...",
+#   "expiresAt": "2026-06-03T03:00:00Z",
+#   "createdAt": "2026-06-03T02:45:00Z"
+# }
+```
+
+查询与终止：
+
+```bash
+curl -s "$BASE/api/v1/pod-terminal/sessions/<SESSION_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/pod-terminal/sessions/<SESSION_ID>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+WebSocket attach：
+
+```text
+GET /api/v1/pod-terminal/sessions/<SESSION_ID>/attach?token=<ONE_TIME_TOKEN>
+```
+
+`attach` 使用创建 session 时返回的一次性 token 授权；浏览器原生 WebSocket
+不能设置 `X-Databrew-Token`，因此该握手不再要求额外 API header。session
+创建、查询和终止接口仍要求正常 DataBrew API 认证。
+
+Frame 是 JSON 文本：
+
+```json
+{"type":"status","status":"attached"}
+{"type":"stdout","data":"..."}
+{"type":"stderr","data":"..."}
+{"type":"exit","exitCode":0,"reason":"completed"}
+{"type":"error","code":"POD_EXEC_UNAVAILABLE","message":"..."}
+```
+
+当后端配置了 Kubernetes exec client 时，attach 会把允许命令的 stdout/stderr/exit
+以 JSON frame 返回给前端。未配置或不可达时，attach 返回受控的
+`POD_EXEC_UNAVAILABLE` / `POD_EXEC_FAILED` frame，而不是暴露底层 Kubernetes
+凭据或原始敏感信息。
+
+错误语义：
+
+- `403 POD_EXEC_FORBIDDEN`：execution target 未启用 terminal，或命令不在 allowlist。
+- `404 WORKFLOW_NOT_FOUND` / `NODE_NOT_FOUND` / `POD_NOT_FOUND`：无法定位 workflow、节点或 Pod。
+- `409 POD_EXEC_UNAVAILABLE`：Pod 已完成、删除或不支持 exec。
+- `503 K8S_UNAVAILABLE`：后端 Kubernetes exec path 未配置或不可达。
+
+### 查询资源用量元数据（F5.8）
+
+查询 workflow 各 pod 的 Argo resource duration、manifest request/limit，以及数据来源。
+当前后端未接入 Kubernetes Metrics API，因此 `live_metrics_available=false`，
+`source.metrics="unavailable"`；`cpu_usage` / `memory_usage` 是兼容字段，含义为
+Argo resource duration，不是真实实时 CPU/Mem 样本或计费值。
 
 ```bash
 curl -s "$BASE/api/v1/deployments/<DEPLOYMENT_ID>/resources" \
@@ -2291,11 +3153,18 @@ curl -s "$BASE/api/v1/deployments/<DEPLOYMENT_ID>/resources" \
 #   "deployment_id": "dep-123",
 #   "workflow_name": "my-pipeline-a1b2c3",
 #   "status": "Running",
+#   "observed_at": "2026-06-02T08:00:00Z",
+#   "source": {"workflow": "argo-live", "metrics": "unavailable", "spec": "stored-manifest"},
+#   "live_metrics_available": false,
 #   "pods": [
 #     {
 #       "pod_name": "my-pipeline-a1b2c3-step-process-12345",
-#       "cpu_usage": "125m",
-#       "memory_usage": "64Mi",
+#       "live_metrics_available": false,
+#       "requests": {"cpu": "500m", "memory": "256Mi"},
+#       "limits": {"cpu": "1000m", "memory": "512Mi"},
+#       "resource_duration": {"cpu": "30s", "memory": "45s"},
+#       "cpu_usage": "30s",
+#       "memory_usage": "45s",
 #       "cpu_request": "500m",
 #       "memory_request": "256Mi",
 #       "cpu_limit": "1000m",
@@ -2304,6 +3173,16 @@ curl -s "$BASE/api/v1/deployments/<DEPLOYMENT_ID>/resources" \
 #   ]
 # }
 # 404: deployment 不存在
+```
+
+也可以直接按 workflow 或 workflow pod node 查询：
+
+```bash
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resources" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/resources" \
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 从部署记录保存为 Template（F7.8）
@@ -2362,6 +3241,25 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 # }
 ```
 
+缺失资产示例：
+
+```bash
+curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_id":"default","asset_ids":["DEAD1536"]}'
+
+# 400:
+# {
+#   "code": "INVALID_ARGUMENT",
+#   "message": "asset_ids contain unknown assets",
+#   "details": {
+#     "field": "asset_ids",
+#     "missing_asset_ids": ["DEAD1536"]
+#   }
+# }
+```
+
 ### Workflow 监控与操作
 
 直接查看和操作 Argo workflow。所有操作接口成功时返回 `{"message":"ok"}`；Argo 返回错误时，后端返回标准错误体。
@@ -2371,26 +3269,87 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 curl -s "$BASE/api/v1/workflows" \
   -H "X-Databrew-Token: $TOKEN"
 
-# 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes，以及标准化 DAG edges）
+# 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes、Pod 节点 podName，以及标准化 DAG edges）
+# nodes 会合并 Argo runtime 节点和 spec 中尚未启动的 DAG task；未启动 task 以 Pending 返回，便于前端立即渲染完整 DAG。
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
   -H "X-Databrew-Token: $TOKEN"
 
-# edges 示例：用于前端绘制 DAG 连线；Failed -> Omitted 等逻辑依赖也会保留
+# edges 示例：用于前端绘制 DAG 连线；Failed -> Omitted 以及 runtime 尚未创建的下游 Pending task 依赖也会保留
 # {
 #   "edges": [
 #     {"id":"e-step-1-step-2","source":"step-1","target":"step-2","kind":"dag"}
 #   ]
 # }
 
-# 查看节点日志
-curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \
+# 查看节点日志。nodeId 传 workflow detail 返回的节点 id；后端会解析实际 Kubernetes podName。
+# 默认 tailLines=200、limitBytes=262144；超过服务端最大值会 clamp。
+# live Argo/Kubernetes 日志没有稳定历史 cursor，因此响应会明确标记 pagination.available=false。
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&tailLines=200&limitBytes=262144" \
   -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "workflowName": "wf-1",
+#   "nodeId": "wf-1-step-123",
+#   "podName": "wf-1-step-123",
+#   "container": "main",
+#   "source": "argo-live",
+#   "logs": "...\n",
+#   "lineCount": 42,
+#   "truncated": false,
+#   "nextCursor": null,
+#   "pagination": {
+#     "available": false,
+#     "nextCursor": null,
+#     "reason": "live Argo logs do not provide stable historical cursor pagination"
+#   },
+#   "window": {
+#     "mode": "tail",
+#     "tailLines": 200,
+#     "limitBytes": 262144,
+#     "scope": "bounded-live-window"
+#   },
+#   "truncation": {
+#     "bounded": true,
+#     "tailLines": 200,
+#     "maxTailLines": 2000,
+#     "limitBytes": 262144,
+#     "maxLimitBytes": 2097152,
+#     "bytesTruncated": false
+#   }
+# }
+
+# 错误路径示例：live Argo 日志不支持稳定历史 cursor，传 cursor 返回 400。
+curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&cursor=older" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 流式日志。canonical endpoint 是 /logs/stream；旧 /log/stream 仅作为兼容 alias。
+curl -N "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs/stream?nodeId=<NODE_ID>&tailLines=200&limitBytes=262144" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# SSE 事件示例:
+# event: log
+# data: {"podName":"wf-1-step-123","container":"main","line":"hello"}
+#
+# event: heartbeat
+# data: {}
+#
+# event: end
+# data: {"reason":"stream-complete"}
 
 # 重试 / 重新提交 / 暂停 / 恢复 / 终止
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/retry" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resubmit" \
   -H "X-Databrew-Token: $TOKEN"
+# 返回示例:
+# {
+#   "message": "ok",
+#   "workflowName": "asset-pipeline-a1b2c3-x7k9p",
+#   "pipelineRunId": "61bd4770-1b5a-4f8c-97c2-d8ff88f4b733"
+# }
+# 重新提交会在 Argo 创建新的 workflow；若原 workflow 有 DataBrew pipeline run，
+# 后端会同步创建新的 pipeline_runs 记录，避免新 workflow 详情出现 pipeline run not found。
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/suspend" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resume" \
@@ -2405,4 +3364,95 @@ curl -X DELETE "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
 # 错误路径示例：缺少 nodeId 返回 400
 curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs" \
   -H "X-Databrew-Token: $TOKEN"
+```
+
+## Pipeline Batch M1
+
+创建 batch 可锁定模板版本、执行目标，并可指定 pilot 试跑数量。`targetId`
+会保存到 batch job 的 filter JSON，并在 materialize、deploy、rerun、continue-full
+产生的每个子任务中透传给 pipeline run；省略时使用默认执行目标。`assetIds` 单批上限为 10,000；超过上限返回
+`400 INVALID_ARGUMENT`。
+
+```bash
+curl -X POST "$BASE/api/v1/backfill" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "daily-batch",
+    "templateId": "tpl-123",
+    "templateVersion": 4,
+    "targetId": "video-proc-dev",
+    "pilotCount": 50,
+    "assetIds": ["asset-1", "asset-2"],
+    "configSelection": {
+      "mode": "saved",
+      "configId": "cfg-123",
+      "version": 2,
+      "fileName": "feature-flags.yaml",
+      "mountPath": "/workspace/configs",
+      "targetFilename": "feature-flags.yaml"
+    }
+  }'
+
+curl -s "$BASE/api/v1/backfill/<BATCH_ID>/node-summary" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应包含 subtasks、nodes[].counts、dataCoverage；Pending 表示该节点尚无账本行。
+
+curl -s "$BASE/api/v1/backfill/<BATCH_ID>/node-failures?pipelineNodeId=step-extract&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"node_failed","pipelineNodeId":"step-extract","templateVersion":4,"dryRun":true}'
+
+# 响应会返回 status / matchedCount / retriedCount / skipped；partial_success 表示部分项因唯一冲突或运行态跳过。
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"failed","templateVersion":4}'
+
+batch job 创建时附带的 `targetId` 和 `configSelection` 会原样保存在 job filter JSON 中，并在
+每个子任务真正 materialize / deploy 时透传给 runtime；这样 pilot、rerun、
+continue-full 与后续子任务能保持同一执行目标、挂载文件和环境变量语义。
+
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/continue-full" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 错误路径：node_failed 缺少 pipelineNodeId 返回 400。
+curl -i -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"node_failed"}'
+```
+
+## Backfill result upload (CYB-2097)
+
+Register algorithm JSON against an asset + report manifest. Requires `report_manifests`
+and `algo_run_results` tables on dev (legacy/dev schema).
+
+```bash
+curl -X POST "$BASE/api/v1/backfill/results" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assetId": "<ASSET_ID>",
+    "reportId": "report.project@1.0.0-backfill-left-eye-only",
+    "version": "1.0.0",
+    "manifest": { "assetId": "<ASSET_ID>" },
+    "result": { "crop": "left_eye_only", "status": "ok" }
+  }'
+
+# 错误路径：manifest assetId 与 body 不一致 → 400
+curl -i -X POST "$BASE/api/v1/backfill/results" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assetId": "<ASSET_ID>",
+    "reportId": "report.project@1.0.0-backfill-left-eye-only",
+    "version": "1.0.0",
+    "manifest": { "assetId": "other-asset" },
+    "result": {}
+  }'
 ```

@@ -13,12 +13,14 @@ import (
 
 func TestInternalSubscriberReceiveBatch_BatchesAcrossKeysAndAcksAll(t *testing.T) {
 	bus := NewInMemoryBus(64)
-	sub, err := NewInternalSubscriber(bus.SubscribeOrClosed(), 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bus.Run(ctx)
+	sub, err := NewInternalSubscriber(bus, 4)
 	if err != nil {
 		t.Fatalf("NewInternalSubscriber: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var (
@@ -54,7 +56,7 @@ func TestInternalSubscriberReceiveBatch_BatchesAcrossKeysAndAcksAll(t *testing.T
 			"event_seq": int64(i + 1),
 			"asset_id":  assetID,
 		})
-		receipt, perr := bus.publish(publishCtx, evJSON)
+		receipt, perr := bus.Publish(publishCtx, evJSON)
 		if perr != nil {
 			t.Fatalf("publish %d failed: %v", i, perr)
 		}
@@ -111,12 +113,14 @@ func TestInternalSubscriberReceiveBatch_BatchesAcrossKeysAndAcksAll(t *testing.T
 
 func TestInternalSubscriberReceiveBatch_PerAssetOrderingPreservedWithinWorker(t *testing.T) {
 	bus := NewInMemoryBus(32)
-	sub, err := NewInternalSubscriber(bus.SubscribeOrClosed(), 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bus.Run(ctx)
+	sub, err := NewInternalSubscriber(bus, 4)
 	if err != nil {
 		t.Fatalf("NewInternalSubscriber: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	const n = 8
@@ -160,7 +164,7 @@ func TestInternalSubscriberReceiveBatch_PerAssetOrderingPreservedWithinWorker(t 
 	for i := 0; i < n; i++ {
 		ev := map[string]any{"event_seq": int64(i + 1), "asset_id": assetID}
 		raw, _ := json.Marshal(ev)
-		receipt, perr := bus.publish(context.Background(), raw)
+		receipt, perr := bus.Publish(context.Background(), raw)
 		if perr != nil {
 			t.Fatalf("publish %d: %v", i, perr)
 		}
@@ -189,12 +193,14 @@ func TestInternalSubscriberReceiveBatch_PerAssetOrderingPreservedWithinWorker(t 
 
 func TestInternalSubscriberReceiveBatch_HandlerErrorAcksAllWithSameError(t *testing.T) {
 	bus := NewInMemoryBus(8)
-	sub, err := NewInternalSubscriber(bus.SubscribeOrClosed(), 1) // serial path
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bus.Run(ctx)
+	sub, err := NewInternalSubscriber(bus, 1) // serial path
 	if err != nil {
 		t.Fatalf("NewInternalSubscriber: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	wantErr := errors.New("batch boom")
@@ -208,7 +214,7 @@ func TestInternalSubscriberReceiveBatch_HandlerErrorAcksAllWithSameError(t *test
 	results := make(chan error, n)
 	for i := 0; i < n; i++ {
 		raw, _ := json.Marshal(map[string]any{"event_seq": int64(i + 1), "asset_id": "a1"})
-		receipt, perr := bus.publish(context.Background(), raw)
+		receipt, perr := bus.Publish(context.Background(), raw)
 		if perr != nil {
 			t.Fatalf("publish %d: %v", i, perr)
 		}
@@ -232,12 +238,14 @@ func TestInternalSubscriberReceiveBatch_HandlerErrorAcksAllWithSameError(t *test
 
 func TestInternalSubscriberReceiveBatch_FallbackWhenBatchSizeOne(t *testing.T) {
 	bus := NewInMemoryBus(4)
-	sub, err := NewInternalSubscriber(bus.SubscribeOrClosed(), 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bus.Run(ctx)
+	sub, err := NewInternalSubscriber(bus, 1)
 	if err != nil {
 		t.Fatalf("NewInternalSubscriber: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var (
@@ -258,7 +266,7 @@ func TestInternalSubscriberReceiveBatch_FallbackWhenBatchSizeOne(t *testing.T) {
 	const n = 3
 	for i := 0; i < n; i++ {
 		raw, _ := json.Marshal(map[string]any{"event_seq": int64(i + 1), "asset_id": "a1"})
-		receipt, perr := bus.publish(context.Background(), raw)
+		receipt, perr := bus.Publish(context.Background(), raw)
 		if perr != nil {
 			t.Fatalf("publish %d: %v", i, perr)
 		}
@@ -291,24 +299,36 @@ func TestInternalSubscriberReceiveBatch_FallbackWhenBatchSizeOne(t *testing.T) {
 
 func TestInMemoryBusPublish_UpdatesDepthMetric(t *testing.T) {
 	bus := NewInMemoryBus(8)
-	// Fan-out only enqueues to active subscribers; register one and never
-	// read so the channel depth grows by exactly 1 per publish.
-	_, _ = bus.Subscribe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Need at least one subscriber so publish() takes the fan-out branch.
+	// The consumer deliberately blocks on a never-closed channel so the
+	// subscriber's queue stays full and the depth gauge reflects pending
+	// messages.
+	block := make(chan struct{})
+	defer close(block)
+	sub, err := NewInternalSubscriber(bus, 1)
+	if err != nil {
+		t.Fatalf("NewInternalSubscriber: %v", err)
+	}
+	defer sub.Close()
+	go func() {
+		_ = sub.Receive(ctx, func(_ context.Context, _ []byte) error {
+			<-block
+			return nil
+		})
+	}()
 
+	before := readGaugeValue(t, metrics.OutboxInternalBusDepth)
 	for i := 0; i < 2; i++ {
 		raw, _ := json.Marshal(map[string]any{"event_seq": int64(i + 1), "asset_id": "depth"})
-		if _, err := bus.publish(context.Background(), raw); err != nil {
+		if _, err := bus.Publish(context.Background(), raw); err != nil {
 			t.Fatalf("publish %d failed: %v", i, err)
 		}
 	}
-	// In fan-out mode the gauge tracks the per-subscriber channel length
-	// (set in publish). The exact prior value is not deterministic because
-	// earlier tests in this binary may have left residual gauge state; we
-	// only assert the publish loop populated the gauge with at least 2
-	// messages sitting in the channel we just subscribed.
 	after := readGaugeValue(t, metrics.OutboxInternalBusDepth)
-	if after < 2 {
-		t.Fatalf("expected bus depth gauge to reflect >=2 enqueued messages, got %v", after)
+	if after < before+1 {
+		t.Fatalf("expected bus depth gauge to be ≥ before+1 (one event queued in slow consumer's channel), before=%v after=%v", before, after)
 	}
 }
 
@@ -321,197 +341,93 @@ func asciiInt(i int) string {
 	return string(rune('0' + i))
 }
 
-// TestInMemoryBus_FanOut_DeliversEachMessageToAllSubscribers verifies the
-// fan-out / broadcast contract: every published event reaches every
-// registered subscriber. The pre-refactor bug (C3) was a single shared
-// channel acting as a competing-consumer queue; this test would have failed
-// against that implementation.
-func TestInMemoryBus_FanOut_DeliversEachMessageToAllSubscribers(t *testing.T) {
-	bus := NewInMemoryBus(16)
-	subA, unsubA := bus.Subscribe()
-	defer unsubA()
-	subB, unsubB := bus.Subscribe()
-	defer unsubB()
-
+// TestInMemoryBus_FanOutEverySubscriberSeesEveryEvent exercises the regression
+// that Blocker #3 of PR #270 flagged: pre-PR the bus used a per-subscriber
+// private channel; a refactor collapsed that into a single shared channel so
+// 3 subscribers (asset ES, algo_run ES, delivery/lineage projector) competed
+// for events and each silently dropped ~2/3 of the stream. This test asserts
+// the original fan-out contract.
+func TestInMemoryBus_FanOutEverySubscriberSeesEveryEvent(t *testing.T) {
+	bus := NewInMemoryBus(64)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go bus.Run(ctx)
 
-	// drain reads n messages from ch and signals completion.
-	// t.Fatalf is forbidden on non-test goroutines; signal via doneCh.
-	drain := func(ch <-chan internalMessage, n int, id string, errCh chan<- string, doneCh chan<- struct{}) {
-		for i := 0; i < n; i++ {
-			select {
-			case <-ctx.Done():
-				errCh <- id + ": ctx done"
-				return
-			case msg := <-ch:
-				msg.ack <- nil
-			}
+	const subscribers = 3
+	const events = 25
+
+	subs := make([]*InternalSubscriber, subscribers)
+	for i := range subs {
+		var err error
+		subs[i], err = NewInternalSubscriber(bus, 1)
+		if err != nil {
+			t.Fatalf("subscriber %d: %v", i, err)
 		}
-		doneCh <- struct{}{}
 	}
 
-	const total = 6
-	errCh := make(chan string, 2)
-	doneCh := make(chan struct{}, 2)
-	go drain(subA, total, "subA", errCh, doneCh)
-	go drain(subB, total, "subB", errCh, doneCh)
+	var (
+		mu   sync.Mutex
+		seen [subscribers][]int64
+	)
+	done := make(chan struct{}, subscribers)
+	for i := range subs {
+		i := i
+		go func() {
+			_ = subs[i].Receive(ctx, func(_ context.Context, data []byte) error {
+				var ev struct {
+					Seq int64 `json:"event_seq"`
+				}
+				_ = json.Unmarshal(data, &ev)
+				mu.Lock()
+				seen[i] = append(seen[i], ev.Seq)
+				ready := true
+				for j := 0; j < subscribers; j++ {
+					if len(seen[j]) < events {
+						ready = false
+						break
+					}
+				}
+				mu.Unlock()
+				if ready {
+					select {
+					case done <- struct{}{}:
+					default:
+					}
+				}
+				return nil
+			})
+		}()
+	}
 
-	for i := 0; i < total; i++ {
-		receipt, err := bus.publish(ctx, []byte{byte(i)})
+	for i := 0; i < events; i++ {
+		raw, _ := json.Marshal(map[string]any{"event_seq": int64(i + 1), "asset_id": "a1"})
+		receipt, err := bus.Publish(ctx, raw)
 		if err != nil {
 			t.Fatalf("publish %d: %v", i, err)
 		}
-		if _, err := receipt.Get(ctx); err != nil {
-			t.Fatalf("receipt.Get %d: %v", i, err)
+		go func() { _, _ = receipt.Get(ctx) }()
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out: subscribers did not all see %d events", events)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for i := 0; i < subscribers; i++ {
+		if len(seen[i]) != events {
+			t.Errorf("subscriber %d received %d events, want %d (fan-out broken — one subscriber is starving)",
+				i, len(seen[i]), events)
 		}
-	}
-
-	for i := 0; i < 2; i++ {
-		select {
-		case e := <-errCh:
-			t.Fatalf("drain failed: %s", e)
-		case <-doneCh:
-			// one subscriber finished its 6 messages
-		case <-time.After(2 * time.Second):
-			t.Fatalf("drain timed out")
-		}
-	}
-}
-
-// TestInMemoryBus_UnsubscribeStopsDelivery ensures callers that drop their
-// subscription stop receiving events (no leak into a closed channel).
-func TestInMemoryBus_UnsubscribeStopsDelivery(t *testing.T) {
-	bus := NewInMemoryBus(4)
-	sub, unsub := bus.Subscribe()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	go func() { _ = sub }() // pin reference
-
-	unsub()
-
-	// After unsubscribe, publish should not block. If it does, the ctx
-	// timeout below trips and the test fails.
-	if _, err := bus.publish(ctx, []byte("after-unsub")); err != nil {
-		t.Fatalf("publish after unsubscribe: %v", err)
-	}
-}
-
-// TestInMemoryBus_FanOut_NoSilentLoss proves that every subscriber receives
-// every message — this is the fix for C3. The pre-refactor bus used a single
-// shared channel where two subscribers would split the stream (competing
-// consumer), silently losing events on both sides.
-//
-// We simulate the pre-fix behavior with a raw chan (competing consumer)
-// and the post-fix behavior with InMemoryBus.Subscribe (fan-out), then
-// assert that fan-out delivers all events to both subscribers.
-func TestInMemoryBus_FanOut_NoSilentLoss(t *testing.T) {
-	const total = 24
-
-	// ── Pre-fix: competing consumer (single shared channel) ──
-	competing := make(chan internalMessage, 1024)
-	receivedA := 0
-	receivedB := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-competing:
-				if !ok {
-					return
-				}
-				receivedA++
-				msg.ack <- nil
+		// Each subscriber must see the SAME event sequence; no events
+		// lost to a competing-consumer race.
+		for j, seq := range seen[i] {
+			if seq != int64(j+1) {
+				t.Errorf("subscriber %d event %d has seq=%d, want %d",
+					i, j, seq, j+1)
 			}
 		}
-	}()
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-competing:
-				if !ok {
-					return
-				}
-				receivedB++
-				msg.ack <- nil
-			}
-		}
-	}()
-	for i := 0; i < total; i++ {
-		msg := internalMessage{data: []byte{byte(i)}, ack: make(chan error, 1)}
-		competing <- msg
-	}
-	time.Sleep(100 * time.Millisecond)
-
-	// ── Post-fix: fan-out bus with Subscribe ──
-	bus := NewInMemoryBus(16)
-	chA, unsubA := bus.Subscribe()
-	chB, unsubB := bus.Subscribe()
-
-	fanOutA := 0
-	fanOutB := 0
-	doneA := make(chan struct{})
-	doneB := make(chan struct{})
-
-	go func() {
-		for fanOutA < total {
-			select {
-			case <-ctx.Done():
-				return
-			case msg := <-chA:
-				fanOutA++
-				msg.ack <- nil
-			}
-		}
-		close(doneA)
-	}()
-	go func() {
-		for fanOutB < total {
-			select {
-			case <-ctx.Done():
-				return
-			case msg := <-chB:
-				fanOutB++
-				msg.ack <- nil
-			}
-		}
-		close(doneB)
-	}()
-
-	for i := 0; i < total; i++ {
-		receipt, err := bus.publish(ctx, []byte{byte(i)})
-		if err != nil {
-			t.Fatalf("publish %d: %v", i, err)
-		}
-		if _, err := receipt.Get(ctx); err != nil {
-			t.Fatalf("receipt.Get %d: %v", i, err)
-		}
-	}
-
-	<-doneA
-	<-doneB
-	unsubA()
-	unsubB()
-
-	// Competing consumer: messages split roughly 50/50, each < total.
-	if receivedA+receivedB != total {
-		t.Fatalf("competing consumer: expected %d total deliveries, got A=%d B=%d sum=%d",
-			total, receivedA, receivedB, receivedA+receivedB)
-	}
-
-	// Fan-out: both subscribers received ALL messages — the fix.
-	if fanOutA != total {
-		t.Fatalf("fan-out subscriber A got %d/%d — lost messages!", fanOutA, total)
-	}
-	if fanOutB != total {
-		t.Fatalf("fan-out subscriber B got %d/%d — lost messages!", fanOutB, total)
 	}
 }

@@ -238,6 +238,35 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 	return r.scanOneAsset(ctx, r.c.db.QueryRow(ctx, q, assetID))
 }
 
+func (r *AssetRepo) FindExistingIDs(ctx context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	if len(assetIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+SELECT asset_id
+FROM assets
+WHERE asset_id = ANY($1)
+  AND is_deleted = FALSE`
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.FindExistingIDs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var assetID string
+		if err := rows.Scan(&assetID); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.FindExistingIDs scan: %w", err)
+		}
+		out[assetID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.FindExistingIDs rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetAll returns an asset regardless of is_deleted status.
 // Used by GET /assets/:id to honor the API contract that soft-deleted
 // assets remain accessible.

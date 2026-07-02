@@ -52,12 +52,18 @@ tags:
     description: Health check, readiness, metrics, version info
   - name: Pipeline
     description: Pipeline orchestration (Argo Workflows)
+  - name: Runs
+    description: Product execution records served through the Run Kernel boundary, including the run ledger, runtime operations, and run tree projections
 components:
   securitySchemes:
     DatabrewToken:
       type: apiKey
       in: header
       name: X-Databrew-Token
+    DatabrewCIIngestToken:
+      type: apiKey
+      in: header
+      name: X-Databrew-CI-Token
     AdminToken:
       type: apiKey
       in: header
@@ -85,6 +91,130 @@ components:
         details:
           type: object
           additionalProperties: true
+    WorkflowLogResponse:
+      type: object
+      required: [workflowName, nodeId, podName, container, source, logs, lineCount, truncated, truncation, pagination, window]
+      properties:
+        workflowName: { type: string }
+        nodeId: { type: string }
+        podName: { type: string }
+        container: { type: string, example: main }
+        source: { type: string, enum: [argo-live] }
+        logs: { type: string }
+        lineCount: { type: integer }
+        truncated:
+          type: boolean
+          description: True when the server-side byte cap cut the returned log payload.
+        nextCursor:
+          type: string
+          nullable: true
+          description: Always null; live Argo logs do not provide stable cursor pagination.
+        pagination:
+          type: object
+          required: [available, nextCursor]
+          properties:
+            available:
+              type: boolean
+              example: false
+              description: Whether this log source can return another historical page through nextCursor.
+            nextCursor:
+              type: string
+              nullable: true
+              description: Cursor for the next historical window when available. Null for live Argo logs.
+            reason:
+              type: string
+              example: live Argo logs do not provide stable historical cursor pagination
+        window:
+          type: object
+          required: [mode, scope]
+          properties:
+            mode:
+              type: string
+              enum: [tail, since, cursor]
+              example: tail
+            tailLines: { type: integer, format: int64, example: 200 }
+            limitBytes: { type: integer, format: int64, example: 262144 }
+            sinceSeconds: { type: integer, format: int64, nullable: true }
+            sinceTime: { type: string, format: date-time, nullable: true }
+            previous: { type: boolean }
+            timestamps: { type: boolean }
+            scope:
+              type: string
+              example: bounded-live-window
+        truncation:
+          type: object
+          required: [bounded, tailLines, maxTailLines, limitBytes, maxLimitBytes, bytesTruncated]
+          properties:
+            bounded: { type: boolean, example: true }
+            tailLines: { type: integer, format: int64, example: 200 }
+            maxTailLines: { type: integer, format: int64, example: 2000 }
+            tailLinesClamped: { type: boolean }
+            limitBytes: { type: integer, format: int64, example: 262144 }
+            maxLimitBytes: { type: integer, format: int64, example: 2097152 }
+            limitBytesClamped: { type: boolean }
+            bytesTruncated: { type: boolean }
+    ResourceValues:
+      type: object
+      properties:
+        cpu: { type: string, example: 500m }
+        memory: { type: string, example: 256Mi }
+    ResourceUsageSource:
+      type: object
+      required: [workflow, metrics, spec]
+      properties:
+        workflow:
+          type: string
+          enum: [argo-live, unavailable]
+          description: Source for workflow status and resource duration values.
+        metrics:
+          type: string
+          enum: [unavailable]
+          description: Live Kubernetes Metrics API source; unavailable until metrics integration is wired.
+        spec:
+          type: string
+          enum: [stored-manifest, unavailable]
+          description: Source for manifest-derived requests and limits.
+    ResourceUsageReport:
+      type: object
+      required: [workflow_name, status, observed_at, source, live_metrics_available, pods]
+      properties:
+        deployment_id: { type: string }
+        workflow_name: { type: string }
+        status: { type: string }
+        observed_at: { type: string, format: date-time }
+        source: { $ref: '#/components/schemas/ResourceUsageSource' }
+        live_metrics_available:
+          type: boolean
+          description: False when live CPU/memory samples are not available.
+        pods:
+          type: array
+          items:
+            type: object
+            properties:
+              pod_name: { type: string }
+              node_id: { type: string }
+              node_name: { type: string }
+              template_name: { type: string }
+              observed_at: { type: string, format: date-time }
+              live_metrics_available: { type: boolean }
+              requests: { $ref: '#/components/schemas/ResourceValues' }
+              limits: { $ref: '#/components/schemas/ResourceValues' }
+              resource_duration:
+                allOf:
+                  - $ref: '#/components/schemas/ResourceValues'
+                description: Argo resource duration, not live CPU/memory usage or billing.
+              cpu_usage:
+                type: string
+                description: Deprecated compatibility alias for cpu_resource_duration; not live CPU usage.
+              memory_usage:
+                type: string
+                description: Deprecated compatibility alias for memory_resource_duration; not live memory usage.
+              cpu_resource_duration: { type: string }
+              memory_resource_duration: { type: string }
+              cpu_request: { type: string }
+              memory_request: { type: string }
+              cpu_limit: { type: string }
+              memory_limit: { type: string }
     AssetID:
       type: string
       minLength: 8
@@ -530,19 +660,24 @@ components:
     AlgoRunCreateRequest:
       type: object
       properties:
-        algo_name: { type: string }
-        algo_version: { type: string }
-        algo_kind: { type: string }
-        triggered_by: { type: string }
+        algo_name: { type: string, example: "scene-detector" }
+        algo_version: { type: string, example: "2.1.0" }
+        algo_kind: { type: string, example: "seg_runner" }
+        triggered_by: { type: string, example: "admin@cyberorigin.ai" }
         params:
           type: object
           additionalProperties: true
+          example: { threshold: 0.85, max_scenes: 100 }
         input_filter:
           type: object
           additionalProperties: true
+          example: { asset_type: "segment", lifecycle_state: "ready" }
         input_asset_ids:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
+          uniqueItems: true
+          description: "Optional explicit input asset IDs. Each ID must exist and must not be soft-deleted."
+          example: ["a1b2c3d4", "e5f6g7h8"]
     AlgoRunStartRequest:
       type: object
       properties:
@@ -785,13 +920,13 @@ components:
       type: object
       required: [customer_id, display_name]
       properties:
-        customer_id: { type: string }
-        display_name: { type: string }
-        legal_name: { type: string }
-        status: { type: string }
-        region: { type: string }
-        sla_tier: { type: string }
-        account_owner: { type: string }
+        customer_id: { type: string, example: "cust-acme-001" }
+        display_name: { type: string, example: "ACME Corporation" }
+        legal_name: { type: string, example: "ACME Technologies Ltd." }
+        status: { type: string, example: "active" }
+        region: { type: string, example: "us-west1" }
+        sla_tier: { type: string, example: "premium" }
+        account_owner: { type: string, example: "zhangsan" }
         compliance_tags:
           type: array
           items: {}
@@ -891,13 +1026,14 @@ components:
       type: object
       required: [customer_id]
       properties:
-        customer_id: { type: string }
+        customer_id: { type: string, example: "cust-acme-001" }
         asset_ids:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
-        contract_id: { type: string }
-        note: { type: string }
-        owner: { type: string }
+          example: ["a1b2c3d4", "e5f6g7h8"]
+        contract_id: { type: string, example: "contract-Q3-2024" }
+        note: { type: string, example: "Priority delivery for ACME Q3 batch" }
+        owner: { type: string, example: "zhangsan" }
     DeliveryDraftResponse:
       type: object
       properties:
@@ -924,10 +1060,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
           minItems: 1
-        customer_id: { type: string }
-        contract_id: { type: string }
-        note: { type: string }
-        owner: { type: string }
+          example: ["a1b2c3d4", "e5f6g7h8"]
+        customer_id: { type: string, example: "cust-acme-001" }
+        contract_id: { type: string, example: "contract-Q3-2024" }
+        note: { type: string, example: "Q3 release batch — customer ACME" }
+        owner: { type: string, example: "zhangsan" }
     DeliveryCommitResponse:
       type: object
       properties:
@@ -949,8 +1086,8 @@ components:
     DeliveryCancelRequest:
       type: object
       properties:
-        cancelled_by: { type: string }
-        cancel_reason: { type: string }
+        cancelled_by: { type: string, example: "zhangsan" }
+        cancel_reason: { type: string, example: "Customer requested changes to asset list" }
     DeliveryCancelResponse:
       type: object
       properties:
@@ -964,7 +1101,7 @@ components:
     DeliveryAckRequest:
       type: object
       properties:
-        acknowledged_by: { type: string }
+        acknowledged_by: { type: string, example: "lisi" }
     DeliveryAckResponse:
       type: object
       properties:
@@ -1071,44 +1208,46 @@ components:
     McapCreateFileRequest:
       type: object
       properties:
-        mcap_file_id: { type: string }
-        gcs_path: { type: string }
-        mcap_uri: { type: string }
-        size_bytes: { type: integer, format: int64 }
-        raw_hash_md5: { type: string }
-        raw_hash_sha256: { type: string }
-        ingest_state: { type: string }
-        file_duration_ms: { type: integer, format: int64 }
-        start_timestamp_ns: { type: integer, format: int64 }
-        end_timestamp_ns: { type: integer, format: int64 }
-        channel_count: { type: integer }
-        chunk_count: { type: integer }
-        vendor_id: { type: string }
-        collector_id: { type: string }
-        task_id: { type: string }
-        device_id: { type: string }
-        camera_model: { type: string }
-        data_source: { type: string }
-        location_id: { type: string }
-        scene_id: { type: string }
-        environment_id: { type: string }
-        collection_method: { type: string }
-        owner: { type: string }
-        retention_tier: { type: string }
-        expire_at: { type: string, format: date-time }
+        mcap_file_id: { type: string, example: "mcap0012", description: "8-character alphanumeric ID" }
+        gcs_path: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
+        mcap_uri: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
+        size_bytes: { type: integer, format: int64, example: 104857600 }
+        raw_hash_md5: { type: string, example: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+        raw_hash_sha256: { type: string, example: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+        ingest_state: { type: string, example: "uploaded" }
+        file_duration_ms: { type: integer, format: int64, example: 3600000 }
+        start_timestamp_ns: { type: integer, format: int64, example: 1700000000000000000 }
+        end_timestamp_ns: { type: integer, format: int64, example: 1700003600000000000 }
+        channel_count: { type: integer, example: 8 }  # pragma: allowlist secret
+        chunk_count: { type: integer, example: 24 }
+        vendor_id: { type: string, example: "acme-sensors" }  # pragma: allowlist secret
+        collector_id: { type: string, example: "vehicle-001" }
+        task_id: { type: string, example: "task-route-42" }
+        device_id: { type: string, example: "lidar-unit-03" }
+        camera_model: { type: string, example: "FLIR-BFS-U3-16S2" }
+        data_source: { type: string, example: "onboard-recording" }
+        location_id: { type: string, example: "loc-sf-downtown" }
+        scene_id: { type: string, example: "scene-heavy-traffic" }
+        environment_id: { type: string, example: "env-urban-day" }
+        collection_method: { type: string, example: "automatic" }
+        owner: { type: string, example: "zhangsan" }
+        retention_tier: { type: string, example: "standard" }
+        expire_at: { type: string, format: date-time, example: "2025-06-01T00:00:00Z" }
         metadata:
           type: object
           additionalProperties: true
+          example: { vehicle_id: "VH-042", route: "SF-LA-101", weather: "clear" }
         process_state:
           type: object
           additionalProperties: { type: string }
-        tenant_id: { type: string }
-        project_id: { type: string }
+          example: { validation: "passed", indexing: "pending" }
+        tenant_id: { type: string, example: "tenant-cyberorigin" }
+        project_id: { type: string, example: "project-autonomous-v1" }
     McapFinalizeUploadRequest:
       type: object
       required: [mcap_file_id]
       properties:
-        mcap_file_id: { type: string }
+        mcap_file_id: { type: string, example: "mcap0012" }
 
     # ── Eval/Metrics ───────────────────────────────────────────────────────
     EvalResult:
@@ -1588,74 +1727,288 @@ components:
       type: object
       required: [token]
       properties:
-        token: { type: string }
+        token: { type: string, example: "g-databrew-admin-token-xxx" }
+    EmailLoginRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email, example: "user@example.com" }
     LoginResponse:
       type: object
       properties:
-        authenticated: { type: boolean }
+        authenticated: { type: boolean, example: true }
+        email: { type: string, format: email, example: "user@example.com" }
+        role: { type: string, example: "admin" }
 
     # ── Layered child-asset creation (CYB-1222) ─────────────────────────────
     ChildAssetCreateRequest:
       type: object
-      required: [start_ns, end_ns]
+      required: [start_timestamp_ns, end_timestamp_ns]
       properties:
-        start_ns:
+        start_timestamp_ns:
           type: integer
           format: int64
           minimum: 1
           description: Start timestamp in nanoseconds
-        end_ns:
+          example: 1700000000000000000
+        end_timestamp_ns:
           type: integer
           format: int64
           minimum: 1
           description: End timestamp in nanoseconds
-        action_index:
-          type: integer
-          description: Optional index for ordering actions within the same segment
-        primary_label:
+          example: 1700000100000000000
+        split_method:
           type: string
-          description: Primary classification label
-        labels:
-          type: array
-          items: { type: string }
-          description: Additional labels
-        description:
+          description: "Split method. When unset or manual/rule:* → edge is split_from; algo:* → edge is derived_from"
+          example: "manual"
+        split_run_id:
           type: string
-          description: Human-readable description
-        attrs:
+          example: "run-abc123"
+        metadata:
           type: object
           additionalProperties: true
-          description: Optional key-value attributes
-        source_type:
-          type: string
-          description: Source system type (e.g. manual, rule, algo)
-        source_name:
-          type: string
-          description: Source system name
-        source_version:
-          type: string
-          description: Source system version
-        run_id:
-          type: string
-          description: ID of the pipeline/deployment run that produced this action
-        confidence:
-          type: number
-          format: double
-          description: Confidence score (0.0–1.0)
-        external_id:
-          type: string
-          description: External system identifier
+          description: Optional metadata for the new child asset
+          example: { source: "manual-annotation" }
+
+    # ── Asset request bodies ────────────────────────────────────────────────
+    CreateAssetRequest:
+      type: object
+      required: [start_timestamp_ns, end_timestamp_ns, reviewer]
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID', description: "Optional — server generates if omitted" }
+        logical_asset_id: { type: string, description: "Logical asset group ID", example: "aaaaaaaa" }
+        mcap_file_id: { $ref: '#/components/schemas/McapFileID', description: "Source MCAP file" }
+        start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds", example: 1700000000000000000 }
+        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds", example: 1700000360000000000 }
+        reviewer: { type: string, description: "Reviewer name for the asset", example: "zhangsan" }
+        owner: { type: string, description: "Owner name", example: "lisi" }
+        type: { type: string, description: "Segment type (legacy)", example: "segment" }
+        asset_type: { type: string, description: "Asset type (e.g. segment, clip, frame_set, derived_asset)", example: "segment" }
+        status: { type: string, description: "Legacy lifecycle status", example: "ready" }
+        lifecycle_state: { type: string, description: "Lifecycle state", example: "ready" }
+        env: { type: string, example: "production" }
+        task: { type: string, example: "data-ingestion-pipeline-v3" }
+        tags: { type: object, additionalProperties: { type: string }, description: "Key→value tags", example: { project: "alpha", batch: "2024-03" } }
+        files: { type: object, additionalProperties: { type: string }, description: "Key→value file URIs", example: { image: "gs://bucket/preview.png", raw: "gs://bucket/data.bin" } }
+        metadata: { type: object, additionalProperties: true, example: { source: "lidar-sensor-01", resolution: "1920x1080" } }
+        lifecycle_meta: { type: object, additionalProperties: true, example: { reason: "quality-review-passed" } }
+        retention_tier: { type: string, example: "standard" }
+        expire_at: { type: string, format: date-time, nullable: true, example: "2025-06-01T00:00:00Z" }
+        storage_uri: { type: string, example: "gs://databrew-assets/segments/a1b2c3d4.mcap" }
+        thumb_uri: { type: string, example: "gs://databrew-thumbnails/a1b2c3d4.jpg" }
+        asset_level: { type: integer, example: 1 }
+        parent_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
+        root_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
+        segment_index: { type: integer, nullable: true, example: 3 }
+        parent_start_offset_ms: { type: integer, format: int64, nullable: true, example: 120000 }
+        parent_end_offset_ms: { type: integer, format: int64, nullable: true, example: 240000 }
+        split_method: { type: string, example: "manual" }
+        split_algo_name: { type: string, example: "scene-detector" }
+        split_algo_version: { type: string, example: "2.1.0" }
+        split_run_id: { type: string, example: "run-abc123" }
+        split_reason: { type: string, example: "scene-change-at-12s" }
+        delivery_count: { type: integer, example: 2 }
+        last_delivered_at: { type: string, format: date-time, nullable: true, example: "2025-05-01T10:30:00Z" }
+        last_delivered_to: { type: string, nullable: true, example: "customer-alpha" }
+    BatchGetAssetsRequest:
+      type: object
+      required: [asset_ids]
+      properties:
+        asset_ids:
+          type: array
+          items: { $ref: '#/components/schemas/AssetID' }
+          maxItems: 100
+          description: "List of asset IDs to fetch (max 100)"
+          example: ["a1b2c3d4", "e5f6g7h8"]
+    PromoteRevisionRequest:
+      type: object
+      properties:
+        logical_asset_id: { type: string, description: "Logical asset group to promote into", example: "aaaaaaaa" }
+        revision_of: { type: string, description: "Source revision identifier", example: "a1b2c3d4" }
+        owner: { type: string, description: "Owner of the new revision", example: "lisi" }
 
     # ── Pipeline ─────────────────────────────────────────────────────────
+    PipelineArgument:
+      type: object
+      properties:
+        name: { type: string }
+        value: { type: string }
+        from: { type: string }
+    PipelinePort:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        desc: { type: string }
+        default_value: { type: string }
+    PipelineNodeComponentResources:
+      type: object
+      properties:
+        cpu: { type: string, example: 500m }
+        memory: { type: string, example: 512Mi }
+        disk: { type: string, example: 1Gi }
+        gpu: { type: string, example: "1" }
+        computeTier: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+    PipelineNodeComponent:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        type: { type: string, enum: [container, script, resource, suspend] }
+        source: { type: string }
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineArgument' }
+        resources:
+          $ref: '#/components/schemas/PipelineNodeComponentResources'
+        componentId: { type: string }
+        releaseId: { type: string }
+        componentVersionLabel: { type: string }
+    PipelineNodeRuntimeConfig:
+      type: object
+      description: Node-local saved config-library binding. During deploy this config is mounted only into the node that declares it.
+      required: [mode, configId, version, mountPath, targetFilename]
+      properties:
+        mode:
+          type: string
+          enum: [saved]
+        configId: { type: string }
+        version: { type: integer, minimum: 1 }
+        fileName: { type: string }
+        mountPath: { type: string, example: /workspace/configs }
+        targetFilename: { type: string, example: detector.yaml }
+        displayName: { type: string }
+    PipelineNodeRuntimeSecretMount:
+      type: object
+      description: Node-local binding to a platform-defined SecretProviderClass catalog entry.
+      required: [resourceId]
+      properties:
+        resourceId: { type: string, description: Runtime secret catalog ID }
+        mountPath:
+          type: string
+          description: Absolute path mounted inside the node container. Defaults to the catalog path.
+          example: /mnt/secrets
+        displayName: { type: string }
+    PipelineNodeRuntimeStorageMount:
+      type: object
+      description: Node-local binding to a platform-defined storage catalog entry such as PVC or emptyDir.
+      required: [resourceId]
+      properties:
+        resourceId: { type: string, description: Runtime storage catalog ID }
+        mountPath:
+          type: string
+          description: Absolute path mounted inside the node container. Defaults to the catalog path.
+          example: /workspace/models
+        readOnly:
+          type: boolean
+          description: Overrides catalog read mode when the resource supports write access.
+        displayName: { type: string }
+    RuntimeSecretMountResource:
+      type: object
+      required: [id, name, kind, secretProviderClass, defaultMountPath, readOnly]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind:
+          type: string
+          enum: [secretProviderClass]
+        secretProviderClass: { type: string, description: Kubernetes SecretProviderClass name }
+        defaultMountPath: { type: string, example: /mnt/secrets }
+        readOnly: { type: boolean, example: true }
+        targetIds:
+          type: array
+          items: { type: string }
+    RuntimeStorageMountResource:
+      type: object
+      required: [id, name, kind, defaultMountPath, readOnly, allowWrite]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind:
+          type: string
+          enum: [pvc, emptyDir]
+        pvcName: { type: string, description: Kubernetes PVC name when kind=pvc }
+        defaultMountPath: { type: string, example: /workspace/scratch }
+        readOnly: { type: boolean }
+        allowWrite: { type: boolean }
+        targetIds:
+          type: array
+          items: { type: string }
+    RuntimeMountCatalog:
+      type: object
+      required: [secrets, storage]
+      properties:
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/RuntimeSecretMountResource' }
+        storage:
+          type: array
+          items: { $ref: '#/components/schemas/RuntimeStorageMountResource' }
+    PipelineNodeDefinition:
+      type: object
+      required: [id, component]
+      properties:
+        id: { type: string }
+        component:
+          $ref: '#/components/schemas/PipelineNodeComponent'
+        inputs:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePort' }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePort' }
+        runtimeConfig:
+          $ref: '#/components/schemas/PipelineNodeRuntimeConfig'
+        runtimeSecrets:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeRuntimeSecretMount' }
+        storageMounts:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeRuntimeStorageMount' }
+    PipelineEdgeDefinition:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string, example: step-a.output }
+        target: { type: string, example: step-b.input }
+    PipelineDefinition:
+      type: object
+      required: [name, nodes, edges]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeDefinition' }
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineEdgeDefinition' }
+        assetSelection:
+          type: object
+          properties:
+            assetIds:
+              type: array
+              items: { type: string }
+            assetQuery: { type: string }
     PipelineTemplate:
       type: object
       properties:
         id: { type: string, description: Template ID }
         name: { type: string, description: Template name }
         version: { type: integer, description: Template version number }
+        versionCount: { type: integer, description: Number of saved versions for the same template name }
         pipeline:
-          type: object
-          description: Full pipeline definition (nodes + edges)
+          $ref: '#/components/schemas/PipelineDefinition'
         nodeCount: { type: integer, description: Number of nodes in the pipeline }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1664,10 +2017,18 @@ components:
       properties:
         id: { type: string, description: Deployment ID }
         templateId: { type: string, nullable: true, description: Optional linked template ID }
+        templateVersion: { type: integer, nullable: true, description: Version of the linked template snapshot }
         pipelineName: { type: string, description: Pipeline name from the deployed pipeline }
         workflowName: { type: string, description: Resulting Argo workflow name }
-        status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, etc.) }
+        status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, Error, Expired, etc.). Expired means the deployment record remains but the Argo Workflow CR is no longer available, usually due to TTL cleanup. }
         nodeCount: { type: integer }
+        assetIds:
+          type: array
+          items: { type: string }
+          description: Asset IDs selected for this run, when any
+        assetCount: { type: integer, description: Number of selected assets }
+        executionTarget:
+          $ref: '#/components/schemas/ExecutionTarget'
         manifest: { type: string, nullable: true }
         pipelineJSON:
           type: object
@@ -1676,6 +2037,473 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
+    ExecutionTarget:
+      type: object
+      properties:
+        id: { type: string, description: Stable execution target ID }
+        name: { type: string, description: Human-readable target name }
+        cluster: { type: string, description: Cluster label or identifier }
+        namespace: { type: string, description: Kubernetes namespace for Argo workflows }
+        serviceAccount: { type: string, description: Kubernetes service account for workflow pods }
+        argoServerUrl:
+          type: string
+          description: Argo Server URL when persisted. May be omitted/redacted by API responses.
+        argoAuthSecretRef: { type: string, description: Secret reference for Argo auth, never raw credentials }
+        argoInsecureSkipTls: { type: boolean }
+        argoCaCertRef: { type: string }
+        argoServerConfigured: { type: boolean, description: Whether backend Argo client is configured }
+        status:
+          type: string
+          enum: [available, unavailable]
+        enabled: { type: boolean }
+        isDefault: { type: boolean }
+        description: { type: string }
+        resourceDefaults:
+          type: object
+          additionalProperties: true
+        quotaPolicy:
+          type: object
+          additionalProperties: true
+        labels:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PipelineRunNode:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        pipelineNodeId: { type: string }
+        argoNodeId: { type: string }
+        argoNodeName: { type: string }
+        displayName: { type: string }
+        templateName: { type: string }
+        type: { type: string }
+        phase: { type: string }
+        message: { type: string }
+        podName: { type: string }
+        hostNodeName: { type: string }
+        children:
+          type: array
+          items: { type: string }
+        inputs:
+          type: object
+          additionalProperties: true
+        outputs:
+          type: object
+          additionalProperties: true
+        resourcesDuration:
+          type: object
+          additionalProperties: true
+        resourceSummary:
+          type: object
+          additionalProperties: true
+        logRef: { type: string, description: Relative logs endpoint for this pod when available }
+        estimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+          description: Best-effort estimated node cost in USD.
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PipelineRun:
+      type: object
+      properties:
+        id: { type: string, description: Pipeline run ID }
+        templateId: { type: string, nullable: true }
+        templateName: { type: string, description: Linked pipeline template name when available }
+        pipelineName: { type: string }
+        templateVersion: { type: integer, nullable: true }
+        workflowName: { type: string }
+        executionTargetId: { type: string }
+        targetSnapshot:
+          type: object
+          additionalProperties: true
+        status: { type: string }
+        nodeCount: { type: integer }
+        assetIds:
+          type: array
+          items: { type: string }
+        assetCount: { type: integer }
+        noAssetRun: { type: boolean }
+        manifest: { type: string, nullable: true }
+        pipelineJSON:
+          type: object
+          nullable: true
+        argoNamespace: { type: string }
+        argoWorkflowUid: { type: string }
+        message: { type: string }
+        failureReason:
+          type: string
+          description: Normalized terminal failure reason derived from Run ledger, events, or runtime diagnostics.
+          example: unschedulable
+        blockingReason:
+          type: string
+          description: Normalized active-state blocking reason when the Run is waiting or blocked.
+          example: runtime_not_submitted
+        blockingMessage:
+          type: string
+          description: Human-readable blocking diagnostic for active Runs.
+          example: Run 已创建，正在等待提交到运行时。
+        executionTarget:
+          $ref: '#/components/schemas/ExecutionTarget'
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunNode' }
+        totalEstimatedCost:
+          type: number
+          format: double
+          nullable: true
+          description: Sum of node estimated costs in USD when pricing data is available.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    DeployConfigSelection:
+      type: object
+      description: Compatibility deploy-level runtime config source. Node-level PipelineNodeRuntimeConfig is the primary product model; deploy-level configSelection is preserved for advanced callers and is applied only as a global fallback when node bindings are present.
+      required: [mode, mountPath, targetFilename]
+      properties:
+        mode:
+          type: string
+          enum: [saved, upload, inline]
+          description: saved = select a platform-stored config; upload = ad hoc local file; inline = deploy-time editor content.
+        configId:
+          type: string
+          description: Required when mode=saved.
+        version:
+          type: integer
+          description: Optional saved config version. Defaults to the latest active version when omitted.
+        fileName:
+          type: string
+          description: Source file name used in the deploy UI and ConfigMap projection.
+        content:
+          type: string
+          description: Required when mode=upload or mode=inline. Raw file content projected into a request-scoped ConfigMap.
+        mountPath:
+          type: string
+          description: Directory mounted into each pipeline step container.
+          example: /workspace/configs
+        targetFilename:
+          type: string
+          description: Final file name inside mountPath.
+          example: app-config.yaml
+    PipelineRunEvent:
+      type: object
+      properties:
+        id: { type: string, description: Event ID }
+        runId: { type: string, description: Pipeline run ID }
+        workflowName: { type: string, description: Argo workflow name when known }
+        eventType:
+          type: string
+          description: Machine-readable event type such as run_submitted or node_failed.
+        subjectType:
+          type: string
+          enum: [run, workflow, node, pod]
+        subjectId: { type: string }
+        status: { type: string }
+        message: { type: string }
+        reason: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          description: Deterministic key used by the backend to deduplicate watcher observations.
+        sequence:
+          type: integer
+          format: int64
+          description: Monotonic run event sequence used for chronological pagination.
+        occurredAt: { type: string, format: date-time }
+        observedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    PipelineRunEventList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunEvent' }
+        nextCursor:
+          type: integer
+          format: int64
+          nullable: true
+        total:
+          type: integer
+          description: Number of events returned in this page.
+    PipelineRunWatcherState:
+      type: object
+      properties:
+        id: { type: string }
+        lastSyncedAt: { type: string, format: date-time, nullable: true }
+        lastScanStartedAt: { type: string, format: date-time, nullable: true }
+        lastScanFinishedAt: { type: string, format: date-time, nullable: true }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        lastErrorAt: { type: string, format: date-time, nullable: true }
+        activeScanLimit: { type: integer }
+        lastSyncedRunCount: { type: integer }
+        consecutiveFailures: { type: integer }
+        totalScans: { type: integer, format: int64 }
+        totalErrors: { type: integer, format: int64 }
+        scanLagSeconds: { type: integer, format: int64, nullable: true }
+        lastError: { type: string }
+        healthy: { type: boolean }
+        stale: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+    PipelineRunAssetNode:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        assetId: { type: string }
+        pipelineNodeId: { type: string }
+        argoNodeId: { type: string }
+        displayName: { type: string }
+        status: { type: string }
+        message: { type: string }
+        podName: { type: string }
+        logRef: { type: string }
+        estimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+        costSource:
+          type: string
+          enum: [estimated_resource_duration, not_available]
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    PipelineRunAssetNodeList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunAssetNode' }
+        nextCursor:
+          type: string
+          nullable: true
+        total: { type: integer }
+        summary:
+          type: object
+          properties:
+            assetCount: { type: integer }
+            nodeCount: { type: integer }
+            statuses:
+              type: object
+              additionalProperties: { type: integer }
+            totalEstimatedCostUsd:
+              type: number
+              format: double
+              nullable: true
+            costSource:
+              type: string
+              enum: [estimated_resource_duration, not_available]
+    PipelineRunCostSummary:
+      type: object
+      properties:
+        runId: { type: string }
+        totalEstimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+        costSource:
+          type: string
+          enum: [estimated_resource_duration, not_available]
+        nodeSummaries:
+          type: array
+          items:
+            type: object
+            properties:
+              nodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              podCount: { type: integer }
+              estimatedCostUsd: { type: number, format: double, nullable: true }
+              costSource: { type: string }
+              durationSeconds: { type: integer, format: int64, nullable: true }
+        assetNodeSummaries:
+          type: array
+          items:
+            type: object
+            properties:
+              assetId: { type: string }
+              nodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              estimatedCostUsd: { type: number, format: double, nullable: true }
+              costSource: { type: string }
+        generatedAt: { type: string, format: date-time }
+    RunInput:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        nodeId: { type: string }
+        type:
+          type: string
+          description: Input kind, for example asset, runtime_target, config, or parameter.
+        refId: { type: string }
+        refVersion: { type: string }
+        fileName: { type: string }
+        mountPath: { type: string }
+        targetFilename: { type: string }
+        contentHash:
+          type: string
+          description: Immutable hash of config content when available. Raw config content is not returned.
+        projectionKey:
+          type: string
+          description: Runtime materialization key for config projection when available.
+        source: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+    RunInputList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunInput' }
+        total: { type: integer }
+    RunOutput:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        nodeId: { type: string }
+        type:
+          type: string
+          description: Output kind, for example node_outputs, logs, or metrics.
+        refId: { type: string }
+        uri: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+    RunOutputList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunOutput' }
+        total: { type: integer }
+    RunChildList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRun' }
+        relations:
+          type: array
+          description: Durable Run relations when available, with legacy projection fallback for historical data.
+          items: { $ref: '#/components/schemas/RunRelation' }
+        summary:
+          $ref: '#/components/schemas/RunChildSummary'
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+    RunRelation:
+      type: object
+      properties:
+        id: { type: string }
+        parentRunId: { type: string }
+        childRunId: { type: string }
+        relationType:
+          type: string
+          description: Relationship kind, for example batch_child, retry_of, resubmit_of, or rerun_of.
+        source:
+          type: string
+          description: Relation source, for example run_kernel, run_relations, pipeline_runs.batch_job_id, or pipeline_run_events.
+        assetId: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+    RunChildSummary:
+      type: object
+      properties:
+        total: { type: integer }
+        statuses:
+          type: object
+          additionalProperties:
+            type: integer
+        aggregateStatus:
+          type: string
+          description: Deterministic aggregate child status.
+        activeCount: { type: integer }
+        terminalCount: { type: integer }
+        succeededCount: { type: integer }
+        failedCount: { type: integer }
+        cancelledCount: { type: integer }
+        pendingCount: { type: integer }
+        runningCount: { type: integer }
+        suspendedCount: { type: integer }
+        hasFailures:
+          type: boolean
+          description: True when any child Run has failed, errored, expired, or been cancelled.
+        hasBlocking:
+          type: boolean
+          description: True when any child Run is pending/suspended or has a blocking diagnostic reason.
+        healthStatus:
+          type: string
+          description: Aggregate health hint such as healthy, warning, degraded, failed, or pending.
+        topFailureReasons:
+          type: array
+          description: Top normalized failure or blocking reasons across immediate child Runs.
+          items:
+            $ref: '#/components/schemas/RunBlockingReason'
+    RunBlockingReason:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Normalized reason code such as unschedulable, resource_incompatible, image_startup, runtime_not_submitted, runtime_missing, or run_failed.
+        message:
+          type: string
+          description: Representative diagnostic message for this reason.
+        count:
+          type: integer
+          description: Number of child Runs matching this reason when returned in a summary.
+        exampleRunId:
+          type: string
+          description: Example Run ID carrying this reason.
+        exampleAssetId:
+          type: string
+          description: Example asset ID carrying this reason when available.
+        source:
+          type: string
+          description: Projection source for the diagnostic.
+    RunRuntime:
+      type: object
+      properties:
+        runId: { type: string }
+        runtime:
+          type: object
+          properties:
+            runtimeType: { type: string, example: argo }
+            workflowName: { type: string }
+            namespace: { type: string }
+            uid: { type: string }
+            status: { type: string }
+            message: { type: string }
+            executionTargetId: { type: string }
+            targetSnapshot:
+              type: object
+              additionalProperties: true
+            debugUrl: { type: string }
+    RunNodeList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunNode' }
+        total: { type: integer }
+    RunOperationResponse:
+      type: object
+      properties:
+        message: { type: string }
     PipelineComponent:
       type: object
       properties:
@@ -1704,8 +2532,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PortDef' }
         resources:
-          type: object
-          description: Container resource requirements
+          $ref: '#/components/schemas/PipelineComponentResources'
         envVars:
           type: array
           items: { $ref: '#/components/schemas/EnvVarDef' }
@@ -1739,10 +2566,314 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PortDef' }
         resources:
-          type: object
+          $ref: '#/components/schemas/PipelineComponentResources'
         envVars:
           type: array
           items: { $ref: '#/components/schemas/EnvVarDef' }
+    PipelineComponentResources:
+      type: object
+      description: Container resource requirements and DataBrew scheduling metadata.
+      properties:
+        cpu:
+          type: string
+          description: Kubernetes CPU quantity, for example "500m" or "4".
+          example: "4000m"
+        memory:
+          type: string
+          description: Kubernetes memory quantity.
+          example: "16Gi"
+        disk:
+          type: string
+          description: Kubernetes ephemeral storage quantity.
+          example: "50Gi"
+        gpu:
+          type: string
+          description: Kubernetes nvidia.com/gpu quantity emitted as a GPU limit.
+          example: "1"
+        computeTier:
+          type: string
+          description: DataBrew compute tier metadata for future scheduling, quota, and cost policy.
+          example: "gpu-l4"
+        type:
+          type: string
+          description: Component runtime type mirror.
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+    PipelineConfig:
+      type: object
+      description: Standalone user-owned config file record. Configs are independent resources and are not children of pipeline components.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        owner: { type: string }
+        scope: { type: string, default: dev }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+        currentVersion: { type: integer, minimum: 1 }
+        versionCount: { type: integer, minimum: 0 }
+        versions:
+          type: array
+          description: Version summaries. File content is omitted here; fetch a specific version for content.
+          items: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PipelineConfigVersion:
+      type: object
+      description: Immutable file snapshot for a standalone config.
+      properties:
+        id: { type: string }
+        configId: { type: string }
+        version: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [draft, ready, deprecated]
+        content:
+          type: string
+          description: Present only on single-version detail responses.
+          maxLength: 1048576
+        contentSha256: { type: string }
+        contentSizeBytes: { type: integer, minimum: 0, maximum: 1048576 }
+        summary: { type: string }
+        author: { type: string }
+        createdAt: { type: string, format: date-time }
+    PipelineConfigCreateRequest:
+      type: object
+      required: [name, content]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+          description: Optional; inferred from the file name when omitted.
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+          default: draft
+        scope:
+          type: string
+          default: dev
+        content:
+          type: string
+          maxLength: 1048576
+        summary: { type: string }
+    PipelineConfigUpdateRequest:
+      type: object
+      required: [name]
+      description: Updates metadata only. Editing file content creates a new immutable version.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+    PipelineConfigVersionCreateRequest:
+      type: object
+      required: [content]
+      properties:
+        status:
+          type: string
+          enum: [draft, ready, deprecated]
+          default: draft
+        content:
+          type: string
+          maxLength: 1048576
+        summary: { type: string }
+    PipelineConfigListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineConfig' }
+    ComponentReleaseRuntimeSnapshot:
+      type: object
+      required: [image, inputPorts, outputPorts]
+      properties:
+        image:
+          type: string
+          description: Immutable runtime image, preferably pinned by digest.
+          example: us-central1-docker.pkg.dev/my-project/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        inputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        outputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        resources:
+          type: object
+          additionalProperties: true
+    PipelineComponentRelease:
+      type: object
+      required:
+        - id
+        - componentId
+        - taskName
+        - releaseLabel
+        - channel
+        - runtimeImage
+        - status
+        - selectable
+        - validationStatus
+        - runtimeSnapshot
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        imageUid:
+          type: string
+          description: Stable 8-character DataBrew image ID generated from image digest, falling back to runtime image.
+          example: 2f4a9c01
+        componentId: { type: string }
+        taskName: { type: string }
+        taskPath: { type: string }
+        displayName: { type: string }
+        owner: { type: string }
+        releaseLabel:
+          type: string
+          description: User-facing version label such as pr-128-abc123, main-abc123, v0.4.1-rc.1, or v0.4.0.
+        channel:
+          type: string
+          enum: [dev, preview, candidate, rc, prod]
+        sourceRepo: { type: string }
+        sourceRef: { type: string }
+        sourceRefType:
+          type: string
+          enum: [tag, commit, branch, pr]
+        sourceCommit: { type: string }
+        buildId: { type: string }
+        imageRepo: { type: string }
+        imageTag: { type: string }
+        imageDigest: { type: string }
+        runtimeImage: { type: string }
+        status:
+          type: string
+          enum: [ready, failed, pending, deprecated]
+        selectable: { type: boolean }
+        validationStatus:
+          type: string
+          enum: [passed, failed]
+        validationErrors:
+          type: array
+          items: { type: string }
+        runtimeSnapshot:
+          $ref: '#/components/schemas/ComponentReleaseRuntimeSnapshot'
+        technicalMetadata:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastSyncedAt: { type: string, format: date-time, nullable: true }
+    PipelineComponentReleaseInput:
+      type: object
+      description: CI/platform generated component release payload. DataBrew derives missing identity/status fields where possible and validates selectability.
+      properties:
+        id: { type: string }
+        imageUid:
+          type: string
+          description: Optional CI-provided DataBrew image ID. DataBrew derives it from image digest when omitted.
+        componentId: { type: string }
+        taskName: { type: string }
+        taskPath: { type: string }
+        displayName: { type: string }
+        owner: { type: string }
+        releaseLabel: { type: string }
+        channel:
+          type: string
+          enum: [dev, preview, candidate, rc, prod]
+        sourceRepo: { type: string }
+        sourceRef: { type: string }
+        sourceRefType:
+          type: string
+          enum: [tag, commit, branch, pr]
+        sourceCommit: { type: string }
+        buildId: { type: string }
+        imageRepo: { type: string }
+        imageTag: { type: string }
+        imageDigest: { type: string }
+        runtimeImage: { type: string }
+        status:
+          type: string
+          enum: [ready, failed, pending, deprecated]
+        runtimeSnapshot:
+          $ref: '#/components/schemas/ComponentReleaseRuntimeSnapshot'
+        technicalMetadata:
+          type: object
+          additionalProperties: true
+    ComponentReleaseIngestSource:
+      type: object
+      description: Shared CI/build source context applied as defaults to every release item in the batch.
+      properties:
+        provider:
+          type: string
+          example: cloud-build
+        repo:
+          type: string
+          example: CyberOrigin2077/automated-processing-gcloud
+        ref:
+          type: string
+          example: refs/heads/main
+        refType:
+          type: string
+          enum: [tag, commit, branch, pr]
+          example: branch
+        commit:
+          type: string
+          example: abc123
+        buildId:
+          type: string
+          example: 1e86eab9-9250-41c5-b905-8ff3c6de23af
+        trigger:
+          type: string
+          example: hand-track-stereo-build-trigger
+    ComponentReleaseSyncRequest:
+      type: object
+      required: [items]
+      properties:
+        source:
+          $ref: '#/components/schemas/ComponentReleaseIngestSource'
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineComponentReleaseInput' }
+    ComponentReleaseListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineComponentRelease' }
     PortDef:
       type: object
       properties:
@@ -1776,10 +2907,11 @@ components:
         progress: { type: string, description: Workflow progress, e.g. 1/2 }
         nodes:
           type: array
+          description: Runtime workflow nodes plus static pending DAG task placeholders for not-yet-started tasks.
           items: { $ref: '#/components/schemas/WorkflowNodeStatus' }
         edges:
           type: array
-          description: Normalized workflow DAG edges between renderable workflow nodes.
+          description: Normalized workflow DAG edges between runtime nodes and static pending DAG task placeholders.
           items: { $ref: '#/components/schemas/WorkflowDagEdge' }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
@@ -1816,6 +2948,7 @@ components:
           description: Argo resource duration counters for the node.
           additionalProperties: true
         hostNodeName: { type: string }
+        podName: { type: string, description: Kubernetes pod name backing this Argo Pod node, when resolvable. }
         progress: { type: string, description: Node progress, e.g. 1/2 }
         estimatedDuration: { type: integer, format: int64, description: Estimated node duration in seconds }
         children:
@@ -1823,25 +2956,133 @@ components:
           items: { type: string }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+        debug:
+          $ref: '#/components/schemas/WorkflowNodeDebugCapabilities'
+    WorkflowNodeDebugCapabilities:
+      type: object
+      properties:
+        execEnabled: { type: boolean, description: Whether Pod terminal exec is enabled for this node and target. }
+        logStreamEnabled: { type: boolean }
+        metricsEnabled: { type: boolean }
+        costEnabled: { type: boolean }
+        reason: { type: string, description: Human-readable terminal availability reason. }
+        allowedCommands:
+          type: array
+          items: { type: string }
+        maxSessionSeconds: { type: integer }
+    WorkflowNodePodDiagnostics:
+      type: object
+      required: [namespace, podName, restartCount, containers, podConditions, podEvents]
+      properties:
+        cluster: { type: string, description: Optional Kubernetes cluster display label }
+        namespace: { type: string, description: Kubernetes namespace }
+        podName: { type: string, description: Kubernetes Pod name backing this workflow node }
+        podIp: { type: string, description: Kubernetes Pod IP }
+        serviceAccountName: { type: string, description: Pod service account name }
+        restartCount: { type: integer, format: int32, description: Sum of all container restart counts }
+        containers:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodContainer' }
+        podConditions:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodCondition' }
+        podEvents:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodEvent' }
+    CreatePodTerminalSessionRequest:
+      type: object
+      properties:
+        containerName:
+          type: string
+          description: Optional container name. Defaults to the workflow node's main container when omitted.
+        command:
+          type: string
+          description: Allowed command preset such as `sh`, `pwd`, `ls`, or `env`.
+          default: sh
+    PodTerminalSession:
+      type: object
+      required: [id, workflowName, nodeId, podName, namespace, command, status, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        workflowName: { type: string }
+        nodeId: { type: string }
+        podName: { type: string }
+        containerName: { type: string }
+        executionTargetId: { type: string }
+        cluster: { type: string }
+        namespace: { type: string }
+        command: { type: string }
+        status:
+          type: string
+          enum: [created, attached, terminated, failed, timed_out]
+        attachUrl:
+          type: string
+          description: One-time backend attach URL. Does not expose Kubernetes credentials.
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        attachedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        errorCode: { type: string }
+        errorMessage: { type: string }
+    WorkflowNodePodContainer:
+      type: object
+      required: [name, ready, restartCount]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        ready: { type: boolean }
+        restartCount: { type: integer, format: int32 }
+        state: { type: string, description: Running, Waiting, Terminated, or empty when unknown }
+    WorkflowNodePodCondition:
+      type: object
+      required: [type, status]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        lastTransitionTime: { type: string, format: date-time, nullable: true }
+    WorkflowNodePodEvent:
+      type: object
+      required: [type, reason, message]
+      properties:
+        type: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        count: { type: integer, format: int32 }
+        firstTimestamp: { type: string, format: date-time, nullable: true }
+        lastTimestamp: { type: string, format: date-time, nullable: true }
     WorkflowOperationResponse:
       type: object
       properties:
         message:
           type: string
           example: ok
+        workflowName:
+          type: string
+          description: Newly created workflow name when the operation creates one, such as resubmit.
+        pipelineRunId:
+          type: string
+          description: DataBrew pipeline run id created for the new workflow when available.
     BackfillJob:
       type: object
       properties:
         id: { type: string }
         name: { type: string }
         templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
         filterJson: { type: object, nullable: true }
         totalCount: { type: integer }
         completedCount: { type: integer }
         failedCount: { type: integer }
+        pilotCount: { type: integer }
+        pilotPhase: { type: string, description: "none | running | review | done" }
         status: { type: string, description: "running | paused | completed | failed" }
+        createdBy: { type: string, nullable: true, description: "email of the user who created the job" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true, description: "set when status reaches completed or failed" }
     BackfillItem:
       type: object
       properties:
@@ -1854,6 +3095,96 @@ components:
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+    BatchNodeSummary:
+      type: object
+      properties:
+        batchJobId: { type: string }
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
+        subtasks:
+          type: object
+          properties:
+            total: { type: integer }
+            completed: { type: integer }
+            failed: { type: integer }
+            running: { type: integer }
+            pending: { type: integer }
+            paused: { type: boolean }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              pipelineNodeId: { type: string }
+              displayName: { type: string }
+              dagOrder: { type: integer }
+              counts:
+                type: object
+                additionalProperties: { type: integer }
+              attempted: { type: integer }
+              failureRate: { type: number, format: double }
+        dataCoverage:
+          type: object
+          properties:
+            runsWithNodeRows: { type: integer }
+            runsTotal: { type: integer }
+            complete: { type: boolean }
+        generatedAt: { type: string, format: date-time }
+    BatchNodeFailureList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              backfillItemId: { type: string }
+              assetId: { type: string }
+              runId: { type: string }
+              workflowName: { type: string }
+              pipelineNodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              message: { type: string }
+              startedAt: { type: string, format: date-time, nullable: true }
+              finishedAt: { type: string, format: date-time, nullable: true }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+    BackfillRerunRequest:
+      type: object
+      properties:
+        scope:
+          type: string
+          enum: [failed, pending, incomplete, completed, custom, node_failed]
+        templateId: { type: string }
+        templateVersion: { type: integer }
+        itemIds:
+          type: array
+          items: { type: string }
+        assetIds:
+          type: array
+          items: { type: string }
+        pipelineNodeId: { type: string }
+        dryRun: { type: boolean }
+    BackfillRerunResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [accepted, partial_success, succeeded, failed, noop]
+        dryRun: { type: boolean }
+        matchedCount: { type: integer }
+        retriedCount: { type: integer }
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId: { type: string }
+              reason: { type: string }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
@@ -1933,6 +3264,30 @@ paths:
           description: Prometheus metrics
 
   # ── Auth ───────────────────────────────────────────────────────────────
+  /api/v1/auth/email-login:
+    post:
+      tags: [Auth]
+      summary: Login with email and issue JWT session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailLoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly databrew_session JWT cookie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400':
+          description: Missing or invalid email
+        '401':
+          description: Email domain not allowed
   /api/v1/auth/login:
     post:
       tags: [Auth]
@@ -1984,6 +3339,11 @@ paths:
     post:
       tags: [Assets]
       summary: Create asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAssetRequest' }
       responses:
         '201': { description: Created }
         '422':
@@ -2055,6 +3415,11 @@ paths:
     post:
       tags: [Assets]
       summary: Batch get assets by IDs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchGetAssetsRequest' }
       responses:
         '200':
           description: OK
@@ -2063,9 +3428,9 @@ paths:
               schema:
                 type: object
                 properties:
-                items:
-                  type: array
-                  items: { $ref: '#/components/schemas/Asset' }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
 
   /api/v1/asset-types/{type}/schema:
     get:
@@ -2259,6 +3624,11 @@ paths:
           name: id
           required: true
           schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteRevisionRequest' }
       responses:
         '200':
           description: Revision promoted
@@ -2374,6 +3744,23 @@ paths:
           name: id
           required: true
           schema: { type: string }
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number for child Run preview results.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of child Runs to return per page. Values above 100 are capped.
       responses:
         '200':
           description: OK
@@ -3778,6 +5165,21 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AlgoRun' }
+        '400':
+          description: Invalid run fields or unknown/duplicate input asset IDs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                missingInputAsset:
+                  summary: Missing input asset
+                  value:
+                    code: INVALID_ARGUMENT
+                    message: input_asset_ids contain unknown assets
+                    request_id: rid-123
+                    details:
+                      field: input_asset_ids
+                      missing_asset_ids: [DEAD1536]
     get:
       tags: [AlgoRuns]
       summary: List algo runs
@@ -3961,14 +5363,15 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/resources:
     get:
       tags: [Pipeline]
-      summary: Get pod-level resource usage for a deployment
+      summary: Get pod-level resource metadata for a deployment
       description: >
-        Returns CPU/memory actual usage (from K8s Metrics API) vs requests/limits
-        (from pod spec) for each pod belonging to a workflow deployment.
+        Returns Argo workflow resource duration plus manifest-derived requests/limits
+        for each pod belonging to a workflow deployment. Live Kubernetes Metrics API
+        samples are not returned unless source.metrics and live_metrics_available say so.
       parameters:
         - in: path
           name: id
@@ -3982,40 +5385,242 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  deployment_id:
-                    type: string
-                  workflow_name:
-                    type: string
-                  status:
-                    type: string
-                  pods:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        pod_name:
-                          type: string
-                        node_name:
-                          type: string
-                        cpu_usage:
-                          type: string
-                        memory_usage:
-                          type: string
-                        cpu_request:
-                          type: string
-                        memory_request:
-                          type: string
-                        cpu_limit:
-                          type: string
-                        memory_limit:
-                          type: string
+                $ref: '#/components/schemas/ResourceUsageReport'
         '404':
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/resources:
+    get:
+      tags: [Pipeline]
+      summary: Get resource metadata for a workflow
+      description: >
+        Returns resource metadata for pods in an Argo workflow. The response
+        distinguishes Argo live status, manifest-derived requests/limits, and
+        unavailable live metrics.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow resource usage report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUsageReport'
+        '404':
+          description: Workflow not found or workflow service unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/nodes/{nodeId}/resources:
+    get:
+      tags: [Pipeline]
+      summary: Get resource metadata for one workflow node
+      description: >
+        Returns resource metadata for a single pod node in an Argo workflow.
+        Live metrics are marked unavailable unless the backend explicitly wires
+        a metrics source.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+        - in: path
+          name: nodeId
+          required: true
+          schema: { type: string }
+          description: Workflow pod node ID
+      responses:
+        '200':
+          description: Workflow node resource usage report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUsageReport'
+        '404':
+          description: Workflow or node not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/nodes/{nodeId}/pod:
+    get:
+      tags: [Pipeline]
+      summary: Get Kubernetes Pod diagnostics for one workflow node
+      description: >
+        Resolves the Argo workflow node to its Kubernetes Pod and returns
+        backend-mediated Pod metadata, container statuses, conditions, and
+        Kubernetes events. The browser never receives Kubernetes credentials.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+        - in: path
+          name: nodeId
+          required: true
+          schema: { type: string }
+          description: Workflow Pod node ID
+      responses:
+        '200':
+          description: Pod diagnostics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowNodePodDiagnostics' }
+        '403':
+          description: Kubernetes credentials cannot read Pod diagnostics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Workflow, node, or Pod not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Kubernetes diagnostics unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/nodes/{nodeId}/terminal-sessions:
+    post:
+      tags: [Pipeline]
+      summary: Create a backend-owned Pod terminal session
+      description: >
+        Resolves a workflow node to its Kubernetes Pod, validates execution
+        target terminal policy, and creates a short-lived backend-owned
+        terminal session. The response may include a one-time attach URL but
+        never exposes Kubernetes credentials.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+        - in: path
+          name: nodeId
+          required: true
+          schema: { type: string }
+          description: Workflow Pod node ID
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePodTerminalSessionRequest' }
+      responses:
+        '201':
+          description: Terminal session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '403':
+          description: Terminal disabled or command denied by policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Workflow, node, or Pod not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Pod is completed or otherwise unavailable for exec
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get Pod terminal session metadata
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminal session metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}/terminate:
+    post:
+      tags: [Pipeline]
+      summary: Terminate a Pod terminal session
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminal session terminated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}/attach:
+    get:
+      tags: [Pipeline]
+      summary: Attach to a Pod terminal WebSocket stream
+      description: >
+        Upgrades to a WebSocket when a valid one-time attach token is provided.
+        Frames are JSON text messages. When the backend has a Kubernetes exec
+        client configured, stdout/stderr/exit frames are proxied from the Pod
+        exec stream. If exec is not configured, the stream returns a controlled
+        `POD_EXEC_UNAVAILABLE` frame without exposing Kubernetes credentials.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+        '403':
+          description: Attach token invalid, expired, or reused
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/deployments/{id}/save-template:
     post:
@@ -4057,7 +5662,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/pipeline-assets:
     post:
@@ -4110,12 +5715,12 @@ paths:
           description: Invalid input
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/pipeline-lineage:
     get:
       tags: [Pipeline]
@@ -4159,11 +5764,11 @@ paths:
   /api/v1/workflows/{name}/logs:
     get:
       tags: [Pipeline]
-      summary: Get workflow node logs
+      summary: Get bounded workflow node logs
       description: >
-        Returns logs for a specific node in a workflow. The logs are
-        fetched from the corresponding Kubernetes Pod via the Argo
-        Workflow API.
+        Returns a bounded log tail for a specific node in a workflow. Defaults
+        are tailLines=200 and limitBytes=262144; server-side maximums clamp
+        tailLines to 2000 and limitBytes to 2097152.
       parameters:
         - in: path
           name: name
@@ -4177,16 +5782,133 @@ paths:
           schema:
             type: string
           description: Node ID (matches Argo template name)
+        - in: query
+          name: container
+          schema:
+            type: string
+            default: main
+        - in: query
+          name: tailLines
+          schema:
+            type: integer
+            format: int64
+            default: 200
+            maximum: 2000
+            minimum: 0
+        - in: query
+          name: limitBytes
+          schema:
+            type: integer
+            format: int64
+            default: 262144
+            maximum: 2097152
+            minimum: 0
+        - in: query
+          name: sinceSeconds
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - in: query
+          name: sinceTime
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: previous
+          schema:
+            type: boolean
+        - in: query
+          name: timestamps
+          schema:
+            type: boolean
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Reserved for persisted log pagination. Live Argo logs return 400 when cursor is provided.
       responses:
         '200':
-          description: Log content
+          description: Bounded log content and truncation metadata
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  logs:
-                    type: string
+                $ref: '#/components/schemas/WorkflowLogResponse'
+        '400':
+          description: Missing nodeId parameter
+        '404':
+          description: Workflow or node not found
+
+  /api/v1/workflows/{name}/logs/stream:
+    get:
+      tags: [Pipeline]
+      summary: Stream bounded workflow node logs
+      description: >
+        Streams workflow node logs as server-sent events. Events are JSON
+        payloads with event names log, heartbeat, and end. Query parameters
+        match the JSON log endpoint and are bounded server-side.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: Workflow name
+        - in: query
+          name: nodeId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: container
+          schema:
+            type: string
+            default: main
+        - in: query
+          name: tailLines
+          schema:
+            type: integer
+            format: int64
+            default: 200
+            maximum: 2000
+            minimum: 0
+        - in: query
+          name: limitBytes
+          schema:
+            type: integer
+            format: int64
+            default: 262144
+            maximum: 2097152
+            minimum: 0
+        - in: query
+          name: sinceSeconds
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - in: query
+          name: sinceTime
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: previous
+          schema:
+            type: boolean
+        - in: query
+          name: timestamps
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Server-sent log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: log
+                  data: {"podName":"pod","container":"main","line":"hello"}
         '400':
           description: Missing nodeId parameter
         '404':
@@ -4197,7 +5919,7 @@ paths:
     post:
       tags: [Pipeline]
       summary: Save a new pipeline template
-      description: Creates a new reusable pipeline template from a pipeline definition.
+      description: Creates a new reusable pipeline template from a pipeline definition. The pipeline is normalized before saving, and Argo-facing validation rejects duplicate fan-in target inputs or consumed output ports whose producer does not write the matching /tmp/outputs/<port> file.
       security:
         - DatabrewToken: []
       requestBody:
@@ -4210,8 +5932,7 @@ paths:
               properties:
                 name: { type: string, description: Template name }
                 pipeline:
-                  type: object
-                  description: Full pipeline definition (nodes + edges)
+                  $ref: '#/components/schemas/PipelineDefinition'
       responses:
         '201':
           description: Template created
@@ -4219,14 +5940,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PipelineTemplate' }
         '400':
-          description: Invalid request body
+          description: Invalid request body or invalid pipeline definition
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Pipeline]
       summary: List pipeline templates
-      description: Returns all saved pipeline templates.
+      description: Returns the latest version of each saved pipeline template.
       security:
         - DatabrewToken: []
       responses:
@@ -4262,7 +5983,7 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a pipeline template
@@ -4280,11 +6001,12 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/pipelines/{id}/versions:
     get:
       tags: [Pipeline]
       summary: List all versions of a pipeline template
+      description: Returns all saved snapshots for the same template name as the provided template ID, ordered by version descending.
       security:
         - DatabrewToken: []
       parameters:
@@ -4292,7 +6014,7 @@ paths:
           name: id
           required: true
           schema: { type: string }
-          description: Template name (the `id` param maps to name for version listing)
+          description: Template ID
       responses:
         '200':
           description: Version list
@@ -4337,8 +6059,15 @@ paths:
                 name: { type: string, description: Optional pipeline name }
                 asset_ids:
                   type: array
-                  items: { type: string }
-                  description: Optional asset IDs to bind as environment variables
+                  items: { $ref: '#/components/schemas/AssetID' }
+                  uniqueItems: true
+                  description: Optional existing, non-deleted asset IDs to bind as environment variables
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the dev target when omitted.
+                version:
+                  type: integer
+                  description: Optional template version to run. Defaults to the template ID's own version.
       responses:
         '200':
           description: Dry-run preview generated
@@ -4354,7 +6083,17 @@ paths:
           description: Invalid request or asset not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                missingAsset:
+                  summary: Missing asset
+                  value:
+                    code: INVALID_ARGUMENT
+                    message: asset_ids contain unknown assets
+                    request_id: rid-123
+                    details:
+                      field: asset_ids
+                      missing_asset_ids: [DEAD1536]
 
   /api/v1/deploy/template/{id}:
     post:
@@ -4380,8 +6119,15 @@ paths:
                 name: { type: string, description: Optional override pipeline name }
                 asset_ids:
                   type: array
-                  items: { type: string }
-                  description: Optional asset IDs to bind as environment variables
+                  items: { $ref: '#/components/schemas/AssetID' }
+                  uniqueItems: true
+                  description: Optional existing, non-deleted asset IDs to bind as environment variables
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the dev target when omitted.
+                version:
+                  type: integer
+                  description: Optional template version to run. Defaults to the template ID's own version.
       responses:
         '201':
           description: Deployment created
@@ -4392,12 +6138,22 @@ paths:
           description: Invalid request or asset not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                duplicateAsset:
+                  summary: Duplicate asset ID
+                  value:
+                    code: INVALID_ARGUMENT
+                    message: asset_ids contain duplicate assets
+                    request_id: rid-123
+                    details:
+                      field: asset_ids
+                      duplicate_asset_ids: [SDKT0202]
         '404':
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Deployments listing ───────────────────────────────────────────
   /api/v1/deployments:
@@ -4418,6 +6174,1112 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineDeployment' }
+  /api/v1/execution-targets:
+    get:
+      tags: [Pipeline]
+      summary: List execution targets
+      description: Returns runtime destinations available for pipeline runs.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Execution target list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExecutionTarget' }
+
+  /api/v1/pipeline/runtime-mounts:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline runtime mount catalog
+      description: Returns platform-defined SecretProviderClass and storage resources that may be mounted into individual pipeline nodes. The response never contains secret values.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Runtime mount catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeMountCatalog'
+        '500':
+          description: Runtime mount catalog is misconfigured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Runs (product execution API) ──────────────────────────────────
+  /api/v1/runs:
+    post:
+      tags: [Runs]
+      summary: Create a Run from an inline pipeline
+      description: Creates the product execution record through the Run Kernel boundary and submits its runtime workflow through the configured adapter. Pipeline design-time templates and runtime workflow names remain references; callers should store the returned run id.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pipeline]
+              properties:
+                pipeline:
+                  type: object
+                  description: Full pipeline definition
+                name: { type: string, description: Optional run name }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the default target when omitted.
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [Runs]
+      summary: List Runs
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: view
+          schema: { type: string, enum: [summary, full] }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: excludeBatch
+          schema: { type: boolean }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: pipelineNodeId
+          schema: { type: string }
+        - in: query
+          name: nodeStatus
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+
+  /api/v1/runs/template/{id}:
+    post:
+      tags: [Runs]
+      summary: Create Run from a pipeline template
+      description: Creates product Run records through the Run Kernel boundary from a saved pipeline template. A single asset returns one Run; multiple asset IDs may return a collection wrapper.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                version: { type: integer }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id: { type: string }
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
+      responses:
+        '201':
+          description: Run created. Multiple asset IDs may return a batch object with items and total.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PipelineRun'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/PipelineRun' }
+                      total: { type: integer }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/watcher/status:
+    get:
+      tags: [Runs]
+      summary: Get Run watcher status
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Run watcher health
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
+
+  /api/v1/runs/by-workflow/{workflowName}:
+    get:
+      tags: [Runs]
+      summary: Resolve a Run by runtime workflow name
+      description: Compatibility/debug resolver. Product links should prefer /runs/{id}.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: workflowName
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}:
+    get:
+      tags: [Runs]
+      summary: Get a Run by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Runs]
+      summary: Delete a Run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted successfully }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/events:
+    get:
+      tags: [Runs]
+      summary: List Run ledger events
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64, minimum: 0 }
+        - in: query
+          name: subjectType
+          schema: { type: string, enum: [run, workflow, node, pod] }
+        - in: query
+          name: eventType
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Run event page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunEventList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/nodes:
+    get:
+      tags: [Runs]
+      summary: List Run node ledger rows
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run node rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNodeList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/asset-nodes:
+    get:
+      tags: [Runs]
+      summary: List Run asset-node snapshots
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: assetId
+          schema: { type: string }
+        - in: query
+          name: nodeId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: orderBy
+          schema: { type: string, enum: [cost, duration, status] }
+      responses:
+        '200':
+          description: Run asset-node snapshot page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunAssetNodeList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/cost-summary:
+    get:
+      tags: [Runs]
+      summary: Get Run estimated cost summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimated cost summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunCostSummary' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/inputs:
+    get:
+      tags: [Runs]
+      summary: List Run input projections
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run inputs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunInputList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/outputs:
+    get:
+      tags: [Runs]
+      summary: List Run output projections
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run outputs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOutputList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/children:
+    get:
+      tags: [Runs]
+      summary: List child Runs
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Child Runs with projected relations and aggregate child status summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunChildList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/runtime:
+    get:
+      tags: [Runs]
+      summary: Get Run runtime debug reference
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Runtime reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunRuntime' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/retry:
+    post:
+      tags: [Runs]
+      summary: Retry failed runtime nodes in place
+      description: Runtime retry uses the existing Run and stored runtime reference through the RuntimeAdapter. It does not create a new Run.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Runtime retry submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/resubmit:
+    post:
+      tags: [Runs]
+      summary: Resubmit a Run as a new Run
+      description: Resubmit creates a new Run from the existing Run spec and records relation metadata as resubmit_of.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: New Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Existing Run spec is invalid for resubmit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/rerun:
+    post:
+      tags: [Runs]
+      summary: Rerun a Run as a new product Run
+      description: Rerun is a product-level full rerun. It creates a new Run from the source Run spec and records relation metadata as rerun_of. Use /runs/{id}/retry for same-Run runtime retry.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: New Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Existing Run spec is invalid for rerun
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/stop:
+    post:
+      tags: [Runs]
+      summary: Stop a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the stop call to the configured RuntimeAdapter.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stop requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/suspend:
+    post:
+      tags: [Runs]
+      summary: Suspend a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the suspend call to the configured RuntimeAdapter.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Suspend requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/resume:
+    post:
+      tags: [Runs]
+      summary: Resume a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the resume call to the configured RuntimeAdapter.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resume requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/terminate:
+    post:
+      tags: [Runs]
+      summary: Terminate a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the terminate call to the configured RuntimeAdapter.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminate requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs:
+    post:
+      tags: [Pipeline]
+      summary: Create a first-class pipeline run
+      description: >
+        Creates a pipeline run and submits the rendered workflow to the selected
+        execution target. This endpoint also writes the legacy deployment record
+        for compatibility.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pipeline]
+              properties:
+                pipeline:
+                  type: object
+                  description: Full pipeline definition
+                name: { type: string, description: Optional pipeline name }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the default target when omitted.
+      responses:
+        '201':
+          description: Pipeline run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Workflow backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [Pipeline]
+      summary: List pipeline runs
+      description: Returns first-class pipeline runs ordered by creation time.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: view
+          schema: { type: string, enum: [summary, full] }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: excludeBatch
+          schema: { type: boolean }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: pipelineNodeId
+          schema: { type: string }
+        - in: query
+          name: nodeStatus
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Pipeline run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+
+  /api/v1/pipeline-runs/watcher/status:
+    get:
+      tags: [Pipeline]
+      summary: Get pipeline run watcher status
+      description: Returns the durable DataBrew watcher health snapshot used to synchronize Argo workflow state into pipeline run ledger tables.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Pipeline run watcher status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
+
+  /api/v1/pipeline-runs/template/{id}:
+    post:
+      tags: [Pipeline]
+      summary: Create a first-class pipeline run from a template
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: Optional override pipeline name }
+                version:
+                  type: integer
+                  description: Optional template version lock. Defaults to the active template version when omitted.
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id:
+                  type: string
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
+      responses:
+        '201':
+          description: Pipeline run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a pipeline run by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pipeline run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a pipeline run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted successfully }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/events:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline run events
+      description: Returns stored DataBrew timeline events for a pipeline run in chronological order.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Pipeline run ID
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+          description: Maximum number of events to return.
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Sequence cursor returned by the previous page.
+        - in: query
+          name: subjectType
+          schema: { type: string, enum: [run, workflow, node, pod] }
+          description: Optional subject type filter.
+        - in: query
+          name: eventType
+          schema: { type: string }
+          description: Optional event type filter.
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Optional event status/phase filter.
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Optional text search across message, subject, and event type.
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+          description: Optional lower bound for occurredAt.
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+          description: Optional upper bound for occurredAt.
+      responses:
+        '200':
+          description: Pipeline run event page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunEventList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/asset-nodes:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline run asset-node snapshots
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: assetId
+          schema: { type: string }
+        - in: query
+          name: nodeId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: orderBy
+          schema: { type: string, enum: [cost, duration, status] }
+      responses:
+        '200':
+          description: Asset-node snapshot page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunAssetNodeList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/cost-summary:
+    get:
+      tags: [Pipeline]
+      summary: Get pipeline run estimated cost summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimated cost summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunCostSummary' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/retry:
+    post:
+      tags: [Pipeline]
+      summary: Retry a pipeline run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Pipeline run retried
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/stop:
+    post:
+      tags: [Pipeline]
+      summary: Stop a pipeline run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stop requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/deployments/{id}:
     get:
       tags: [Pipeline]
@@ -4440,7 +7302,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a deployment
@@ -4458,7 +7320,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/retry:
     post:
       tags: [Pipeline]
@@ -4484,7 +7346,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/stop:
     post:
       tags: [Pipeline]
@@ -4515,7 +7377,205 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Pipeline config registry ───────────────────────────────────────
+  /api/v1/pipeline-configs:
+    get:
+      tags: [Pipeline]
+      summary: List standalone pipeline configs
+      description: Lists config metadata for the current user by default. Admin/legacy SDK callers may pass owner to inspect a specific owner. Version content is omitted.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search over name, description, owner, file type, and tags.
+        - in: query
+          name: owner
+          schema: { type: string }
+          description: Optional owner filter for admin/legacy SDK callers.
+        - in: query
+          name: scope
+          schema: { type: string }
+          description: Optional scope filter; defaults to dev.
+        - in: query
+          name: lifecycle
+          schema:
+            type: string
+            enum: [draft, ready, deprecated]
+      responses:
+        '200':
+          description: Config list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigListResponse' }
+    post:
+      tags: [Pipeline]
+      summary: Create a standalone pipeline config
+      description: Creates metadata plus the first immutable file version. File payload is stored in PostgreSQL and limited to 1 MiB.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigCreateRequest' }
+      responses:
+        '201':
+          description: Config created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '400':
+          description: Invalid request body or content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get standalone pipeline config metadata
+      description: Returns metadata and version summaries. File content is omitted; fetch a specific version for content.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Config details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [Pipeline]
+      summary: Update standalone pipeline config metadata
+      description: Updates metadata only. To edit file content, create a new version.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigUpdateRequest' }
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '400':
+          description: Invalid metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/versions:
+    post:
+      tags: [Pipeline]
+      summary: Create a new immutable config file version
+      description: Appends a new file snapshot and advances currentVersion. Existing versions are not mutated.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigVersionCreateRequest' }
+      responses:
+        '201':
+          description: Version created. Content is omitted from the response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        '400':
+          description: Invalid content or status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/versions/{version}:
+    get:
+      tags: [Pipeline]
+      summary: Get one immutable config file version
+      description: Returns the file content for a single version.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Version details including content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        '400':
+          description: Invalid version number
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config or version not found, or config not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/deprecate:
+    post:
+      tags: [Pipeline]
+      summary: Deprecate a standalone pipeline config
+      description: Marks the config and current version as deprecated. Hard delete is intentionally not exposed because configs can be referenced by saved pipelines and runs.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deprecated config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Pipeline component registry ───────────────────────────────────
   /api/v1/pipeline-components:
@@ -4540,7 +7600,7 @@ paths:
           description: Invalid request body
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Pipeline]
       summary: List all registered pipeline components
@@ -4587,7 +7647,7 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     put:
       tags: [Pipeline]
       summary: Update a pipeline component
@@ -4613,7 +7673,87 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-component-releases:
+    get:
+      tags: [Pipeline]
+      summary: List generated component releases
+      description: Lists platform-generated component releases. Normal UI should use selectable=true to hide unsafe or incomplete builds.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search over component, task, display name, release label, source commit/ref/repo, build id, image tag/digest, and runtime image.
+        - in: query
+          name: componentId
+          schema: { type: string }
+        - in: query
+          name: taskName
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: channel
+          schema: { type: string }
+        - in: query
+          name: selectable
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Component release list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComponentReleaseListResponse' }
+  /api/v1/pipeline-component-releases/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a generated component release
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Component release details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponentRelease' }
+        '404':
+          description: Component release not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-component-releases/sync:
+    post:
+      tags: [Pipeline]
+      summary: Sync generated component releases
+      description: Accepts release records generated by CI/platform tooling and stores the validated selectable state. CI should prefer X-Databrew-CI-Token; administrators may still use normal DataBrew auth.
+      security:
+        - DatabrewCIIngestToken: []
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ComponentReleaseSyncRequest' }
+      responses:
+        '200':
+          description: Synced component releases
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComponentReleaseListResponse' }
+        '400':
+          description: Invalid request body or release identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/components:
     get:
@@ -4707,7 +7847,7 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Workflow monitoring ───────────────────────────────────────────
   /api/v1/workflows:
@@ -4732,7 +7872,7 @@ paths:
     get:
       tags: [Pipeline]
       summary: Get workflow details
-      description: Returns full workflow details including node statuses.
+      description: Returns full workflow details including runtime node statuses and static pending DAG tasks.
       security:
         - DatabrewToken: []
       parameters:
@@ -4751,7 +7891,7 @@ paths:
           description: Workflow not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a workflow
@@ -4774,7 +7914,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/retry:
     post:
       tags: [Pipeline]
@@ -4798,7 +7938,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/resubmit:
     post:
       tags: [Pipeline]
@@ -4822,7 +7962,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/suspend:
     post:
       tags: [Pipeline]
@@ -4846,7 +7986,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/resume:
     post:
       tags: [Pipeline]
@@ -4870,7 +8010,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/terminate:
     post:
       tags: [Pipeline]
@@ -4894,7 +8034,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Backfill jobs (batch asset processing) ────────────────────────────
   /api/v1/backfill:
@@ -4910,11 +8050,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, templateId]
+              required: [name, templateId, assetIds]
               properties:
                 name: { type: string, description: Job name }
                 templateId: { type: string, description: Pipeline template ID }
+                templateVersion: { type: integer, description: Optional template version lock }
+                targetId: { type: string, description: Optional execution target ID/name used for each materialized pipeline run }
+                pilotCount: { type: integer, description: Optional pilot gate size }
+                assetIds:
+                  type: array
+                  items: { type: string }
                 filterJson: { type: object, description: Asset filter criteria (JSON) }
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
       responses:
         '201':
           description: Backfill job created
@@ -4925,7 +8073,7 @@ paths:
           description: Invalid request
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Backfill]
       summary: List all backfill jobs
@@ -4963,7 +8111,72 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/node-summary:
+    get:
+      tags: [Backfill]
+      summary: Get batch node status summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Node summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchNodeSummary' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/node-failures:
+    get:
+      tags: [Backfill]
+      summary: List batch items for a node status
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: pipelineNodeId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, example: "Failed,Error" }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Node item page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchNodeFailureList' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/pause:
     post:
       tags: [Backfill]
@@ -4988,7 +8201,7 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/resume:
     post:
       tags: [Backfill]
@@ -5013,7 +8226,117 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/rerun:
+    post:
+      tags: [Backfill]
+      summary: Rerun selected backfill items
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackfillRerunRequest' }
+      responses:
+        '200':
+          description: Rerun accepted or dry-run result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackfillRerunResult' }
+        '400':
+          description: Invalid scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/continue-full:
+    post:
+      tags: [Backfill]
+      summary: Continue full batch after pilot review
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Full batch resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: running }
+        '400':
+          description: Pilot is not awaiting review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/results:
+    post:
+      tags: [Backfill]
+      summary: Register algorithm result JSON for a backfill asset
+      description: Validates report manifest and upserts a staging row in algo_run_results.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId, reportId, version]
+              properties:
+                assetId: { type: string }
+                reportId: { type: string, example: report.project@1.0.0-backfill-left-eye-only }
+                version: { type: string, example: "1.0.0" }
+                manifest:
+                  type: object
+                  additionalProperties: true
+                  description: Optional manifest metadata; assetId must match when present
+                result:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Result registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assetId: { type: string }
+                  reportId: { type: string }
+                  version: { type: string }
+                  algoKey: { type: string }
+                  status: { type: string, example: registered }
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Asset or report manifest not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/retry-failed:
     post:
       tags: [Backfill]
@@ -5038,4 +8361,4 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

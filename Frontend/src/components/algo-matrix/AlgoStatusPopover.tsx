@@ -1,8 +1,13 @@
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Descriptions, message, Popover } from "antd";
+import { Button, Descriptions, message, Popover, Tag } from "antd";
 import dayjs from "dayjs";
 import { type ReactNode, useState } from "react";
 import { assetsApi } from "../../api/assets";
+import {
+	COLUMN_LABELS,
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../../lib/productVocabulary";
 import RunIdLink from "../asset-detail/RunIdLink";
 
 interface AlgoDetail {
@@ -69,14 +74,18 @@ export default function AlgoStatusPopover({
 	const content = detail ? (
 		<div style={{ minWidth: 280 }}>
 			<Descriptions column={1} size="small" bordered>
-				<Descriptions.Item label="状态">{detail.status}</Descriptions.Item>
+				<Descriptions.Item label={COLUMN_LABELS.runStatus}>
+					<Tag color={resolveBusinessStatusTagColor(detail.status ?? "")}>
+						{formatBusinessStatusLabel(detail.status)}
+					</Tag>
+				</Descriptions.Item>
 				<Descriptions.Item label="开始时间">
 					{formatTime(detail.started_at)}
 				</Descriptions.Item>
 				<Descriptions.Item label="结束时间">
 					{formatTime(detail.finished_at)}
 				</Descriptions.Item>
-				<Descriptions.Item label="Run ID">
+				<Descriptions.Item label={COLUMN_LABELS.runId}>
 					<RunIdLink runId={detail.run_id} />
 				</Descriptions.Item>
 				<Descriptions.Item label="输出路径">

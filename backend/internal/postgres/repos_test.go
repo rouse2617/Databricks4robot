@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"pgregory.net/rapid"
 )
 
@@ -20,6 +21,8 @@ type fakeDB struct {
 	queryRow         rowScanner
 	queryErr         error
 	rows             rowsScanner
+	querySQLs        []string
+	queryArgs        [][]any
 	execErr          error
 	execRowsAffected int64
 	pingErr          error
@@ -28,13 +31,17 @@ type fakeDB struct {
 	execArgs         [][]any
 }
 
-func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) rowScanner {
+func (f *fakeDB) QueryRow(_ context.Context, q string, args ...any) rowScanner {
+	f.querySQLs = append(f.querySQLs, q)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.queryRow == nil {
 		return &fakeRow{err: errNoRows}
 	}
 	return f.queryRow
 }
-func (f *fakeDB) Query(_ context.Context, _ string, _ ...any) (rowsScanner, error) {
+func (f *fakeDB) Query(_ context.Context, q string, args ...any) (rowsScanner, error) {
+	f.querySQLs = append(f.querySQLs, q)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.queryErr != nil {
 		return nil, f.queryErr
 	}
@@ -56,6 +63,185 @@ func (f *fakeDB) ExecResult(_ context.Context, _ string, _ ...any) (int64, error
 }
 func (f *fakeDB) Ping(_ context.Context) error { return f.pingErr }
 func (f *fakeDB) Close()                       { f.closed = true }
+
+func TestPipelineRunRepoSaveUsesExplicitEmptyAssetArray(t *testing.T) {
+	db := &fakeDB{}
+	repo := NewPipelineRunRepo(&Client{db: db})
+	run := &models.PipelineRun{
+		ID:                "run-1",
+		PipelineName:      "no-asset",
+		WorkflowName:      "no-asset-abc123",
+		ExecutionTargetID: "default",
+		Status:            "Pending",
+		PipelineJSON:      map[string]interface{}{"name": "no-asset"},
+		TargetSnapshot:    map[string]interface{}{"id": "default"},
+	}
+
+	if err := repo.Save(context.Background(), run); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if len(db.execArgs) != 1 {
+		t.Fatalf("expected 1 exec call, got %d", len(db.execArgs))
+	}
+	got, ok := db.execArgs[0][9].(pgtype.FlatArray[string])
+	if !ok {
+		t.Fatalf("asset_ids arg type = %T, want pgtype.FlatArray[string]", db.execArgs[0][9])
+	}
+	if got == nil {
+		t.Fatal("asset_ids arg is nil, want explicit empty array")
+	}
+	if len(got) != 0 {
+		t.Fatalf("asset_ids arg = %#v, want empty array", got)
+	}
+	if run.AssetIDs == nil {
+		t.Fatal("run.AssetIDs is nil after Save(), want empty slice")
+	}
+	if !run.NoAssetRun {
+		t.Fatal("run.NoAssetRun = false, want true")
+	}
+}
+
+func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		BatchJobID: "job-1",
+		Status:     "Succeeded",
+		Page:       1,
+		PageSize:   20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[1]
+	for _, want := range []string{
+		"WHEN 'completed' THEN 'Succeeded'",
+		"CASE WHEN bi.status = 'completed' THEN ''",
+		"COALESCE(pr.started_at, bi.started_at)",
+		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+		"LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id",
+		"total_estimated_cost",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	if strings.Contains(q, "pr.status = $2") {
+		t.Fatalf("batch-scoped status filter should not use raw pipeline run status:\n%s", q)
+	}
+	if got := db.queryArgs[1]; !reflect.DeepEqual(got, []any{"job-1", "Succeeded", 20, 0}) {
+		t.Fatalf("query args = %#v, want job/status/page args", got)
+	}
+}
+
+func TestPipelineRunRepoFindSummaryByIDIncludesBackfillOnlyItem(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{err: errNoRows},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, err := repo.FindSummaryByID(context.Background(), "item-1")
+	if err != nil {
+		t.Fatalf("FindSummaryByID() error = %v", err)
+	}
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"FROM pipeline_runs pr",
+		"FROM backfill_items",
+		"WHERE id = $1 OR pipeline_run_id = $1",
+		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+		"template_name",
+		"total_estimated_cost",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("FindSummaryByID query missing %q:\n%s", want, q)
+		}
+	}
+	if got := db.queryArgs[0]; !reflect.DeepEqual(got, []any{"item-1"}) {
+		t.Fatalf("query args = %#v, want item id", got)
+	}
+}
+
+func TestPipelineRunRepoListSummariesExcludeBatchUsesPipelineRunsOnly(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		ExcludeBatch: true,
+		Page:         1,
+		PageSize:     20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[1]
+	for _, want := range []string{
+		"FROM pipeline_runs pr",
+		"LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id",
+		"pr.batch_job_id IS NULL",
+		"ORDER BY pr.created_at DESC",
+		"total_estimated_cost",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	for _, bad := range []string{" bi.", "FROM backfill_items", "COALESCE(pr.created_at, bi.created_at)"} {
+		if strings.Contains(q, bad) {
+			t.Fatalf("list query should not reference batch items %q:\n%s", bad, q)
+		}
+	}
+}
+
+func TestPipelineRunRepoListSummariesQueryMatchesTemplateName(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		Query:    "Customer Template",
+		Page:     1,
+		PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[1]
+	for _, want := range []string{
+		"LOWER(COALESCE(pr.id, '')) LIKE $1",
+		"LOWER(COALESCE(pr.pipeline_name, '')) LIKE $1",
+		"LOWER(COALESCE(pr.workflow_name, '')) LIKE $1",
+		"LOWER(COALESCE(pt.name, '')) LIKE $1",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	if got := db.queryArgs[1]; !reflect.DeepEqual(got, []any{"%customer template%", 20, 0}) {
+		t.Fatalf("query args = %#v, want query/page args", got)
+	}
+}
 
 type fakeRow struct {
 	values []any
@@ -234,6 +420,44 @@ func TestAssetRepo(t *testing.T) {
 	if got.LifecycleState != "ready" || got.AssetType != "segment" || got.DurationMs != 1200 {
 		t.Fatalf("new columns not read: lifecycle=%s type=%s durationMs=%d", got.LifecycleState, got.AssetType, got.DurationMs)
 	}
+
+	db.rows = nil
+	db.querySQLs = nil
+	db.queryArgs = nil
+	existing, err := repo.FindExistingIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("find existing empty err: %v", err)
+	}
+	if len(existing) != 0 || len(db.querySQLs) != 0 {
+		t.Fatalf("empty FindExistingIDs should not query, got existing=%v queries=%d", existing, len(db.querySQLs))
+	}
+
+	db.rows = &fakeRows{data: [][]any{{"a1"}, {"a2"}}}
+	existing, err = repo.FindExistingIDs(ctx, []string{"a1", "a2", "missing"})
+	if err != nil {
+		t.Fatalf("find existing err: %v", err)
+	}
+	if _, ok := existing["a1"]; !ok {
+		t.Fatalf("expected a1 to exist: %v", existing)
+	}
+	if _, ok := existing["a2"]; !ok {
+		t.Fatalf("expected a2 to exist: %v", existing)
+	}
+	if _, ok := existing["missing"]; ok {
+		t.Fatalf("did not expect missing in existing set: %v", existing)
+	}
+	if len(db.queryArgs) == 0 || len(db.queryArgs[len(db.queryArgs)-1]) != 1 {
+		t.Fatalf("expected one ANY($1) query argument, got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[len(db.queryArgs)-1][0].([]string); !ok || len(got) != 3 {
+		t.Fatalf("expected []string query argument, got %#v", db.queryArgs[len(db.queryArgs)-1][0])
+	}
+
+	db.queryErr = errors.New("find fail")
+	if _, err := repo.FindExistingIDs(ctx, []string{"a1"}); err == nil {
+		t.Fatalf("expected find existing query error")
+	}
+	db.queryErr = nil
 
 	a := &models.Asset{AssetID: "a2", McapFileID: "m1", Status: models.AssetStatusApproved}
 	if err := repo.Set(ctx, a); err != nil {

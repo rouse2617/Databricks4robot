@@ -23,7 +23,7 @@ const QUICK_FILTERS: QuickFilterDef[] = [
 		field: "lifecycle_state",
 		op: "eq",
 		value: "ready",
-		label: "Ready",
+		label: "已就绪",
 		icon: <CheckCircleOutlined />,
 		color: "#10b981",
 	},

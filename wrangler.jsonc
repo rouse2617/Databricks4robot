@@ -1,9 +1,20 @@
 {
-  "name": "cyber-databrew",
+  "name": "cyber-databrew-dev",
   "compatibility_date": "2026-05-27",
   "main": "_worker.js",
   "assets": {
     "directory": "./site",
     "binding": "ASSETS"
+  },
+  "env": {
+    "prod": {
+      "name": "cyber-databrew",
+      "routes": [
+        {
+          "pattern": "cyber-databrew.cyberorigin.ai/*",
+          "zone_name": "cyberorigin.ai"
+        }
+      ]
+    }
   }
 }

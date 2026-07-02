@@ -6,6 +6,11 @@ backend/vendor/
 backend/server
 backend/bench
 backend/megaTest
+# Compiled binaries from services/ (each is a self-contained Go service with a
+# Dockerfile that builds from source — see services/mcap-preview/Dockerfile,
+# services/grace-sync/Dockerfile). Keep the git tree to source only.
+services/*/server
+services/*/grace-sync
 
 # Python
 __pycache__/
@@ -17,7 +22,6 @@ dist/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
-sdk/src/cyber_databrew_sdk/_version.py
 
 # Node / Frontend
 Frontend/node_modules/
@@ -59,7 +63,12 @@ openspec/changes/**/*.png
 .agent/tasks/
 .agent/context/
 .agent/screenshots/
+.agent/tmp/
+.agent/reports/
 .omm/
+
+# Vite internal cache (never meant to be committed; regenerated on `npm run dev`/`build`)
+.vite/
 *.swp
 
 # OS
@@ -70,6 +79,7 @@ Thumbs.db
 Frontend/e2e/test-results/
 Frontend/e2e/report/
 Frontend/e2e/screenshots/*.png
+Frontend/e2e/*.png
 /e2e-screenshots/
 
 # Agent QA dumps (keep under docs/screenshots/ if needed)
@@ -89,7 +99,6 @@ backend-dev-screenshot*.png
 .worktrees-split/
 .local/
 .claude/
-.codegraph/
 _tmp_cyber_iac/
 _tmp_cyber_iac_fresh/
 
@@ -110,10 +119,3 @@ argo-ui/
 # Task / planning files
 TASK-*
 .hermes/TASK-*
-
-
-# repo-wiki MkDocs Material build (regenerate via mkdocs build)
-docs/repo-wiki-site/
-
-# repo-wiki MkDocs Material config (regenerate via scripts/repo-wiki/gen_mkdocs.py)
-mkdocs.yml

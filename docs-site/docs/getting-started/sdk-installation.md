@@ -14,7 +14,7 @@ pip install cyber-databrew-sdk
 
 ### 前置条件
 
-- Python 3.11+
+- Python 3.10+
 - `gcloud` 已登录并有权限访问目标 GCP 项目
 
 ### 安装步骤
@@ -63,6 +63,35 @@ python -c "from cyber_databrew_sdk import _version; print(_version.__version__)"
 pip install --upgrade cyber-databrew-sdk
 ```
 
+## 认证方式
+
+SDK 面向脚本、算法任务和服务端集成，默认使用 `X-Databrew-Token`：
+
+```python
+from cyber_databrew_sdk import CyberDatabrewClient
+
+client = CyberDatabrewClient(base_url="...", token="g-xxx")
+```
+
+也可以通过环境变量提供：
+
+```bash
+export CYBER_DATABREW_TOKEN="g-xxx"
+```
+
+浏览器端使用邮箱登录生成 JWT 会话 cookie。前端调用 `POST /api/v1/auth/email-login`，后端校验邮箱域名后写入 `databrew_session` HttpOnly cookie；后续页面请求依赖该 cookie，而不是在浏览器端持久保存 SDK token。
+
+```bash
+curl -X POST "$BASE/api/v1/auth/email-login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@cyberorigin.ai"}' \
+  -c /tmp/databrew.cookie
+
+curl "$BASE/api/v1/auth/me" -b /tmp/databrew.cookie
+```
+
+`POST /api/v1/auth/login` 仍用于静态 token 会话登录和兼容场景；SDK 直接传 `token` 时不需要先登录。
+
 ## 依赖说明
 
 SDK 的核心依赖：
@@ -85,8 +114,8 @@ SDK 的核心依赖：
 
 ```python
 with CyberDatabrewClient(base_url="...", token="g-xxx") as client:
-    assets = client.assets.list()
-    for asset in assets:
-        print(asset.asset_id)
+    assets = client.assets.list_all()
+    for asset in assets["items"]:
+        print(asset["asset_id"])
 # 退出时自动关闭 HTTP 连接
 ```

@@ -8,39 +8,78 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
-import { DeployPanel } from "./DeployPanel";
+import { buildDeployConfigSelection, DeployPanel } from "./DeployPanel";
+
+const mockNavigate = vi.hoisted(() => vi.fn());
+const mockMessage = vi.hoisted(() => ({
+	success: vi.fn(),
+	error: vi.fn(),
+	warning: vi.fn(),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+	const actual = await importOriginal<Record<string, unknown>>();
+	return {
+		...actual,
+		useNavigate: () => mockNavigate,
+	};
+});
 
 // Mock pipeline API
 const mockListPipelines = vi.fn();
+const mockListPipelineVersions = vi.fn();
 const mockListDeployments = vi.fn();
-const mockDeployTemplate = vi.fn();
+const mockDeployPipelineForAssets = vi.fn();
 const mockDeletePipeline = vi.fn();
-const mockDeleteDeployment = vi.fn();
-const mockRetryDeployment = vi.fn();
 const mockGetPipeline = vi.fn();
+const mockListExecutionTargets = vi.fn();
+const mockListPipelineConfigs = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
+	listPipelineVersions: (...args: unknown[]) =>
+		mockListPipelineVersions(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
-	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
+	listExecutionTargets: (...args: unknown[]) =>
+		mockListExecutionTargets(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
-	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
-	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
 
-// Mock antd message to suppress console noise
+vi.mock("../../api/pipelineConfigs", () => ({
+	pipelineConfigApi: {
+		list: (...args: unknown[]) => mockListPipelineConfigs(...args),
+	},
+}));
+
+vi.mock("../../api/deployPipelineRun", () => ({
+	deployPipelineForAssets: (...args: unknown[]) =>
+		mockDeployPipelineForAssets(...args),
+	BATCH_ASSET_THRESHOLD: 2,
+}));
+
+// Mock antd message / App.useApp to suppress console noise
 vi.mock("antd", async () => {
-	const actual = await vi.importActual("antd");
+	const actual = await vi.importActual<typeof import("antd")>("antd");
+	const AppMock = ({ children }: { children: ReactNode }) => children;
+	(AppMock as typeof actual.App).useApp = () => ({ message: mockMessage });
 	return {
-		...(actual as Record<string, unknown>),
-		message: {
-			success: vi.fn(),
-			error: vi.fn(),
-		},
+		...actual,
+		message: mockMessage,
+		App: AppMock,
 	};
 });
 
@@ -71,10 +110,18 @@ const mockTemplate = (
 ): PipelineTemplate => ({
 	id: "tmpl-001",
 	name: "test-pipeline",
+	version: 1,
 	pipeline: { name: "test-pipeline", version: "1", nodes: [], edges: [] },
 	nodeCount: 3,
 	createdAt: "2026-05-27T12:00:00Z",
 	...overrides,
+});
+
+const pipelinesResponse = (items: PipelineTemplate[], total?: number) => ({
+	items,
+	total: total ?? items.length,
+	page: 1,
+	pageSize: 10,
 });
 
 const mockDeployment = (overrides: Partial<Deployment> = {}): Deployment => ({
@@ -90,20 +137,21 @@ const mockDeployment = (overrides: Partial<Deployment> = {}): Deployment => ({
 
 function renderDeployPanel(
 	onEditTemplate?: (pipeline: PipelineTemplate["pipeline"]) => void,
+	initialEntry = "/pipeline",
 ) {
 	return render(
-		<MemoryRouter>
+		<MemoryRouter initialEntries={[initialEntry]}>
 			<DeployPanel onEditTemplate={onEditTemplate} />
 		</MemoryRouter>,
 	);
 }
 
-/** Click the Ant Design Dropdown trigger (down-arrow button) inside a template card. */
-function clickDropdownTrigger() {
-	const triggers = document.querySelectorAll(".ant-dropdown-trigger");
-	if (triggers.length > 0) {
-		fireEvent.click(triggers[0]);
-	}
+function renderCompactDeployPanel() {
+	return render(
+		<MemoryRouter>
+			<DeployPanel variant="compact" />
+		</MemoryRouter>,
+	);
 }
 
 beforeAll(() => {
@@ -124,23 +172,89 @@ beforeAll(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	mockNavigate.mockClear();
 	cleanup();
 });
 
+beforeEach(() => {
+	vi.clearAllMocks();
+	mockListPipelineVersions.mockResolvedValue([]);
+	mockListPipelineConfigs.mockResolvedValue({
+		items: [
+			{
+				id: "cfg-001",
+				name: "detector.yaml",
+				description: "Detector thresholds",
+				owner: "sdk",
+				scope: "dev",
+				tags: ["vision"],
+				fileType: "yaml",
+				lifecycle: "ready",
+				currentVersion: 2,
+				versionCount: 2,
+				createdAt: "2026-06-18T00:00:00Z",
+				updatedAt: "2026-06-18T00:00:00Z",
+			},
+		],
+	});
+	mockListExecutionTargets.mockResolvedValue([
+		{
+			id: "default",
+			name: "Default Argo target",
+			cluster: "default",
+			namespace: "cyber-databrew-dev",
+			argoServerConfigured: true,
+			status: "available",
+			isDefault: true,
+		},
+	]);
+	mockDeployPipelineForAssets.mockImplementation(
+		async (templateId, assetIds, _options) => {
+			if (assetIds.length >= 2) {
+				return {
+					mode: "batch",
+					batchJob: {
+						id: "batch-001",
+						name: "demo-batch",
+						templateId,
+						totalCount: assetIds.length,
+						completedCount: 0,
+						failedCount: 0,
+						status: "running",
+						createdAt: "2026-05-27T12:30:00Z",
+						updatedAt: "2026-05-27T12:30:00Z",
+					},
+				};
+			}
+			return {
+				mode: "single",
+				runs: [
+					mockDeployment({
+						id: "dep-auto",
+						workflowName: "wf-auto",
+					}),
+				],
+			};
+		},
+	);
+});
+
 describe("DeployPanel", () => {
-	it("shows empty state when no templates or deployments exist", async () => {
-		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([]);
+	it("shows empty state when no templates exist", async () => {
+		mockListPipelines.mockResolvedValue(pipelinesResponse([]));
 		renderDeployPanel();
 
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
-		expect(screen.getByText("暂无部署记录")).toBeTruthy();
+		expect(screen.queryByText("运行历史")).toBeNull();
+		expect(screen.queryByText("暂无部署记录")).toBeNull();
 	});
 
-	it("loads and displays templates and deployments on mount", async () => {
-		mockListPipelines.mockResolvedValue([
-			mockTemplate({ id: "tmpl-001", name: "my-pipeline", nodeCount: 5 }),
-		]);
+	it("loads and displays templates on mount", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([
+				mockTemplate({ id: "tmpl-001", name: "my-pipeline", nodeCount: 5 }),
+			]),
+		);
 		mockListDeployments.mockResolvedValue([
 			mockDeployment({
 				id: "dep-001",
@@ -150,38 +264,58 @@ describe("DeployPanel", () => {
 		]);
 		renderDeployPanel();
 
-		// "my-pipeline" appears in both template and deployment cards
 		const names = await screen.findAllByText("my-pipeline");
-		expect(names.length).toBeGreaterThanOrEqual(2);
-
-		// Deployment status tag
-		expect(screen.getByText("Succeeded")).toBeTruthy();
+		expect(names).toHaveLength(1);
+		expect(screen.queryByText("Succeeded")).toBeNull();
+		expect(mockListDeployments).not.toHaveBeenCalled();
 	});
 
-	it("calls deployTemplate on direct run", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
-		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(
-			mockDeployment({ id: "dep-002", workflowName: "wf-test-002" }),
+	it("calls deployPipelineForAssets on direct run", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
 		);
+		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001");
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
+				"tmpl-001",
+				[],
+				expect.objectContaining({
+					configSelection: undefined,
+					targetId: "default",
+					version: 1,
+				}),
+			);
 		});
+		expect(mockListPipelineVersions).toHaveBeenCalledWith("tmpl-001");
 	});
 
 	it("shows error toast when direct deploy fails", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockRejectedValue(new Error("K8s error"));
+		mockDeployPipelineForAssets.mockRejectedValue(new Error("K8s error"));
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
 		const { message } = await import("antd");
 		await waitFor(() => {
@@ -191,25 +325,21 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("opens asset modal via dropdown and deploys with asset ids", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+	it("opens run modal and creates batch job with two asset ids", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-003" }));
 		renderDeployPanel();
 
 		// Wait for template to render
 		expect(await screen.findByText("运行")).toBeTruthy();
 
-		// Click the dropdown trigger (down-arrow button) to show menu
-		clickDropdownTrigger();
-
-		// Now click "选择资产运行" from the dropdown menu
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
+		fireEvent.click(screen.getByText("运行"));
 
 		// Modal should open
 		await waitFor(() => {
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 		});
 
 		// Asset picker is shown
@@ -226,38 +356,88 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001", [
-				"ast-001",
-				"ast-002",
-			]);
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
+				"tmpl-001",
+				["ast-001", "ast-002"],
+				expect.objectContaining({
+					configSelection: undefined,
+					targetId: "default",
+					version: 1,
+				}),
+			);
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.anything(),
+			);
 		});
 	});
 
-	it("deploys without asset IDs when none selected", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-002" })]);
-		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-004" }));
-		renderDeployPanel();
-
-		expect(await screen.findByText("运行")).toBeTruthy();
-
-		// Click dropdown trigger
-		clickDropdownTrigger();
-
-		// Click "选择资产运行"
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
-
-		await waitFor(() => {
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+	it("builds saved config selection payload for deploy requests", () => {
+		expect(
+			buildDeployConfigSelection({
+				configSourceMode: "saved",
+				selectedSavedConfig: {
+					id: "cfg-001",
+					name: "detector.yaml",
+					description: "Detector thresholds",
+					owner: "sdk",
+					scope: "dev",
+					tags: ["vision"],
+					fileType: "yaml",
+					lifecycle: "ready",
+					currentVersion: 2,
+					versionCount: 2,
+					createdAt: "2026-06-18T00:00:00Z",
+					updatedAt: "2026-06-18T00:00:00Z",
+				},
+				uploadDraftFile: null,
+				inlineDraftName: "runtime-config.yaml",
+				inlineDraftContent: "",
+				configMountPath: "/workspace/configs",
+				configTargetFilename: "detector.yaml",
+			}),
+		).toEqual({
+			mode: "saved",
+			configId: "cfg-001",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
 		});
+	});
 
-		// Verify no assets are pre-selected
-		expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
-			"(none)",
+	it("uses asset ids from pipeline url when running a saved template", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		mockListPipelineVersions.mockResolvedValue([
+			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
+			mockTemplate({ id: "tmpl-001", version: 1, nodeCount: 3 }),
+		]);
+
+		renderDeployPanel(
+			undefined,
+			"/pipeline?tab=pipelines&asset_ids=ast-a,ast-b",
 		);
 
-		// Click OK without selecting assets — should pass undefined
+		expect(await screen.findByText("已选择 2 个资产")).toBeTruthy();
+		expect(
+			screen.getByText(/请选择要运行的流水线和版本，确认后即可提交运行。/),
+		).toBeTruthy();
+		fireEvent.click(screen.getByText("运行"));
+
+		await waitFor(() => {
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
+			expect(screen.getByText("将创建批量任务，共 2 个子任务")).toBeTruthy();
+			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
+				"Selected: ast-a,ast-b",
+			);
+		});
+
+		fireEvent.mouseDown(screen.getByRole("combobox", { name: /模板版本/i }));
+		fireEvent.click(await screen.findByText(/版本 v2/));
+
 		const deployBtn = document.querySelector(
 			".ant-modal-footer .ant-btn-primary",
 		);
@@ -265,7 +445,57 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-002", undefined);
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
+				"tmpl-001",
+				["ast-a", "ast-b"],
+				expect.objectContaining({
+					targetId: "default",
+					version: 2,
+				}),
+			);
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.anything(),
+			);
+		});
+	});
+
+	it("deploys without asset IDs when none selected", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-002" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		expect(await screen.findByText("运行")).toBeTruthy();
+
+		fireEvent.click(screen.getByText("运行"));
+
+		await waitFor(() => {
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
+		});
+
+		// Verify no assets are pre-selected
+		expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
+			"(none)",
+		);
+
+		// Click OK without selecting assets — should pass an explicit empty asset list
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
+
+		await waitFor(() => {
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
+				"tmpl-002",
+				[],
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
+			);
 		});
 	});
 
@@ -277,9 +507,9 @@ describe("DeployPanel", () => {
 			nodes: [],
 			edges: [],
 		};
-		mockListPipelines.mockResolvedValue([
-			mockTemplate({ id: "tmpl-001", pipeline }),
-		]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001", pipeline })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockResolvedValue(
 			mockTemplate({ id: "tmpl-001", pipeline }),
@@ -295,38 +525,37 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("falls back to sessionStorage when onEditTemplate is not provided", async () => {
+	it("navigates to the designer with templateId when onEditTemplate is not provided", async () => {
 		const pipeline = {
 			name: "test-pipeline",
 			version: "1",
 			nodes: [],
 			edges: [],
 		};
-		mockListPipelines.mockResolvedValue([
-			mockTemplate({ id: "tmpl-001", pipeline }),
-		]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001", pipeline })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockResolvedValue(
 			mockTemplate({ id: "tmpl-001", pipeline }),
 		);
 
-		const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 		renderDeployPanel();
 
 		expect(await screen.findByText("编辑")).toBeTruthy();
 		fireEvent.click(screen.getByText("编辑"));
 
 		await waitFor(() => {
-			expect(setItemSpy).toHaveBeenCalledWith(
-				"pipeline-edit",
-				expect.stringContaining("test-pipeline"),
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline?templateId=tmpl-001&tab=design",
 			);
 		});
-		setItemSpy.mockRestore();
 	});
 
 	it("shows error when load template fails on edit", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockRejectedValue(new Error("not found"));
 		renderDeployPanel();
@@ -343,7 +572,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("deletes a template", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeletePipeline.mockResolvedValue(undefined);
 		renderDeployPanel();
@@ -362,76 +593,84 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("deletes a deployment record", async () => {
-		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([
-			mockDeployment({ id: "dep-001", pipelineName: "test-pipeline" }),
-		]);
-		mockDeleteDeployment.mockResolvedValue(undefined);
-		renderDeployPanel();
-
-		expect(await screen.findByText("test-pipeline")).toBeTruthy();
-
-		const deleteBtns = screen.getAllByRole("button", { name: /delete/i });
-		expect(deleteBtns.length).toBeGreaterThanOrEqual(1);
-		fireEvent.click(deleteBtns[0]);
-
-		await waitFor(() => {
-			expect(mockDeleteDeployment).toHaveBeenCalledWith("dep-001");
-		});
-	});
-
-	it("navigates to workflow detail on '查看'", async () => {
-		mockListPipelines.mockResolvedValue([]);
+	it("shows recent executions in compact mode", async () => {
+		mockListPipelines.mockResolvedValue(pipelinesResponse([]));
 		mockListDeployments.mockResolvedValue([
 			mockDeployment({ id: "dep-001", workflowName: "wf-my-workflow" }),
 		]);
-		renderDeployPanel();
+		renderCompactDeployPanel();
 
+		expect(await screen.findByText("最近执行")).toBeTruthy();
 		expect(await screen.findByText("查看")).toBeTruthy();
-
-		// Click view — MemoryRouter handles the navigate internally
 		fireEvent.click(screen.getByText("查看"));
-		// No explicit assertion needed — MemoryRouter handles it without error
+		expect(mockNavigate).toHaveBeenCalledWith("/runs/dep-001");
 	});
 
 	it("refreshes data after successful deploy", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-005" }));
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
-		// After deploy, refresh() is called — verify deployTemplate was called
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001");
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
+				"tmpl-001",
+				[],
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
+			);
 		});
 
-		// refresh() triggers listDeployments again (1 mount + 1 refresh = 2)
-		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
+		// refresh() triggers listPipelines again (1 mount + 1 refresh = 2)
+		expect(mockListPipelines.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 
-	it("shows modal with correct info text when opening from dropdown", async () => {
-		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+	it("dedupes listPipelines refresh under StrictMode", async () => {
+		mockListPipelines.mockResolvedValue(pipelinesResponse([]));
+		mockListDeployments.mockResolvedValue([]);
+		render(
+			<StrictMode>
+				<MemoryRouter initialEntries={["/pipeline"]}>
+					<DeployPanel />
+				</MemoryRouter>
+			</StrictMode>,
+		);
+		await waitFor(() => {
+			expect(mockListPipelines).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it("shows modal with no-asset run warning", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 
-		// Click dropdown trigger
-		clickDropdownTrigger();
-
-		// Click "选择资产运行"
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
+		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
+			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
 			expect(
-				screen.getByText("不选择则直接部署，不注入资产环境变量。"),
+				screen.getByText(
+					"本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。",
+				),
 			).toBeTruthy();
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 		});
 	});
 
@@ -442,25 +681,112 @@ describe("DeployPanel", () => {
 
 		// Should show empty state without crashing
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
-		expect(await screen.findByText("暂无部署记录")).toBeTruthy();
+		expect(screen.queryByText("暂无部署记录")).toBeNull();
 	});
 
-	it("retries failed deployments from history", async () => {
-		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([
-			mockDeployment({ id: "dep-failed", status: "Failed" }),
-		]);
-		mockRetryDeployment.mockResolvedValue(
-			mockDeployment({ id: "dep-failed", status: "Running" }),
+	it("refetches only pipelines when template filters change", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ name: "alpha-pipeline" })]),
 		);
+		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
-		const retryButton = await screen.findByRole("button", { name: /重试/i });
-		fireEvent.click(retryButton);
+		await waitFor(() => {
+			expect(mockListPipelines).toHaveBeenCalledTimes(1);
+			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1);
+		});
+
+		const searchInput = screen.getByTestId("pipeline-template-search");
+		fireEvent.change(searchInput, { target: { value: "alpha" } });
+		fireEvent.keyDown(searchInput, { key: "Enter", code: "Enter" });
 
 		await waitFor(() => {
-			expect(mockRetryDeployment).toHaveBeenCalledWith("dep-failed");
+			expect(mockListPipelines).toHaveBeenCalledTimes(2);
 		});
-		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(mockListExecutionTargets).toHaveBeenCalledTimes(1);
+		expect(mockListPipelines.mock.calls[1]?.[0]).toMatchObject({
+			q: "alpha",
+			page: 1,
+		});
+	});
+
+	it("shows saved config mode in deploy modal and loads platform configs", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		expect(screen.getByTestId("deploy-config-panel")).toBeTruthy();
+		expect(screen.getByText("高级全局配置（可选）")).toBeTruthy();
+		expect(mockListPipelineConfigs).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByText("启用全局配置"));
+		expect(screen.getByText("选择已保存配置")).toBeTruthy();
+
+		await waitFor(() => {
+			expect(mockListPipelineConfigs).toHaveBeenCalledTimes(1);
+		});
+		expect(
+			screen.getByRole("combobox", { name: /选择已保存配置/i }),
+		).toBeTruthy();
+		expect(screen.getByText("还未选择平台配置")).toBeTruthy();
+	});
+
+	it("shows upload draft metadata in deploy modal", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置"));
+		fireEvent.click(screen.getByText("上传本地文件"));
+
+		const input = screen.getByLabelText("上传配置文件") as HTMLInputElement;
+		const file = new File(["threshold: 0.82\n"], "runtime.yaml", {
+			type: "text/yaml",
+		});
+		fireEvent.change(input, { target: { files: [file] } });
+
+		expect(await screen.findByText("runtime.yaml")).toBeTruthy();
+		expect(screen.getByText(/本地文件仅作为本次 deploy 草稿/)).toBeTruthy();
+	});
+
+	it("shows inline editor summary and mount target", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置"));
+		fireEvent.click(screen.getByText("在线编辑"));
+
+		fireEvent.change(screen.getByLabelText("在线编辑文件名"), {
+			target: { value: "inline-config.yaml" },
+		});
+		fireEvent.change(screen.getByLabelText("在线编辑配置内容"), {
+			target: { value: "threshold: 0.90\nwindow: 3\n" },
+		});
+		fireEvent.change(screen.getByLabelText("挂载目录"), {
+			target: { value: "/workspace/configs" },
+		});
+		fireEvent.change(screen.getByLabelText("目标文件名"), {
+			target: { value: "effective.yaml" },
+		});
+
+		expect(
+			await screen.findByText(/来源：在线编辑 · inline-config.yaml/),
+		).toBeTruthy();
+		expect(
+			screen.getByText(/挂载到 \/workspace\/configs\/effective.yaml/),
+		).toBeTruthy();
 	});
 });

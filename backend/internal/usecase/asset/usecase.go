@@ -848,12 +848,15 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 		assetType = "segment"
 		segType = "segment"
 	}
-	if in.McapFileID == "" && assetType != "derived_asset" && (u.schemaRegistry == nil || u.schemaRegistry.GetSchema(assetType) == nil) {
+	mcapFileID := in.McapFileID
+	if mcapFileID == "" && assetType != "derived_asset" && (u.schemaRegistry == nil || u.schemaRegistry.GetSchema(assetType) == nil) {
 		return nil, ErrMcapFileIDRequired
 	}
+	// Schema-registered types (e.g. grace_video) may omit mcap_file_id; the
+	// DB column allows empty/NULL per assets_mcap_file_id_check.
 	a := &models.Asset{
 		AssetID:             "",
-		McapFileID:          in.McapFileID,
+		McapFileID:          mcapFileID,
 		StartTimestampNs:    in.StartTimestampNs,
 		EndTimestampNs:      in.EndTimestampNs,
 		DurationSec:         float64(in.EndTimestampNs-in.StartTimestampNs) / 1e9,
@@ -928,9 +931,9 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	// Initialize algorithm states from algo_registry if available.
 	if u.algoRegistry != nil {
 		initAlgoStates(a, u.algoRegistry)
-		// Write raw_mcap reference to files.
-		if _, ok := a.Files["raw_mcap"]; !ok {
-			a.Files["raw_mcap"] = in.McapFileID
+		// Write raw_mcap reference to files for non-schema types.
+		if _, ok := a.Files["raw_mcap"]; !ok && mcapFileID != "" {
+			a.Files["raw_mcap"] = mcapFileID
 		}
 	}
 	// CYB-1164: validate hierarchy invariants before persisting.

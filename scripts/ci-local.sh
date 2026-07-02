@@ -30,6 +30,10 @@ done
 
 echo "==> ci-local (${MODE})"
 
+if [[ "$(uname -s)" == "Darwin" ]] && [[ -d /opt/homebrew/opt/expat/lib ]]; then
+	export DYLD_LIBRARY_PATH="/opt/homebrew/opt/expat/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+fi
+
 if ! command -v pre-commit >/dev/null 2>&1; then
   echo "Install pre-commit: pip install pre-commit==3.7.1" >&2
   exit 1
@@ -61,25 +65,6 @@ else
   echo "==> commitlint (${FROM_SHA}..HEAD, base ${BASE_REF})"
 fi
 bash "${ROOT}/scripts/commitlint-run.sh" --from "${FROM_SHA}" --to "${TO_SHA:-HEAD}" --verbose
-
-# Wiki-sync advisory: warn (don't block) when documented code changed without its
-# wiki page. Set WIKI_SYNC_STRICT=1 to make it blocking. Needs python3 + pyyaml.
-echo "==> wiki-sync (advisory; ${FROM_SHA}..HEAD)"
-if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" >/dev/null 2>&1; then
-  set +e
-  python3 "${ROOT}/scripts/repo-wiki/wiki_sync.py" check --from "${FROM_SHA}"
-  WIKI_RC=$?
-  set -e
-  if [[ "${WIKI_RC}" -eq 1 ]]; then
-    if [[ "${WIKI_SYNC_STRICT:-}" == "1" ]]; then
-      echo "wiki-sync: divergence (WIKI_SYNC_STRICT=1) — update docs/repo-wiki or unset to warn only." >&2
-      exit 1
-    fi
-    echo "wiki-sync: ^ advisory only (not blocking). Update docs/repo-wiki, or add the wiki-exempt label on the PR."
-  fi
-else
-  echo "wiki-sync: skipped (python3 + pyyaml not available)"
-fi
 
 if [[ "${MODE}" != "full" ]]; then
   echo "OK: quick ci-local passed. For full parity: scripts/ci-local.sh --full"

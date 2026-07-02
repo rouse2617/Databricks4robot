@@ -208,10 +208,11 @@ edges: edges.map((e) => ({
 
 | 方法 | HTTP | 用途 |
 |------|------|------|
-| `listPipelines` | GET `/pipelines` | 运行记录 Tab 模板列表 |
-| `savePipeline` | POST `/pipelines` | 保存 template |
+| `listPipelines` | GET `/pipelines` | 运行记录 Tab 模板列表；只返回每个模板名的最新版 |
+| `listPipelineVersions` | GET `/pipelines/:id/versions` | 查看同名模板的历史快照版本 |
+| `savePipeline` | POST `/pipelines` | 保存 template；同名保存会生成新版本快照 |
 | `deploy` | POST `/deploy` | 画布运行（**需加 `asset_ids`**） |
-| `deployTemplate` | POST `/deploy/template/:id` | 模板运行（DeployPanel 已支持 asset） |
+| `deployTemplate` | POST `/deploy/template/:id` | 模板运行（DeployPanel 已支持 asset 和 version） |
 | `listDeployments` | GET `/deployments` | 运行历史 |
 
 **待改 `deploy` 签名**：

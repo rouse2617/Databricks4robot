@@ -13,37 +13,69 @@ type Pipeline struct {
 // Node is a single step in the pipeline.
 // When SubNodes is non-empty this node is a sub-graph (nested DAG).
 type Node struct {
-	ID           string        `json:"id" yaml:"id"`
-	Component    Component     `json:"component" yaml:"component"`
-	Inputs       []Port        `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	Outputs      []Port        `json:"outputs,omitempty" yaml:"outputs,omitempty"`
-	SubNodes     []Node        `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
-	SubEdges     []Edge        `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
-	VolumeMounts []VolumeMount `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
+	ID             string                       `json:"id" yaml:"id"`
+	Component      Component                    `json:"component" yaml:"component"`
+	Inputs         []Port                       `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Outputs        []Port                       `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	RuntimeConfig  *RuntimeConfigBinding        `json:"runtimeConfig,omitempty" yaml:"runtimeConfig,omitempty"`
+	RuntimeSecrets []RuntimeSecretMountBinding  `json:"runtimeSecrets,omitempty" yaml:"runtimeSecrets,omitempty"`
+	StorageMounts  []RuntimeStorageMountBinding `json:"storageMounts,omitempty" yaml:"storageMounts,omitempty"`
+	SubNodes       []Node                       `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
+	SubEdges       []Edge                       `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
+	VolumeMounts   []VolumeMount                `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
+}
+
+// RuntimeConfigBinding references a saved config-library version for one node.
+type RuntimeConfigBinding struct {
+	Mode           string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	ConfigID       string `json:"configId,omitempty" yaml:"configId,omitempty"`
+	Version        int    `json:"version,omitempty" yaml:"version,omitempty"`
+	FileName       string `json:"fileName,omitempty" yaml:"fileName,omitempty"`
+	MountPath      string `json:"mountPath,omitempty" yaml:"mountPath,omitempty"`
+	TargetFilename string `json:"targetFilename,omitempty" yaml:"targetFilename,omitempty"`
+}
+
+// RuntimeSecretMountBinding references a platform-defined SecretProviderClass
+// resource that should be mounted into only this node at runtime.
+type RuntimeSecretMountBinding struct {
+	ResourceID  string `json:"resourceId" yaml:"resourceId"`
+	MountPath   string `json:"mountPath,omitempty" yaml:"mountPath,omitempty"`
+	DisplayName string `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+}
+
+// RuntimeStorageMountBinding references a platform-defined storage resource
+// such as an existing PVC or a per-pod emptyDir.
+type RuntimeStorageMountBinding struct {
+	ResourceID  string `json:"resourceId" yaml:"resourceId"`
+	MountPath   string `json:"mountPath,omitempty" yaml:"mountPath,omitempty"`
+	ReadOnly    *bool  `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
+	DisplayName string `json:"displayName,omitempty" yaml:"displayName,omitempty"`
 }
 
 // Component is a pipeline step backed by a container image.
 type Component struct {
-	Name            string                `json:"name" yaml:"name"`
-	Image           string                `json:"image" yaml:"image"`
-	ImagePullPolicy string                `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
-	Command         []string              `json:"command,omitempty" yaml:"command,omitempty"`
-	Args            []Argument            `json:"args,omitempty" yaml:"args,omitempty"`
+	Name            string     `json:"name" yaml:"name"`
+	Image           string     `json:"image" yaml:"image"`
+	ImagePullPolicy string     `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
+	Command         []string   `json:"command,omitempty" yaml:"command,omitempty"`
+	Args            []Argument `json:"args,omitempty" yaml:"args,omitempty"`
 	// Mode controls the template type: "container" (default) or "script".
 	// "container" emits an Argo container template (suitable for any image).
 	// "script" emits an Argo script template: Source is injected as inline script,
 	// and Command is treated as the interpreter (default: ["sh"]).
-	Mode   string `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Source string `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
-	Env             []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
-	Resources       *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Mode      string                `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Source    string                `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
+	Env       []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
+	Resources *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
 // ResourceRequirements defines compute resources for a component.
 type ResourceRequirements struct {
-	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`       // e.g. "500m", "2"
-	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"` // e.g. "256Mi", "1Gi"
-	Disk   string `json:"disk,omitempty" yaml:"disk,omitempty"`     // ephemeral storage, e.g. "1Gi"
+	CPU         string `json:"cpu,omitempty" yaml:"cpu,omitempty"`                 // e.g. "500m", "2"
+	Memory      string `json:"memory,omitempty" yaml:"memory,omitempty"`           // e.g. "256Mi", "1Gi"
+	Disk        string `json:"disk,omitempty" yaml:"disk,omitempty"`               // ephemeral storage, e.g. "1Gi"
+	GPU         string `json:"gpu,omitempty" yaml:"gpu,omitempty"`                 // Kubernetes nvidia.com/gpu quantity, e.g. "1"
+	ComputeTier string `json:"computeTier,omitempty" yaml:"computeTier,omitempty"` // DataBrew scheduling/cost metadata
 }
 
 // Param is a key-value pair for workflow-level parameters.
@@ -69,12 +101,14 @@ type EnvVar struct {
 
 // VolumeMount describes a volume mount on a node's container.
 type VolumeMount struct {
-	Name      string `json:"name" yaml:"name"`
-	MountPath string `json:"mountPath" yaml:"mountPath"`
-	SubPath   string `json:"subPath,omitempty" yaml:"subPath,omitempty"`
-	ReadOnly  bool   `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
-	PVCName   string `json:"pvcName,omitempty" yaml:"pvcName,omitempty"`   // existing PVC
-	EmptyDir  bool   `json:"emptyDir,omitempty" yaml:"emptyDir,omitempty"` // ephemeral volume
+	Name                   string `json:"name" yaml:"name"`
+	MountPath              string `json:"mountPath" yaml:"mountPath"`
+	SubPath                string `json:"subPath,omitempty" yaml:"subPath,omitempty"`
+	ReadOnly               bool   `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
+	PVCName                string `json:"pvcName,omitempty" yaml:"pvcName,omitempty"`                               // existing PVC
+	EmptyDir               bool   `json:"emptyDir,omitempty" yaml:"emptyDir,omitempty"`                             // ephemeral volume
+	CSIDriver              string `json:"csiDriver,omitempty" yaml:"csiDriver,omitempty"`                           // CSI driver name
+	CSISecretProviderClass string `json:"csiSecretProviderClass,omitempty" yaml:"csiSecretProviderClass,omitempty"` // SecretProviderClass name
 }
 
 // Edge connects an output port of one node to an input port of another.

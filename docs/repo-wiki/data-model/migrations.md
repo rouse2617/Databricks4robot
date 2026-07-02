@@ -5,10 +5,10 @@
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 - [backend/scripts/ensure_migrations.sh](file://backend/scripts/ensure_migrations.sh)
 - [scripts/apply-migration-dev.sh](file://scripts/apply-migration-dev.sh)
 - [scripts/check_migration_filenames.sh](file://scripts/check_migration_filenames.sh)
@@ -98,10 +98,10 @@ graph TB
     BASE["000_initial.sql<br/>squashed baseline"]
     F39["039_pipeline_tables.sql"]
     F40["040_pipeline_components.sql"]
-    F41["041_pipeline_template_version.sql"]
-    F42["042_backfill_tables.sql"]
-    F43["043_asset_model_expansion_p1.sql"]
-    F44["044_asset_model_p2.sql"]
+    F41["042_pipeline_template_version.sql"]
+    F42["043_backfill_tables.sql"]
+    F43["044_asset_model_expansion_p1.sql"]
+    F44["045_asset_model_p2.sql"]
     subgraph "archive/"
       ARCH["001_init.sql … 038_reverse_mcap_files_fk.sql<br/>(36 historical files)"]
     end
@@ -113,7 +113,7 @@ graph TB
 **Diagram sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L1-L3)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L1-L26)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L1-L37)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L1-L37)
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L1-L13)
@@ -220,10 +220,10 @@ file in `backend/migrations/`.
 | --- | --- |
 | `039_pipeline_tables.sql` | Creates `pipeline_templates` (id, name, `pipeline` JSONB, `node_count`, timestamps) and `pipeline_deployments` (id, FK `template_id` → `pipeline_templates`, `pipeline_name`, `workflow_name`, `status` default `'Pending'`, `node_count`, `manifest`, `pipeline_json` JSONB, timestamps, `finished_at`). |
 | `040_pipeline_components.sql` | Creates `pipeline_components` (id, name, description, `image`, `tag` default `'latest'`, `source` default `'custom'`, `input_ports`/`output_ports` JSONB defaulting to `'[]'`, `resources`, `env_vars`, timestamps) plus indexes `idx_pipeline_components_name` and `idx_pipeline_components_source`. |
-| `041_pipeline_template_version.sql` | Adds a `version INT NOT NULL DEFAULT 1` column to `pipeline_templates`, backfills sequential versions per `name` (via a `ROW_NUMBER()` CTE ordered by `created_at`), and creates the unique index `idx_pipeline_templates_name_version` on `(name, version)`. |
-| `042_backfill_tables.sql` | Creates `backfill_jobs` (id, name, FK `template_id` → `pipeline_templates`, `filter_json` JSONB, `total_count`/`completed_count`/`failed_count`, `status` default `'running'`, timestamps) and `backfill_items` (id, FK `job_id` → `backfill_jobs` `ON DELETE CASCADE`, `asset_id`, `status` default `'pending'`, `workflow_name`, `error_message`, `started_at`/`finished_at`, `created_at`). Adds indexes on job status, job `created_at`, item `job_id`, and item status. |
-| `043_asset_model_expansion_p1.sql` | Asset-model expansion Phase 1. Rewrites the `chk_relation_type` CHECK on `asset_relations` to add `annotated_from` and `materialized_from`, and relaxes the `chk_mcap_file_required` CHECK on `assets` so `derived_asset`, `dataset`, and `annotation_result` types may omit `mcap_file_id`. |
-| `044_asset_model_p2.sql` | Asset-model expansion Phase 2. Widens `chk_relation_type` again with ML/eval relations (`trained_from`, `evaluated_on`, `validated_on`, `configured_by`, `fine_tuned_from`, `features_from`, `tested_on`, `evaluates`, `compares_to`, `calibrated_from`, `generated_by`), adds a non-null `metadata jsonb DEFAULT '{}'` column to `asset_relations`, and extends `chk_mcap_file_required` to also exempt `ml_model` and `evaluation_report` asset types. |
+| `042_pipeline_template_version.sql` | Adds a `version INT NOT NULL DEFAULT 1` column to `pipeline_templates`, backfills sequential versions per `name` (via a `ROW_NUMBER()` CTE ordered by `created_at`), and creates the unique index `idx_pipeline_templates_name_version` on `(name, version)`. |
+| `043_backfill_tables.sql` | Creates `backfill_jobs` (id, name, FK `template_id` → `pipeline_templates`, `filter_json` JSONB, `total_count`/`completed_count`/`failed_count`, `status` default `'running'`, timestamps) and `backfill_items` (id, FK `job_id` → `backfill_jobs` `ON DELETE CASCADE`, `asset_id`, `status` default `'pending'`, `workflow_name`, `error_message`, `started_at`/`finished_at`, `created_at`). Adds indexes on job status, job `created_at`, item `job_id`, and item status. |
+| `044_asset_model_expansion_p1.sql` | Asset-model expansion Phase 1. Rewrites the `chk_relation_type` CHECK on `asset_relations` to add `annotated_from` and `materialized_from`, and relaxes the `chk_mcap_file_required` CHECK on `assets` so `derived_asset`, `dataset`, and `annotation_result` types may omit `mcap_file_id`. |
+| `045_asset_model_p2.sql` | Asset-model expansion Phase 2. Widens `chk_relation_type` again with ML/eval relations (`trained_from`, `evaluated_on`, `validated_on`, `configured_by`, `fine_tuned_from`, `features_from`, `tested_on`, `evaluates`, `compares_to`, `calibrated_from`, `generated_by`), adds a non-null `metadata jsonb DEFAULT '{}'` column to `asset_relations`, and extends `chk_mcap_file_required` to also exempt `ml_model` and `evaluation_report` asset types. |
 
 Notice the recurring **pattern for CHECK-constraint evolution**: each phase does
 `DROP CONSTRAINT IF EXISTS chk_relation_type` then re-adds the constraint with
@@ -233,10 +233,10 @@ phase over an earlier one is safe and produces the final, complete enumeration.
 **Section sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L5-L26)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L1-L18)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L4-L18)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L35)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L3-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L3-L37)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L4-L18)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L35)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L3-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L3-L37)
 
 ### Pipeline relational schema introduced by 039–042
 
@@ -299,12 +299,12 @@ to the other tables; templates reference component images by value, not by FK.
 **Diagram sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L5-L26)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L1-L18)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L4-L4)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L35)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L4-L4)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L35)
 
 **Section sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L1-L26)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L35)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L35)
 
 ### Fresh-install application via Docker initdb
 
@@ -442,10 +442,10 @@ The runtime application tooling depends on `psql` plus, for the dev path,
 Docker container name `local-postgres-1` for its in-container code path.
 
 **Section sources**
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L4-L18)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L7-L7)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L3-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L3-L37)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L4-L18)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L7-L7)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L3-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L3-L37)
 
 ## Performance Considerations
 
@@ -470,7 +470,7 @@ Docker container name `local-postgres-1` for its in-container code path.
   idempotency, not transactions, provide safety.
 
 **Section sources**
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L6-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L6-L18)
 - [scripts/apply-migration-dev.sh](file://scripts/apply-migration-dev.sh#L70-L70)
 - [backend/scripts/ensure_migrations.sh](file://backend/scripts/ensure_migrations.sh#L58-L60)
 
@@ -557,10 +557,10 @@ repeatable.
 | --- | --- |
 | `039_pipeline_tables.sql` | L1–L26 |
 | `040_pipeline_components.sql` | L1–L17 |
-| `041_pipeline_template_version.sql` | L1–L18 |
-| `042_backfill_tables.sql` | L1–L34 |
-| `043_asset_model_expansion_p1.sql` | L1–L22 |
-| `044_asset_model_p2.sql` | L1–L37 |
+| `042_pipeline_template_version.sql` | L1–L18 |
+| `043_backfill_tables.sql` | L1–L34 |
+| `044_asset_model_expansion_p1.sql` | L1–L22 |
+| `045_asset_model_p2.sql` | L1–L37 |
 
 ### Appendix C — `asset_relations.relation_type` enumeration (after 044)
 
@@ -571,4 +571,4 @@ repeatable.
 `generated_by`.
 
 **Section sources**
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L5-L27)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L5-L27)

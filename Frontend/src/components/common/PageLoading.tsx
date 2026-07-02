@@ -12,7 +12,7 @@ export interface PageLoadingProps {
 
 export default function PageLoading({
 	height = "60vh",
-	tip,
+	tip = "正在加载页面内容…",
 }: PageLoadingProps) {
 	return (
 		<div
@@ -22,7 +22,12 @@ export default function PageLoading({
 			aria-live="polite"
 			aria-busy="true"
 		>
-			<Spin size="large" tip={tip} />
+			<div style={{ display: "grid", gap: 8, justifyItems: "center" }}>
+				<Spin size="large" />
+				{tip ? (
+					<span style={{ color: "#64748b", fontSize: 13 }}>{tip}</span>
+				) : null}
+			</div>
 		</div>
 	);
 }

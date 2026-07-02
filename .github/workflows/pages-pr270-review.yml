@@ -1,0 +1,38 @@
+name: pages-pr270-review
+
+# Publishes the PR #270 review overview page to the repo's (private) GitHub Pages
+# site. Pages Source is set to "GitHub Actions", so this workflow controls exactly
+# what ships: only docs/pr270-review/ becomes the site root — the rest of the repo
+# is never exposed. Visibility is enforced by the Pages "Private" setting.
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "docs/pr270-review/**"
+      - ".github/workflows/pages-pr270-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages allows one concurrent deployment; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/pr270-review
+      - id: deployment
+        uses: actions/deploy-pages@v4

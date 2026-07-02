@@ -5,6 +5,7 @@ import {
 	formatEdgeEndpoint,
 	fromTranspilerPipeline,
 	normalizeComponentArgs,
+	PIPELINE_EDGE_KIND_DEPENDENCY,
 	toTranspilerPipeline,
 } from "./pipelineContract";
 
@@ -138,7 +139,77 @@ describe("toTranspilerPipeline", () => {
 		expect(result.nodes[0].outputs?.[0].name).toBe("output");
 	});
 
-	it("includes resources when CPU/memory/disk are set", () => {
+	it("serializes node runtime config binding", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "echo",
+					image: "busybox:latest",
+					command: ["sh", "-c"],
+					args: [{ name: "args", value: "hello" }],
+					cpu: "",
+					memory: "",
+					disk: "",
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 2,
+						fileName: "detector.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "detector.yaml",
+						displayName: "Detector Config",
+					},
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
+			displayName: "Detector Config",
+		});
+	});
+
+	it("preserves custom input and output ports from canvas node data", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "join",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "join",
+					image: "busybox:latest",
+					command: ["sh", "-c"],
+					args: [{ name: "script", value: "echo ok > /tmp/outputs/summary" }],
+					inputPorts: [
+						{ name: "left", type: "string" },
+						{ name: "right", type: "string" },
+					],
+					outputPorts: [{ name: "summary", type: "string" }],
+					cpu: "",
+					memory: "",
+					disk: "",
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].inputs).toEqual([
+			{ name: "left", type: "string" },
+			{ name: "right", type: "string" },
+		]);
+		expect(result.nodes[0].outputs).toEqual([
+			{ name: "summary", type: "string" },
+		]);
+	});
+
+	it("includes resources when CPU/memory/disk/gpu/compute tier are set", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
 				id: "step-1",
@@ -152,6 +223,8 @@ describe("toTranspilerPipeline", () => {
 					cpu: "1000m",
 					memory: "512Mi",
 					disk: "10Gi",
+					gpu: "1",
+					computeTier: "gpu-l4",
 				},
 			},
 		];
@@ -160,8 +233,8 @@ describe("toTranspilerPipeline", () => {
 			cpu: "1000m",
 			memory: "512Mi",
 			disk: "10Gi",
-			type: "container",
-			source: "custom",
+			gpu: "1",
+			computeTier: "gpu-l4",
 		});
 	});
 
@@ -184,6 +257,99 @@ describe("toTranspilerPipeline", () => {
 		];
 		const result = toTranspilerPipeline(nodes, [], { name: "test" });
 		expect(result.nodes[0].component.resources).toBeUndefined();
+	});
+
+	it("emits env at component.env as an array (backend []EnvVar contract)", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "with-env",
+					image: "busybox",
+					command: ["sh", "-c"],
+					args: [],
+					env: [
+						{ name: "QA_CONFIG", value: "mode=fast;limit=100" },
+						{ name: "QA_THRESHOLD", value: "0.85" },
+						{ name: "", value: "ignored" },
+					],
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].component.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast;limit=100" },
+			{ name: "QA_THRESHOLD", value: "0.85" },
+		]);
+		// env must not be nested under resources (backend ignores it there)
+		expect(result.nodes[0].component.resources?.env).toBeUndefined();
+	});
+
+	it("omits component.env when no env vars are set", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "no-env",
+					image: "busybox",
+					command: [],
+					args: [],
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].component.env).toBeUndefined();
+	});
+
+	it("round-trips env through component.env", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "with-env",
+					image: "busybox",
+					command: ["sh", "-c"],
+					args: [],
+					env: [{ name: "QA_CONFIG", value: "mode=fast" }],
+				},
+			},
+		];
+		const dsl = toTranspilerPipeline(nodes, [], { name: "test" });
+		const restored = fromTranspilerPipeline(dsl);
+		expect(restored.nodes[0].data.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast" },
+		]);
+	});
+
+	it("restores legacy env stored under resources.env (backward compat)", () => {
+		const legacy: Pipeline = {
+			name: "legacy",
+			version: "1",
+			nodes: [
+				{
+					id: "step-1",
+					component: {
+						name: "legacy",
+						image: "busybox",
+						resources: {
+							cpu: "250m",
+							env: { QA_CONFIG: "mode=fast" },
+						},
+					},
+				},
+			],
+			edges: [],
+		};
+		const restored = fromTranspilerPipeline(legacy);
+		expect(restored.nodes[0].data.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast" },
+		]);
 	});
 
 	it("converts edges with source/target handles", () => {
@@ -215,6 +381,22 @@ describe("toTranspilerPipeline", () => {
 		const result = toTranspilerPipeline([], edges, { name: "test" });
 		expect(result.edges[0].source).toBe("step-1.output");
 		expect(result.edges[0].target).toBe("step-2.input");
+	});
+
+	it("converts dependency edges without port refs", () => {
+		const edges: Edge[] = [
+			{
+				id: "e-1",
+				source: "step-1",
+				target: "step-2",
+				data: { kind: PIPELINE_EDGE_KIND_DEPENDENCY },
+			},
+		];
+		const result = toTranspilerPipeline([], edges, { name: "test" });
+		expect(result.edges[0]).toEqual({
+			source: "step-1",
+			target: "step-2",
+		});
 	});
 
 	it("uses custom version when provided", () => {
@@ -254,6 +436,12 @@ describe("fromTranspilerPipeline", () => {
 		expect(nodes[0].data.image).toBe("busybox:latest");
 		expect(nodes[0].data.command).toEqual(["sh", "-c"]);
 		expect(nodes[0].data.args).toEqual([{ name: "args", value: "hello" }]);
+		expect(nodes[0].data.inputPorts).toEqual([
+			{ name: "input", type: "string" },
+		]);
+		expect(nodes[0].data.outputPorts).toEqual([
+			{ name: "output", type: "string" },
+		]);
 		expect(edges).toHaveLength(1);
 		expect(edges[0].source).toBe("step-1");
 		expect(edges[0].target).toBe("step-2");
@@ -273,7 +461,13 @@ describe("fromTranspilerPipeline", () => {
 						image: "python:3.11",
 						command: ["python", "train.py"],
 						args: [],
-						resources: { cpu: "2000m", memory: "2Gi", disk: "20Gi" },
+						resources: {
+							cpu: "2000m",
+							memory: "2Gi",
+							disk: "20Gi",
+							gpu: "1",
+							computeTier: "gpu-l4",
+						},
 					},
 				},
 			],
@@ -283,6 +477,8 @@ describe("fromTranspilerPipeline", () => {
 		expect(nodes[0].data.cpu).toBe("2000m");
 		expect(nodes[0].data.memory).toBe("2Gi");
 		expect(nodes[0].data.disk).toBe("20Gi");
+		expect(nodes[0].data.gpu).toBe("1");
+		expect(nodes[0].data.computeTier).toBe("gpu-l4");
 	});
 
 	it("defaults empty resources to empty strings", () => {
@@ -329,6 +525,63 @@ describe("fromTranspilerPipeline", () => {
 		expect(edges[0].target).toBe("step-2");
 		expect(edges[0].sourceHandle).toBeUndefined();
 		expect(edges[0].targetHandle).toBeUndefined();
+		expect(edges[0].data?.kind).toBe(PIPELINE_EDGE_KIND_DEPENDENCY);
+	});
+
+	it("lays out sequential templates without overlapping nodes", () => {
+		const pipeline: Pipeline = {
+			name: "cyberpipe",
+			version: "1",
+			nodes: [
+				{
+					id: "head_tracking",
+					component: { name: "head-track-pycuvslam", image: "img" },
+				},
+				{
+					id: "hand_detection",
+					component: { name: "hand-detect-yolov26m", image: "img" },
+				},
+				{
+					id: "hand_tracking",
+					component: { name: "hand-track-stereo", image: "img" },
+				},
+				{
+					id: "find_tony_stats",
+					component: { name: "find-toni-stats", image: "img" },
+				},
+				{
+					id: "ss_delivery_lerobot",
+					component: { name: "ss-delivery-lerobot", image: "img" },
+				},
+			],
+			edges: [
+				{ source: "head_tracking", target: "hand_detection" },
+				{ source: "hand_detection", target: "hand_tracking" },
+				{ source: "hand_tracking", target: "find_tony_stats" },
+				{ source: "find_tony_stats", target: "ss_delivery_lerobot" },
+			],
+		};
+
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		const orderedNodes = [
+			"head_tracking",
+			"hand_detection",
+			"hand_tracking",
+			"find_tony_stats",
+			"ss_delivery_lerobot",
+		].map((id) => nodes.find((node) => node.id === id));
+
+		for (const node of orderedNodes) {
+			expect(node).toBeTruthy();
+		}
+		for (let i = 1; i < orderedNodes.length; i += 1) {
+			const previous = orderedNodes[i - 1];
+			const current = orderedNodes[i];
+			expect(current?.position.x ?? 0).toBeGreaterThan(
+				(previous?.position.x ?? 0) + 220,
+			);
+			expect(current?.position.y).toBe(previous?.position.y);
+		}
 	});
 
 	it("assigns sequential edge IDs", () => {
@@ -344,6 +597,66 @@ describe("fromTranspilerPipeline", () => {
 		const { edges } = fromTranspilerPipeline(pipeline);
 		expect(edges[0].id).toBe("e-0");
 		expect(edges[1].id).toBe("e-1");
+	});
+
+	it("restores custom node ports from pipeline JSON", () => {
+		const pipeline: Pipeline = {
+			name: "fan-in",
+			version: "1",
+			nodes: [
+				{
+					id: "join",
+					component: { name: "join", image: "busybox" },
+					inputs: [
+						{ name: "left", type: "string" },
+						{ name: "right", type: "string" },
+					],
+					outputs: [{ name: "summary", type: "string" }],
+				},
+			],
+			edges: [],
+		};
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		expect(nodes[0].data.inputPorts).toEqual([
+			{ name: "left", type: "string" },
+			{ name: "right", type: "string" },
+		]);
+		expect(nodes[0].data.outputPorts).toEqual([
+			{ name: "summary", type: "string" },
+		]);
+	});
+
+	it("restores node runtime config binding from pipeline JSON", () => {
+		const pipeline: Pipeline = {
+			name: "configured",
+			version: "1",
+			nodes: [
+				{
+					id: "step-1",
+					component: { name: "echo", image: "busybox" },
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 2,
+						fileName: "detector.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "detector.yaml",
+						displayName: "Detector Config",
+					},
+				},
+			],
+			edges: [],
+		};
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		expect(nodes[0].data.runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
+			displayName: "Detector Config",
+		});
 	});
 });
 
@@ -364,6 +677,30 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 					cpu: "500m",
 					memory: "256Mi",
 					disk: "1Gi",
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 3,
+						fileName: "step-one.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "runtime.yaml",
+						displayName: "Step One Config",
+					},
+					runtimeSecrets: [
+						{
+							resourceId: "platform-db-secrets",
+							mountPath: "/mnt/secrets",
+							displayName: "Platform DB 密钥",
+						},
+					],
+					storageMounts: [
+						{
+							resourceId: "scratch-emptydir",
+							mountPath: "/workspace/scratch",
+							readOnly: false,
+							displayName: "临时工作目录",
+						},
+					],
 				},
 			},
 			{
@@ -407,6 +744,30 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 		expect(nodes[0].data.cpu).toBe("500m");
 		expect(nodes[0].data.memory).toBe("256Mi");
 		expect(nodes[0].data.disk).toBe("1Gi");
+		expect(nodes[0].data.runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 3,
+			fileName: "step-one.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "runtime.yaml",
+			displayName: "Step One Config",
+		});
+		expect(nodes[0].data.runtimeSecrets).toEqual([
+			{
+				resourceId: "platform-db-secrets",
+				mountPath: "/mnt/secrets",
+				displayName: "Platform DB 密钥",
+			},
+		]);
+		expect(nodes[0].data.storageMounts).toEqual([
+			{
+				resourceId: "scratch-emptydir",
+				mountPath: "/workspace/scratch",
+				readOnly: false,
+				displayName: "临时工作目录",
+			},
+		]);
 		// Node without resources
 		expect(nodes[1].data.cpu).toBe("");
 		expect(nodes[1].data.memory).toBe("");

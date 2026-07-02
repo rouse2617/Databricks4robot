@@ -6,10 +6,43 @@ from GKE to Cloud Run.
 ## Current scope
 
 - `mcap-preview-dev.sh`: deploys `mcap-preview` to Cloud Run in `us-central1`.
-- `frontend-dev.sh`: builds a Cloud Run-specific frontend image and deploys
-  `cyber-databrew-frontend-dev`.
 - `backend-dev.sh`: deploys `cyber-databrew-backend-dev` and can source env
   values from `cyber-databrew-dev` K8s ConfigMap/Secret.
+- `local-build-deploy.sh`: local backend shortcut — rsync `backend/` (including
+  uncommitted changes) to the VM build box, build+push the image, then deploy
+  to Cloud Run dev. Run `bash deploy/cloudrun/local-build-deploy.sh` from repo
+  root. Typical total ~40 s when the BuildKit builder is warm.
+- `local-frontend-deploy.sh`: same pattern for frontend — rsyncs `Frontend/`
+  and Cloud Run wrapper assets to the VM, builds both images (SPA + nginx
+  wrapper), then deploys `cyber-databrew-frontend-dev`. Run
+  `bash deploy/cloudrun/local-frontend-deploy.sh` from repo root.
+
+## Backend build flow
+
+### Backend
+
+**Auto-trigger:** `.github/workflows/deploy-backend-dev.yml` fires on push to
+`dev` touching `backend/`. SSHes into the VM build box (shiqi-test-cpu), fetches
+the commit, builds `linux/amd64` with BuildKit cache, pushes to AR, then calls
+`backend-dev.sh USE_EXISTING_IMAGE=true`. Typical ~1 min (Go change), ~33 s (no
+code change).
+
+**Local:** `bash deploy/cloudrun/local-build-deploy.sh` — rsyncs `backend/`,
+builds on VM, deploys. ~40 s warm.
+
+**Deploy only:** `USE_EXISTING_IMAGE=true bash deploy/cloudrun/backend-dev.sh`
+
+### Frontend
+
+**Auto-trigger:** `.github/workflows/deploy-frontend-dev.yml` fires on push to
+`dev` touching `Frontend/`. Same VM build box flow — builds the SPA image
+(`Frontend/Dockerfile`) then the Cloud Run nginx wrapper, pushes both, then
+calls `frontend-dev.sh USE_EXISTING_IMAGE=true`.
+
+**Local:** `bash deploy/cloudrun/local-frontend-deploy.sh` — rsyncs `Frontend/`
+and the nginx wrapper files, builds on VM, deploys.
+
+**Deploy only:** `USE_EXISTING_IMAGE=true BUILD_ARGO_UI=false bash deploy/cloudrun/frontend-dev.sh`
 
 ## Notes
 
@@ -22,13 +55,18 @@ from GKE to Cloud Run.
   `deploy/cloudrun/frontend-nginx.conf`: **`/api/v1/preview/` → mcap-preview-dev**,
   **`/api/` → cyber-databrew-backend-dev** (same layout as `Frontend/nginx.conf`).
 - `frontend-dev.sh` defaults to local `docker build && docker push` for speed.
-  Set `USE_CLOUD_BUILD=true` to use remote Cloud Build instead.
   Optional: `BASE_IMAGE=<registry/.../cyber-databrew-frontend:tag>` passes
   `--build-arg BASE_IMAGE=...` so the SPA bundle is not silently taken from
   the Dockerfile default (`dev-latest`).
-- `backend-dev.sh` defaults to local `docker build && docker push`; set
-  `USE_CLOUD_BUILD=true` for remote build, or `USE_EXISTING_IMAGE=true` to
-  skip build and deploy the provided image directly.
+- `frontend-dev.sh` also ensures the embedded Argo UI static bundle exists
+  before building the Cloud Run nginx wrapper. By default `BUILD_ARGO_UI=auto`
+  reuses `databrew-pipeline/argo-ui/dist` when present and otherwise runs
+  `yarn install && yarn build` in `databrew-pipeline/argo-ui`. If another
+  worktree or CI artifact already has the bundle, set
+  `ARGO_UI_DIST_SOURCE=/path/to/dist` to copy it into place.
+- `backend-dev.sh` normally runs with `USE_EXISTING_IMAGE=true` (image built on
+  VM by GHA or `local-build-deploy.sh`). Set `USE_EXISTING_IMAGE=false` to build
+  locally with `docker build && docker push` instead.
 - `backend-dev.sh` supports `DB_PASSWORD_SECRET=<secret-name>` to load
   `DB_PASSWORD` from GCP Secret Manager at deploy time (recommended over
   plaintext `DB_PASSWORD_OVERRIDE`).
@@ -63,9 +101,17 @@ from GKE to Cloud Run.
 - If K8s secret uses `DB_HOST=postgres`, Cloud Run revision will fail because
   that DNS name is cluster-internal. Set `DB_HOST_OVERRIDE` (and optionally
   `VPC_CONNECTOR`) to a reachable PostgreSQL endpoint before rollout.
-- `backend-dev.sh` now auto-falls back to the PostgreSQL pod IP when it sees
-  `DB_HOST=postgres` and no `DB_HOST_OVERRIDE` is provided. This is a temporary
-  migration convenience, not a stable long-term endpoint.
+- `backend-dev.sh` defaults to the current dev Cloud Run wiring:
+  `DB_HOST_OVERRIDE=172.27.160.7`, `DB_NAME_OVERRIDE=cyber_databrew_dev`,
+  `DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password`,
+  `VPC_CONNECTOR=cr-central-conn`, `ARGO_SERVER_URL_OVERRIDE=http://10.2.1.211:2746`,
+  `K8S_API_ENDPOINT_OVERRIDE=https://34.59.48.233`,
+  `K8S_BEARER_TOKEN_SECRET=cyber-databrew-dev-k8s-bearer-token`, and
+  `K8S_CA_DATA_SECRET=cyber-databrew-dev-k8s-ca-data`. Override these variables
+  only when deploying to a different dev topology.
+- `backend-dev.sh` still auto-falls back to the PostgreSQL pod IP if you clear
+  `DB_HOST_OVERRIDE` and the merged K8s env says `DB_HOST=postgres`. This is a
+  temporary migration convenience, not a stable long-term endpoint.
 - Cloud Run target database name is now `cyber_databrew_dev`. Override with
   `DB_NAME` via the script when K8s-sourced env points to a
   different database than the one Cloud Run should target.

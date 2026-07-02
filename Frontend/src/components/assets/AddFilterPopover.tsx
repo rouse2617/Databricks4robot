@@ -2,7 +2,7 @@
 // Validates: Requirements R12
 
 import { PlusOutlined } from "@ant-design/icons";
-import { Button, Input, Popover, Select, Space, Tag } from "antd";
+import { Button, Input, Popover, Select, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { createFilterChip } from "../../lib/assets/assetsDiscoveryActions";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
@@ -289,19 +289,29 @@ export default function AddFilterPopover({
 					))}
 
 				{/* Action buttons */}
-				<Space>
-					<Button
-						size="small"
-						type="primary"
-						onClick={handleSubmit}
-						disabled={!selectedField || !selectedOp || !value.trim()}
-					>
-						添加
-					</Button>
-					<Button size="small" onClick={handleCancel}>
-						取消
-					</Button>
-				</Space>
+				<div>
+					<Space>
+						<Button
+							size="small"
+							type="primary"
+							onClick={handleSubmit}
+							disabled={!selectedField || !selectedOp || !value.trim()}
+						>
+							添加
+						</Button>
+						<Button size="small" onClick={handleCancel}>
+							取消
+						</Button>
+					</Space>
+					{(!selectedField || !selectedOp || !value.trim()) && (
+						<Typography.Text
+							type="secondary"
+							style={{ display: "block", marginTop: 4, fontSize: 12 }}
+						>
+							先选择字段、操作符和值。
+						</Typography.Text>
+					)}
+				</div>
 
 				{/* Quick field buttons */}
 				<div>
@@ -317,7 +327,7 @@ export default function AddFilterPopover({
 									style={{ cursor: "pointer", fontSize: 11 }}
 									onClick={() => handleFieldChange(key)}
 								>
-									{meta.label}
+									+ {meta.label}
 								</Tag>
 							) : null;
 						})}

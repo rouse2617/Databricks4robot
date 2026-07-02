@@ -1,6 +1,13 @@
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const openApiSpec = readFileSync(
+  path.resolve(process.cwd(), '../api/openapi.yaml'),
+  'utf8',
+);
 
 const config: Config = {
   title: 'Cyber Databrew',
@@ -15,6 +22,13 @@ const config: Config = {
 
   url: 'https://cyber-databrew.cyberorigin.ai',
   baseUrl: '/doc/',
+
+  scripts: [
+    {
+      src: '/doc/js/api-reference-default.js',
+      async: false,
+    },
+  ],
 
   organizationName: 'CyberOrigin2077',
   projectName: 'cyber-databrew',
@@ -35,13 +49,52 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
           editUrl:
-            'https://github.com/CyberOrigin2077/cyber-databrew/tree/main/docs-site/',
+            'https://github.com/CyberOrigin2077/cyber-databrew/tree/dev/docs-site/',
         },
         blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
       } satisfies Preset.Options,
+    ],
+  ],
+
+  plugins: [
+    [
+      '@scalar/docusaurus',
+      {
+        label: 'API Reference',
+        route: '/api/reference',
+        showNavLink: false,
+        configuration: {
+          title: 'Cyber Databrew API',
+          content: openApiSpec,
+          layout: 'modern',
+          theme: 'default',
+          defaultHttpClient: {
+            targetKey: 'shell',
+            clientKey: 'curl', // pragma: allowlist secret
+          },
+          defaultOpenFirstTag: true,
+          documentDownloadType: 'none',
+          expandAllResponses: false,
+          hideModels: false,
+          hideClientButton: false,
+          persistAuth: true,
+          showSidebar: true,
+          showDeveloperTools: 'never',
+          servers: [
+            {
+              url: 'http://localhost:8080',
+              description: 'Local development',
+            },
+            {
+              url: 'https://cyber-databrew.cyberorigin.ai',
+              description: 'Production',
+            },
+          ],
+        },
+      },
     ],
   ],
 
@@ -62,7 +115,17 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
           position: 'left',
-          label: '文档',
+          label: 'Docs',
+        },
+        {
+          to: '/api/reference',
+          position: 'left',
+          label: 'REST API Reference',
+        },
+        {
+          to: '/changelog',
+          position: 'left',
+          label: 'Changelog',
         },
         {
           href: 'https://github.com/CyberOrigin2077/cyber-databrew',

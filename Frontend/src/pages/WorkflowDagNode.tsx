@@ -1,6 +1,14 @@
+import {
+	CloudServerOutlined,
+	CodeOutlined,
+	FileTextOutlined,
+	InfoCircleOutlined,
+	WarningOutlined,
+} from "@ant-design/icons";
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
-import { Tag, Tooltip } from "antd";
+import { Button, Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
+import type { MouseEvent } from "react";
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 import {
 	PHASE_COLORS,
@@ -13,11 +21,20 @@ import "./WorkflowDagNode.css";
 const PROGRESS_RING_SIZE = 18;
 const PROGRESS_RING_STROKE = 2.5;
 
+export type WorkflowDagNodeAction =
+	| "summary"
+	| "logs"
+	| "runtime"
+	| "io"
+	| "terminal";
+
 export interface WorkflowDagNodeData extends Record<string, unknown> {
 	workflowNode: WorkflowNodeStatus;
 	selected: boolean;
 	dimmed: boolean;
 	progressPercent: number | null;
+	pipelineLabels?: Map<string, string>;
+	onAction?: (node: WorkflowNodeStatus, action: WorkflowDagNodeAction) => void;
 }
 
 function getProgressRingColor(phase: string): string {
@@ -38,6 +55,12 @@ function getNodeRelativeTime(node: WorkflowNodeStatus): string | null {
 		}
 	}
 	return started.fromNow();
+}
+
+function getMessageSummary(message?: string): string | null {
+	const normalized = message?.replace(/\s+/g, " ").trim();
+	if (!normalized) return null;
+	return normalized.length > 92 ? `${normalized.slice(0, 89)}...` : normalized;
 }
 
 function ProgressRing({ percent, color }: { percent: number; color: string }) {
@@ -82,14 +105,31 @@ function ProgressRing({ percent, color }: { percent: number; color: string }) {
 export function WorkflowDagNode({
 	data,
 }: NodeProps<Node<WorkflowDagNodeData>>): React.JSX.Element {
-	const { workflowNode, selected, dimmed, progressPercent } = data;
-	const displayText = getWorkflowNodeDisplayText(workflowNode);
+	const { workflowNode, selected, dimmed, progressPercent, pipelineLabels } =
+		data;
+	const displayText = getWorkflowNodeDisplayText(workflowNode, pipelineLabels);
 	const phase = workflowNode.phase;
 	const accent = PHASE_COLORS[phase] || "#64748b";
 	const phaseLabel =
 		WORKFLOW_PHASE_LABELS[phase as keyof typeof WORKFLOW_PHASE_LABELS] || phase;
 	const relTime = getNodeRelativeTime(workflowNode);
 	const isRunning = phase === "Running";
+	const isFailed = phase === "Failed" || phase === "Error";
+	const messageSummary = isFailed
+		? getMessageSummary(workflowNode.message)
+		: null;
+
+	const openAction =
+		(action: WorkflowDagNodeAction) => (event: MouseEvent<HTMLElement>) => {
+			event.stopPropagation();
+			data.onAction?.(workflowNode, action);
+		};
+
+	// Omitted/Skipped 节点没有运行，禁用需要 Pod 的操作
+	const hasNotRun = phase === "Omitted" || phase === "Skipped";
+	const canViewLogs = !hasNotRun;
+	const canViewRuntime = !hasNotRun;
+	const canViewTerminal = !hasNotRun;
 
 	return (
 		<div
@@ -98,6 +138,7 @@ export function WorkflowDagNode({
 				selected ? "workflow-dag-node--selected" : "",
 				dimmed ? "workflow-dag-node--dimmed" : "",
 				isRunning ? "workflow-dag-node--running" : "",
+				isFailed ? "workflow-dag-node--failed" : "",
 			]
 				.filter(Boolean)
 				.join(" ")}
@@ -157,6 +198,86 @@ export function WorkflowDagNode({
 							<span className="workflow-dag-node__time">{relTime}</span>
 						</Tooltip>
 					) : null}
+				</div>
+
+				{messageSummary ? (
+					<Tooltip title={workflowNode.message}>
+						<div className="workflow-dag-node__message">
+							<WarningOutlined />
+							<span>{messageSummary}</span>
+						</div>
+					</Tooltip>
+				) : isFailed ? (
+					<div
+						className="workflow-dag-node__failed-actions"
+						style={{ marginTop: 4 }}
+					>
+						<Button
+							size="small"
+							danger
+							icon={<FileTextOutlined />}
+							onClick={openAction("logs")}
+						>
+							查看失败日志
+						</Button>
+					</div>
+				) : null}
+
+				<div className="workflow-dag-node__actions">
+					<Tooltip title={canViewLogs ? "查看日志" : "节点未运行，无日志"}>
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							icon={<FileTextOutlined />}
+							aria-label="查看日志"
+							disabled={!canViewLogs}
+							onClick={openAction("logs")}
+						/>
+					</Tooltip>
+					<Tooltip title={canViewRuntime ? "运行环境" : "节点未运行"}>
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							icon={<CloudServerOutlined />}
+							aria-label="运行环境"
+							disabled={!canViewRuntime}
+							onClick={openAction("runtime")}
+						/>
+					</Tooltip>
+					<Tooltip title="输入/输出">
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							aria-label="输入/输出"
+							onClick={openAction("io")}
+						>
+							IO
+						</Button>
+					</Tooltip>
+					<Tooltip title={canViewTerminal ? "终端" : "节点未运行"}>
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							icon={<CodeOutlined />}
+							aria-label="终端"
+							disabled={!canViewTerminal}
+							onClick={openAction("terminal")}
+						/>
+					</Tooltip>
+					<Tooltip title="详情">
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							icon={<InfoCircleOutlined />}
+							aria-label="详情"
+							onClick={openAction("summary")}
+						/>
+					</Tooltip>
 				</div>
 			</div>
 		</div>

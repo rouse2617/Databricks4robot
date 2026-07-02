@@ -1,0 +1,13 @@
+.git
+.github
+.agent
+.cursor
+.wrangler
+.terraform
+.DS_Store
+*.log
+
+**/node_modules
+Frontend/dist
+docs-site/build
+site

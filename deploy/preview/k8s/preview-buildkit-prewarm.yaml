@@ -1,0 +1,162 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: preview-buildkit-prewarm
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-buildkit-prewarm
+    app.kubernetes.io/part-of: cyber-databrew-preview
+    app.kubernetes.io/managed-by: codex
+spec:
+  schedule: "17 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: preview-buildkit-prewarm
+            app.kubernetes.io/part-of: cyber-databrew-preview
+        spec:
+          serviceAccountName: tekton-builder
+          restartPolicy: Never
+          nodeSelector:
+            build-pool-tier: warm
+          tolerations:
+            - key: build-pool-tier
+              operator: Equal
+              value: warm
+              effect: NoSchedule
+          volumes:
+            - name: source
+              emptyDir: {}
+            - name: github-token
+              secret:
+                secretName: cyber-databrew-preview-github-token # pragma: allowlist secret
+          initContainers:
+            - name: fetch-source
+              image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+              env:
+                - name: PREWARM_REF
+                  value: dev
+                - name: REPO_URL
+                  value: https://github.com/CyberOrigin2077/cyber-databrew.git
+              command:
+                - bash
+                - -ceu
+                - |
+                  src=/workspace/src
+                  token_file=/var/run/preview-github/token
+                  repo_path="${REPO_URL#https://github.com/}"
+                  repo_path="${repo_path%.git}"
+
+                  rm -rf "${src:?}/"*
+                  mkdir -p "${src}"
+
+                  start="$(date -u +%s)"
+                  curl -fsSL \
+                    -H "Authorization: Bearer $(cat "${token_file}")" \
+                    -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${repo_path}/tarball/${PREWARM_REF}" \
+                    | tar -xz --strip-components=1 -C "${src}"
+                  end="$(date -u +%s)"
+                  echo "TIMING prewarm_source_archive_seconds=$((end - start))"
+                  echo "prewarm ref: ${PREWARM_REF}"
+              volumeMounts:
+                - name: source
+                  mountPath: /workspace/src
+                - name: github-token
+                  mountPath: /var/run/preview-github
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+          containers:
+            - name: warm-cache
+              image: moby/buildkit:v0.20.2
+              env:
+                - name: BUILDKIT_HOST
+                  value: tcp://preview-buildkitd.cyber-databrew-dev.svc.cluster.local:1234
+                - name: REGISTRY_HOST
+                  value: us-central1-docker.pkg.dev
+                - name: REGISTRY_REPO
+                  value: green-valley-442103/cyber-databrew-images
+                - name: API_IMAGE_NAME
+                  value: cyber-databrew-backend
+                - name: WEB_IMAGE_NAME
+                  value: cyber-databrew-frontend
+                - name: PREWARM_FRONTEND
+                  value: "false"
+              command:
+                - sh
+                - -ceu
+                - |
+                  src=/workspace/src
+                  api_cache_image="${REGISTRY_HOST}/${REGISTRY_REPO}/${API_IMAGE_NAME}:preview-buildcache"
+                  web_cache_image="${REGISTRY_HOST}/${REGISTRY_REPO}/${WEB_IMAGE_NAME}:preview-buildcache"
+
+                  token="$(wget -q -O - \
+                    --header="Metadata-Flavor: Google" \
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                    | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4 || true)"
+                  if [ -z "${token}" ]; then
+                    echo "ERROR: failed to get metadata access token" >&2
+                    exit 1
+                  fi
+
+                  mkdir -p /root/.docker
+                  encoded="$(printf 'oauth2accesstoken:%s' "${token}" | base64 | tr -d '\n')"
+                  printf '{"auths":{"https://%s":{"auth":"%s"}}}\n' "${REGISTRY_HOST}" "${encoded}" > /root/.docker/config.json
+
+                  start="$(date -u +%s)"
+                  buildctl build \
+                    --frontend dockerfile.v0 \
+                    --opt filename=Dockerfile \
+                    --opt platform=linux/amd64 \
+                    --local context="${src}/backend" \
+                    --local dockerfile="${src}/backend" \
+                    --import-cache "type=registry,ref=${api_cache_image}" \
+                    --export-cache "type=registry,ref=${api_cache_image},mode=max"
+                  end="$(date -u +%s)"
+                  echo "TIMING prewarm_backend_buildctl_seconds=$((end - start))"
+
+                  if [ "${PREWARM_FRONTEND}" = "true" ]; then
+                    start="$(date -u +%s)"
+                    buildctl build \
+                      --frontend dockerfile.v0 \
+                      --opt filename=frontend-runtime.Dockerfile \
+                      --opt platform=linux/amd64 \
+                      --opt "build-arg:VITE_APP_VERSION=preview" \
+                      --opt "build-arg:VITE_BUILD_REF=preview" \
+                      --opt "build-arg:VITE_APP_ENV=preview" \
+                      --opt "build-arg:VITE_BASE_PATH=./" \
+                      --opt "build-arg:VITE_API_BASE_URL=" \
+                      --local context="${src}" \
+                      --local dockerfile="${src}/deploy/preview" \
+                      --import-cache "type=registry,ref=${web_cache_image}" \
+                      --export-cache "type=registry,ref=${web_cache_image},mode=max"
+                    end="$(date -u +%s)"
+                    echo "TIMING prewarm_frontend_buildctl_seconds=$((end - start))"
+                  else
+                    echo "Skipping frontend prewarm because PREWARM_FRONTEND=${PREWARM_FRONTEND}."
+                  fi
+              volumeMounts:
+                - name: source
+                  mountPath: /workspace/src
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+                  ephemeral-storage: 4Gi
+                limits:
+                  cpu: "4"
+                  memory: 8Gi
+                  ephemeral-storage: 12Gi

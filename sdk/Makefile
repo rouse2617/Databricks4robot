@@ -60,7 +60,9 @@ sdk-generate:
 	uv run datamodel-codegen \
 		--input $(SDK_OPENAPI) \
 		--input-file-type openapi \
+		--disable-timestamp \
 		--output $(SDK_GENERATED)
+	uv run python -c "from pathlib import Path; p = Path('$(SDK_GENERATED)'); text = p.read_text(); text = text.replace(\"    secretProviderClass = 'secretProviderClass'\n\", \"    secretProviderClass = 'secretProviderClass'  # pragma: allowlist secret\n\"); p.write_text(text)"
 
 sdk-check-generated: sdk-generate
 	@git diff --quiet $(SDK_GENERATED) || { \

@@ -1,12 +1,16 @@
 package pipeline_component
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	uc "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 )
 
@@ -18,6 +22,11 @@ type Handler struct {
 // New constructs a Handler.
 func New(uc *uc.Usecase) *Handler { return &Handler{uc: uc} }
 
+type syncReleasesRequest struct {
+	Source models.ComponentReleaseIngestSource `json:"source,omitempty"`
+	Items  []models.PipelineComponentRelease   `json:"items"`
+}
+
 // CreateComponent handles POST /api/v1/components.
 func (h *Handler) CreateComponent(c *gin.Context) {
 	var pc models.PipelineComponent
@@ -25,6 +34,8 @@ func (h *Handler) CreateComponent(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	pc.Scope = "dev"
+	pc.Owner = middleware.GetUserEmail(c)
 	created, err := h.uc.Create(c.Request.Context(), &pc)
 	if err != nil {
 		writeComponentError(c, err)
@@ -101,6 +112,91 @@ func (h *Handler) DeleteComponent(c *gin.Context) {
 	c.Status(204)
 }
 
+// ListReleases handles GET /api/v1/pipeline-component-releases.
+func (h *Handler) ListReleases(c *gin.Context) {
+	filter := repository.ComponentReleaseFilter{
+		Query:       strings.TrimSpace(c.Query("q")),
+		ComponentID: strings.TrimSpace(c.Query("componentId")),
+		TaskName:    strings.TrimSpace(c.Query("taskName")),
+		Status:      strings.TrimSpace(c.Query("status")),
+		Channel:     strings.TrimSpace(c.Query("channel")),
+	}
+	if raw := strings.TrimSpace(c.Query("selectable")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "selectable must be a boolean", nil)
+			return
+		}
+		filter.Selectable = &value
+	}
+	items, err := h.uc.ListReleases(c.Request.Context(), filter)
+	if err != nil {
+		writeReleaseError(c, err)
+		return
+	}
+	if items == nil {
+		items = []models.PipelineComponentRelease{}
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
+// GetRelease handles GET /api/v1/pipeline-component-releases/:id.
+func (h *Handler) GetRelease(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	release, err := h.uc.GetRelease(c.Request.Context(), id)
+	if err != nil {
+		writeReleaseError(c, err)
+		return
+	}
+	if release == nil {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "component release not found")
+		return
+	}
+	c.JSON(200, release)
+}
+
+// SyncReleases handles POST /api/v1/pipeline-component-releases/sync.
+func (h *Handler) SyncReleases(c *gin.Context) {
+	req, err := parseSyncReleasesRequest(c)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	items, err := h.uc.SyncReleaseManifest(c.Request.Context(), models.ComponentReleaseIngestManifest{
+		Source: req.Source,
+		Items:  req.Items,
+	})
+	if err != nil {
+		writeReleaseError(c, err)
+		return
+	}
+	if items == nil {
+		items = []models.PipelineComponentRelease{}
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
+func parseSyncReleasesRequest(c *gin.Context) (syncReleasesRequest, error) {
+	var req syncReleasesRequest
+	raw, err := c.GetRawData()
+	if err != nil {
+		return req, err
+	}
+	if err := json.Unmarshal(raw, &req); err == nil && req.Items != nil {
+		return req, nil
+	}
+	var items []models.PipelineComponentRelease
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return req, err
+	}
+	req.Items = items
+	return req, nil
+}
+
 func writeComponentError(c *gin.Context, err error) {
 	msg := err.Error()
 	switch {
@@ -109,6 +205,18 @@ func writeComponentError(c *gin.Context, err error) {
 	case strings.Contains(msg, "required") || strings.Contains(msg, "type must be"):
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
 	case strings.Contains(msg, "system components cannot"):
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+	default:
+		httpresp.Internal(c, msg)
+	}
+}
+
+func writeReleaseError(c *gin.Context, err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "component release not found")
+	case strings.Contains(msg, "required") || strings.Contains(msg, "must be"):
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
 	default:
 		httpresp.Internal(c, msg)

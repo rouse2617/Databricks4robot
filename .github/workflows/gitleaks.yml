@@ -1,0 +1,46 @@
+---
+name: gitleaks
+
+# Secret scanning gate. Catches tokens, passwords, API keys, GCP service-account
+# JSON, etc. in PRs and direct pushes to protected branches. Fails the workflow
+# on any finding so the PR cannot merge with leaked credentials.
+#
+# Pre-commit runs detect-secrets locally for the same purpose; gitleaks is the
+# CI-side counterpart with a richer rule set.
+#
+# Implementation notes:
+#  - gitleaks-action@v1 (v2 requires a paid GITLEAKS_LICENSE).
+#  - The action's default config-path is `.github/.gitleaks.toml`; this repo's
+#    config lives at the repo root, so we set `config-path` explicitly. Without
+#    this override, the action uses gitleaks' upstream default ruleset which has
+#    noisy base64 / entropy heuristics that flag in-repo PNG screenshots as
+#    false-positive "secrets".
+#  - gitleaks-action@v1 doesn't auto-upload SARIF. PR failures show in the
+#    Checks tab with the redacted finding list in the run log.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v1
+        with:
+          config-path: .gitleaks.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

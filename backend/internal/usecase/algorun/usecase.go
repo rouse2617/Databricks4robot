@@ -11,6 +11,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
 // Event types for algo_run outbox events (aggregate_type="algo_run").
@@ -84,11 +85,17 @@ type FinishInput struct {
 // Usecase implements algo_runs lifecycle.
 type Usecase struct {
 	repo      repository.AlgoRunRepository
+	assetRepo repository.AssetRepository      // optional; nil disables explicit asset validation
 	eventRepo repository.AssetEventRepository // optional; nil disables outbox events
 }
 
 func New(repo repository.AlgoRunRepository) *Usecase {
 	return &Usecase{repo: repo}
+}
+
+// SetAssetRepo enables shared validation for explicit input_asset_ids.
+func (u *Usecase) SetAssetRepo(r repository.AssetRepository) {
+	u.assetRepo = r
 }
 
 // SetEventRepo enables outbox event emission for algo_run state transitions.
@@ -140,6 +147,11 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, 
 		return nil, ErrInvalidAlgoKind
 	}
 
+	inputAssetIDs, err := assetvalidation.Validate(ctx, u.assetRepo, "input_asset_ids", in.InputAssetIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	run := &models.AlgoRun{
 		RunID:           runID,
 		AlgoName:        algoName,
@@ -148,7 +160,7 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, 
 		TriggeredBy:     triggeredBy,
 		Status:          models.AlgoRunStatusPending,
 		InputFilter:     in.InputFilter,
-		InputAssetIDs:   in.InputAssetIDs,
+		InputAssetIDs:   inputAssetIDs,
 		Params:          in.Params,
 		CodeCommit:      strings.TrimSpace(in.CodeCommit),
 		ImageDigest:     strings.TrimSpace(in.ImageDigest),

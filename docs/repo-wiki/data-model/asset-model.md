@@ -9,8 +9,8 @@
 - [backend/internal/models/schema_evolution.go](file://backend/internal/models/schema_evolution.go)
 - [backend/internal/postgres/logical_assets.go](file://backend/internal/postgres/logical_assets.go)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 </cite>
 
 ## Table of Contents
@@ -29,7 +29,7 @@
 
 The **asset model** is the relational and Go-domain backbone of cyber-databrew. An *asset* is the canonical unit of curated data — most commonly a time segment of an MCAP recording, but also (as of the Phase 1/Phase 2 schema expansion) datasets, annotation results, ML models, and evaluation reports. Each physical asset row lives in the `assets` table, keyed by an 8-character base-62 `asset_id`. Assets are organized into multi-version families through the `logical_assets` table, carry typed metadata validated against per-type JSON Schemas, accumulate free-form assertions in `asset_tags`, track engagement in `asset_usage_stats`, and form lineage graphs through `asset_relations`.
 
-The model evolved through three layered migrations: `000_initial.sql` provisions the full schema (legacy + typed fields, multi-version identity, indexes, foreign keys, triggers); `043_asset_model_expansion_p1.sql` widens lineage relation types and relaxes the MCAP requirement for `dataset`/`annotation_result`; `044_asset_model_p2.sql` adds `ml_model`/`evaluation_report` asset types and a broad set of ML lineage edges. The Go side (`internal/models`) mirrors these columns and adds **dual-write backward-compatibility** logic so that legacy CF-era fields (`status`, `type`, `duration_sec`) and the new typed fields (`lifecycle_state`, `asset_type`, `duration_ms`) stay coherent in API responses.
+The model evolved through three layered migrations: `000_initial.sql` provisions the full schema (legacy + typed fields, multi-version identity, indexes, foreign keys, triggers); `044_asset_model_expansion_p1.sql` widens lineage relation types and relaxes the MCAP requirement for `dataset`/`annotation_result`; `045_asset_model_p2.sql` adds `ml_model`/`evaluation_report` asset types and a broad set of ML lineage edges. The Go side (`internal/models`) mirrors these columns and adds **dual-write backward-compatibility** logic so that legacy CF-era fields (`status`, `type`, `duration_sec`) and the new typed fields (`lifecycle_state`, `asset_type`, `duration_ms`) stay coherent in API responses.
 
 This page is the authoritative reference for the asset entities: their fields and types, enum/status domains, relationships and foreign keys, the asset-type schema registry, JSONB columns, validation rules, and the indexing strategy.
 
@@ -47,7 +47,7 @@ The asset model spans the Go domain layer, the PostgreSQL repository layer, and 
 - **`backend/internal/models/schema_evolution.go`** — the `AssetTag` projection struct (multi-source tag rows).
 - **`backend/internal/postgres/logical_assets.go`** — `LogicalAssetRepo`, the repository that coordinates revisions, current-pointer flipping, and `logical_assets` CRUD.
 - **`backend/migrations/000_initial.sql`** — the canonical schema (tables, constraints, indexes, FKs, triggers).
-- **`backend/migrations/043_asset_model_expansion_p1.sql`** / **`044_asset_model_p2.sql`** — the asset-type and lineage-relation expansions.
+- **`backend/migrations/044_asset_model_expansion_p1.sql`** / **`045_asset_model_p2.sql`** — the asset-type and lineage-relation expansions.
 
 ```mermaid
 graph TB
@@ -295,8 +295,8 @@ The `assets` table participates in a rich foreign-key graph, all declared in `00
 Lineage between assets is modeled in `asset_relations`, whose composite primary key is `(parent_asset_id, child_asset_id, relation_type)` ([000_initial.sql#L622-L623](file://backend/migrations/000_initial.sql#L622-L623)). The set of allowed `relation_type` values grew across migrations:
 
 - Base (`000_initial.sql#L257`): `split_from`, `derived_from`, `contains`, `sampled_from`, `merged_from`, `revision_of`, `annotated_from`, `materialized_from`.
-- Phase 1 (`043`): same eight, plus relaxing the `chk_mcap_file_required` constraint for `dataset`/`annotation_result` ([043_asset_model_expansion_p1.sql#L3-L22](file://backend/migrations/043_asset_model_expansion_p1.sql#L3-L22)).
-- Phase 2 (`044`): adds `trained_from`, `evaluated_on`, `validated_on`, `configured_by`, `fine_tuned_from`, `features_from`, `tested_on`, `evaluates`, `compares_to`, `calibrated_from`, `generated_by`, plus a `metadata jsonb` column on `asset_relations` ([044_asset_model_p2.sql#L3-L30](file://backend/migrations/044_asset_model_p2.sql#L3-L30)).
+- Phase 1 (`043`): same eight, plus relaxing the `chk_mcap_file_required` constraint for `dataset`/`annotation_result` ([044_asset_model_expansion_p1.sql#L3-L22](file://backend/migrations/044_asset_model_expansion_p1.sql#L3-L22)).
+- Phase 2 (`044`): adds `trained_from`, `evaluated_on`, `validated_on`, `configured_by`, `fine_tuned_from`, `features_from`, `tested_on`, `evaluates`, `compares_to`, `calibrated_from`, `generated_by`, plus a `metadata jsonb` column on `asset_relations` ([045_asset_model_p2.sql#L3-L30](file://backend/migrations/045_asset_model_p2.sql#L3-L30)).
 
 The `LogicalAssetRepo` enforces the version-family invariants in code: `MaxRevision` reads the highest revision for a logical asset, `BumpRevision` advances `current_revision`/`total_revisions`, `CurrentAssetID` finds the single `is_current = TRUE` row, and `ClearCurrentForLogical` clears the current flag before a new revision is promoted ([logical_assets.go#L77-L124](file://backend/internal/postgres/logical_assets.go#L77-L124)).
 
@@ -310,8 +310,8 @@ The `LogicalAssetRepo` enforces the version-family invariants in code: `MaxRevis
 `asset_type` defaults to `segment` ([000_initial.sql#L316](file://backend/migrations/000_initial.sql#L316)). The `chk_mcap_file_required` constraint makes `mcap_file_id` mandatory *unless* the type is one of the "derived" families. That exemption list expanded with each migration:
 
 - `000_initial.sql#L357`: `derived_asset`, `dataset`, `annotation_result`.
-- `043` re-states the same three ([043_asset_model_expansion_p1.sql#L18-L22](file://backend/migrations/043_asset_model_expansion_p1.sql#L18-L22)).
-- `044` adds `ml_model` and `evaluation_report` ([044_asset_model_p2.sql#L32-L37](file://backend/migrations/044_asset_model_p2.sql#L32-L37)).
+- `043` re-states the same three ([044_asset_model_expansion_p1.sql#L18-L22](file://backend/migrations/044_asset_model_expansion_p1.sql#L18-L22)).
+- `044` adds `ml_model` and `evaluation_report` ([045_asset_model_p2.sql#L32-L37](file://backend/migrations/045_asset_model_p2.sql#L32-L37)).
 
 Typed metadata for these families is validated by the in-process `SchemaRegistry`, which registers four code-defined JSON Schemas ([asset_type_schema.go#L22-L29](file://backend/internal/models/asset_type_schema.go#L22-L29)):
 
@@ -328,8 +328,8 @@ On the `logical_assets` side, `asset_type` is **immutable**: the `logical_assets
 
 **Section sources**
 - [backend/internal/models/asset_type_schema.go](file://backend/internal/models/asset_type_schema.go#L21-L229)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L18-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L32-L37)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L18-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L32-L37)
 
 ### JSON / JSONB fields
 
@@ -399,7 +399,7 @@ Key edges: `LogicalAssetRepo` implements `repository.LogicalAssetRepository` ([l
 
 - **`logical_assets.asset_type is immutable (LA1)`** — an `UPDATE` tried to change a logical asset's `asset_type`. The trigger blocks this; create a new logical asset family instead ([000_initial.sql#L35-L44](file://backend/migrations/000_initial.sql#L35-L44)).
 - **`chk_lifecycle_state` violation** — a write set `lifecycle_state` to a value outside the eight allowed states. Validate with `IsValidLifecycleState` before writing ([asset.go#L286-L288](file://backend/internal/models/asset.go#L286-L288)).
-- **`chk_mcap_file_required` violation** — a `segment`/`derived_asset` (or other non-exempt type) was inserted without `mcap_file_id`. Either supply the MCAP id or use an exempt type (`dataset`, `annotation_result`, `ml_model`, `evaluation_report`) ([044_asset_model_p2.sql#L32-L37](file://backend/migrations/044_asset_model_p2.sql#L32-L37)).
+- **`chk_mcap_file_required` violation** — a `segment`/`derived_asset` (or other non-exempt type) was inserted without `mcap_file_id`. Either supply the MCAP id or use an exempt type (`dataset`, `annotation_result`, `ml_model`, `evaluation_report`) ([045_asset_model_p2.sql#L32-L37](file://backend/migrations/045_asset_model_p2.sql#L32-L37)).
 - **`uq_assets_current_per_logical` unique violation** — two rows for the same `logical_asset_id` are flagged `is_current = TRUE`. Call `ClearCurrentForLogical` before promoting a new revision ([logical_assets.go#L119-L124](file://backend/internal/postgres/logical_assets.go#L119-L124)).
 - **Identity check failures (`^[0-9A-Za-z]{8}$`)** — an id was not an 8-character base-62 string. Generate ids with the canonical id generator ([000_initial.sql#L352-L354](file://backend/migrations/000_initial.sql#L352-L354)).
 - **Metadata validation errors** (e.g. `metadata.format must be one of …`) — the typed metadata failed its per-type schema. Inspect the offending key reported by the validator ([asset_type_schema.go#L146-L229](file://backend/internal/models/asset_type_schema.go#L146-L229)).
@@ -478,4 +478,4 @@ Source: [000_initial.sql#L310-L358](file://backend/migrations/000_initial.sql#L3
 | Migration | Added relation types |
 | --- | --- |
 | 000_initial | split_from, derived_from, contains, sampled_from, merged_from, revision_of, annotated_from, materialized_from ([#L257](file://backend/migrations/000_initial.sql#L257)) |
-| 044_p2 | trained_from, evaluated_on, validated_on, configured_by, fine_tuned_from, features_from, tested_on, evaluates, compares_to, calibrated_from, generated_by ([#L15-L25](file://backend/migrations/044_asset_model_p2.sql#L15-L25)) |
+| 044_p2 | trained_from, evaluated_on, validated_on, configured_by, fine_tuned_from, features_from, tested_on, evaluates, compares_to, calibrated_from, generated_by ([#L15-L25](file://backend/migrations/045_asset_model_p2.sql#L15-L25)) |

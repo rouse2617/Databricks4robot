@@ -8,6 +8,7 @@ import {
 import {
 	Button,
 	Empty,
+	Grid,
 	message,
 	Result,
 	Spin,
@@ -64,6 +65,7 @@ import {
 } from "../lib/assets/assetWorkbenchNavigation";
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 /** Parse algo_results map into structured algo info list. */
 function parseAlgoResults(algoResults: Record<string, string> | undefined) {
@@ -95,6 +97,11 @@ function parseAlgoResults(algoResults: Record<string, string> | undefined) {
 }
 
 export default function AssetDetailPage() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -426,7 +433,10 @@ export default function AssetDetailPage() {
 			{msgCtx}
 
 			{/* Header */}
-			<div className="flex items-center gap-3 mb-4">
+			<div
+				className="flex items-center gap-3 mb-4"
+				style={{ flexWrap: "wrap" }}
+			>
 				<Button
 					icon={<ArrowLeftOutlined />}
 					onClick={() => {
@@ -455,20 +465,33 @@ export default function AssetDetailPage() {
 				<Tag color={getAssetStateColor(asset)}>
 					{getLifecycleState(asset) || "—"}
 				</Tag>
-				<Text type="secondary" className="text-xs font-mono">
+				<Text
+					type="secondary"
+					className="text-xs font-mono"
+					style={{
+						display: "inline-block",
+						maxWidth: isNarrow ? 88 : 220,
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						whiteSpace: "nowrap",
+						verticalAlign: "bottom",
+					}}
+					title={asset.asset_id}
+				>
 					{asset.asset_id}
 				</Text>
 				<Button
 					size="small"
+					style={{ width: isNarrow ? "100%" : undefined }}
 					onClick={() => {
 						if (asset?.asset_id) {
 							navigate(
-								`/pipeline?asset_ids=${encodeURIComponent(asset.asset_id)}`,
+								`/pipeline?tab=pipelines&asset_ids=${encodeURIComponent(asset.asset_id)}`,
 							);
 						}
 					}}
 				>
-					以此资产创建流水线
+					用此资产运行 Pipeline
 				</Button>
 			</div>
 

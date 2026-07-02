@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"time"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
@@ -14,17 +17,21 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"       // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
-	"log/slog"
+	pipelineConfigUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 )
 
 // ── Layer 2: Core business layer (repos + usecases + handlers) ──
@@ -81,6 +88,7 @@ func setupCore(inf *infra) *coreHandlers {
 	customerHandler := customerH.New(customerRepo)
 	deliveryRuleHandler := deliveryruleH.New(deliveryRuleRepo, customerRepo)
 	algoRunUC := algorunUC.New(algoRunRepo)
+	algoRunUC.SetAssetRepo(assetRepo)
 	algoRunUC.SetEventRepo(assetEventRepo)
 	algoRunHandler := algorunH.New(algoRunUC)
 	evalHandler := evalH.New(evalRepo, inf.metricRegistry, assetEventRepo)
@@ -94,11 +102,63 @@ func setupCore(inf *infra) *coreHandlers {
 	// ── Pipeline (Argo Workflows) ──
 	pipelineTemplateRepo := postgres.NewPipelineTemplateRepo(pg)
 	pipelineDeploymentRepo := postgres.NewPipelineDeploymentRepo(pg)
+	executionTargetRepo := postgres.NewExecutionTargetRepo(pg)
+	pipelineRunRepo := postgres.NewPipelineRunRepo(pg)
+	pipelineRunNodeRepo := postgres.NewPipelineRunNodeRepo(pg)
+	pipelineRunEventRepo := postgres.NewPipelineRunEventRepo(pg)
+	runRelationRepo := postgres.NewRunRelationRepo(pg)
+	runInputRepo := postgres.NewRunInputRepo(pg)
+	pipelineRunAssetNodeRepo := postgres.NewPipelineRunAssetNodeRepo(pg)
+	pipelineRunNotificationRepo := postgres.NewPipelineRunNotificationRepo(pg)
+	pipelineRunWatcherStateRepo := postgres.NewPipelineRunWatcherStateRepo(pg)
+	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	if inf.workflowClient != nil {
+		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
+	}
+	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
+		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
+		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,
+		MaxDisk:                       inf.cfg.PipelineResourceMaxDisk,
+		MaxGPU:                        inf.cfg.PipelineResourceMaxGPU,
+		UnschedulablePendingThreshold: inf.cfg.PipelineUnschedulablePendingThresholdDuration(),
+	})
+	puc.SetRunRepositories(executionTargetRepo, pipelineRunRepo, pipelineRunNodeRepo)
+	puc.SetRunEventRepo(pipelineRunEventRepo)
+	puc.SetRunFactRepositories(runRelationRepo, runInputRepo)
+	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
-	pipelineHandler := pipelineH.New(puc)
+	puc.SetPipelineConfigRepo(pipelineConfigRepo)
+	if clientset, err := k8s.NewClientset(""); err != nil {
+		slog.Warn("runtime config projection store disabled", "err", err)
+	} else {
+		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
+	}
+	if inf.cfg.PricingConfigPath != "" {
+		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
+		if err != nil {
+			slog.Warn("load pricing config", "err", err)
+		}
+		puc.SetPricing(priceCfg)
+	}
+	puc.StartRunEventWatcher(context.Background(), 3*time.Second, 100)
+
+	backfillRepo := postgres.NewBackfillRepo(pg)
+	puc.SetBackfillRepo(backfillRepo)
+	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
+	backfillUC := backfillUC.New(backfillRepo, puc)
+	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+	backfillUC.StartReaper()
+	backfillUC.ResumeIncompleteBatches(context.Background())
+	backfillHandler := backfillH.New(backfillUC)
+
+	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
+
+	// Standalone pipeline config library
+	pipelineConfigHandler := pipelineConfigH.New(pipelineConfigUC.New(pipelineConfigRepo))
 
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
@@ -108,12 +168,17 @@ func setupCore(inf *infra) *coreHandlers {
 	}
 	pipelineComponentHandler := pipelineComponentH.New(pipelineComponentUC)
 
-	backfillRepo := postgres.NewBackfillRepo(pg)
-	backfillUC := backfillUC.New(backfillRepo, puc)
-	backfillHandler := backfillH.New(backfillUC)
-
 	// ── Workflow monitoring ──
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	workflowHandler.SetPodClient(inf.podClient)
+	workflowHandler.SetExecClient(inf.execClient)
+	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo)
+
+	// ── Storage (GCS signed URL proxy + Grace resolver) ──
+	var storageHandler *storageH.Handler
+	if inf.gcsClient != nil {
+		storageHandler = storageH.NewHandler(inf.gcsClient)
+	}
 
 	return &coreHandlers{
 		asset:             assetHandler,
@@ -126,10 +191,12 @@ func setupCore(inf *infra) *coreHandlers {
 		eval:              evalHandler,
 		action:            actionHandler,
 		pipeline:          pipelineHandler,
+		pipelineConfig:    pipelineConfigHandler,
 		pipelineComponent: pipelineComponentHandler,
 		backfill:          backfillHandler,
 		query:             queryHandler,
 		workflow:          workflowHandler,
+		storage:           storageHandler,
 		assetUC:           assetUsecase,
 	}
 }
