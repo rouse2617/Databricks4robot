@@ -18,3 +18,74 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check Pure CDC wording in docs/review
         run: bash scripts/check_review_docs_pure_cdc.sh
+
+  backend:
+    name: Backend (vet + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Check migration filenames are unique
+        run: bash ../scripts/check_migration_filenames.sh
+
+      - run: go vet ./...
+      - run: go test -p 4 -timeout 300s ./...
+
+  backend-fresh-db:
+    name: Backend fresh DB migrations + asset CRUD
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cyber_databrew_dev
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      INTEGRATION_DB: "1"
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: cyber_databrew_dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply all migrations to empty database
+        run: |
+          for f in migrations/*.sql; do
+            echo "==> $f"
+            PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d cyber_databrew_dev -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Asset CRUD smoke (post-migration 025)
+        run: go test -p 4 -tags integration -v -timeout 120s ./internal/postgres/ -run TestFreshDB_AssetCRUD
+

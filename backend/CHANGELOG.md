@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### Frontend — UI/UX improvements & tooling
+
+#### Added
+- **版本检测通知系统** — `useVersionCheck` hook 每 60s 轮询 `version.json`，版本变更时显示右上角通知，用户点击"刷新"即可无缝更新。Vite 构建时自动生成 `version.json`（含 version、buildRef、timestamp）。
+- **资产 ID 一键导出** — 批量任务详情页新增"导出资产 ID"按钮（Dropdown 菜单），支持复制到剪贴板（Clipboard API + execCommand 兜底）和下载 CSV。
+- **DataBrew 品牌图标** — 新增灯笼火焰 SVG 图标（黄色 `#F4B740` + 深黄 `#D4841A`），替换 favicon 和导航栏 logo。
+
+#### Changed
+- **批量任务表格设计** — 行高从 8-10px 提升到 16px；列对齐标准化（数值右对齐、文本左对齐、状态居中）；对比度提升（`#1F2937` 文本 + `#E5E7EB` 边框）；表头 `#f3f4f6` 背景 + 大写字间距。
+- **DAG 可视化优化** — 边路由从 smoothstep 改为 step（复杂图更清晰）；`ranksep` 28 → 60 避免边重叠；边改为虚线（`strokeDasharray: "6,4"`，色 `#94a3b8`）；箭头尺寸 14×14 → 12×12。
+- **部署流程** — dev 分支改为完全由 GitHub Actions 控制（backend + mcap-preview + frontend），local wrangler deploy 改为备用方案。
+
+#### Fixed
+- **资产 ID 提取** — 修正为从 `item.assetIds` 数组读取（而非 `labels.asset_id`），并支持 `asset_id` / `assetId` fallback。
+- **剪贴板复制兼容性** — 当 `navigator.clipboard.writeText` 失败时，自动降级到 `document.execCommand("copy")` + 隐藏 textarea。
+
 ### Deprecated / Breaking
 - **Bigtable 存储后端运行期下线** — `STORAGE_BACKEND=bigtable` 启动时直接 `slog.Error` + `os.Exit(1)`；当前运行时口径为 PostgreSQL + outbox relay/subscriber。`.env.example` 已注释相关变量。
 

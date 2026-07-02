@@ -49,7 +49,7 @@ export default {
     // JavaScript module and get stuck in the app error boundary.
     const response = await env.ASSETS.fetch(request);
     if (response.status === 404) {
-      if (isStaticAssetPath(url.pathname)) {
+      if (isStaticAssetPath(url.pathname) || isVersionCheck(url.pathname)) {
         return response;
       }
       return env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
@@ -92,4 +92,8 @@ async function proxyToHost(request, targetHost, options = {}) {
 
 function isStaticAssetPath(pathname) {
   return pathname.startsWith("/assets/") && /\.[A-Za-z0-9]+$/.test(pathname);
+}
+
+function isVersionCheck(pathname) {
+  return pathname === "/version.json";
 }

@@ -2124,12 +2124,49 @@ tr:hover .node-copy-icon,
 	font-size: 13px;
 }
 
-.pipeline-execution-table-row:hover > td {
-	background: #f6faff;
+.pipeline-execution-table-row > td {
+	padding: 16px 12px !important;
+	border-bottom: 1px solid #f3f4f6 !important;
+	color: #1f2937;
+	font-size: 13px;
 }
 
+.pipeline-execution-table-row:hover > td {
+	background: #fafbfc;
+}
+
+/* 问题2: 增加行间距 + 问题5: 改进色彩对比度 */
+.pipeline-execution-table .ant-table-thead > tr > th {
+	padding: 14px 12px !important;
+	background: #f3f4f6 !important;
+	color: #6b7280 !important;
+	font-weight: 600;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	border-bottom: 2px solid #e5e7eb !important;
+}
+
+/* 问题4: 列对齐一致性 */
+.pipeline-execution-table td:nth-child(5),
+.pipeline-execution-table td:nth-child(6) {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.pipeline-execution-table td:nth-child(1),
+.pipeline-execution-table td:nth-child(3),
+.pipeline-execution-table td:nth-child(4) {
+	text-align: left;
+}
+
+/* 问题6: 改进视觉优先级 */
 .pipeline-execution-table .ant-table {
 	width: 100%;
+}
+
+.pipeline-batch-detail .pipeline-execution-table tbody tr {
+	height: 56px;
 }
 
 .workflow-detail-header {

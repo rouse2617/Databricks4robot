@@ -187,3 +187,38 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --env prod
+
+  # ─── Notify: Deploy complete ───────────────────────────────────────────────
+  notify-complete:
+    name: Notify deploy complete
+    needs: [resolve-version, deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Feishu — deploy complete
+        env:
+          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
+          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          BACKEND_STATUS="${{ needs.deploy-backend.result }}"
+          FRONTEND_STATUS="${{ needs.deploy-frontend.result }}"
+
+          if [[ "${BACKEND_STATUS}" == "success" ]] && [[ "${FRONTEND_STATUS}" == "success" ]]; then
+            TITLE="【部署成功】生产环境部署完成"
+            HINT="backend 和 frontend 均已成功部署到生产环境。"
+            RESULT="✅ 成功"
+          else
+            TITLE="【部署失败】生产环境部署异常"
+            HINT="backend 或 frontend 部署失败，请查看日志。"
+            RESULT="❌ 失败"
+          fi
+
+          export FEISHU_ROUTE_BRANCH="main"
+          export FEISHU_MESSAGE="$(printf '%s\n\n版本：%s\nBackend：%s\nFrontend：%s\n结果：%s\n说明：%s\n日志：%s\n' \
+            "${TITLE}" "${VERSION}" "${BACKEND_STATUS}" "${FRONTEND_STATUS}" "${RESULT}" "${HINT}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+
+          bash .github/scripts/feishu-notify.sh

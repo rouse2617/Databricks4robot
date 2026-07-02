@@ -353,6 +353,74 @@ function exportFailuresCsv(
 	URL.revokeObjectURL(url);
 }
 
+function extractAssetIds(runs: RunChildSummary[]): string[] {
+	const ids = new Set<string>();
+	for (const item of runs) {
+		// 优先从 assetIds 数组中获取
+		if (item.assetIds && item.assetIds.length > 0) {
+			for (const id of item.assetIds) {
+				const trimmed = id?.trim();
+				if (trimmed) ids.add(trimmed);
+			}
+		} else if (item.labels?.asset_id) {
+			const trimmed = item.labels.asset_id.trim();
+			if (trimmed) ids.add(trimmed);
+		} else if (item.labels?.assetId) {
+			const trimmed = item.labels.assetId.trim();
+			if (trimmed) ids.add(trimmed);
+		}
+	}
+	return Array.from(ids);
+}
+
+function exportAssetIdsCsv(assetIds: string[], batchId: string): void {
+	const header = "assetId\n";
+	// CSV 中双引号需要转义为两个双引号
+	const rows = assetIds
+		.map((id) => `"${id.replace(/"/g, '""')}"`)
+		.join("\n");
+	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = `batch-${batchId.slice(0, 8)}-asset-ids.csv`;
+	// Firefox 要求 anchor 必须先添加到 DOM 才能点击
+	document.body.appendChild(anchor);
+	anchor.click();
+	document.body.removeChild(anchor);
+	URL.revokeObjectURL(url);
+}
+
+async function copyAssetIdsToClipboard(assetIds: string[]): Promise<boolean> {
+	const text = assetIds.join("\n");
+
+	// 方法1: 使用现代 Clipboard API
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch {
+			// 降级到方法2
+		}
+	}
+
+	// 方法2: 使用传统 execCommand（兼容性更好）
+	try {
+		const textarea = document.createElement("textarea");
+		textarea.value = text;
+		textarea.style.position = "fixed";
+		textarea.style.left = "-999999px";
+		textarea.setAttribute("readonly", ""); // 移动设备避免弹出键盘
+		document.body.appendChild(textarea);
+		textarea.select();
+		const success = document.execCommand("copy");
+		document.body.removeChild(textarea);
+		return success;
+	} catch {
+		return false;
+	}
+}
+
 export function formatRerunFeedback(result: {
 	status: string;
 	matchedCount: number;
@@ -864,6 +932,52 @@ export default function BatchJobDetailPage() {
 								loading={actionLoading?.startsWith("rerun-")}
 							>
 								重跑
+							</Button>
+						</Dropdown>
+						<Dropdown
+							menu={{
+								items: [
+									{
+										key: "copy",
+										label: "复制到剪贴板",
+										disabled: !runTree || runTree.items.length === 0,
+									},
+									{
+										key: "csv",
+										label: "导出 CSV",
+										disabled: !runTree || runTree.items.length === 0,
+									},
+								],
+								onClick: async ({ key }) => {
+									if (!runTree) return;
+									const assetIds = extractAssetIds(runTree.items);
+									if (assetIds.length === 0) {
+										message.info("没有可导出的资产 ID");
+										return;
+									}
+									if (key === "copy") {
+										const success = await copyAssetIdsToClipboard(assetIds);
+										if (success) {
+											message.success(
+												`已复制 ${assetIds.length} 个资产 ID 到剪贴板`,
+											);
+										} else {
+											message.error("复制失败，请重试");
+										}
+									} else if (key === "csv") {
+										exportAssetIdsCsv(assetIds, job.id);
+										message.success(
+											`已导出 ${assetIds.length} 个资产 ID`,
+										);
+									}
+								},
+							}}
+						>
+							<Button
+								icon={<DownloadOutlined />}
+								disabled={!runTree || runTree.items.length === 0}
+							>
+								导出资产 ID
 							</Button>
 						</Dropdown>
 						{job.pilotPhase === "review" ? (

@@ -1,6 +1,12 @@
 import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const previewId = (process.env.VITE_PREVIEW_ID ?? "").trim();
 const previewHost = (
@@ -88,8 +94,31 @@ function devServerBanner(): import("vite").Plugin {
 	};
 }
 
+function versionPlugin(): import("vite").Plugin {
+	return {
+		name: "databrew-version-generator",
+		apply: "build",
+		writeBundle() {
+			const versionInfo = {
+				version: appVersion,
+				buildRef: buildRef,
+				timestamp: Date.now(),
+			};
+			const distPath = path.resolve(__dirname, "dist");
+			const versionPath = path.join(distPath, "version.json");
+			if (!fs.existsSync(distPath)) {
+				fs.mkdirSync(distPath, { recursive: true });
+			}
+			fs.writeFileSync(versionPath, JSON.stringify(versionInfo, null, 2));
+			console.log(
+				`✓ Generated version.json: v${appVersion} (${buildRef})`,
+			);
+		},
+	};
+}
+
 export default defineConfig({
-	plugins: [react(), devServerBanner()],
+	plugins: [react(), devServerBanner(), versionPlugin()],
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
 		__APP_BUILD_REF__: JSON.stringify(buildRef),
