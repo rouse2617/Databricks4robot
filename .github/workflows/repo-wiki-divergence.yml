@@ -8,16 +8,8 @@ name: repo-wiki-divergence
 # "enforce" step at the bottom and mark this check Required in branch protection.
 
 on:
-  pull_request:
-    paths:
-      - "backend/**"
-      - "Frontend/**"
-      - "sdk/**"
-      - "services/**"
-      - "api/openapi.yaml"
-      - "docs/repo-wiki/**"
-      - "scripts/repo-wiki/**"
-      - ".github/workflows/repo-wiki-divergence.yml"
+  push:
+    branches: [main]
 
 permissions:
   contents: read

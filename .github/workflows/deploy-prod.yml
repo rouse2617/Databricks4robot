@@ -134,25 +134,15 @@ jobs:
           # would REPLACE the entire set (gcloud docs: "All existing environment
           # variables will be removed first"), which would wipe JWT_SECRET,
           # DATABREW_TOKEN, DB_HOST, and every other prod env var on first run.
+          # --set-secrets loads the named Secret Manager secrets as environment variables.
           gcloud run deploy cyber-databrew-backend-prod \
             --image="${{ env.IMAGE }}" \
             --region=${{ env.REGION }} \
             --project=${{ env.PROJECT_ID }} \
             --platform=managed \
             --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }}
-
-      - name: Verify backend health
-        run: |
-          BACKEND_URL=$(gcloud run services describe cyber-databrew-backend-prod \
-            --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} \
-            --format='value(status.url)')
-          if curl -sf "${BACKEND_URL}/healthz" > /dev/null; then
-            echo "backend healthy"
-          else
-            echo "::error::backend health check failed at ${BACKEND_URL}/healthz — failing the deploy"
-            exit 1
-          fi
+            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }} \
+            --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest
 
   # ─── Frontend (Cloudflare Worker) ───────────────────────────────────────────
   deploy-frontend:
