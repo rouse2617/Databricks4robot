@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { useVersionCheck } from "../hooks/useVersionCheck";
 import { getAppVersionLabel } from "../lib/appVersion";
 import CmdKSearch from "./CmdKSearch";
 
@@ -110,6 +111,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const [collapsed, setCollapsed] = useState<boolean>(
 		() => localStorage.getItem("db.sider.collapsed") === "1",
 	);
+	useVersionCheck();
+
 	const toggleCollapsed = () => {
 		setCollapsed((prev) => {
 			const next = !prev;
@@ -157,9 +160,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					onClick={() => navigate("/dashboard")}
 				>
 					<img
-						src="/favicon.svg"
+						src="/databrew-icon.svg"
 						alt="DataBrew"
-						style={{ width: 28, height: 28, marginRight: 10 }}
+						style={{ width: 32, height: 32, marginRight: 12 }}
 					/>
 					<Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
 						DataBrew

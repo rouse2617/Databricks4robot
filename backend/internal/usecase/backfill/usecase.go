@@ -1006,10 +1006,6 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
-	uc.refreshBatchReadModel(ctx, jobID)
-	if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
-		job = fresh
-	}
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return nil, err

@@ -1,4 +1,5 @@
 {
+  // Cloudflare Worker configuration with full permissions
   "name": "cyber-databrew-dev",
   "compatibility_date": "2026-05-27",
   "main": "_worker.js",
@@ -7,6 +8,15 @@
     "binding": "ASSETS"
   },
   "env": {
+    "dev": {
+      "name": "cyber-databrew-dev",
+      "routes": [
+        {
+          "pattern": "cyber-databrew-dev.cyberorigin.ai/*",
+          "zone_name": "cyberorigin.ai"
+        }
+      ]
+    },
     "prod": {
       "name": "cyber-databrew",
       "routes": [

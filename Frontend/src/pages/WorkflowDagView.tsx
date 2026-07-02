@@ -146,13 +146,17 @@ export function buildDagElements(
 			id: edgeId,
 			source,
 			target,
-			type: "smoothstep",
-			style: { stroke: "#64748b", strokeWidth: 1.5 },
+			type: "step",
+			style: {
+				stroke: "#94a3b8",
+				strokeWidth: 1.5,
+				strokeDasharray: "6,4"
+			},
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
-				color: "#64748b",
-				width: 14,
-				height: 14,
+				color: "#94a3b8",
+				width: 12,
+				height: 12,
 			},
 		});
 	};
@@ -194,7 +198,7 @@ export function buildDagElements(
 	graph.setGraph({
 		rankdir: DAG_RANK_DIR,
 		nodesep: DAG_NODE_GAP,
-		ranksep: 28,
+		ranksep: 60,
 		marginx: 20,
 		marginy: 20,
 	});

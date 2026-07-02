@@ -24,4 +24,3 @@ jobs:
         uses: actions/github-script@v7
         with:
           script-path: .github/scripts/pr-prod-deploy-comment.js
-
