@@ -498,6 +498,28 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 	targetID := targetIDFromBackfillJob(job)
 
+	// Dedup guard: if this item was claimed while it ALREADY had a live workflow
+	// submitted to Argo, do not deploy a second one. ClaimNextItem always sets the
+	// item status to "running", so item.Status cannot tell a fresh claim from a
+	// re-claim — inspect the run itself. A run that was actually submitted to Argo
+	// has an ArgoWorkflowUID (assigned by Argo on creation, so even a queued/Pending
+	// workflow has one) or a StartedAt (set by CommitBatchSubtaskDeploy). An
+	// unsubmitted placeholder created by UpsertBatchSubtaskRun has neither, so
+	// genuine first-time deploys still proceed. Re-deploying an already-queued
+	// (Argo Pending) run is what orphaned tens of thousands of workflows.
+	if runID != "" && uc.pipelineUC != nil {
+		if existing, getErr := uc.pipelineUC.GetRun(ctx, runID); getErr == nil && runAlreadySubmitted(existing) {
+			wf := strings.TrimSpace(existing.WorkflowName)
+			if wf == "" {
+				wf = workflowName
+			}
+			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "running")
+			slog.Info("executeItem: skip duplicate deploy, run already live",
+				"jobID", jobID, "assetID", item.AssetID, "runID", runID, "runStatus", existing.Status)
+			return nil
+		}
+	}
+
 	if runID == "" && uc.pipelineUC != nil {
 		var initErr error
 		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
@@ -1006,12 +1028,10 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
-	// Asynchronously reconcile missing runs in background to avoid blocking the read path
-	// on expensive ReconcileSubtaskRuns. Allows UI to render immediately while state
-	// updates happen in the background.
-	go func() {
-		_ = uc.ReconcileSubtaskRuns(context.Background(), jobID)
-	}()
+	uc.refreshBatchReadModel(ctx, jobID)
+	if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
+		job = fresh
+	}
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -1495,12 +1515,44 @@ func mapRunStatusToItem(runStatus string) string {
 	case "failed", "error":
 		return "failed"
 	case "pending":
-		return "pending"
+		// Argo "Pending" means the workflow HAS been submitted and is queued
+		// (e.g. waiting for a concurrency/parallelism slot) — a healthy in-flight
+		// state. It is NOT the same as the backfill item's own "pending", which
+		// means "never submitted, free to be re-claimed". Mapping Argo-Pending to
+		// item-pending made ClaimNextItem re-select an already-queued asset and
+		// executeItem submit a duplicate workflow, orphaning the original. Treat a
+		// queued workflow as "running" so it is not re-claimed.
+		return "running"
 	case "running":
 		return "running"
 	default:
 		return "running"
 	}
+}
+
+// isTerminalRunStatus reports whether a pipeline run has reached a final state.
+// Queued ("Pending") and "Running" are explicitly non-terminal.
+func isTerminalRunStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success", "failed", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+// runAlreadySubmitted reports whether a pipeline run has already been dispatched
+// to Argo and is still in flight, so executeItem must not submit a duplicate.
+// A run counts as submitted once Argo has assigned a workflow UID (present even
+// while the workflow is queued/Pending) or once it has a StartedAt. An unsubmitted
+// placeholder (UpsertBatchSubtaskRun) has neither, so first-time deploys proceed.
+// Terminal runs return false so retries can re-deploy.
+func runAlreadySubmitted(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	submitted := strings.TrimSpace(run.ArgoWorkflowUID) != "" || run.StartedAt != nil
+	return submitted && !isTerminalRunStatus(run.Status)
 }
 
 // GetItemAttempts returns all pipeline runs (attempts) for one logical backfill item.
