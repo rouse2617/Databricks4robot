@@ -107,11 +107,16 @@ func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipeline
 	for i := range m.items {
 		if m.items[i].ID == id {
 			m.items[i].Status = status
+			// Mirror the postgres repo's nullIfEmpty: empty clears the column.
 			if pipelineRunID != "" {
 				m.items[i].PipelineRunID = &pipelineRunID
+			} else {
+				m.items[i].PipelineRunID = nil
 			}
 			if workflowName != "" {
 				m.items[i].WorkflowName = &workflowName
+			} else {
+				m.items[i].WorkflowName = nil
 			}
 		}
 	}
@@ -133,8 +138,18 @@ func (m *mockBackfillRepo) CountItemsByStatus(_ context.Context, _, _ string) (i
 func (m *mockBackfillRepo) SummarizeItemStatuses(_ context.Context, _ string) (repository.BackfillItemStatusSummary, error) {
 	return repository.BackfillItemStatusSummary{}, nil
 }
-func (m *mockBackfillRepo) FindItemsByJobIDWithStatuses(_ context.Context, _ string, _ []string) ([]models.BackfillItem, error) {
-	return nil, nil
+func (m *mockBackfillRepo) FindItemsByJobIDWithStatuses(_ context.Context, jobID string, statuses []string) ([]models.BackfillItem, error) {
+	out := []models.BackfillItem{}
+	for _, item := range m.items {
+		if item.JobID != jobID {
+			continue
+		}
+		if len(statuses) > 0 && !containsString(statuses, item.Status) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 func (m *mockBackfillRepo) FindItemsMissingPipelineRun(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
@@ -745,5 +760,38 @@ func TestPauseJob_SetsPausedStatus(t *testing.T) {
 	}
 	if repo.jobs["job-1"].Status != "paused" {
 		t.Fatalf("job status not updated: %q", repo.jobs["job-1"].Status)
+	}
+}
+
+func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
+	// When pausing with StopRunning, stopping the workflow removes it from Argo.
+	// The item must be reset to "pending" so a later resume re-submits it; if it
+	// stayed "running" it would be invisible to ResumeJob's ClaimNextItem and the
+	// executeItem dedup guard would skip redeploy — stranding it forever.
+	runID := "run-1"
+	repo := &mockBackfillRepo{
+		jobs: map[string]*models.BackfillJob{
+			"job-1": {ID: "job-1", Status: "running", TotalCount: 1},
+		},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "a1", Status: "running", PipelineRunID: &runID},
+		},
+	}
+	runRepo := &syncTestRunRepo{byID: map[string]*models.PipelineRun{
+		runID: {ID: runID, WorkflowName: "wf-1", Status: "Running", ArgoNamespace: "default"},
+	}}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+
+	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{StopRunning: true})
+	if err != nil {
+		t.Fatalf("PauseJob: %v", err)
+	}
+	if result.StoppedCount != 1 {
+		t.Fatalf("StoppedCount = %d, want 1", result.StoppedCount)
+	}
+	if repo.items[0].Status != "pending" {
+		t.Fatalf("stopped item status = %q, want pending (so resume re-runs it)", repo.items[0].Status)
 	}
 }

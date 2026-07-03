@@ -835,6 +835,15 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 				continue
 			}
 			result.StoppedCount++
+			// Stopping removes the workflow from Argo, so the item is no longer
+			// running. Reset it to "pending" and drop its run link so a later
+			// resume re-submits it cleanly. Leaving it "running" with a stale run
+			// both hides it from ResumeJob (ClaimNextItem only claims "pending")
+			// and trips executeItem's dedup guard (the run still looks submitted)
+			// — that combination is what stranded items after pause→resume.
+			if err := uc.repo.UpdateItemPipelineRun(ctx, item.ID, "", "", "pending"); err != nil {
+				slog.Warn("PauseJob: reset stopped item to pending failed", "jobID", id, "itemID", item.ID, "err", err)
+			}
 		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
