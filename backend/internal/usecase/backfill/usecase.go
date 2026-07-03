@@ -1006,6 +1006,12 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
+	// Asynchronously reconcile missing runs in background to avoid blocking the read path
+	// on expensive ReconcileSubtaskRuns. Allows UI to render immediately while state
+	// updates happen in the background.
+	go func() {
+		_ = uc.ReconcileSubtaskRuns(context.Background(), jobID)
+	}()
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return nil, err
