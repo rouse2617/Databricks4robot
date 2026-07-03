@@ -134,7 +134,29 @@ jobs:
           IMAGE=${{ env.IMAGE }} \
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
+          CLOUDRUN_ENV=development \
           bash deploy/cloudrun/backend-dev.sh
+
+      # The dev service has no real DATABREW_TOKEN / JWT_SECRET, so ENV=production
+      # (the backend-dev.sh default) makes every new revision fail the fail-fast
+      # config check and crash on boot — freezing traffic on the last good
+      # revision. CLOUDRUN_ENV=development matches the known-good running revision.
+
+      - name: Route dev traffic to latest revision
+        run: |
+          # gcloud run deploy leaves traffic pinned to the previously-serving
+          # revision when the service is in manual-traffic mode, so new revisions
+          # never receive traffic. Force 100% onto the newest ready revision.
+          for i in 1 2 3 4 5; do
+            if gcloud run services update-traffic cyber-databrew-backend-dev \
+                 --project=green-valley-442103 --region=us-central1 \
+                 --to-latest --quiet; then
+              echo "traffic routed to latest"
+              break
+            fi
+            echo "traffic routing attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
 
   # ─── MCAP Preview ───────────────────────────────────────────────────────────
   deploy-mcap:
