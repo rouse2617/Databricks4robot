@@ -156,14 +156,20 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillUC := backfillUC.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
-	// Phase 4 Commit A: persistent dispatcher (outbox) is OPT-IN. The
-	// migration 064 has already run and stamped existing rows to
-	// dispatch_state='legacy_skip' so they continue draining via the
-	// legacy ClaimNextItem + ResetStaleItems path. The dispatcher
-	// picks up only NEW rows (Commit B will start writing to it). Set
-	// BACKFILL_DISPATCH_MODE=outbox to enable. See
-	// openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
-	if os.Getenv("BACKFILL_DISPATCH_MODE") == "outbox" {
+	// Phase 4 Commit C1: dispatcher is now DEFAULT-ON. The legacy
+	// pool is still reachable as a fallback via
+	// BACKFILL_DISPATCH_MODE=legacy (committed Commit C2 will delete
+	// that path entirely once we've validated the dispatcher in
+	// dev). Both dispatcher and legacy cannot run on the same data
+	// in the same process — see Commit B's BACKFILL_DISPATCH_MODE
+	// documentation.
+	if os.Getenv("BACKFILL_DISPATCH_MODE") == "legacy" {
+		// EMERGENCY FALLBACK. To re-enable, set
+		// BACKFILL_DISPATCH_MODE=legacy. Will be removed in Commit C2.
+		backfillUC.StartReaper()
+		backfillUC.ResumeIncompleteBatches(context.Background())
+		slog.Info("backfill dispatcher SKIPPED (mode=legacy legacy path active)")
+	} else {
 		dispatcher := backfillUC.NewDispatcher(backfillRepo, puc, backfillUC.DispatcherConfig{
 			Tick:          5 * time.Second,
 			LeaseSec:      60,
@@ -174,10 +180,7 @@ func setupCore(inf *infra) *coreHandlers {
 			BackoffMax:    30 * time.Second,
 		})
 		dispatcher.Start(context.Background())
-		slog.Info("backfill dispatcher started (mode=outbox)")
-	} else {
-		backfillUC.StartReaper()
-		backfillUC.ResumeIncompleteBatches(context.Background())
+		slog.Info("backfill dispatcher started (mode=outbox default)")
 	}
 	backfillHandler := backfillH.New(backfillUC)
 

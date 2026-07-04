@@ -37,21 +37,24 @@ var maxConcurrentBatchItems = func() int {
 // the persistent dispatcher (outbox engine) or the legacy in-memory
 // runItems goroutine pool. See PHASE4-DESIGN.md.
 //
-//	legacy  — Default. Items land in dispatch_state='legacy_skip',
-//	          the legacy runItems path drains them. New dispatcher
-//	          (Commit A) sits idle.
-//	outbox  — Items land with dispatch_state='pending' and a
-//	          pre-computed workflow_name_planned. The dispatcher
+//	outbox  — DEFAULT as of Commit C1. Items land with
+//	          dispatch_state='pending' and a pre-computed
+//	          workflow_name_planned. The persistent dispatcher
 //	          watches the table and submits them.
+//	legacy  — EMERGENCY FALLBACK. Set BACKFILL_DISPATCH_MODE=legacy
+//	          to revert to the legacy go runItems pool. Kept until
+//	          the dispatcher is validated end-to-end in dev; once
+//	          Commit C deletes this branch entirely, the flag is
+//	          removed and the dispatcher becomes the only path.
 //
 // Read once at startup from BACKFILL_DISPATCH_MODE env var. The env
 // read happens in init() so callers can adjust it before boot via
 // os.Setenv if needed.
 var globalDispatchMode = func() string {
-	if v := strings.ToLower(strings.TrimSpace(os.Getenv("BACKFILL_DISPATCH_MODE"))); v == "outbox" {
-		return "outbox"
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("BACKFILL_DISPATCH_MODE"))); v == "legacy" {
+		return "legacy"
 	}
-	return "legacy"
+	return "outbox"
 }()
 
 // deployTimeout caps how long a single executeItem call may take
