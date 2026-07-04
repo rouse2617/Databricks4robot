@@ -35,6 +35,23 @@ type BackfillItem struct {
 	StartedAt     *time.Time `json:"startedAt,omitempty"`
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
+
+	// Phase 4: persistent dispatcher (outbox) columns. See
+	// openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
+	//
+	// DispatchState is the outbox state machine:
+	//   pending      ready to be claimed
+	//   claimed      ticker has SKIP-LOCKED-locked this row; lease active
+	//   submitting   worker has refreshed lease; submit in flight
+	//   failed       retryable; lease holds the backoff window
+	//   submitted    ABSORBING — successful, never re-claim
+	//   dead         ABSORBING — MaxAttempts reached, never re-claim
+	//   legacy_skip  sentinel: pre-migration row, dispatcher ignores
+	DispatchState        string     `json:"dispatchState,omitempty"`          // above enum
+	DispatchGeneration   int64      `json:"dispatchGeneration,omitempty"`     // bumped on rerun
+	WorkflowNamePlanned  string     `json:"workflowNamePlanned,omitempty"`    // deterministic wfname (Phase 1)
+	DispatchLeaseExpires *time.Time `json:"dispatchLeaseExpiresAt,omitempty"` // active lease wall-clock
+	DispatchLastError    string     `json:"dispatchLastError,omitempty"`      // for observability
 }
 
 type BatchNodeSummary struct {
@@ -98,17 +115,17 @@ type BatchNodeFailureListResult struct {
 }
 
 type BackfillItemAttempt struct {
-	RunID           string                  `json:"runId"`
-	AttemptNo       int                     `json:"attemptNo"`
-	Status          string                  `json:"status"`
-	TemplateVersion int                     `json:"templateVersion,omitempty"`
-	WorkflowName    string                  `json:"workflowName,omitempty"`
-	Message         string                  `json:"message,omitempty"`
+	RunID           string                   `json:"runId"`
+	AttemptNo       int                      `json:"attemptNo"`
+	Status          string                   `json:"status"`
+	TemplateVersion int                      `json:"templateVersion,omitempty"`
+	WorkflowName    string                   `json:"workflowName,omitempty"`
+	Message         string                   `json:"message,omitempty"`
 	NodeProgress    *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
-	IsCurrent       bool                    `json:"isCurrent"`
-	StartedAt       *time.Time              `json:"startedAt,omitempty"`
-	FinishedAt      *time.Time              `json:"finishedAt,omitempty"`
-	CreatedAt       time.Time               `json:"createdAt"`
+	IsCurrent       bool                     `json:"isCurrent"`
+	StartedAt       *time.Time               `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time               `json:"finishedAt,omitempty"`
+	CreatedAt       time.Time                `json:"createdAt"`
 }
 
 type BackfillItemAttemptsResult struct {

@@ -52,6 +52,56 @@ type BackfillRepository interface {
 	// FindIncompleteJobs returns all backfill jobs that are still running
 	// and have at least one pending item. Used for startup recovery.
 	FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error)
+
+	// ── Phase 4 dispatcher surface (outbox) ──────────────────────────────────
+	// See openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
+	// The legacy ClaimNextItem/ResetStaleItems above coexist during the
+	// migration window and are removed in a later Phase 4 commit.
+
+	// ClaimNextDispatch atomically picks the oldest ready backfill_item
+	// using FOR UPDATE SKIP LOCKED and sets dispatch_state='claimed' with
+	// a lease held until now()+leaseSec. Returns nil if no item is ready
+	// (or all ready items have exhausted MaxAttempts). The reserved row
+	// stays under SKIP LOCKED for the duration of the surrounding
+	// transaction. Returns errors.ErrNoRows (mapped to a return of (nil,
+	// nil)) when the candidate set is empty.
+	ClaimNextDispatch(ctx context.Context, leaseSec, maxAttempts int) (*models.BackfillItem, error)
+
+	// MarkDispatchSubmitting is called by a worker right before invoking
+	// the pipeline Deploy, to keep the lease alive while a slow submit is
+	// in flight and to set dispatch_state='submitting'. Idempotent.
+	MarkDispatchSubmitting(ctx context.Context, itemID string, leaseSec int) error
+
+	// MarkDispatched is the success-terminal state transition. Stamps
+	// the determined argo workflow name + UID into backfill_items
+	// (alongside the legacy columns used by other endpoints) and clears
+	// the lease. After this call, the row is in the absorbing
+	// 'submitted' state.
+	MarkDispatched(ctx context.Context, itemID, argoWorkflowName, argoUID string) error
+
+	// MarkDispatchFailedRetryable transitions to 'failed' and sets the
+	// lease to NOW()+leaseSec — the lease IS the backoff window
+	// (Decision B). Increments attempts and records dispatch_last_error.
+	// The row stays out of ClaimNextDispatch until the lease expires.
+	MarkDispatchFailedRetryable(ctx context.Context, itemID string, attempts int, lastErr string, leaseSec int) error
+
+	// MarkDispatchDead is the absorbing failure terminal state, reached
+	// only when attempts exceed MaxAttempts. Same as
+	// MarkDispatchFailedRetryable but with state='dead'.
+	MarkDispatchDead(ctx context.Context, itemID string, attempts int, lastErr string) error
+
+	// UpdateItemDispatchFields writes back the realtime runtime fields
+	// (template_id, template_version, target_id, dispatch_lease_expires_at)
+	// from the dispatcher into backfill_items. Bumps attempts to mirror
+	// the dispatcher's claim for downstream observers.
+	UpdateItemDispatchFields(ctx context.Context, itemID string, templateID string, templateVersion int, targetID string, leaseSec int) error
+
+	// ResetStaleDispatchedItems is the new reaper. It transitions
+	// 'claimed' / 'submitting' rows whose lease has expired back to
+	// 'pending' (provided they still have headroom under MaxAttempts).
+	// ABsorbing 'submitted' / 'dead' states are explicitly excluded.
+	// Returns the number of rows reclaimed.
+	ResetStaleDispatchedItems(ctx context.Context, leaseSec, maxAttempts int) (int, error)
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

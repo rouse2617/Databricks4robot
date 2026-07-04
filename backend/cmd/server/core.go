@@ -155,8 +155,30 @@ func setupCore(inf *infra) *coreHandlers {
 	// would have run the legacy non-atomic fallback.
 	backfillUC := backfillUC.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
-	backfillUC.StartReaper()
-	backfillUC.ResumeIncompleteBatches(context.Background())
+
+	// Phase 4 Commit A: persistent dispatcher (outbox) is OPT-IN. The
+	// migration 064 has already run and stamped existing rows to
+	// dispatch_state='legacy_skip' so they continue draining via the
+	// legacy ClaimNextItem + ResetStaleItems path. The dispatcher
+	// picks up only NEW rows (Commit B will start writing to it). Set
+	// BACKFILL_DISPATCH_MODE=outbox to enable. See
+	// openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
+	if os.Getenv("BACKFILL_DISPATCH_MODE") == "outbox" {
+		dispatcher := backfillUC.NewDispatcher(backfillRepo, puc, backfillUC.DispatcherConfig{
+			Tick:          5 * time.Second,
+			LeaseSec:      60,
+			MaxAttempts:   3,
+			WorkerCount:   5,
+			JobBufferSize: 64,
+			BackoffBase:   1 * time.Second,
+			BackoffMax:    30 * time.Second,
+		})
+		dispatcher.Start(context.Background())
+		slog.Info("backfill dispatcher started (mode=outbox)")
+	} else {
+		backfillUC.StartReaper()
+		backfillUC.ResumeIncompleteBatches(context.Background())
+	}
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

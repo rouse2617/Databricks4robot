@@ -89,6 +89,90 @@ func (m *mockBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Bac
 	return nil, nil
 }
 
+// ── Phase 4 dispatcher (outbox) implementations for the test mock.
+// These keep the existing legacy mock behaviour but also implement the
+// outbox-method surface so tests that exercise Dispatcher can compile.
+
+func (m *mockBackfillRepo) ClaimNextDispatch(_ context.Context, leaseSec, maxAttempts int) (*models.BackfillItem, error) {
+	// Return the first item in dispatch_state in {pending,failed} with
+	// lease expired or unset. Tests rarely need this; the dispatcher_test
+	// has a dedicated behavioural mock.
+	for i := range m.items {
+		it := &m.items[i]
+		if it.DispatchState != "pending" && it.DispatchState != "failed" {
+			continue
+		}
+		if it.Attempts >= maxAttempts {
+			continue
+		}
+		copy := *it
+		it.DispatchState = "claimed"
+		it.Attempts++
+		return &copy, nil
+	}
+	return nil, nil
+}
+func (m *mockBackfillRepo) MarkDispatchSubmitting(_ context.Context, _ string, leaseSec int) error {
+	for i := range m.items {
+		if m.items[i].DispatchState == "claimed" || m.items[i].DispatchState == "submitting" {
+			m.items[i].DispatchState = "submitting"
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) MarkDispatched(_ context.Context, itemID, argoName, argoUID string) error {
+	for i := range m.items {
+		if m.items[i].ID == itemID {
+			m.items[i].DispatchState = "submitted"
+			m.items[i].WorkflowName = &argoName
+			m.items[i].PipelineRunID = &argoUID
+			m.items[i].Status = "running"
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) MarkDispatchFailedRetryable(_ context.Context, itemID string, attempts int, lastErr string, leaseSec int) error {
+	for i := range m.items {
+		if m.items[i].ID == itemID {
+			m.items[i].DispatchState = "failed"
+			m.items[i].Attempts = attempts
+			m.items[i].DispatchLastError = lastErr
+			m.items[i].ErrorMessage = &lastErr
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) MarkDispatchDead(_ context.Context, itemID string, attempts int, lastErr string) error {
+	for i := range m.items {
+		if m.items[i].ID == itemID {
+			m.items[i].DispatchState = "dead"
+			m.items[i].Attempts = attempts
+			m.items[i].DispatchLastError = lastErr
+			m.items[i].ErrorMessage = &lastErr
+			m.items[i].Status = "failed"
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) UpdateItemDispatchFields(_ context.Context, itemID, _ string, templateVersion int, _ string, _ int) error {
+	for i := range m.items {
+		if m.items[i].ID == itemID {
+			if templateVersion > 0 {
+				m.items[i].TemplateVersion = templateVersion
+			}
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) ResetStaleDispatchedItems(_ context.Context, _, _ int) (int, error) {
+	return 0, nil
+}
+
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -715,7 +799,6 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
-
 
 func (r *trackingBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
 	return nil, nil

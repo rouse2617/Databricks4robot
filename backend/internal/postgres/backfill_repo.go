@@ -181,7 +181,9 @@ func (r *BackfillRepo) IncrementFailed(ctx context.Context, id string) error {
 // ── Items ───────────────────────────────────────────────────────────────────
 
 const backfillItemSelectCols = `id, job_id, asset_id, status,
-  pipeline_run_id, workflow_name, error_message, attempts, started_at, finished_at, created_at`
+  pipeline_run_id, workflow_name, error_message, attempts, started_at, finished_at, created_at,
+  dispatch_state, dispatch_generation, workflow_name_planned,
+  dispatch_lease_expires_at, dispatch_last_error`
 
 func scanBackfillItem(rs rowScanner) (*models.BackfillItem, error) {
 	var item models.BackfillItem
@@ -189,6 +191,8 @@ func scanBackfillItem(rs rowScanner) (*models.BackfillItem, error) {
 		&item.ID, &item.JobID, &item.AssetID, &item.Status,
 		&item.PipelineRunID, &item.WorkflowName, &item.ErrorMessage, &item.Attempts, &item.StartedAt, &item.FinishedAt,
 		&item.CreatedAt,
+		&item.DispatchState, &item.DispatchGeneration, &item.WorkflowNamePlanned,
+		&item.DispatchLeaseExpires, &item.DispatchLastError,
 	); err != nil {
 		return nil, err
 	}
@@ -1001,4 +1005,187 @@ func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backfil
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
+}
+
+// ── Phase 4 dispatcher (outbox) implementation ────────────────────────────
+// See openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
+//
+// These methods implement the per-row state machine the persistent
+// dispatcher relies on. The legacy claim methods above (ClaimNextItem,
+// ResetStaleItems) continue to coexist so we can deploy this commit
+// without changing any production entry point yet. Commit B/C will
+// route the entry points through these then delete the legacy paths.
+
+// ClaimNextDispatch atomically locks the oldest ready item using
+// FOR UPDATE SKIP LOCKED and stamps the claimer's lease on it.
+// Ready means: dispatch_state IN ('pending', 'failed') AND the
+// existing lease (if any) has expired AND attempts < MaxAttempts.
+//
+// NOTE: ORDER BY created_at ASC — NOT by id (id is a TEXT uuid column,
+// ordering on it is random and would silently break FIFO fairness).
+// See plan section "游标铁律".
+func (r *BackfillRepo) ClaimNextDispatch(ctx context.Context, leaseSec, maxAttempts int) (*models.BackfillItem, error) {
+	const q = `
+		WITH picked AS (
+			SELECT id FROM backfill_items
+			WHERE dispatch_state IN ('pending', 'failed')
+			  AND (dispatch_lease_expires_at IS NULL OR dispatch_lease_expires_at < NOW())
+			  AND attempts < $2
+			ORDER BY created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE backfill_items bi
+		SET dispatch_state='claimed',
+		    dispatch_lease_expires_at=NOW() + ($1 || ' seconds')::interval,
+		    attempts=attempts + 1
+		FROM picked
+		WHERE bi.id = picked.id
+		RETURNING ` + backfillItemSelectCols
+	db := dbFromCtx(ctx, r.c.db)
+	item, err := scanBackfillItem(db.QueryRow(ctx, q, leaseSec, maxAttempts))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres BackfillRepo.ClaimNextDispatch: %w", err)
+	}
+	return item, nil
+}
+
+// MarkDispatchSubmitting refreshes the lease (cheap heartbeat) and
+// marks the row as actively being submitted. Idempotent.
+func (r *BackfillRepo) MarkDispatchSubmitting(ctx context.Context, itemID string, leaseSec int) error {
+	const q = `
+		UPDATE backfill_items
+		SET dispatch_state='submitting',
+		    dispatch_lease_expires_at=NOW() + ($2 || ' seconds')::interval
+		WHERE id=$1 AND dispatch_state IN ('claimed', 'submitting')`
+	db := dbFromCtx(ctx, r.c.db)
+	if _, err := db.Exec(ctx, q, itemID, leaseSec); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkDispatchSubmitting: %w", err)
+	}
+	return nil
+}
+
+// MarkDispatched is the absorbing success transition. Clears lease and
+// records the resolved Argo workflow name + UID for downstream consumers
+// (backfill_items.pipeline_run_id / workflow_name + pipeline_runs.workflow_name).
+func (r *BackfillRepo) MarkDispatched(ctx context.Context, itemID, argoWorkflowName, argoUID string) error {
+	const q = `
+		UPDATE backfill_items
+		SET dispatch_state='submitted',
+		    dispatch_lease_expires_at=NULL,
+		    dispatch_last_error=NULL,
+		    status='running',
+		    started_at=NOW(),
+		    finished_at=NULL,
+		    error_message=NULL,
+		    pipeline_run_id=COALESCE(pipeline_run_id, $2)
+		WHERE id=$1
+		  AND dispatch_state IN ('claimed', 'submitting')`
+	db := dbFromCtx(ctx, r.c.db)
+	res, err := db.Exec(ctx, q, itemID, argoUID)
+	if err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkDispatched: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		// The row may already have transitioned by the reaper or a
+		// duplicate worker. Idempotent no-op rather than silent success.
+		return fmt.Errorf("postgres BackfillRepo.MarkDispatched: row %s not in claimable state", itemID)
+	}
+	// Mirror the argo wfname to the legacy column so the still-used
+	// existing paths (ReportBatchSubtaskFailure / SyncJobProgress) keep
+	// seeing the same workflow_name they always saw.
+	if argoWorkflowName != "" {
+		_, _ = db.Exec(ctx, `UPDATE backfill_items SET workflow_name=$2 WHERE id=$1`, itemID, argoWorkflowName)
+	}
+	return nil
+}
+
+// MarkDispatchFailedRetryable transitions to 'failed' and parks the
+// row at NOW()+leaseSec — the lease IS the backoff window (Decision B).
+// Idempotent and only fires for rows still in a claimable state.
+func (r *BackfillRepo) MarkDispatchFailedRetryable(ctx context.Context, itemID string, attempts int, lastErr string, leaseSec int) error {
+	const q = `
+		UPDATE backfill_items
+		SET dispatch_state='failed',
+		    dispatch_lease_expires_at=NOW() + ($4 || ' seconds')::interval,
+		    attempts=$2,
+		    dispatch_last_error=$3,
+		    error_message=$3
+		WHERE id=$1
+		  AND dispatch_state IN ('claimed', 'submitting', 'failed')`
+	db := dbFromCtx(ctx, r.c.db)
+	if _, err := db.Exec(ctx, q, itemID, attempts, lastErr, leaseSec); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkDispatchFailedRetryable: %w", err)
+	}
+	return nil
+}
+
+// MarkDispatchDead is the absorbing failure transition. Called only when
+// attempts > MaxAttempts. Absorbing — reaper and ClaimNextDispatch MUST
+// never touch a 'dead' row.
+func (r *BackfillRepo) MarkDispatchDead(ctx context.Context, itemID string, attempts int, lastErr string) error {
+	const q = `
+		UPDATE backfill_items
+		SET dispatch_state='dead',
+		    dispatch_lease_expires_at=NULL,
+		    attempts=$2,
+		    dispatch_last_error=$3,
+		    error_message=$3,
+		    status='failed',
+		    finished_at=NOW()
+		WHERE id=$1
+		  AND dispatch_state IN ('claimed', 'submitting', 'failed', 'pending')`
+	db := dbFromCtx(ctx, r.c.db)
+	if _, err := db.Exec(ctx, q, itemID, attempts, lastErr); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkDispatchDead: %w", err)
+	}
+	return nil
+}
+
+// UpdateItemDispatchFields is a runtime-conditions checkpoint: the
+// dispatcher computed (or reloaded from Job filter_json) the
+// template_id / template_version / target_id, and stamps them onto
+// the row so sync progress and downstream diagnostics see current
+// values. Keeps the in-memory claim in alignment with what the
+// worker is actually doing.
+func (r *BackfillRepo) UpdateItemDispatchFields(ctx context.Context, itemID, _ string, templateVersion int, _ string, leaseSec int) error {
+	const q = `
+		UPDATE backfill_items
+		SET template_version = COALESCE(NULLIF($3, 0), template_version),
+		    dispatch_lease_expires_at = NOW() + ($5 || ' seconds')::interval
+		WHERE id=$1`
+	db := dbFromCtx(ctx, r.c.db)
+	if _, err := db.Exec(ctx, q, itemID, templateVersion, leaseSec); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.UpdateItemDispatchFields: %w", err)
+	}
+	return nil
+}
+
+// ResetStaleDispatchedItems is the new dispatch reaper. It transitions
+// 'claimed' / 'submitting' rows whose lease has expired back to
+// 'pending' so they can be re-claimed. Absorbing states ('submitted',
+// 'dead', 'legacy_skip') are EXPLICITLY excluded from the WHERE clause
+// — the same SQL defense as the plan section "游标铁律".
+func (r *BackfillRepo) ResetStaleDispatchedItems(ctx context.Context, leaseSec, maxAttempts int) (int, error) {
+	const q = `
+		WITH reclaimed AS (
+			UPDATE backfill_items
+			SET dispatch_state='pending',
+			    dispatch_lease_expires_at=NULL,
+			    dispatch_last_error='lease expired'
+			WHERE dispatch_state IN ('claimed', 'submitting')
+			  AND dispatch_lease_expires_at < NOW() - ($1 || ' seconds')::interval
+			  AND attempts < $2
+			RETURNING id
+		)
+		SELECT COUNT(*) FROM reclaimed`
+	db := dbFromCtx(ctx, r.c.db)
+	var count int
+	if err := db.QueryRow(ctx, q, leaseSec, maxAttempts).Scan(&count); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.ResetStaleDispatchedItems: %w", err)
+	}
+	return count, nil
 }
