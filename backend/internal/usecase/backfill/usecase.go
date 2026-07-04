@@ -515,11 +515,12 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 
 	deployOpts := pipelineUC.DeployOptions{
-		BatchJobID:         jobID,
-		TemplateVersion:    templateVersion,
-		TargetID:           targetID,
-		AllowUnknownAssets: true,
-		PreallocatedRunID:  runID,
+		BatchJobID:               jobID,
+		TemplateVersion:          templateVersion,
+		TargetID:                 targetID,
+		AllowUnknownAssets:       true,
+		PreallocatedRunID:        runID,
+		PreallocatedWorkflowName: workflowName,
 	}
 	if job != nil && job.FilterJSON != nil {
 		deployOpts.TargetID = stringFromBackfillFilter(job.FilterJSON, "targetId", "target_id", "executionTargetId", "execution_target_id")

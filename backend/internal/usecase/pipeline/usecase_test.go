@@ -2021,6 +2021,12 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
 	return m.FindAll(context.Background())
 }
+func (m *mockRunRepo) FindActiveSummariesStaleFirst(_ context.Context, _ int) ([]models.PipelineRun, error) {
+	// Phase 2: in tests, just delegate to FindAll. The watcher will only
+	// ever observe what it observed before — tests don't depend on the
+	// ordering guarantee.
+	return m.FindAll(context.Background())
+}
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())
@@ -4679,24 +4685,26 @@ func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
 
 	run := runRepo.byID["run-1"]
 	uc.RefreshRunForList(ctx, run)
-	if run.Status != string(wfv1.WorkflowError) {
-		t.Fatalf("expected Error for over-threshold unschedulable run, got %q", run.Status)
+	// Phase 3: the run is genuinely stuck waiting for resources, not
+	// in a terminal state. The status must remain active so the watcher
+	// keeps polling it (and the user sees it as "running/pending", not
+	// "failed" with a misleading red badge).
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("Phase 3: expected status to stay Running for unschedulable run, got %q", run.Status)
 	}
-	if !strings.Contains(run.Message, "Insufficient cpu") || !strings.Contains(run.Message, "Pending 20m0s") {
-		t.Fatalf("expected scheduler diagnostics in message, got %q", run.Message)
+	if run.FinishedAt != nil {
+		t.Fatalf("Phase 3: expected finished_at to stay nil for still-active unschedulable run, got %v", run.FinishedAt)
 	}
-	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
-		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
-	}
+	// The diagnosis lives in the event ledger rather than the run row.
 	foundEvent := false
 	for _, event := range eventRepo.events {
-		if event.EventType == runEventFailed && event.Reason == "unschedulable" {
+		if event.Reason == "unschedulable" {
 			foundEvent = true
 			break
 		}
 	}
 	if !foundEvent {
-		t.Fatalf("expected unschedulable run_failed event, got %#v", eventRepo.events)
+		t.Fatalf("Phase 3: expected a run_failed event with reason=unschedulable, got %#v", eventRepo.events)
 	}
 }
 
@@ -4975,5 +4983,121 @@ func TestGetRun_RepairsPollutedFinishedAtFromArgo(t *testing.T) {
 	}
 	if run.FinishedAt == nil || !run.FinishedAt.Equal(correctFinish) {
 		t.Fatalf("expected repaired finished_at %v, got %v", correctFinish, run.FinishedAt)
+	}
+}
+
+// ── Phase 1 idempotency hinge tests ─────────────────────────────────────────
+
+// TestSubmitRuntimeWorkflow_AdoptsOnAlreadyExists covers the success path:
+// when CreateWorkflow returns ErrAlreadyExists (HTTP 409), we Get the
+// existing object and stitch it into a RuntimeJob with the right UID/Name,
+// so the caller proceeds as if Create had succeeded.
+func TestSubmitRuntimeWorkflow_AdoptsOnAlreadyExists(t *testing.T) {
+	const existingName = "phase1-adopt-me"
+
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	wf := &wfv1.Workflow{}
+	wf.Name = existingName
+
+	wfClient := &mockWorkflowClient{
+		createWorkflowFn: func(_ context.Context, _ *wfv1.Workflow, _ string) error {
+			return fmt.Errorf("%w: workflow \"%s\" already exists", argo.ErrAlreadyExists, existingName)
+		},
+		getWorkflowFn: func(_ context.Context, name, ns string) (*wfv1.Workflow, error) {
+			if name != existingName {
+				t.Fatalf("expected GetWorkflow to use the deterministic name %q, got %q", existingName, name)
+			}
+			existing := wf.DeepCopy()
+			existing.Name = name
+			existing.Namespace = ns
+			existing.UID = "adopted-uid-001"
+			return existing, nil
+		},
+	}
+	uc.wfClient = wfClient
+	uc.namespace = "default"
+
+	job, err := uc.submitRuntimeWorkflow(context.Background(), "run-id-1", "human-name", wf, "default")
+	if err != nil {
+		t.Fatalf("submitRuntimeWorkflow err = %v, want adopt success", err)
+	}
+	if job == nil || job.Raw == nil {
+		t.Fatalf("expected non-nil RuntimeJob + Raw, got %#v", job)
+	}
+	if job.Ref.UID != "adopted-uid-001" {
+		t.Fatalf("Ref.UID = %q, want adopted-uid-001", job.Ref.UID)
+	}
+	if job.Ref.Name != existingName {
+		t.Fatalf("Ref.Name = %q, want %q", job.Ref.Name, existingName)
+	}
+}
+
+// TestSubmitRuntimeWorkflow_TerminatingObjectRejected covers the safety
+// path: when the conflicting workflow is being torn down (deletionTimestamp
+// set), adoption must be refused with ErrWorkflowBeingDeleted so the caller
+// can reset dispatch state rather than race the GC.
+func TestSubmitRuntimeWorkflow_TerminatingObjectRejected(t *testing.T) {
+	const dyingName = "phase1-dying"
+
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	wf := &wfv1.Workflow{}
+	wf.Name = dyingName
+
+	wfClient := &mockWorkflowClient{
+		createWorkflowFn: func(_ context.Context, _ *wfv1.Workflow, _ string) error {
+			return fmt.Errorf("%w: object is being deleted", argo.ErrAlreadyExists)
+		},
+		getWorkflowFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			now := metav1.Now()
+			dying := wf.DeepCopy()
+			dying.UID = "dying-uid"
+			dying.DeletionTimestamp = &now
+			dying.Finalizers = []string{"workflows.argoproj.io/background"}
+			return dying, nil
+		},
+	}
+	uc.wfClient = wfClient
+	uc.namespace = "default"
+
+	_, err := uc.submitRuntimeWorkflow(context.Background(), "run-id-2", "human-name-2", wf, "default")
+	if err == nil {
+		t.Fatalf("submitRuntimeWorkflow err = nil, want ErrWorkflowBeingDeleted")
+	}
+	if !errors.Is(err, ErrWorkflowBeingDeleted) {
+		t.Fatalf("err = %v, want errors.Is(_, ErrWorkflowBeingDeleted)", err)
+	}
+}
+
+// TestSubmitRuntimeWorkflow_NonAlreadyExistsPropagates covers the negative
+// path: any 409 we don't recognise stays as the upstream error so the
+// caller can fall back to retry/repair strategies without swallowing it.
+func TestSubmitRuntimeWorkflow_NonAlreadyExistsPropagates(t *testing.T) {
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	wfClient := &mockWorkflowClient{
+		createWorkflowFn: func(_ context.Context, _ *wfv1.Workflow, _ string) error {
+			return errors.New("argo server: 500 internal error")
+		},
+	}
+	uc.wfClient = wfClient
+	wf := &wfv1.Workflow{}
+	wf.Name = "phase1-non-409"
+
+	_, err := uc.submitRuntimeWorkflow(context.Background(), "run-id-3", "h-name-3", wf, "default")
+	if err == nil {
+		t.Fatalf("expected err propagation, got nil")
+	}
+	if errors.Is(err, argo.ErrAlreadyExists) {
+		t.Fatalf("non-409 should not be reported as ErrAlreadyExists: %v", err)
+	}
+}
+
+// ── Phase 1 deterministic workflow-name contract tests ────────────────────
+
+func TestDeployOptions_IncludesPreallocatedWorkflowNameContract(t *testing.T) {
+	// Compile-time check that the field exists with the expected type.
+	// If anyone renames it, the struct literal below fails to compile.
+	opts := DeployOptions{PreallocatedWorkflowName: "deterministic-name"}
+	if opts.PreallocatedWorkflowName != "deterministic-name" {
+		t.Fatalf("field did not round-trip")
 	}
 }

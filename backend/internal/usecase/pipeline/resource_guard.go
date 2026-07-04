@@ -279,8 +279,15 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 	if selectedMessage == "" {
 		return "", "", nil, false
 	}
-	finishedAt := now
-	return string(wfv1.WorkflowError), formatUnschedulableRunMessage(selectedName, now.Sub(selectedSince), selectedMessage), &finishedAt, true
+	// Phase 3: stop poisoning the run status. The scheduler is saturated
+	// (the run is genuinely stuck waiting for resources), not in a terminal
+	// state. Returning ("", "", nil, true) keeps the run row's status in
+	// its real active phase, so the watcher keeps polling it and the
+	// front-end stops misleadingly showing "Error". The caller's
+	// derivedFailureReason path will record the diagnostic event with an
+	// idempotency key (scheduling_timeout:<run_id>) so repeat observations
+	// collapse to a single event.
+	return "", "", nil, true
 }
 
 // imageStartupThreshold derives a shorter threshold for image startup failures

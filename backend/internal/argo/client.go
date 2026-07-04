@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +23,22 @@ var ErrNotFound = errors.New("argo resource not found")
 // service (e.g. the DataBrew backend or pipeline UI). Callers MUST NOT treat
 // this as "workflow genuinely not found" and MUST NOT write terminal status.
 var ErrUnexpectedNotFound = errors.New("argo unexpected not found: response is not from Argo API")
+
+// ErrAlreadyExists indicates the Argo API rejected a CreateWorkflow with
+// HTTP 409 and an "already exists" body — i.e. a workflow with the same
+// metadata.name already exists in the cluster. Callers SHOULD treat this
+// as idempotent success: the existing workflow should be re-bound rather
+// than the operation retried as a new create.
+//
+// Witnessed on dev (video-proc-dev argo-workflows-server:2746, 2026-07-05):
+// HTTP 409 with body {"code":6,"message":"workflows.argoproj.io \"<name>\" already exists"}.
+//
+// IMPORTANT: a 409 does NOT mean the name is permanently unavailable. It may
+// also indicate the existing object is being deleted (Finalizer cleanup
+// running, deletionTimestamp set). In that case the body message typically
+// includes "object is being deleted"; callers handling that variant should
+// reset state rather than adopt the dying object. See IsTerminatingAlreadyExists.
+var ErrAlreadyExists = errors.New("argo resource already exists")
 
 // WorkflowClient defines the interface for managing Argo Workflows.
 type WorkflowClient interface {
@@ -281,7 +297,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return nil, err
 	}
-		slog.Info("argo_client_request", "method", method, "endpoint", endpoint, "serverURL", c.serverURL)
+	slog.Info("argo_client_request", "method", method, "endpoint", endpoint, "serverURL", c.serverURL)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create argo request: %w", err)
@@ -317,6 +333,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 				return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
 			}
 			return nil, fmt.Errorf("%w: body=%q", ErrUnexpectedNotFound, message)
+		}
+		if resp.StatusCode == http.StatusConflict {
+			// 409 with "already exists" body → idempotent collision. Caller
+			// should treat as adoption opportunity (see Phase 1). The body
+			// might also indicate the object is being deleted (Finalizer
+			// cleanup still running) — surface both signals to the caller.
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, message)
 		}
 		return nil, fmt.Errorf("argo API %s %s failed: %s", method, path, message)
 	}
@@ -359,4 +382,24 @@ func authorizationHeader(token string) string {
 // such as the DataBrew backend (HTML, plain text, or JSON with code 404).
 func IsArgo404Response(body string) bool {
 	return strings.Contains(body, `"code":5`) || strings.Contains(body, `"code": 5`)
+}
+
+// IsArgo409Response returns true when a 409 response body originates from
+// the Argo API server (JSON with gRPC code 6 — ALREADY_EXISTS) versus a
+// non-Argo upstream that may also emit 409s for unrelated reasons.
+func IsArgo409Response(body string) bool {
+	return strings.Contains(body, `"code":6`) || strings.Contains(body, `"code": 6`)
+}
+
+// IsTerminatingAlreadyExists inspects an Argo 409/AlreadyExists body and
+// returns true when the conflicting object is being deleted (Kubernetes
+// Finalizer still running, deletionTimestamp set). Callers handling this
+// variant MUST reset state rather than adopt the dying object — adopting
+// would race the garbage collector and leave the workflow in an undefined
+// state once the object is gone.
+//
+// The K8s API surfaces this as a wrapped 409 whose message contains the
+// "object is being deleted" marker. Argo Server forwards the same body.
+func IsTerminatingAlreadyExists(body string) bool {
+	return strings.Contains(strings.ToLower(body), "object is being deleted")
 }

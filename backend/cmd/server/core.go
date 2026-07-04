@@ -19,7 +19,7 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"       // NEW
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -149,7 +149,11 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillRepo := postgres.NewBackfillRepo(pg)
 	puc.SetBackfillRepo(backfillRepo)
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
-	backfillUC := backfillUC.New(backfillRepo, puc)
+	// Use NewWithPostgres so backfill.CreateBackfill and other lifecycle paths
+	// run inside an atomic WithTx boundary (see usecase CreateBackfill ~:242).
+	// pg is already in scope at line 79; with pgClient nil the constructor
+	// would have run the legacy non-atomic fallback.
+	backfillUC := backfillUC.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 	backfillUC.StartReaper()
 	backfillUC.ResumeIncompleteBatches(context.Background())

@@ -100,6 +100,15 @@ type PipelineRunRepository interface {
 	FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error)
 	// ListSummaries returns filtered/paginated summary rows for batch job UIs.
 	ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error)
+	// FindActiveSummariesStaleFirst is the Phase 2 idempotency hinge for the
+	// pipeline run watcher. It returns up to limit rows whose status is in
+	// the active set (Pending/Running/Suspended/empty/Unknown — the same
+	// set isActiveDeploymentStatus accepts; SQL keeps the symmetric set so
+	// Go-side filtering doesn't lose any rows), ordered by updated_at ASC
+	// so the most-stale (longest-since-last-reconciled) rows are returned
+	// first. This guarantees bounded staleness: a row left untouched
+	// will surface within N s where N = (activeCount/limit) * tick.
+	FindActiveSummariesStaleFirst(ctx context.Context, limit int) ([]models.PipelineRun, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindSummaryByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)

@@ -225,8 +225,18 @@ func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.Pip
 	items = filtered
 	return items, len(items), nil
 }
-func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
-	return m.byID[id], nil
+func (m *mockPipelineRunRepo) FindActiveSummariesStaleFirst(_ context.Context, _ int) ([]models.PipelineRun, error) {
+	out := make([]models.PipelineRun, 0, len(m.byID))
+	for _, r := range m.byID {
+		copy := *r
+		copy.PipelineJSON = nil
+		copy.Manifest = nil
+		copy.TargetSnapshot = nil
+		copy.Nodes = nil
+		copy.ExecutionTarget = nil
+		out = append(out, copy)
+	}
+	return out, nil
 }
 func (m *mockPipelineRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	return m.byID[id], nil

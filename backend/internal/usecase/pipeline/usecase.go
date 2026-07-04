@@ -43,6 +43,12 @@ var (
 	ErrInvalidArgument         = errors.New("invalid argument")
 	ErrExecutionTargetNotFound = errors.New("execution target not found")
 	ErrWorkflowUnavailable     = errors.New("workflow service unavailable: argo server not configured")
+	// ErrWorkflowBeingDeleted is returned when a Phase 1 adoption attempt
+	// hits an "already exists" 409 whose object is currently being torn
+	// down (deletionTimestamp set on the K8s object, Finalizer cleanup
+	// still running). Callers MUST reset their dispatch state rather than
+	// race the garbage collector. See plan Phase 1 Terminating protection.
+	ErrWorkflowBeingDeleted = errors.New("workflow being deleted")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -84,15 +90,29 @@ type Usecase struct {
 }
 
 type DeployOptions struct {
-	DryRun             bool
-	TemplateID         string
-	TemplateVersion    int
-	TargetID           string
-	Owner              string
-	BatchJobID         string
-	PreallocatedRunID  string
-	AllowUnknownAssets bool
-	ConfigSelection    *RuntimeConfigSelection
+	DryRun            bool
+	TemplateID        string
+	TemplateVersion   int
+	TargetID          string
+	Owner             string
+	BatchJobID        string
+	PreallocatedRunID string
+	// PreallocatedWorkflowName is the optional caller-supplied workflow name
+	// to install on the new Argo Workflow's ObjectMeta. When non-empty, the
+	// Deploy path uses it verbatim instead of generating a random one. This
+	// is the idempotency hinge (Phase 1) — a deterministic name lets a
+	// crash-retry reproduce the same CreateWorkflow name and lean on
+	// Argo's own name-uniqueness semantics (HTTP 409 AlreadyExists) to
+	// detect the previously-created workflow and adopt it rather than
+	// create a second orphan.
+	//
+	// Contract: callers MUST provide a name that is already DNS-1123
+	// compliant (lowercase, [a-z0-9-], max 253 chars). A 2026-07-05
+	// audit of 1873 existing dev workflows confirms every pipelineName
+	// in use today satisfies this implicitly.
+	PreallocatedWorkflowName string
+	AllowUnknownAssets       bool
+	ConfigSelection          *RuntimeConfigSelection
 }
 
 type RuntimeConfigSelection struct {
@@ -1872,12 +1892,28 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		}
 	}
 	if derivedFailureReason != "" {
+		// Phase 3: distinguish real failure (Status=Failed already set by
+		// deriveImageStartupRunFromWorkflow) from transient diagnosis
+		// (Status stays active because deriveUnschedulableRunFromWorkflow
+		// now refuses to poison the status). For the unschedulable case
+		// the run is still active; we tag the event as a diagnosis event
+		// type and keep its status field reflecting the live run state.
+		eventType := runEventFailed
+		eventStatus := run.Status
+		eventMessage := run.Message
+		if derivedFailureReason == "unschedulable" {
+			// Status remains the active phase (Pending/Running) and the
+			// event records the diagnosis without reclassifying it as a
+			// terminal failure. The IdempotencyKey still collapses
+			// repeat observations to a single row.
+			eventMessage = run.Message + " [diagnostic: " + derivedFailureReason + "]"
+		}
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
-			EventType:      runEventFailed,
+			EventType:      eventType,
 			SubjectType:    "run",
 			SubjectID:      run.ID,
-			Status:         run.Status,
-			Message:        run.Message,
+			Status:         eventStatus,
+			Message:        eventMessage,
 			Reason:         derivedFailureReason,
 			OccurredAt:     ptrTimeOrNow(finishedAt),
 			IdempotencyKey: fmt.Sprintf("run_%s:%s", derivedFailureReason, run.ID),
@@ -2614,10 +2650,28 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	if uc.runRepo == nil {
 		return nil, nil
 	}
-	return uc.runRepo.FindAllSummaries(ctx)
+	// Phase 2: switched from FindAllSummaries (which full-scanned the table
+	// ordered by created_at DESC) to a targeted stale-first scan. This is
+	// the bounded-staleness guarantee: rows that have sat untouched longest
+	// will surface first, so no active run can starve regardless of how
+	// busy the front of the queue is. Limit is taken from the watcher's
+	// configured ActiveScanLimit (default-capped inside the repo).
+	limit := 0
+	if uc.watcherRepo != nil {
+		if state, err := uc.watcherRepo.FindByID(ctx, "default"); err == nil && state != nil && state.ActiveScanLimit > 0 {
+			limit = state.ActiveScanLimit
+		}
+	}
+	return uc.runRepo.FindActiveSummariesStaleFirst(ctx, limit)
 }
 
 func computeLedgerHealth(runs []models.PipelineRun, lastBackfill *time.Time) models.LedgerHealth {
+	// Phase 2 caveat: this currently reports health only for the slice the
+	// watcher happened to scan (the stale-first top-N). That intentionally
+	// narrows the metric; the follow-up Phase 2 ledgerHealth work would
+	// move this aggregate into the SQL repo so the total reflects the
+	// entire active set. For now we keep the in-memory shape so the
+	// existing watcher state struct is unchanged.
 	total := len(runs)
 	hasEvents := 0
 	for i := range runs {
@@ -2973,7 +3027,22 @@ func (uc *Usecase) Deploy(
 		pipeName = name
 	}
 
-	wfName := pipeName + "-" + uuid.New().String()[:8]
+	// wfName for the Argo Workflow ObjectMeta. The deterministic path is
+	// the Phase 1 idempotency hinge: PreallocatedRunID+PreallocatedWorkflowName
+	// together let us reproduce the same name across crash-retry, so the
+	// K8s API's name-uniqueness check (HTTP 409) is what adoption detection
+	// keys off of. The random fallback preserves the legacy behavior for
+	// non-batch callers that haven't opted in.
+	var preallocName string
+	if len(opts) > 0 {
+		preallocName = strings.TrimSpace(opts[0].PreallocatedWorkflowName)
+	}
+	var wfName string
+	if preallocName != "" {
+		wfName = preallocName
+	} else {
+		wfName = pipeName + "-" + uuid.New().String()[:8]
+	}
 	depID := uuid.New().String()
 	templateID := ""
 	templateVersion := 0
@@ -3273,13 +3342,41 @@ func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName str
 	if uc.wfClient == nil {
 		return nil, ErrWorkflowUnavailable
 	}
+	wfName := strings.TrimSpace(wf.Name)
 	if err := uc.wfClient.CreateWorkflow(ctx, wf, namespace); err != nil {
-		return nil, err
+		// Phase 1 idempotency hinge: the deterministic workflow name lets
+		// a crash-retry reproduce the same CreateWorkflow call. Argo Server
+		// returns HTTP 409 when an object with that name already exists
+		// (witnessed 2026-07-05 on dev). That 409 is not a fatal error —
+		// it's an adoption opportunity. We re-fetch the existing object and
+		// stitch it into a RuntimeJob so the caller proceeds as if Create
+		// had succeeded.
+		//
+		// BUT: a 409 can also mean the existing object is being torn down
+		// (Finalizer cleanup still running, deletionTimestamp set on the
+		// K8s object). Adopting a dying object would race the GC and
+		// leave the workflow in an undefined state. Surface that as a
+		// distinct typed error so callers (e.g. Phase 4 dispatcher) can
+		// reset dispatch state and let the next sweep submit a clean
+		// create. See IsTerminatingAlreadyExists in the argo client for
+		// the body-level probe used during this Phase 1 implementation
+		// (kept documented even though we lean on DeletionTimestamp here
+		// for the strongly-typed primary signal).
+		if !errors.Is(err, argo.ErrAlreadyExists) {
+			return nil, err
+		}
+		wf, err = uc.wfClient.GetWorkflow(ctx, wfName, namespace)
+		if err != nil {
+			return nil, fmt.Errorf("adopt already-existing workflow %q: %w", wfName, err)
+		}
+		if !wf.DeletionTimestamp.IsZero() {
+			return nil, ErrWorkflowBeingDeleted
+		}
 	}
 	return &runtimeadapter.RuntimeJob{
 		Ref: runtimeadapter.RuntimeRef{
 			RuntimeType: "argo",
-			Name:        strings.TrimSpace(wf.Name),
+			Name:        wfName,
 			Namespace:   firstNonEmpty(namespace, wf.Namespace),
 			UID:         string(wf.UID),
 		},

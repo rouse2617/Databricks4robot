@@ -82,6 +82,9 @@ func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) { r
 func (m *mockRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *mockRunRepo) FindActiveSummariesStaleFirst(_ context.Context, _ int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
 func (m *mockRunRepo) ListSummaries(context.Context, models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	return nil, 0, nil
 }

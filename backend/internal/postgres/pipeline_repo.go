@@ -943,6 +943,48 @@ func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.Pipeli
 	return items, err
 }
 
+// FindActiveSummariesStaleFirst is the Phase 2 watcher-data-source
+// replacement for FindAllSummaries. It returns active pipeline runs
+// ordered by updated_at ASC so the watcher always reconciles the
+// longest-untouched active run first, bounding reconciliation lag to
+// (activeCount/limit) * tick. Active status set mirrors the Go-side
+// isActiveDeploymentStatus gate so no row appears to SQL but is dropped
+// (or vice versa) downstream.
+//
+// NOTE on the "stale-first" cursor safety: we deliberately avoid a
+// persistent "high-water mark" cursor here. It would be unsafe for the
+// reason documented in the plan "游标铁律" section: a row that fails
+// to bump updated_at on every iteration would livelock under
+// high-water-mark cursor schemes. By leaning on updated_at ordering
+// alone (with every persist bumping it via Save in pipeline_repo.go),
+// we get self-correcting round-robin semantics for free.
+func (r *PipelineRunRepo) FindActiveSummariesStaleFirst(ctx context.Context, limit int) ([]models.PipelineRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+WHERE pr.status IN ('Pending', 'Running', 'Suspended', '')
+   OR pr.status IS NULL
+ORDER BY pr.updated_at ASC
+LIMIT $1`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveSummariesStaleFirst: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveSummariesStaleFirst scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, rows.Err()
+}
+
 // ListSummaries returns filtered/paginated summary rows.
 func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	var (
