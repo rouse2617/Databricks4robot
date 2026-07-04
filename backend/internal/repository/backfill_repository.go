@@ -102,6 +102,14 @@ type BackfillRepository interface {
 	// ABsorbing 'submitted' / 'dead' states are explicitly excluded.
 	// Returns the number of rows reclaimed.
 	ResetStaleDispatchedItems(ctx context.Context, leaseSec, maxAttempts int) (int, error)
+
+	// EnqueueForDispatcher transitions the given item IDs to
+	// dispatch_state='pending' and stashes a workflow_name_planned for
+	// each (computed by the runner parameter so we don't bake deterministic
+	// naming into the SQL). Used by the mode='outbox' code path (Commit
+	// B) at CreateBackfill / ResumeJob / Rerun / ContinueFull.
+	// The commit_generation stays as-is; rerun bumps it separately.
+	EnqueueForDispatcher(ctx context.Context, itemIDs []string, resolveWfName func(itemID string) string) error
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

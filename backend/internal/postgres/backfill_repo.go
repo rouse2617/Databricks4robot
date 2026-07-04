@@ -574,7 +574,11 @@ func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []strin
 	  status = 'pending',
 	  error_message = NULL,
 	  started_at = NULL,
-	  finished_at = NULL
+	  finished_at = NULL,
+	  dispatch_state = 'pending',
+	  dispatch_generation = dispatch_generation + 1,
+	  dispatch_lease_expires_at = NULL,
+	  dispatch_last_error = NULL
 	WHERE id = ANY($1)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, itemIDs); err != nil {
@@ -1188,4 +1192,77 @@ func (r *BackfillRepo) ResetStaleDispatchedItems(ctx context.Context, leaseSec, 
 		return 0, fmt.Errorf("postgres BackfillRepo.ResetStaleDispatchedItems: %w", err)
 	}
 	return count, nil
+}
+
+// EnqueueForDispatcher transitions the given items to
+// dispatch_state='pending' and stamps a workflow_name_planned (computed
+// per-row by the caller). This is the Commit B entry-point switch —
+// mode='outbox' replaces the legacy go runItems(). Validated states
+// exclude the absorbing endpoints + 'legacy_skip'.
+//
+// The caller passes a resolveWfName func which receives each item ID
+// and returns the deterministic workflow name. We do this in Go (not
+// SQL) because the name depends on stable identity fields the caller
+// already has and would otherwise re-derive needlessly.
+//
+// We rely on resolveWfName returning the (cached) input row data; we
+// only have itemIDs here, so the implementation reads the rows
+// first, lets the caller compute names, then UPDATEs. One round trip
+// becomes two. The volume of "items just added" is bounded by the
+// entry point's pipeline (typically < a few thousand per Create),
+// so this is acceptable for Commit B.
+func (r *BackfillRepo) EnqueueForDispatcher(ctx context.Context, itemIDs []string, resolveWfName func(itemID string) string) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	// Read current rows so the resolver sees the canonical data.
+	rows, err := r.c.db.Query(ctx,
+		`SELECT id, workflow_name_planned FROM backfill_items WHERE id = ANY($1)`,
+		itemIDs,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres BackfillRepo.EnqueueForDispatcher: %w", err)
+	}
+	defer rows.Close()
+	type pair struct {
+		id, wfname string
+	}
+	var pairs []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.id, &p.wfname); err != nil {
+			return fmt.Errorf("postgres BackfillRepo.EnqueueForDispatcher scan: %w", err)
+		}
+		pairs = append(pairs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	// Apply one UPDATE per row so we can also write workflow_name_planned
+	// when the caller has a fresh deterministic name to use. (In Commit
+	// B the resolveWfName simply returns the per-asset stable name.)
+	//
+	// The legacy_skip sentinel excludes itself from re-staging; absorbing
+	// 'submitted' / 'dead' shouldn't ever appear in fresh queues but
+	// the explicit guards document intent.
+	for _, p := range pairs {
+		wfname := resolveWfName(p.id)
+		if wfname == "" {
+			wfname = p.wfname
+		}
+		const q = `
+			UPDATE backfill_items
+			SET dispatch_state = 'pending',
+			    dispatch_lease_expires_at = NULL,
+			    workflow_name_planned = $2
+			WHERE id = $1
+			  AND dispatch_state NOT IN ('legacy_skip', 'submitted', 'dead')`
+		if _, err := r.c.db.Exec(ctx, q, p.id, wfname); err != nil {
+			return fmt.Errorf("postgres BackfillRepo.EnqueueForDispatcher update: %w", err)
+		}
+	}
+	return nil
 }

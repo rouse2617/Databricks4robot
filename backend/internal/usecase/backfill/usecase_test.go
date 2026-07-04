@@ -172,6 +172,20 @@ func (m *mockBackfillRepo) UpdateItemDispatchFields(_ context.Context, itemID, _
 func (m *mockBackfillRepo) ResetStaleDispatchedItems(_ context.Context, _, _ int) (int, error) {
 	return 0, nil
 }
+func (m *mockBackfillRepo) EnqueueForDispatcher(_ context.Context, itemIDs []string, _ func(itemID string) string) error {
+	// Mark mock items as 'pending' in dispatch_state so tests can
+	// assert the entry-point switch happened.
+	for i := range m.items {
+		for _, want := range itemIDs {
+			if m.items[i].ID == want {
+				if m.items[i].DispatchState != "legacy_skip" && m.items[i].DispatchState != "submitted" && m.items[i].DispatchState != "dead" {
+					m.items[i].DispatchState = "pending"
+				}
+			}
+		}
+	}
+	return nil
+}
 
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
@@ -245,6 +259,17 @@ func (m *mockBackfillRepo) FindItemsByScope(_ context.Context, filter repository
 func (m *mockBackfillRepo) PrepareItemsForRerun(_ context.Context, itemIDs []string) error {
 	for _, id := range itemIDs {
 		_ = m.UpdateItemStatus(context.Background(), id, "pending", "", "")
+		// Mirror the postgres impl: bump dispatch_generation and
+		// reset dispatch fields so the mock behaves like the real
+		// data after PrepareItemsForRerun.
+		for i := range m.items {
+			if m.items[i].ID == id {
+				m.items[i].DispatchGeneration++
+				m.items[i].DispatchState = "pending"
+				m.items[i].DispatchLeaseExpires = nil
+				m.items[i].DispatchLastError = ""
+			}
+		}
 	}
 	return nil
 }

@@ -33,6 +33,27 @@ var maxConcurrentBatchItems = func() int {
 	return 5
 }()
 
+// DispatchMode controls whether new batch items are routed through
+// the persistent dispatcher (outbox engine) or the legacy in-memory
+// runItems goroutine pool. See PHASE4-DESIGN.md.
+//
+//	legacy  — Default. Items land in dispatch_state='legacy_skip',
+//	          the legacy runItems path drains them. New dispatcher
+//	          (Commit A) sits idle.
+//	outbox  — Items land with dispatch_state='pending' and a
+//	          pre-computed workflow_name_planned. The dispatcher
+//	          watches the table and submits them.
+//
+// Read once at startup from BACKFILL_DISPATCH_MODE env var. The env
+// read happens in init() so callers can adjust it before boot via
+// os.Setenv if needed.
+var globalDispatchMode = func() string {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("BACKFILL_DISPATCH_MODE"))); v == "outbox" {
+		return "outbox"
+	}
+	return "legacy"
+}()
+
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and
@@ -62,6 +83,11 @@ type Usecase struct {
 	pipelineUC *pipelineUC.Usecase
 	pgClient   any // *postgres.Client — set via NewWithPostgres
 
+	// dispatchMode is the snapshot of globalDispatchMode captured at
+	// construction time. Read by entry points to choose the routing
+	// path (legacy runItems vs outbox enqueue). See PHASE4-DESIGN.md.
+	dispatchMode string
+
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
@@ -71,12 +97,12 @@ type Usecase struct {
 
 // New creates a Usecase without transaction support.
 func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Usecase {
-	return &Usecase{repo: repo, pipelineUC: pipelineUC}
+	return &Usecase{repo: repo, pipelineUC: pipelineUC, dispatchMode: globalDispatchMode}
 }
 
 // NewWithPostgres creates a Usecase with transaction support via the postgres client.
 func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, pgClient any) *Usecase {
-	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient}
+	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient, dispatchMode: globalDispatchMode}
 }
 
 // StartReaper launches the stale reaper goroutine that reclaims items stuck
@@ -114,9 +140,32 @@ func (uc *Usecase) StopReaper() {
 	uc.reaperWg.Wait()
 }
 
+// DispatchMode returns the snapshot of the dispatch mode captured at
+// construction. Used by entry points and tests.
+func (uc *Usecase) DispatchMode() string { return uc.dispatchMode }
+
+// EnqueueForDispatcher is the mode='outbox' entry-point switch. It
+// stamps pending items for pickup by the persistent dispatcher. No-op
+// when dispatchMode == legacy (the legacy go runItems path is the
+// responsibility of the entry point itself).
+//
+// Items already in absorbing states (submitted / dead) or
+// legacy_skip are left untouched by the SQL.
+func (uc *Usecase) EnqueueForDispatcher(ctx context.Context, itemIDs []string, resolveWfName func(itemID string) string) error {
+	if uc.dispatchMode != "outbox" || len(itemIDs) == 0 {
+		return nil
+	}
+	return uc.repo.EnqueueForDispatcher(ctx, itemIDs, resolveWfName)
+}
+
 // ResumeIncompleteBatches scans for running batch jobs with pending items
 // and starts worker pools for them. Call after constructing the Usecase to
 // recover from prior service interruptions.
+//
+// Phase 4 Commit B: in outbox mode, items in legacy_skip continue to
+// drain via the legacy path (a no-op safety: legacy_skip means
+// "dispatcher should never touch me"), but the dispatcher picks up
+// new 'pending' items automatically — no worker pool spawned here.
 func (uc *Usecase) ResumeIncompleteBatches(ctx context.Context) {
 	jobs, err := uc.repo.FindIncompleteJobs(ctx)
 	if err != nil {
@@ -129,6 +178,11 @@ func (uc *Usecase) ResumeIncompleteBatches(ctx context.Context) {
 			templateVersion = uc.resolveTemplateVersion(ctx, job.TemplateID)
 		}
 		slog.Info("resume incomplete batch", "jobID", job.ID, "templateID", job.TemplateID, "pendingItems", job.TotalCount-job.CompletedCount-job.FailedCount)
+		if uc.dispatchMode == "outbox" {
+			// Items already have dispatch_state; the dispatcher
+			// picks them up. No goroutine needed.
+			continue
+		}
 		go uc.runItems(context.Background(), job.ID, job.TemplateID, templateVersion, nil)
 	}
 }
@@ -423,10 +477,33 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 	}
 	uc.ensureBatchParentRunByID(ctx, jobID)
 	if uc.pipelineUC != nil && len(itemsToRun) > 0 {
-		go func() {
-			slog.Info("materializeAndRunBatch: starting runItems", "jobID", jobID, "templateID", templateID)
-			uc.runItems(context.Background(), jobID, templateID, templateVersion, itemsToRun, "pending")
-		}()
+		if uc.dispatchMode == "outbox" {
+			// Hand items to the persistent dispatcher. They were
+			// already inserted with dispatch_state='pending' and
+			// workflow_name_planned by the caller (CreateBackfill /
+			// ResumeJob / Rerun / ContinueFull).
+			ids := make([]string, len(itemsToRun))
+			for i, it := range itemsToRun {
+				ids[i] = it.ID
+			}
+			if err := uc.EnqueueForDispatcher(ctx, ids, func(id string) string {
+				for _, it := range itemsToRun {
+					if it.ID == id {
+						if wn := it.WorkflowName; wn != nil {
+							return strings.TrimSpace(*wn)
+						}
+					}
+				}
+				return ""
+			}); err != nil {
+				slog.Warn("materializeAndRunBatch: enqueue failed", "jobID", jobID, "err", err)
+			}
+		} else {
+			go func() {
+				slog.Info("materializeAndRunBatch: starting runItems", "jobID", jobID, "templateID", templateID)
+				uc.runItems(context.Background(), jobID, templateID, templateVersion, itemsToRun, "pending")
+			}()
+		}
 	}
 	close(errCh)
 	return errCh
@@ -839,10 +916,26 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 		return err
 	}
 	if uc.pipelineUC != nil {
-		go func() {
-			slog.Info("ResumeJob: starting runItems", "jobID", id)
-			uc.runItems(context.Background(), id, job.TemplateID, job.TemplateVersion, items, "pending")
-		}()
+		if uc.dispatchMode == "outbox" {
+			ids := make([]string, len(items))
+			for i, it := range items {
+				ids[i] = it.ID
+			}
+			uc.EnqueueForDispatcher(ctx, ids, func(id string) string {
+				for _, it := range items {
+					if it.ID == id && it.WorkflowName != nil {
+						return strings.TrimSpace(*it.WorkflowName)
+					}
+				}
+				return ""
+			})
+			uc.syncJobProgress(ctx, id)
+		} else {
+			go func() {
+				slog.Info("ResumeJob: starting runItems", "jobID", id)
+				uc.runItems(context.Background(), id, job.TemplateID, job.TemplateVersion, items, "pending")
+			}()
+		}
 	}
 	return nil
 }
@@ -943,10 +1036,17 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		}
 		uc.ensureBatchParentRunByID(ctx, jobID)
 		if uc.pipelineUC != nil {
-			go func() {
-				slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
-				uc.runItems(context.Background(), jobID, templateID, templateVersion, scheduled, "pending")
-			}()
+			if uc.dispatchMode == "outbox" {
+				// Rerun already bumped dispatch_generation + reset
+				// dispatch_state='pending' in PrepareItemsForRerun. The
+				// dispatcher picks them up; no goroutine needed.
+				_ = uc
+			} else {
+				go func() {
+					slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
+					uc.runItems(context.Background(), jobID, templateID, templateVersion, scheduled, "pending")
+				}()
+			}
 		}
 	}
 	result.RetriedCount = retriedCount
@@ -1285,10 +1385,25 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 		return err
 	}
 	if uc.pipelineUC != nil {
-		go func() {
-			slog.Info("ContinueFull: starting runItems", "jobID", jobID)
-			uc.runItems(context.Background(), jobID, job.TemplateID, job.TemplateVersion, items, "pending")
-		}()
+		if uc.dispatchMode == "outbox" {
+			ids := make([]string, len(items))
+			for i, it := range items {
+				ids[i] = it.ID
+			}
+			uc.EnqueueForDispatcher(ctx, ids, func(id string) string {
+				for _, it := range items {
+					if it.ID == id && it.WorkflowName != nil {
+						return strings.TrimSpace(*it.WorkflowName)
+					}
+				}
+				return ""
+			})
+		} else {
+			go func() {
+				slog.Info("ContinueFull: starting runItems", "jobID", jobID)
+				uc.runItems(context.Background(), jobID, job.TemplateID, job.TemplateVersion, items, "pending")
+			}()
+		}
 	}
 	return nil
 }
