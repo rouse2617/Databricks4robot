@@ -46,7 +46,9 @@ type BackfillItem struct {
 	//   failed       retryable; lease holds the backoff window
 	//   submitted    ABSORBING — successful, never re-claim
 	//   dead         ABSORBING — MaxAttempts reached, never re-claim
-	//   legacy_skip  sentinel: pre-migration row, dispatcher ignores
+	//   legacy_skip  legacy sentinel: pre-migration row retained
+	//               for historical traceability; the dispatcher no
+	//               longer treats this as a meaningful state.
 	DispatchState        string     `json:"dispatchState,omitempty"`          // above enum
 	DispatchGeneration   int64      `json:"dispatchGeneration,omitempty"`     // bumped on rerun
 	WorkflowNamePlanned  string     `json:"workflowNamePlanned,omitempty"`    // deterministic wfname (Phase 1)

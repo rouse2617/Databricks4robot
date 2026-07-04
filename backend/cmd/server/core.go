@@ -156,32 +156,19 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillUC := backfillUC.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
-	// Phase 4 Commit C1: dispatcher is now DEFAULT-ON. The legacy
-	// pool is still reachable as a fallback via
-	// BACKFILL_DISPATCH_MODE=legacy (committed Commit C2 will delete
-	// that path entirely once we've validated the dispatcher in
-	// dev). Both dispatcher and legacy cannot run on the same data
-	// in the same process — see Commit B's BACKFILL_DISPATCH_MODE
-	// documentation.
-	if os.Getenv("BACKFILL_DISPATCH_MODE") == "legacy" {
-		// EMERGENCY FALLBACK. To re-enable, set
-		// BACKFILL_DISPATCH_MODE=legacy. Will be removed in Commit C2.
-		backfillUC.StartReaper()
-		backfillUC.ResumeIncompleteBatches(context.Background())
-		slog.Info("backfill dispatcher SKIPPED (mode=legacy legacy path active)")
-	} else {
-		dispatcher := backfillUC.NewDispatcher(backfillRepo, puc, backfillUC.DispatcherConfig{
-			Tick:          5 * time.Second,
-			LeaseSec:      60,
-			MaxAttempts:   3,
-			WorkerCount:   5,
-			JobBufferSize: 64,
-			BackoffBase:   1 * time.Second,
-			BackoffMax:    30 * time.Second,
-		})
-		dispatcher.Start(context.Background())
-		slog.Info("backfill dispatcher started (mode=outbox default)")
-	}
+	// Phase 4 Commit C2: dispatcher is the only path. The legacy
+	// go runItems pool / reaper / startup-scan have been deleted.
+	dispatcher := backfillUC.NewDispatcher(backfillRepo, puc, backfillUC.DispatcherConfig{
+		Tick:          5 * time.Second,
+		LeaseSec:      60,
+		MaxAttempts:   3,
+		WorkerCount:   5,
+		JobBufferSize: 64,
+		BackoffBase:   1 * time.Second,
+		BackoffMax:    30 * time.Second,
+	})
+	dispatcher.Start(context.Background())
+	slog.Info("backfill dispatcher started")
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

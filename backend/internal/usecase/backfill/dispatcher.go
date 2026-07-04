@@ -36,8 +36,7 @@
 // no entry point in the codebase has been wired to write
 // dispatch_state='pending' yet. Entries still flow through the legacy
 // runItems path. Commit B switches the entries; Commit C deletes the
-// legacy path. The BACKFILL_DISPATCH_MODE flag (default legacy) gates
-// whether the dispatcher loop runs at all.
+// legacy path. Only the dispatcher remains.
 package backfill
 
 import (

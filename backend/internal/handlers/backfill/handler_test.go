@@ -81,16 +81,6 @@ func (missingJobRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ str
 func (missingJobRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
-func (missingJobRepo) ClaimNextItem(_ context.Context, _ string) (*models.BackfillItem, error) {
-	return nil, nil
-}
-func (missingJobRepo) ResetStaleItems(_ context.Context, _, _ int) (int, error) {
-	return 0, nil
-}
-func (missingJobRepo) FindIncompleteJobs(_ context.Context) ([]models.BackfillJob, error) {
-	return nil, nil
-}
-
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := New(backfillUC.New(missingJobRepo{}, nil))

@@ -48,8 +48,8 @@ func (s *stubAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (m
 }
 func (s *stubAssetRepo) GetAll(context.Context, string) (*models.Asset, error) { return nil, nil }
 func (s *stubAssetRepo) InsertNew(context.Context, *models.Asset) error        { return nil }
-func (s *stubAssetRepo) Set(context.Context, *models.Asset) error                { return nil }
-func (s *stubAssetRepo) SoftDelete(context.Context, string) error                  { return nil }
+func (s *stubAssetRepo) Set(context.Context, *models.Asset) error              { return nil }
+func (s *stubAssetRepo) SoftDelete(context.Context, string) error              { return nil }
 func (s *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
@@ -101,18 +101,6 @@ func (s *stubBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, ass
 			return &item, nil
 		}
 	}
-	return nil, nil
-}
-
-func (s *stubBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
-	return nil, nil
-}
-
-func (s *stubBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
-	return 0, nil
-}
-
-func (s *stubBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 

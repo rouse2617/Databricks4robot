@@ -77,18 +77,6 @@ func (m *mockBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, ass
 	return nil, nil
 }
 
-func (m *mockBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
-	return nil, nil
-}
-
-func (m *mockBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
-	return 0, nil
-}
-
-func (m *mockBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	return nil, nil
-}
-
 // ── Phase 4 dispatcher (outbox) implementations for the test mock.
 // These keep the existing legacy mock behaviour but also implement the
 // outbox-method surface so tests that exercise Dispatcher can compile.
@@ -822,18 +810,6 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 	return r.runsWithNodeRows, nil
 }
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
-	return nil, nil
-}
-
-func (r *trackingBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
-	return nil, nil
-}
-
-func (r *trackingBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
-	return 0, nil
-}
-
-func (r *trackingBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 
