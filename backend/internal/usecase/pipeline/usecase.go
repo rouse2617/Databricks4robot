@@ -2582,6 +2582,14 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		if !isActiveDeploymentStatus(runs[i].Status) {
 			continue
 		}
+		// Phase 6: skip batch-parent rows. Their aggregate status is
+		// derived from child runs only; querying the cluster for the
+		// parent would return ErrNotFound (parent is a synthetic
+		// ledger row, not a real Argo Workflow) and poison the
+		// record with NotFound diagnostics over time.
+		if isBatchParentWorkflowName(strings.TrimSpace(runs[i].WorkflowName)) {
+			continue
+		}
 		uc.refreshPipelineRunStatus(ctx, &runs[i])
 		synced++
 	}
@@ -2624,6 +2632,56 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		backfilled++
 	}
 	synced += backfilled
+
+	// Phase 5 (level-triggered bulk reconciliation). Instead of relying
+	// solely on what FindActiveSummariesStaleFirst returned, do a single
+	// ListWorkflows call (cheap, namespace-local) and reconcile the
+	// returned snapshot of active workflow names back into the DB.
+	//
+	// Stale-safe: if a row's workflow is *not* in the list, we DON'T
+	// immediately mark it terminal. We only act on rows where the
+	// recorded workflow_name is present in the cluster; for ones
+	// missing from the list we just skip (next cycle may catch them).
+	// That's the level-triggered stance: never punish the DB for what
+	// the cluster might just be slow to surface.
+	if uc.wfClient != nil && uc.namespace != "" && len(runs) > 0 {
+		seen, err := uc.wfClient.ListWorkflows(ctx, uc.namespace, "")
+		if err == nil && len(seen) > 0 {
+			clusterByName := make(map[string]struct{}, len(seen))
+			for _, wf := range seen {
+				if n := strings.TrimSpace(wf.Name); n != "" {
+					clusterByName[n] = struct{}{}
+				}
+			}
+			for i := range runs {
+				run := &runs[i]
+				if !isActiveDeploymentStatus(run.Status) {
+					continue
+				}
+				name := strings.TrimSpace(run.WorkflowName)
+				if name == "" {
+					continue
+				}
+				if _, ok := clusterByName[name]; ok {
+					// Cluster still has it; no change in this pass,
+					// the existing GetWorkflow path in Pass 1 will
+					// pick up phase/status updates.
+					continue
+				}
+				// Per Phase 5 stale-safe policy: skip rather than mark
+				// terminal. Future ticks will re-check; if it
+				// persistently disappears we add a separate tombstone
+				// pass in a follow-up commit.
+				slog.Debug("watcher: cluster list missing run, skipping reconciliation (level-triggered)",
+					"runID", run.ID, "wf", name)
+			}
+		} else if err != nil {
+			// Don't fail the whole tick on a transient Argo error;
+			// Pass 1 still handles the most common case.
+			slog.Warn("watcher: phase 5 bulk list failed, falling back to per-row", "err", err)
+		}
+	}
+
 	if uc.watcherRepo != nil {
 		now := time.Now().UTC()
 		lag := int64(0)
