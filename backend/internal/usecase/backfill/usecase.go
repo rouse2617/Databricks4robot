@@ -559,7 +559,70 @@ func backfillItemLedgerStatus(item models.BackfillItem) (status, message string)
 // ListJobs returns all backfill jobs from the database.
 // Listing must stay read-only: syncJobProgress (per-job DB + optional GetRun/Argo)
 // belongs on GetJob, ReconcileSubtaskRuns, and background runners — not on list.
+// syncJobStats updates the job's total_count, completed_count, and failed_count
+// based on the actual items in the database. This ensures consistency when
+// items are added/removed or their states change. This is especially important
+// for jobs created via direct API/SQL that may not have total_count initialized.
+func (uc *Usecase) syncJobStats(ctx context.Context, jobID string) error {
+	// Get the job first
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+
+	// Query items to count by state
+	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+
+	totalCount := len(items)
+	completedCount := 0
+	failedCount := 0
+
+	for _, item := range items {
+		switch item.DispatchState {
+		case "submitted":
+			completedCount++
+		case "dead":
+			failedCount++
+		}
+	}
+
+	// Update if values changed OR if total_count is 0 but we have items
+	// (handles jobs created without going through CreateBackfill)
+	needsUpdate := job.TotalCount != totalCount ||
+		job.CompletedCount != completedCount ||
+		job.FailedCount != failedCount ||
+		(job.TotalCount == 0 && totalCount > 0)
+
+	if needsUpdate {
+		slog.Info("syncJobStats: updating job counts",
+			"jobID", jobID,
+			"old_total", job.TotalCount, "new_total", totalCount,
+			"old_completed", job.CompletedCount, "new_completed", completedCount,
+			"old_failed", job.FailedCount, "new_failed", failedCount,
+		)
+		job.TotalCount = totalCount
+		job.CompletedCount = completedCount
+		job.FailedCount = failedCount
+		if err := uc.repo.SaveJob(ctx, job); err != nil {
+			slog.Error("syncJobStats: SaveJob failed", "jobID", jobID, "err", err)
+			return err
+		}
+		slog.Info("syncJobStats: job updated successfully",
+			"jobID", jobID,
+			"total_count", totalCount,
+			"completed_count", completedCount,
+			"failed_count", failedCount,
+		)
+	}
+	return nil
+}
+
 func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	// Just return the jobs without syncing stats to avoid N+1 writes on list load.
+	// Stats are synced on GetJob (detail page) when the user actually needs them.
 	return uc.repo.FindAllJobs(ctx)
 }
 
@@ -578,6 +641,8 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 	if err := uc.syncJobProgressForce(ctx, id); err != nil {
 		slog.Warn("GetJob: syncJobProgressForce failed", "jobID", id, "err", err)
 	}
+	// Sync statistics from items to ensure consistency
+	_ = uc.syncJobStats(ctx, id)
 	return uc.repo.FindJobByID(ctx, id)
 }
 
