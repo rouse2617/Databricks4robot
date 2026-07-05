@@ -331,6 +331,7 @@ func (d *Dispatcher) workerLoop(idx int) {
 // Dispatcher agnostic to concrete business implementations and eliminates
 // circular dependencies.
 func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem) {
+	logger.Info(">>> PROCESSING ITEM", "item_id", item.ID, "job_id", item.JobID)
 	// Per-item context with the lease's remaining lifetime as the deadline.
 	// -5 seconds for safety margin between worker timeout and lease expiry.
 	deadline := time.Duration(d.cfg.LeaseSec-5) * time.Second
@@ -349,6 +350,7 @@ func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem)
 		// the handler itself manages state transitions, so we just log here.
 		logger.Warn("handler returned error", "item_id", item.ID, "err", err)
 	}
+	logger.Info(">>> FINISHED ITEM", "item_id", item.ID)
 }
 // NOTE: Backoff, error classification, and failure handling logic has been
 // moved to BackfillTaskHandler. The Dispatcher is now a pure orchestration

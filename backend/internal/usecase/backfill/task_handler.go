@@ -69,12 +69,18 @@ func (h *BackfillTaskHandler) Handle(ctx context.Context, item *models.BackfillI
 	templateID := ""
 	templateVersion := 0
 	if item.JobID != "" {
-		if job, _ := h.repo.FindJobByID(ctx, item.JobID); job != nil {
+		job, err := h.repo.FindJobByID(ctx, item.JobID)
+		if err != nil {
+			logger.Warn("FindJobByID error", "job_id", item.JobID, "err", err)
+		} else if job != nil {
 			templateID = strings.TrimSpace(job.TemplateID)
 			templateVersion = job.TemplateVersion
 			if f, ok := job.FilterJSON["targetId"].(string); ok {
 				targetID = strings.TrimSpace(f)
 			}
+			logger.Debug("resolved job", "job_id", item.JobID, "templateID", templateID)
+		} else {
+			logger.Warn("job not found", "job_id", item.JobID)
 		}
 	}
 	if templateID == "" {
