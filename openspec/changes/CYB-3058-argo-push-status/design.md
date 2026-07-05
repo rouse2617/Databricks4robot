@@ -20,8 +20,9 @@
 
 ## Architecture Decisions
 
-### Decision 1: Push transport = Argo `onExit` HTTP-template hook (not Argo Events, not Informer)
-- **Approach**: At transpile time, append a `wfv1.Template{HTTP: &wfv1.HTTP{Method: POST, URL: <webhook>, Headers: [auth token], Body: JSON with `{{workflow.name}}`, `{{workflow.status}}`, `{{workflow.uid}}`, message, finish time}}` and set `Spec.Hooks[exit] = {Template: <that template>}`. The Argo controller/agent fires the HTTP call when the workflow reaches a terminal phase; no business step pod is spawned.
+### Decision 1: Push transport = Argo `onExit` container (curl) hook (not http-template, not Argo Events, not Informer)
+- **UPDATE (2026-07-05, see decisions.md)**: The `http`-template variant is BLOCKED on this cluster — its agent pod cannot mount the SA token on K8s 1.35 and hangs the workflow. Switched to a **plain container** exit handler running `curl` (token via env `secretKeyRef`, `|| true; exit 0` best-effort). Validated on dev. Argo Events (C) assessed as too heavy (full NATS stack install).
+- **Approach**: At transpile time, append a `wfv1.Template{Container: &corev1.Container{Image: <curl image>, Command: sh -c, Args: [curl POST <webhook> with X-Databrew-Webhook-Token from env, body = {{workflow.name/namespace/uid/status}}], Env: [DATABREW_WEBHOOK_URL, DATABREW_WEBHOOK_TOKEN via secretKeyRef]}}` and set `Spec.Hooks[exit] = {Template: <that template>}`. It runs as a normal pod at terminal phase.
 - **Alternative**: (a) Full Argo Events (EventSource watches Workflow CRD → Sensor → webhook) — richer, per-change granularity, but a new CRD component to deploy/secure/operate per namespace; deferred to a later phase. (b) K8s Informer in the backend — architecturally wrong for Cloud Run (long-lived watch, multi-instance duplication).
 - **Rationale**: The hook is the lowest-cost signal that requires no new cluster component, works per-workflow, and gives us the highest-value event (terminal) immediately. It lets us validate the push→webhook→ledger path before deciding whether full Argo Events is warranted.
 - **Trade-off**: Only fires at workflow exit (terminal), so intermediate node phases still come from the poll backstop until/unless we add hooks with phase expressions. HTTP-template hooks use the shared Argo agent pod (one per workflow, lightweight), not fully pod-free.

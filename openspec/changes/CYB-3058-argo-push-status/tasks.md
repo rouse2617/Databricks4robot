@@ -9,11 +9,12 @@ Verification tier for this change: **L** (API contract sync + cross-module).
 - [ ] [backend] Add `SetArgoRunWebhook(url, token)` setter + getter + Usecase fields in `usecase/pipeline/usecase.go` (mirror `SetArgoWorkflowTTLSecondsAfterCompletion` 225-233).
 - [ ] [backend] In `cmd/server/core.go`: call `SetArgoRunWebhook` from `cfg`; replace hardcoded `StartRunEventWatcher(ctx, 3*time.Second, 100)` (line 147) with config-driven interval + scan limit.
 
-## 2. Transpiler — inject exit hook (Scenario: Workflow success/failure is pushed)
-- [ ] [backend] Add `ExitHookURL`, `ExitHookToken` fields to `transpiler.Options` (transpiler.go 38-52).
-- [ ] [backend] In `Transpile` (transpiler.go 80-107): when `ExitHookURL != ""`, append an HTTP `wfv1.Template` (POST, auth header, JSON body with `{{workflow.name}}`/`{{workflow.status}}`/`{{workflow.uid}}`/message/finish time) and set `Spec.Hooks[wfv1.ExitLifecycleEvent] = {Template: <name>}`.
-- [ ] [backend] Pass `ExitHookURL/Token` into `wfOpts` in `Deploy` (usecase.go 3092-3103).
-- [ ] [backend] Unit test in `transpiler_test.go`: hook present when URL set; absent when URL empty (Scenario: Notification delivery fails without blocking — hook is best-effort, absence path).
+## 2. Transpiler — inject container (curl) exit hook (Scenario: Workflow success/failure is pushed) [DONE]
+- [x] [backend] Add `ExitHookURL`, `ExitHookTokenSecretName/Key`, `ExitHookImage` to `transpiler.Options`.
+- [x] [backend] In `Transpile`: when `ExitHookURL != ""`, append a **container** `wfv1.Template` (curl POST to the webhook; `DATABREW_WEBHOOK_URL` env + `DATABREW_WEBHOOK_TOKEN` via env `secretKeyRef`; `|| true; exit 0` best-effort) and set `Spec.Hooks[exit]`. NOTE: container, not `http` template — the http agent pod cannot start on K8s 1.35 (see decisions.md).
+- [x] [backend] Pass hook opts (incl. image) into `wfOpts` in `Deploy`; `SetArgoRunWebhook(url, secretName, secretKey, image)`; config `ARGO_RUN_WEBHOOK_IMAGE`.
+- [x] [backend] Unit test: container template present w/ curl + env secretKeyRef when URL set; absent when URL empty; token never a literal.
+- [x] [validation] Isolated dev kubectl workflow: container exit handler runs as normal pod, secretKeyRef resolves, webhook reached (HTTP 404 for unknown wf = auth OK), workflow reaches terminal cleanly.
 
 ## 3. Webhook endpoint (Scenario: duplicate dedup / unauthenticated rejected / unknown workflow rejected)
 - [ ] [backend] Add `ArgoWebhookAuth(token)` middleware (constant-time compare, mirror `ingest_auth.go` 17/80). Rejects missing/invalid token → 401 (Scenario: Unauthenticated call is rejected).

@@ -79,6 +79,7 @@ type Usecase struct {
 	argoRunWebhookURL             string
 	argoRunWebhookTokenSecretName string
 	argoRunWebhookTokenSecretKey  string
+	argoRunWebhookImage           string
 
 	// batchCancels holds cancel funcs for in-flight batch submission
 	// goroutines so StopBatchRuns can halt further run creation.
@@ -242,10 +243,11 @@ func (uc *Usecase) argoWorkflowTTLSecondsAfter() int32 {
 // SetArgoRunWebhook configures the exit-hook that pushes run status to DataBrew.
 // url empty disables hook injection (poll-only). secretName/secretKey reference
 // the K8s Secret (in the workflow namespace) holding the webhook auth token.
-func (uc *Usecase) SetArgoRunWebhook(url, secretName, secretKey string) {
+func (uc *Usecase) SetArgoRunWebhook(url, secretName, secretKey, image string) {
 	uc.argoRunWebhookURL = strings.TrimSpace(url)
 	uc.argoRunWebhookTokenSecretName = strings.TrimSpace(secretName)
 	uc.argoRunWebhookTokenSecretKey = strings.TrimSpace(secretKey)
+	uc.argoRunWebhookImage = strings.TrimSpace(image)
 }
 
 func defaultExecutionTargetServiceAccount() string {
@@ -3192,6 +3194,7 @@ func (uc *Usecase) Deploy(
 		ExitHookURL:             uc.argoRunWebhookURL,
 		ExitHookTokenSecretName: uc.argoRunWebhookTokenSecretName,
 		ExitHookTokenSecretKey:  uc.argoRunWebhookTokenSecretKey,
+		ExitHookImage:           uc.argoRunWebhookImage,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {

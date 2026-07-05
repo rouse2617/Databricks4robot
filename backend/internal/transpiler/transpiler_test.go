@@ -754,31 +754,46 @@ func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
 	if hook.Template != ExitNotifyTemplateName {
 		t.Fatalf("hook template = %q, want %q", hook.Template, ExitNotifyTemplateName)
 	}
+	// The exit handler must be a plain container (NOT an Argo http template,
+	// whose agent pod cannot start on this cluster), running curl.
 	tmpl := findTemplate(wf, ExitNotifyTemplateName)
-	if tmpl == nil || tmpl.HTTP == nil {
-		t.Fatalf("expected HTTP notify template %q", ExitNotifyTemplateName)
+	if tmpl == nil || tmpl.Container == nil {
+		t.Fatalf("expected container notify template %q", ExitNotifyTemplateName)
 	}
-	if tmpl.HTTP.Method != "POST" || tmpl.HTTP.URL != "https://backend.example/api/v1/pipeline-runs/webhook" {
-		t.Fatalf("unexpected HTTP method/url: %+v", tmpl.HTTP)
+	if tmpl.HTTP != nil {
+		t.Fatalf("notify template must not use the http template (agent pod unavailable)")
 	}
-	// token must be sent via secretKeyRef, never as a literal value.
-	var authHeader *wfv1.HTTPHeader
-	for i := range tmpl.HTTP.Headers {
-		if tmpl.HTTP.Headers[i].Name == exitNotifyHeaderName {
-			authHeader = &tmpl.HTTP.Headers[i]
+	if tmpl.Container.Image == "" {
+		t.Fatalf("notify container must set an image")
+	}
+	joined := strings.Join(tmpl.Container.Args, " ")
+	if !strings.Contains(joined, "curl") || !strings.Contains(joined, "$DATABREW_WEBHOOK_URL") {
+		t.Fatalf("notify container must curl the webhook url: %q", joined)
+	}
+	// URL as env value; token as env valueFrom.secretKeyRef (never literal).
+	var urlEnv, tokEnv *corev1.EnvVar
+	for i := range tmpl.Container.Env {
+		switch tmpl.Container.Env[i].Name {
+		case "DATABREW_WEBHOOK_URL":
+			urlEnv = &tmpl.Container.Env[i]
+		case "DATABREW_WEBHOOK_TOKEN":
+			tokEnv = &tmpl.Container.Env[i]
 		}
 	}
-	if authHeader == nil {
-		t.Fatalf("expected auth header %q", exitNotifyHeaderName)
+	if urlEnv == nil || urlEnv.Value != "https://backend.example/api/v1/pipeline-runs/webhook" {
+		t.Fatalf("unexpected webhook url env: %+v", urlEnv)
 	}
-	if authHeader.Value != "" {
-		t.Fatalf("auth header must not carry a literal token value")
+	if tokEnv == nil {
+		t.Fatalf("expected DATABREW_WEBHOOK_TOKEN env")
 	}
-	if authHeader.ValueFrom == nil || authHeader.ValueFrom.SecretKeyRef == nil {
-		t.Fatalf("auth header must use valueFrom.secretKeyRef")
+	if tokEnv.Value != "" {
+		t.Fatalf("token env must not carry a literal value")
 	}
-	if authHeader.ValueFrom.SecretKeyRef.Name != "databrew-run-webhook-token" || authHeader.ValueFrom.SecretKeyRef.Key != "token" {
-		t.Fatalf("unexpected secretKeyRef: %+v", authHeader.ValueFrom.SecretKeyRef)
+	if tokEnv.ValueFrom == nil || tokEnv.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("token env must use valueFrom.secretKeyRef")
+	}
+	if tokEnv.ValueFrom.SecretKeyRef.Name != "databrew-run-webhook-token" || tokEnv.ValueFrom.SecretKeyRef.Key != "token" { // pragma: allowlist secret
+		t.Fatalf("unexpected secretKeyRef: %+v", tokEnv.ValueFrom.SecretKeyRef)
 	}
 }
 
