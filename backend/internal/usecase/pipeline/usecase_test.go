@@ -4952,3 +4952,101 @@ func TestGetRun_RepairsPollutedFinishedAtFromArgo(t *testing.T) {
 		t.Fatalf("expected repaired finished_at %v, got %v", correctFinish, run.FinishedAt)
 	}
 }
+
+func TestRefreshRunFromWorkflowByName_AppliesArgoTruth(t *testing.T) {
+	ctx := context.Background()
+	run := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Running", ArgoWorkflowUID: "uid-1"}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": run},
+		byWf: map[string]*models.PipelineRun{"wf-1": run},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowSucceeded},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	got, err := uc.RefreshRunFromWorkflowByName(ctx, "wf-1", "uid-1")
+	if err != nil {
+		t.Fatalf("RefreshRunFromWorkflowByName: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("expected a run, got nil")
+	}
+	if !isSucceededRunStatus(got.Status) {
+		t.Fatalf("expected succeeded status, got %q", got.Status)
+	}
+}
+
+func TestRefreshRunFromWorkflowByName_UnknownWorkflowReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{byWf: map[string]*models.PipelineRun{}}
+	wfClient := &mockWorkflowClient{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	got, err := uc.RefreshRunFromWorkflowByName(ctx, "no-such-wf", "")
+	if err != nil {
+		t.Fatalf("RefreshRunFromWorkflowByName: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil run for unknown workflow, got %+v", got)
+	}
+}
+
+func TestRefreshRunFromWorkflowByName_UIDMismatchDoesNotApply(t *testing.T) {
+	ctx := context.Background()
+	run := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Running", ArgoWorkflowUID: "uid-1"}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": run},
+		byWf: map[string]*models.PipelineRun{"wf-1": run},
+	}
+	called := false
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		called = true
+		return &wfv1.Workflow{Status: wfv1.WorkflowStatus{Phase: wfv1.WorkflowSucceeded}}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	got, err := uc.RefreshRunFromWorkflowByName(ctx, "wf-1", "uid-2-different")
+	if err != nil {
+		t.Fatalf("RefreshRunFromWorkflowByName: %v", err)
+	}
+	if got == nil || got.Status != "Running" {
+		t.Fatalf("expected run untouched (Running), got %+v", got)
+	}
+	if called {
+		t.Fatalf("GetWorkflow must not be called on UID mismatch")
+	}
+}
+
+func TestPersistRunObservation_SucceededNotRegressedToActive(t *testing.T) {
+	ctx := context.Background()
+	existing := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Succeeded"}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": existing},
+		byWf: map[string]*models.PipelineRun{"wf-1": existing},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	// A late/out-of-order observation tries to move the run back to Running.
+	stale := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Running"}
+	uc.persistRunObservation(ctx, stale)
+
+	if runRepo.byID["run-1"].Status != "Succeeded" {
+		t.Fatalf("succeeded run must not regress, got %q", runRepo.byID["run-1"].Status)
+	}
+	if stale.Status != "Succeeded" {
+		t.Fatalf("returned run should reflect terminal status, got %q", stale.Status)
+	}
+}

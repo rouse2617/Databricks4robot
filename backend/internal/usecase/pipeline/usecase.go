@@ -74,6 +74,12 @@ type Usecase struct {
 	now                     func() time.Time
 	workflowTTLSecondsAfter int32
 
+	// Argo run status push webhook (CYB-3058). When argoRunWebhookURL is empty,
+	// no exit hook is injected into transpiled workflows (poll-only fallback).
+	argoRunWebhookURL             string
+	argoRunWebhookTokenSecretName string
+	argoRunWebhookTokenSecretKey  string
+
 	// batchCancels holds cancel funcs for in-flight batch submission
 	// goroutines so StopBatchRuns can halt further run creation.
 	batchCancelMu sync.Mutex
@@ -231,6 +237,15 @@ func (uc *Usecase) argoWorkflowTTLSecondsAfter() int32 {
 		return uc.workflowTTLSecondsAfter
 	}
 	return transpiler.DefaultTTLSecondsAfterCompletion
+}
+
+// SetArgoRunWebhook configures the exit-hook that pushes run status to DataBrew.
+// url empty disables hook injection (poll-only). secretName/secretKey reference
+// the K8s Secret (in the workflow namespace) holding the webhook auth token.
+func (uc *Usecase) SetArgoRunWebhook(url, secretName, secretKey string) {
+	uc.argoRunWebhookURL = strings.TrimSpace(url)
+	uc.argoRunWebhookTokenSecretName = strings.TrimSpace(secretName)
+	uc.argoRunWebhookTokenSecretKey = strings.TrimSpace(secretKey)
 }
 
 func defaultExecutionTargetServiceAccount() string {
@@ -1605,6 +1620,12 @@ func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun
 func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.NodeStatus) []models.PipelineRunNode {
 	out := make([]models.PipelineRunNode, 0, len(nodes))
 	for id, node := range nodes {
+		// Exclude the DataBrew exit-notify hook node (CYB-3058): it is
+		// infrastructure, not a business step, and must not appear in the step
+		// list or influence run status derivation.
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
 		now := time.Now().UTC()
 		podName := ""
 		if node.Type == wfv1.NodeTypePod {
@@ -1960,6 +1981,22 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		return
 	}
 	existingWasActive := isActiveDeploymentStatus(existing.Status)
+	// Monotonicity guard (CYB-3058): a run that has already succeeded must not be
+	// regressed to an active phase by a late or out-of-order observation (e.g. a
+	// delayed poll snapshot landing after a push-triggered terminal apply). Only
+	// success is guarded — Argo never un-succeeds a workflow — while Error/Failed
+	// remain revivable (misclassification recovery, e.g. TTL-cleanup false
+	// positives handled by reconcileMisclassifiedRunFromArgo).
+	if isSucceededRunStatus(existing.Status) && isActiveDeploymentStatus(run.Status) {
+		slog.Warn("persistRunObservation: ignoring active-status regression on succeeded run",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"succeededStatus", existing.Status,
+			"incomingStatus", run.Status,
+		)
+		*run = *existing
+		return
+	}
 	if existing.Status != run.Status || existing.Message != run.Message {
 		slog.Info("persistRunObservation status change",
 			"runID", run.ID,
@@ -2498,6 +2535,58 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 	run.LedgerState = "has_ledger"
 	logPipelineSideEffect("update pipeline run ledger state + backfill completed",
 		uc.runRepo.UpdateLedgerState(ctx, run.ID, "has_ledger"))
+}
+
+// RefreshRunFromWorkflowByName is the entry point for the run status push
+// webhook (CYB-3058). The webhook payload is a trigger ("poke") only: DataBrew
+// resolves the run by workflow name, cross-checks the workflow UID, fetches the
+// authoritative workflow state from Argo, and applies it (status + events +
+// nodes) via applyWorkflowToRun. The payload phase is never trusted, so a
+// forged/replayed call cannot inject false status. Returns (nil, nil) when no
+// run matches the workflow name (handler maps to 404).
+func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowName, workflowUID string) (*models.PipelineRun, error) {
+	if uc.runRepo == nil || uc.wfClient == nil {
+		return nil, nil
+	}
+	workflowName = strings.TrimSpace(workflowName)
+	if workflowName == "" {
+		return nil, nil
+	}
+	run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, nil
+	}
+	// Guard against workflow-name reuse across generations: if we know the UID
+	// and the payload carries a different one, skip (idempotent no-op).
+	if uid := strings.TrimSpace(workflowUID); uid != "" {
+		if known := strings.TrimSpace(run.ArgoWorkflowUID); known != "" && known != uid {
+			slog.Warn("RefreshRunFromWorkflowByName: workflow UID mismatch, ignoring poke",
+				"runID", run.ID, "workflowName", workflowName,
+				"knownUID", known, "payloadUID", uid)
+			return run, nil
+		}
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) || errors.Is(err, argo.ErrUnexpectedNotFound) {
+			slog.Warn("RefreshRunFromWorkflowByName: GetWorkflow not found, skipping",
+				"runID", run.ID, "workflowName", workflowName, "err", err)
+			return run, nil
+		}
+		return run, err
+	}
+	if wf == nil {
+		return run, nil
+	}
+	uc.applyWorkflowToRun(ctx, run, wf)
+	return run, nil
 }
 
 // SyncActiveRunEvents refreshes active runs from Argo and records durable
@@ -3099,6 +3188,10 @@ func (uc *Usecase) Deploy(
 		WorkflowParams:       wfParams,
 		GlobalEnv:            globalEnv,
 		ExtraVolumes:         extraVolumes,
+
+		ExitHookURL:             uc.argoRunWebhookURL,
+		ExitHookTokenSecretName: uc.argoRunWebhookTokenSecretName,
+		ExitHookTokenSecretKey:  uc.argoRunWebhookTokenSecretKey,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
@@ -5067,6 +5160,18 @@ const workflowCreateVisibilityGracePeriod = 5 * time.Minute
 func isActiveDeploymentStatus(status string) bool {
 	switch strings.TrimSpace(status) {
 	case "", "Running", "Pending", "Unknown", "Suspended":
+		return true
+	default:
+		return false
+	}
+}
+
+// isSucceededRunStatus reports whether the run status is a successful terminal
+// state. Success is final in Argo (a workflow never un-succeeds), so it is the
+// only status protected by the monotonicity guard in persistRunObservation.
+func isSucceededRunStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(wfv1.WorkflowSucceeded), "completed", "success":
 		return true
 	default:
 		return false

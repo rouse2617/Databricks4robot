@@ -143,6 +143,16 @@ type Config struct {
 	PipelineResourceMaxGPU                string
 	PipelineUnschedulablePendingThreshold string
 
+	// Argo run status push webhook (CYB-3058).
+	// ArgoRunWebhookURL empty disables exit-hook injection (poll-only fallback).
+	ArgoRunWebhookURL             string
+	ArgoRunWebhookToken           string // backend-side token to validate inbound webhook calls
+	ArgoRunWebhookTokenSecretName string // K8s Secret name referenced by the workflow hook header
+	ArgoRunWebhookTokenSecretKey  string // key within that Secret
+	// Run status watcher (now a reconcile backstop behind the push path).
+	PipelineRunWatcherIntervalSec int32
+	PipelineRunWatcherScanLimit   int32
+
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
 
@@ -245,6 +255,13 @@ func Load() *Config {
 		PipelineResourceMaxDisk:               getenv("PIPELINE_RESOURCE_MAX_DISK", ""),
 		PipelineResourceMaxGPU:                getenv("PIPELINE_RESOURCE_MAX_GPU", ""),
 		PipelineUnschedulablePendingThreshold: getenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "15m"),
+
+		ArgoRunWebhookURL:             getenv("ARGO_RUN_WEBHOOK_URL", ""),
+		ArgoRunWebhookToken:           getenv("ARGO_RUN_WEBHOOK_TOKEN", ""),
+		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),
+		ArgoRunWebhookTokenSecretKey:  getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_KEY", "token"),
+		PipelineRunWatcherIntervalSec: getenvInt32("PIPELINE_RUN_WATCHER_INTERVAL_SEC", 30),
+		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
 
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
 	}

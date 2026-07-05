@@ -68,6 +68,10 @@ components:
       type: apiKey
       in: header
       name: X-Admin-Token
+    DatabrewWebhookToken:
+      type: apiKey
+      in: header
+      name: X-Databrew-Webhook-Token
   parameters:
     RequestIdHeader:
       in: header
@@ -6370,6 +6374,58 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
+
+  /api/v1/pipeline-runs/webhook:
+    post:
+      tags: [Runs]
+      summary: Argo workflow run status push webhook (CYB-3058)
+      description: >
+        Receives a lightweight "poke" from an Argo workflow exit hook when a
+        workflow reaches a terminal phase. The payload phase is a trigger only:
+        DataBrew resolves the run by workflow name, cross-checks the workflow
+        UID, and re-reads the authoritative state from Argo before applying it,
+        so a forged or replayed call cannot inject false status. Idempotent.
+        Authenticated with a dedicated machine token (not user/JWT); an empty
+        configured token disables the route.
+      security:
+        - DatabrewWebhookToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflowName]
+              properties:
+                workflowName: { type: string, description: Argo workflow name }
+                namespace: { type: string, description: Argo namespace }
+                uid: { type: string, description: Argo workflow UID (cross-checked against the run) }
+                phase: { type: string, description: Argo workflow phase (hint only; not trusted) }
+      responses:
+        '200':
+          description: Run refreshed (or idempotent no-op)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runId: { type: string }
+                  status: { type: string }
+        '400':
+          description: Missing or invalid payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Missing or invalid webhook token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: No run matches the workflow name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/runs/by-workflow/{workflowName}:
     get:

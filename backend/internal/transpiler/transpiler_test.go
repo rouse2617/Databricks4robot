@@ -710,3 +710,87 @@ func TestTranspileUsesCanonicalStepTemplateName(t *testing.T) {
 		t.Fatalf("task template = %q, want step-1", dag.DAG.Tasks[0].Template)
 	}
 }
+
+// helper: a minimal single-node pipeline for hook tests.
+func singleNodePipeline() *Pipeline {
+	return &Pipeline{
+		Name: "hooktest",
+		Nodes: []Node{{
+			ID: "a",
+			Component: Component{
+				Name:    "a",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo hi"}},
+			},
+		}},
+	}
+}
+
+func findTemplate(wf *wfv1.Workflow, name string) *wfv1.Template {
+	for i := range wf.Spec.Templates {
+		if wf.Spec.Templates[i].Name == name {
+			return &wf.Spec.Templates[i]
+		}
+	}
+	return nil
+}
+
+func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:                    "wf-hook",
+		Namespace:               "cyber-databrew-dev",
+		ExitHookURL:             "https://backend.example/api/v1/pipeline-runs/webhook",
+		ExitHookTokenSecretName: "databrew-run-webhook-token",
+		ExitHookTokenSecretKey:  "token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, ok := wf.Spec.Hooks[wfv1.ExitLifecycleEvent]
+	if !ok {
+		t.Fatalf("expected exit lifecycle hook to be set")
+	}
+	if hook.Template != ExitNotifyTemplateName {
+		t.Fatalf("hook template = %q, want %q", hook.Template, ExitNotifyTemplateName)
+	}
+	tmpl := findTemplate(wf, ExitNotifyTemplateName)
+	if tmpl == nil || tmpl.HTTP == nil {
+		t.Fatalf("expected HTTP notify template %q", ExitNotifyTemplateName)
+	}
+	if tmpl.HTTP.Method != "POST" || tmpl.HTTP.URL != "https://backend.example/api/v1/pipeline-runs/webhook" {
+		t.Fatalf("unexpected HTTP method/url: %+v", tmpl.HTTP)
+	}
+	// token must be sent via secretKeyRef, never as a literal value.
+	var authHeader *wfv1.HTTPHeader
+	for i := range tmpl.HTTP.Headers {
+		if tmpl.HTTP.Headers[i].Name == exitNotifyHeaderName {
+			authHeader = &tmpl.HTTP.Headers[i]
+		}
+	}
+	if authHeader == nil {
+		t.Fatalf("expected auth header %q", exitNotifyHeaderName)
+	}
+	if authHeader.Value != "" {
+		t.Fatalf("auth header must not carry a literal token value")
+	}
+	if authHeader.ValueFrom == nil || authHeader.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("auth header must use valueFrom.secretKeyRef")
+	}
+	if authHeader.ValueFrom.SecretKeyRef.Name != "databrew-run-webhook-token" || authHeader.ValueFrom.SecretKeyRef.Key != "token" {
+		t.Fatalf("unexpected secretKeyRef: %+v", authHeader.ValueFrom.SecretKeyRef)
+	}
+}
+
+func TestTranspileNoExitHookWhenURLEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nohook", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wf.Spec.Hooks) != 0 {
+		t.Fatalf("expected no hooks, got %v", wf.Spec.Hooks)
+	}
+	if findTemplate(wf, ExitNotifyTemplateName) != nil {
+		t.Fatalf("notify template must not be present when hook disabled")
+	}
+}

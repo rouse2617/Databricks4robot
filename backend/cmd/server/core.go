@@ -19,7 +19,7 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"       // NEW
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -117,6 +117,11 @@ func setupCore(inf *infra) *coreHandlers {
 		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
 	}
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	puc.SetArgoRunWebhook(
+		inf.cfg.ArgoRunWebhookURL,
+		inf.cfg.ArgoRunWebhookTokenSecretName,
+		inf.cfg.ArgoRunWebhookTokenSecretKey,
+	)
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
 		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,
@@ -144,7 +149,17 @@ func setupCore(inf *infra) *coreHandlers {
 		}
 		puc.SetPricing(priceCfg)
 	}
-	puc.StartRunEventWatcher(context.Background(), 3*time.Second, 100)
+	// Push (Argo exit hook) is the primary status signal (CYB-3058); the watcher
+	// is a low-frequency reconcile backstop. Interval/scan-limit are configurable.
+	watcherInterval := time.Duration(inf.cfg.PipelineRunWatcherIntervalSec) * time.Second
+	if watcherInterval <= 0 {
+		watcherInterval = 30 * time.Second
+	}
+	watcherScanLimit := int(inf.cfg.PipelineRunWatcherScanLimit)
+	if watcherScanLimit <= 0 {
+		watcherScanLimit = 100
+	}
+	puc.StartRunEventWatcher(context.Background(), watcherInterval, watcherScanLimit)
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
 	puc.SetBackfillRepo(backfillRepo)

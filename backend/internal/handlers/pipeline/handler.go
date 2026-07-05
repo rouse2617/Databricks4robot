@@ -15,10 +15,10 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
-	"github.com/google/uuid"
 	runKernel "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/run"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
+	"github.com/google/uuid"
 )
 
 // BatchSubtaskReconciler materializes batch subtasks as pipeline runs for list views.
@@ -793,6 +793,41 @@ func (h *Handler) RetryRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, run)
+}
+
+// runWebhookRequest is the poke payload sent by the Argo workflow exit hook
+// (CYB-3058). The phase is a hint only; DataBrew re-reads the workflow for the
+// authoritative state, so a forged/replayed call cannot inject false status.
+type runWebhookRequest struct {
+	WorkflowName string `json:"workflowName"`
+	Namespace    string `json:"namespace"`
+	UID          string `json:"uid"`
+	Phase        string `json:"phase"`
+}
+
+// HandleRunWebhook handles POST /api/v1/pipeline-runs/webhook. It receives an
+// Argo workflow exit-hook poke and refreshes the corresponding run from Argo.
+// Idempotent: repeated deliveries converge on the authoritative state.
+func (h *Handler) HandleRunWebhook(c *gin.Context) {
+	var req runWebhookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid webhook payload", nil)
+		return
+	}
+	if strings.TrimSpace(req.WorkflowName) == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflowName is required", nil)
+		return
+	}
+	run, err := h.uc.RefreshRunFromWorkflowByName(c.Request.Context(), req.WorkflowName, req.UID)
+	if err != nil {
+		httpresp.Internal(c, "failed to refresh run from workflow")
+		return
+	}
+	if run == nil {
+		httpresp.NotFound(c, "RUN_NOT_FOUND", "no run found for workflow")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"runId": run.ID, "status": run.Status})
 }
 
 // RetryRunRuntime handles POST /api/v1/runs/:id/retry.

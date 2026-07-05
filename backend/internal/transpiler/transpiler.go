@@ -49,6 +49,58 @@ type Options struct {
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
 	GlobalEnv    []EnvVar
 	ExtraVolumes []Volume // additional workflow-level volumes
+
+	// ExitHookURL, when non-empty, injects a workflow-level exit lifecycle hook
+	// that POSTs a lightweight "run finished" poke to DataBrew when the workflow
+	// reaches a terminal phase. Empty disables the hook entirely (kill switch).
+	ExitHookURL string
+	// ExitHookTokenSecretName / ExitHookTokenSecretKey reference a Kubernetes
+	// Secret (in the workflow namespace) holding the webhook auth token, sent via
+	// valueFrom.secretKeyRef so the token is never embedded in the manifest.
+	ExitHookTokenSecretName string
+	ExitHookTokenSecretKey  string
+}
+
+// ExitNotifyTemplateName is the template invoked by the workflow-level exit hook.
+// It is distinct from node templates (which are prefixed "step-") so DataBrew can
+// exclude this node from run status derivation and the step list.
+const ExitNotifyTemplateName = "databrew-exit-notify"
+
+// exitNotifyHeaderName is the HTTP header carrying the webhook auth token.
+const exitNotifyHeaderName = "X-Databrew-Webhook-Token"
+
+// buildExitNotifyTemplate builds a controller-executed HTTP template that pokes
+// DataBrew on workflow completion. It is best-effort: a short timeout keeps a
+// slow/unreachable endpoint from stalling the agent, and DataBrew treats the
+// call as a trigger (it re-reads the workflow for authoritative state), so the
+// body only needs to identify the workflow.
+func buildExitNotifyTemplate(opts *Options) wfv1.Template {
+	timeout := int64(10)
+	headers := wfv1.HTTPHeaders{
+		{Name: "Content-Type", Value: "application/json"},
+	}
+	if opts.ExitHookTokenSecretName != "" && opts.ExitHookTokenSecretKey != "" {
+		headers = append(headers, wfv1.HTTPHeader{
+			Name: exitNotifyHeaderName,
+			ValueFrom: &wfv1.HTTPHeaderSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: opts.ExitHookTokenSecretName},
+					Key:                  opts.ExitHookTokenSecretKey,
+				},
+			},
+		})
+	}
+	body := `{"workflowName":"{{workflow.name}}","namespace":"{{workflow.namespace}}","uid":"{{workflow.uid}}","phase":"{{workflow.status}}"}`
+	return wfv1.Template{
+		Name: ExitNotifyTemplateName,
+		HTTP: &wfv1.HTTP{
+			Method:         "POST",
+			URL:            opts.ExitHookURL,
+			Headers:        headers,
+			TimeoutSeconds: &timeout,
+			Body:           body,
+		},
+	}
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -99,6 +151,16 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	}
 	for _, s := range opts.ImagePullSecrets {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
+	}
+
+	// Workflow-level exit hook: poke DataBrew on terminal phase (push status).
+	// Kept out of the entrypoint DAG so the notify node is never treated as a
+	// business step; DataBrew excludes it from run status derivation.
+	if opts.ExitHookURL != "" {
+		wf.Spec.Templates = append(wf.Spec.Templates, buildExitNotifyTemplate(opts))
+		wf.Spec.Hooks = wfv1.LifecycleHooks{
+			wfv1.ExitLifecycleEvent: wfv1.LifecycleHook{Template: ExitNotifyTemplateName},
+		}
 	}
 
 	if p.Parallelism > 0 {
@@ -863,7 +925,6 @@ func splitArgValue(raw string) []string {
 	}
 	return []string{v}
 }
-
 
 // or Command=["sh", "-c"], Args=["..."].
 func shellScriptArgIndex(cmd []string, args []string) int {
