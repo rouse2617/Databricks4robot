@@ -2162,6 +2162,10 @@ components:
           format: double
           nullable: true
           description: Sum of node estimated costs in USD when pricing data is available.
+        videoDurationSec:
+          type: number
+          format: double
+          description: Source video duration in seconds (from video_durations, by asset_id). Absent when unknown. (CYB-3059)
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }

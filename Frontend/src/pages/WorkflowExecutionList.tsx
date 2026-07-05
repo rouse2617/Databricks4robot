@@ -106,6 +106,7 @@ type ExecutionRecord = WorkflowSummary & {
 	templateName?: string;
 	owner?: string;
 	argoNamespace?: string;
+	videoDurationSec?: number;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -404,6 +405,22 @@ const runMatchesFilters = (
 	return true;
 };
 
+// formatVideoDurationSec renders a raw second count as "m分s秒" (or "h时m分s秒"
+// for long videos). Returns "-" when the duration is unknown (some videos have
+// no recorded duration).
+const formatVideoDurationSec = (sec?: number): string => {
+	if (sec === undefined || sec === null || !Number.isFinite(sec) || sec < 0) {
+		return "-";
+	}
+	const total = Math.round(sec);
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	if (h > 0) return `${h}时${m}分${s}秒`;
+	if (m > 0) return `${m}分${s}秒`;
+	return `${s}秒`;
+};
+
 const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 	const labels = labelsForRun(run);
 	return {
@@ -424,6 +441,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		blockingMessage: run.blockingMessage,
 		owner: run.owner,
 		argoNamespace: run.argoNamespace,
+		videoDurationSec: run.videoDurationSec,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
@@ -1359,6 +1377,16 @@ export function WorkflowExecutionList({
 						finishedAt={record.finishedAt}
 					/>
 				),
+			},
+			{
+				title: "视频时长",
+				key: "videoDuration",
+				width: 100,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					((a as ExecutionRecord).videoDurationSec ?? -1) -
+					((b as ExecutionRecord).videoDurationSec ?? -1),
+				render: (_: unknown, record: WorkflowSummary) =>
+					formatVideoDurationSec((record as ExecutionRecord).videoDurationSec),
 			},
 			{
 				title: (

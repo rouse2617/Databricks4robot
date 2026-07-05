@@ -134,6 +134,7 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.SetRunEventRepo(pipelineRunEventRepo)
 	puc.SetRunFactRepositories(runRelationRepo, runInputRepo)
 	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
+	puc.SetVideoDurationRepo(postgres.NewVideoDurationRepo(pg))
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
