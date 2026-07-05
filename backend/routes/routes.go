@@ -143,9 +143,9 @@ func RegisterAll(
 			c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{
 				"authenticated": true,
-				"token":        jwtToken,
-				"email":        email,
-				"role":         "user",
+				"token":         jwtToken,
+				"email":         email,
+				"role":          "user",
 			})
 		})
 
@@ -200,6 +200,17 @@ func RegisterAll(
 			releaseIngest.Use(cbMiddleware)
 		}
 		releaseIngest.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
+	}
+
+	// Argo workflow run status push webhook (CYB-3058). Dedicated machine-token
+	// auth (not user/JWT): the caller is the Argo controller exit hook. Empty
+	// token disables the route (poll-only fallback).
+	if pipelineHandler != nil && cfg.ArgoRunWebhookToken != "" {
+		argoWebhook := r.Group("/api/v1", middleware.ArgoWebhookAuth(cfg.ArgoRunWebhookToken))
+		if cbMiddleware != nil {
+			argoWebhook.Use(cbMiddleware)
+		}
+		argoWebhook.POST("/pipeline-runs/webhook", pipelineHandler.HandleRunWebhook)
 	}
 
 	if workflowHandler != nil {

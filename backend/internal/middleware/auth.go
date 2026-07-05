@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,6 +29,25 @@ func GetUserEmail(c *gin.Context) string {
 		}
 	}
 	return "legacy"
+}
+
+// ArgoWebhookAuth authenticates the Argo workflow status-push webhook (CYB-3058)
+// via a dedicated token in the X-Databrew-Webhook-Token header, compared in
+// constant time. It is intentionally separate from user/JWT auth: the caller is
+// the Argo controller, not a user, so it must not receive broad API scope. An
+// empty configured token disables the endpoint (always unauthorized).
+func ArgoWebhookAuth(token string) gin.HandlerFunc {
+	want := strings.TrimSpace(token)
+	return func(c *gin.Context) {
+		got := strings.TrimSpace(c.GetHeader("X-Databrew-Webhook-Token"))
+		if want == "" || got == "" || len(got) != len(want) ||
+			subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func StaticTokenAuth(token string) gin.HandlerFunc {

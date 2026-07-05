@@ -3456,3 +3456,31 @@ curl -i -X POST "$BASE/api/v1/backfill/results" \
     "result": {}
   }'
 ```
+
+## Run status push webhook (CYB-3058)
+
+Machine endpoint called by the Argo workflow exit hook to push run status.
+Authenticated with a dedicated token in `X-Databrew-Webhook-Token` (not user/JWT).
+The payload phase is a hint only — DataBrew re-reads the workflow from Argo for
+authoritative state, so the call is safe to replay and cannot inject false status.
+
+```bash
+# Happy path: poke for a known workflow -> 200, run refreshed from Argo
+curl -sS -X POST "$BASE/api/v1/pipeline-runs/webhook" \
+  -H "Content-Type: application/json" \
+  -H "X-Databrew-Webhook-Token: $ARGO_RUN_WEBHOOK_TOKEN" \
+  -d '{"workflowName":"pipeline-1783238030952-1a87815c","uid":"<argo-uid>","phase":"Succeeded"}'
+# -> {"runId":"...","status":"Succeeded"}
+
+# Error: bad token -> 401
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/api/v1/pipeline-runs/webhook" \
+  -H "Content-Type: application/json" -H "X-Databrew-Webhook-Token: wrong" \
+  -d '{"workflowName":"x"}'          # 401
+
+# Error: missing workflowName -> 400 ; unknown workflow -> 404
+```
+
+Notes:
+- The Argo hook is injected at transpile time only when `ARGO_RUN_WEBHOOK_URL` is set (empty = poll-only fallback). The token is sent from a K8s Secret (`databrew-run-webhook-token`) via `valueFrom.secretKeyRef`, never embedded in the manifest.
+- The polling watcher remains a reconcile backstop (`PIPELINE_RUN_WATCHER_INTERVAL_SEC`, default 30s); dropped pokes are eventually reconciled.
+- Smoke: `scripts/smoke-argo-push-dev.sh` (covers 401/400/404, plus 200 when passed a known workflow name).
