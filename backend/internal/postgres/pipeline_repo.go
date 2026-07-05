@@ -962,7 +962,7 @@ func (r *PipelineRunRepo) FindActiveSummariesStaleFirst(ctx context.Context, lim
 	if limit <= 0 {
 		limit = 50
 	}
-	const q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+	q := `SELECT ` + pipelineRunSummarySelectSQL(false) + `
 FROM pipeline_runs pr
 WHERE pr.status IN ('Pending', 'Running', 'Suspended', '')
    OR pr.status IS NULL

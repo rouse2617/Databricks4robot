@@ -241,6 +241,9 @@ func (m *mockPipelineRunRepo) FindActiveSummariesStaleFirst(_ context.Context, _
 func (m *mockPipelineRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	return m.byID[id], nil
 }
+func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	return m.byID[id], nil
+}
 func (m *mockPipelineRunRepo) FindByWorkflowName(_ context.Context, workflowName string) (*models.PipelineRun, error) {
 	for _, r := range m.byID {
 		if r.WorkflowName == workflowName {

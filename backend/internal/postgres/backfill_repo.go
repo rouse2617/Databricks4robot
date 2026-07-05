@@ -962,7 +962,7 @@ func (r *BackfillRepo) MarkDispatchSubmitting(ctx context.Context, itemID string
 		    dispatch_lease_expires_at=NOW() + ($2 || ' seconds')::interval
 		WHERE id=$1 AND dispatch_state IN ('claimed', 'submitting')`
 	db := dbFromCtx(ctx, r.c.db)
-	if _, err := db.Exec(ctx, q, itemID, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, leaseSec); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatchSubmitting: %w", err)
 	}
 	return nil
@@ -985,11 +985,11 @@ func (r *BackfillRepo) MarkDispatched(ctx context.Context, itemID, argoWorkflowN
 		WHERE id=$1
 		  AND dispatch_state IN ('claimed', 'submitting')`
 	db := dbFromCtx(ctx, r.c.db)
-	res, err := db.Exec(ctx, q, itemID, argoUID)
+	affected, err := db.ExecResult(ctx, q, itemID, argoUID)
 	if err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatched: %w", err)
 	}
-	if res.RowsAffected() == 0 {
+	if affected == 0 {
 		// The row may already have transitioned by the reaper or a
 		// duplicate worker. Idempotent no-op rather than silent success.
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatched: row %s not in claimable state", itemID)
@@ -998,7 +998,7 @@ func (r *BackfillRepo) MarkDispatched(ctx context.Context, itemID, argoWorkflowN
 	// existing paths (ReportBatchSubtaskFailure / SyncJobProgress) keep
 	// seeing the same workflow_name they always saw.
 	if argoWorkflowName != "" {
-		_, _ = db.Exec(ctx, `UPDATE backfill_items SET workflow_name=$2 WHERE id=$1`, itemID, argoWorkflowName)
+		_ = db.Exec(ctx, `UPDATE backfill_items SET workflow_name=$2 WHERE id=$1`, itemID, argoWorkflowName)
 	}
 	return nil
 }
@@ -1017,7 +1017,7 @@ func (r *BackfillRepo) MarkDispatchFailedRetryable(ctx context.Context, itemID s
 		WHERE id=$1
 		  AND dispatch_state IN ('claimed', 'submitting', 'failed')`
 	db := dbFromCtx(ctx, r.c.db)
-	if _, err := db.Exec(ctx, q, itemID, attempts, lastErr, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, attempts, lastErr, leaseSec); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatchFailedRetryable: %w", err)
 	}
 	return nil
@@ -1039,7 +1039,7 @@ func (r *BackfillRepo) MarkDispatchDead(ctx context.Context, itemID string, atte
 		WHERE id=$1
 		  AND dispatch_state IN ('claimed', 'submitting', 'failed', 'pending')`
 	db := dbFromCtx(ctx, r.c.db)
-	if _, err := db.Exec(ctx, q, itemID, attempts, lastErr); err != nil {
+	if err := db.Exec(ctx, q, itemID, attempts, lastErr); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatchDead: %w", err)
 	}
 	return nil
@@ -1047,8 +1047,8 @@ func (r *BackfillRepo) MarkDispatchDead(ctx context.Context, itemID string, atte
 
 // UpdateItemDispatchFields is a runtime-conditions checkpoint: the
 // dispatcher computed (or reloaded from Job filter_json) the
-// template_id / template_version / target_id, and stamps them onto
-// the row so sync progress and downstream diagnostics see current
+// template_id / template_version, and stamps them onto the item
+// row so sync progress and downstream diagnostics see current
 // values. Keeps the in-memory claim in alignment with what the
 // worker is actually doing.
 func (r *BackfillRepo) UpdateItemDispatchFields(ctx context.Context, itemID, _ string, templateVersion int, _ string, leaseSec int) error {
@@ -1058,7 +1058,7 @@ func (r *BackfillRepo) UpdateItemDispatchFields(ctx context.Context, itemID, _ s
 		    dispatch_lease_expires_at = NOW() + ($5 || ' seconds')::interval
 		WHERE id=$1`
 	db := dbFromCtx(ctx, r.c.db)
-	if _, err := db.Exec(ctx, q, itemID, templateVersion, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, templateVersion, leaseSec); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateItemDispatchFields: %w", err)
 	}
 	return nil
@@ -1156,7 +1156,7 @@ func (r *BackfillRepo) EnqueueForDispatcher(ctx context.Context, itemIDs []strin
 			    workflow_name_planned = $2
 			WHERE id = $1
 			  AND dispatch_state NOT IN ('legacy_skip', 'submitted', 'dead')`
-		if _, err := r.c.db.Exec(ctx, q, p.id, wfname); err != nil {
+		if err := r.c.db.Exec(ctx, q, p.id, wfname); err != nil {
 			return fmt.Errorf("postgres BackfillRepo.EnqueueForDispatcher update: %w", err)
 		}
 	}

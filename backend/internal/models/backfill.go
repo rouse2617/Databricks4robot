@@ -36,6 +36,12 @@ type BackfillItem struct {
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
 
+	// TemplateVersion is the per-item override of the job-level
+	// template version. The dispatcher reads it to pin the Argo
+	// template version on each submit so a requeue after a rerun
+	// always uses the version the user requested.
+	TemplateVersion int `json:"templateVersion,omitempty"`
+
 	// Phase 4: persistent dispatcher (outbox) columns. See
 	// openspec/changes/CYB-RUN-DIAGNOSIS-REFACTOR/PHASE4-DESIGN.md.
 	//

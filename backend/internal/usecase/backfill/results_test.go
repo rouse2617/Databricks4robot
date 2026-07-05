@@ -156,6 +156,33 @@ func (s *stubBackfillRepo) FindItemsByAssetID(_ context.Context, assetID string)
 	return out, nil
 }
 
+// Phase 4 dispatcher surface stubs (results_test uses these so the type
+// satisfies repository.BackfillRepository).
+func (s *stubBackfillRepo) ClaimNextDispatch(_ context.Context, leaseSec, maxAttempts int) (*models.BackfillItem, error) {
+	return nil, nil
+}
+func (s *stubBackfillRepo) MarkDispatchSubmitting(_ context.Context, _ string, leaseSec int) error {
+	return nil
+}
+func (s *stubBackfillRepo) MarkDispatched(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (s *stubBackfillRepo) MarkDispatchFailedRetryable(_ context.Context, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (s *stubBackfillRepo) MarkDispatchDead(_ context.Context, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *stubBackfillRepo) UpdateItemDispatchFields(_ context.Context, _ string, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (s *stubBackfillRepo) ResetStaleDispatchedItems(_ context.Context, _, _ int) (int, error) {
+	return 0, nil
+}
+func (s *stubBackfillRepo) EnqueueForDispatcher(_ context.Context, _ []string, _ func(itemID string) string) error {
+	return nil
+}
+
 func TestUploadResult_Success(t *testing.T) {
 	resultRepo := &stubResultRepo{
 		manifest: &repository.ReportManifest{

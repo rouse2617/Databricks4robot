@@ -28,7 +28,7 @@ import (
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
-	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
+	backfillUCPkg "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 	pipelineConfigUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
@@ -153,12 +153,12 @@ func setupCore(inf *infra) *coreHandlers {
 	// run inside an atomic WithTx boundary (see usecase CreateBackfill ~:242).
 	// pg is already in scope at line 79; with pgClient nil the constructor
 	// would have run the legacy non-atomic fallback.
-	backfillUC := backfillUC.NewWithPostgres(backfillRepo, puc, pg)
+	backfillUC := backfillUCPkg.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
 	// Phase 4 Commit C2: dispatcher is the only path. The legacy
 	// go runItems pool / reaper / startup-scan have been deleted.
-	dispatcher := backfillUC.NewDispatcher(backfillRepo, puc, backfillUC.DispatcherConfig{
+	dispatcher := backfillUCPkg.NewDispatcher(backfillRepo, puc, backfillUCPkg.DispatcherConfig{
 		Tick:          5 * time.Second,
 		LeaseSec:      60,
 		MaxAttempts:   3,

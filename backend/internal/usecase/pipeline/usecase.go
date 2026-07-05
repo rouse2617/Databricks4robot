@@ -1854,9 +1854,15 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		finishedAt = derivedFinishedAt
 		derivedFailureReason = "image_startup"
 	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveUnschedulableRunFromWorkflow(run, wf); ok {
-		status = derivedStatus
-		message = derivedMessage
-		finishedAt = derivedFinishedAt
+		// Phase 3: only adopt the derived status if it's non-empty.
+		// deriveUnschedulableRunFromWorkflow returns ("", "", nil, true)
+		// to signal 'diagnosis, not terminal' — we must not clobber
+		// the wf.Status.Phase we set earlier.
+		if derivedStatus != "" {
+			status = derivedStatus
+			message = derivedMessage
+			finishedAt = derivedFinishedAt
+		}
 		derivedFailureReason = "unschedulable"
 	} else if derivedStatus, ok := deriveActiveRunFromWorkflowNodes(wf); ok {
 		status = derivedStatus

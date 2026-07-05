@@ -169,6 +169,31 @@ func (r *pausedSyncRepo) CountRunsWithNodeRowsByBatchJobID(context.Context, stri
 func (r *pausedSyncRepo) FindItemsByAssetID(context.Context, string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
+func (r *pausedSyncRepo) ClaimNextDispatch(_ context.Context, _, _ int) (*models.BackfillItem, error) {
+	return nil, nil
+}
+func (r *pausedSyncRepo) MarkDispatchSubmitting(_ context.Context, _ string, _ int) error {
+	return nil
+}
+func (r *pausedSyncRepo) MarkDispatched(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (r *pausedSyncRepo) MarkDispatchFailedRetryable(_ context.Context, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (r *pausedSyncRepo) MarkDispatchDead(_ context.Context, _ string, _ int, _ string) error {
+	return nil
+}
+func (r *pausedSyncRepo) UpdateItemDispatchFields(_ context.Context, _ string, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (r *pausedSyncRepo) ResetStaleDispatchedItems(_ context.Context, _, _ int) (int, error) {
+	return 0, nil
+}
+func (r *pausedSyncRepo) EnqueueForDispatcher(_ context.Context, _ []string, _ func(string) string) error {
+	return nil
+}
+
 
 type syncTestRunRepo struct {
 	byID           map[string]*models.PipelineRun

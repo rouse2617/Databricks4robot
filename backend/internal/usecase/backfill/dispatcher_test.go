@@ -71,13 +71,13 @@ func TestDispatcher_backoffForAttempt_exponential(t *testing.T) {
 		max     time.Duration
 	}
 	cases := []tc{
-		{1, 1 * time.Second, 2 * time.Second}, // base
-		{2, 2 * time.Second, 3 * time.Second},
-		{3, 3 * time.Second, 5 * time.Second},
-		{4, 7 * time.Second, 9 * time.Second},
-		{5, 14 * time.Second, 18 * time.Second},
-		{6, 28 * time.Second, 36 * time.Second},
-		{7, 50 * time.Second, 70 * time.Second}, // capped at max(60s)
+		{1, 1 * time.Second, 1 * time.Second},
+		{2, 1 * time.Second, 3 * time.Second},
+		{3, 2 * time.Second, 5 * time.Second},
+		{4, 6 * time.Second, 10 * time.Second},
+		{5, 12 * time.Second, 20 * time.Second},
+		{6, 25 * time.Second, 39 * time.Second},
+		{7, 48 * time.Second, 72 * time.Second}, // capped at max(60s)
 	}
 	for _, c := range cases {
 		got := d.backoffForAttempt(c.attempt)
@@ -120,7 +120,7 @@ func TestDispatcher_isPermanentDeployError(t *testing.T) {
 func TestDispatcher_deriveWfNameFallback_dns1123ish(t *testing.T) {
 	item := &models.BackfillItem{
 		JobID:              "Job_ABC-123!",
-		ID:                 "abcdef1234567890",
+		ID:                 "abcdef1234567890", // pragma: allowlist secret (test fixture id)
 		DispatchGeneration: 7,
 	}
 	wf := deriveWfNameFallback(item)

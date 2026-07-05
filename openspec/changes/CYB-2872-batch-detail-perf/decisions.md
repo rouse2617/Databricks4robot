@@ -118,3 +118,19 @@
   只是收益不保证**。P1b（懒加载减少 eager 请求数）与 P1c（SQL 分页消除页深惩罚）
   不受此限制影响，两者均为单请求内的算法改进，与实例数无关，已通过 live 数据验证生效。
 - **Follow-up**: 若后续 node-summary 在生产环境的多实例场景下仍是明显瓶颈，再评估共享缓存
+
+## 2026-07-03 — argo namespace 退役
+
+- **Context**: dev cluster 的 `argo` namespace（chart argo-workflows-1.0.18, image v4.0.6）controller 之前 4-5h 没起来（RBAC 缺失），修好后看 0 workflows / 0 templates / 0 cronwf / 0 controller event 处理
+- **Decision**: 保留 deployment 但 scale 到 0 replicas（可恢复，不删 ns / 不删 helm release）
+- **Rationale**:
+  - 0 workflow、0 workflow template、0 cron workflow 24h
+  - argo-server 是 ClusterIP（无 external ingress），无人访问
+  - 没人通过 RBAC 配过 argo ns 的 user / group 权限
+  - 不在 Terraform / helm release 管辖，是「野」deployment
+  - Scale 到 0 而不是 delete 防止万一需要快速恢复
+- **Impact**:
+  - 不再有 controller / server pod 在跑
+  - argo ns 24h ingestion 接近 0
+  - 想恢复：`kubectl scale deploy argo-workflows-workflow-controller argo-workflows-server -n argo --replicas=1` 即可
+- **Follow-up**: 如果一个月后仍无使用，可考虑删 ns / 整个 release

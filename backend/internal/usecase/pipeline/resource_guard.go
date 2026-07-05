@@ -244,7 +244,6 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 		return "", "", nil, false
 	}
 	now := uc.nowUTC()
-	var selectedName string
 	var selectedMessage string
 	var selectedSince time.Time
 	for _, node := range wf.Status.Nodes {
@@ -264,7 +263,6 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 		}
 		if selectedSince.IsZero() || pendingSince.Before(selectedSince) {
 			selectedSince = pendingSince
-			selectedName = workflowNodeDisplayName(node)
 			selectedMessage = message
 		}
 	}
@@ -272,7 +270,6 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 		pendingSince := workflowPendingReferenceTime(run, wf)
 		if !pendingSince.IsZero() && now.Sub(pendingSince) >= cfg.UnschedulablePendingThreshold {
 			selectedSince = pendingSince
-			selectedName = strings.TrimSpace(wf.Name)
 			selectedMessage = strings.TrimSpace(wf.Status.Message)
 		}
 	}

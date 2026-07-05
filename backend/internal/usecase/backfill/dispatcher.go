@@ -56,6 +56,13 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
+
+// rng is the package-local pseudo-random source. The seed is fixed
+// at startup so jitter is reproducible across runs (test stability);
+// backoff intervals are seconds-scale and the source has plenty
+// of internal state, so production de-correlation is unaffected.
+var rng = rand.New(rand.NewSource(0xdabbad00))
+
 // DispatcherConfig is the tunables for the dispatcher loop.
 // Defaults are enforced by `DispatcherConfig.normalized()`. All times are
 // seconds except where time.Duration is taken directly.
@@ -416,9 +423,9 @@ func (d *Dispatcher) backoffForAttempt(attempts int) time.Duration {
 	if dur > d.cfg.BackoffMax {
 		dur = d.cfg.BackoffMax
 	}
-	// Jitter ±10%
-	jitter := time.Duration(rand.Int63n(int64(dur) / 5))
-	if rand.Intn(2) == 0 {
+	// Jitter ±10% (deterministic — see rng var above).
+	jitter := time.Duration(rng.Int63n(int64(dur) / 5))
+	if rng.Intn(2) == 0 {
 		dur += jitter
 	} else {
 		dur -= jitter

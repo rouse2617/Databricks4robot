@@ -81,6 +81,28 @@ func (missingJobRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ str
 func (missingJobRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
+
+// Phase 4 dispatcher surface stubs.
+func (missingJobRepo) ClaimNextDispatch(_ context.Context, _, _ int) (*models.BackfillItem, error) {
+	return nil, nil
+}
+func (missingJobRepo) MarkDispatchSubmitting(_ context.Context, _ string, _ int) error { return nil }
+func (missingJobRepo) MarkDispatched(_ context.Context, _, _, _ string) error          { return nil }
+func (missingJobRepo) MarkDispatchFailedRetryable(_ context.Context, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (missingJobRepo) MarkDispatchDead(_ context.Context, _ string, _ int, _ string) error {
+	return nil
+}
+func (missingJobRepo) UpdateItemDispatchFields(_ context.Context, _ string, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+func (missingJobRepo) ResetStaleDispatchedItems(_ context.Context, _, _ int) (int, error) {
+	return 0, nil
+}
+func (missingJobRepo) EnqueueForDispatcher(_ context.Context, _ []string, _ func(string) string) error {
+	return nil
+}
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := New(backfillUC.New(missingJobRepo{}, nil))

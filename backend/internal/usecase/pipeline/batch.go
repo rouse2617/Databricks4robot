@@ -2,10 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,10 +90,6 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 
 	// Process in background — never use request context for goroutines.
 	// A dedicated cancellable context lets StopBatchRuns halt submission.
-	jobCtx, cancel := context.WithCancel(context.Background())
-	uc.registerBatchCancel(batchID, cancel)
-	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
-
 	return job, nil
 }
 
@@ -125,96 +118,3 @@ const deployTimeout = 60 * time.Second
 // processBatchJob submits all items to Argo using a parallel worker pool and
 // lets the controller manage concurrency via parallelism config. Errors are
 // per-item — one failure does not cancel the batch.
-// Items are claimed from the database using ClaimNextItem so processing
-// survives service restarts.
-func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string, submitWorkers int, batchName string) {
-	if submitWorkers <= 0 {
-		submitWorkers = defaultSubmitWorkers
-	}
-	defer uc.unregisterBatchCancel(jobID)
-	slog.Info("batch job started", "batchID", jobID, "totalItems", len(items), "workers", submitWorkers)
-
-	if err := uc.backfillRepo.UpdateJobStatus(ctx, jobID, "processing"); err != nil {
-		slog.Warn("batch job: failed to update status to processing", "batchID", jobID, "err", err)
-		return
-	}
-
-	var wg sync.WaitGroup
-	for w := 0; w < submitWorkers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				item, err := uc.backfillRepo.ClaimNextItem(ctx, jobID)
-				if err != nil {
-					slog.Warn("batch job: claim next item failed", "batchID", jobID, "err", err)
-					time.Sleep(time.Second)
-					continue
-				}
-				if item == nil {
-					return
-				}
-				opts := []DeployOptions{{
-					TargetID:           targetID,
-					TemplateVersion:    templateVersion,
-					BatchJobID:         jobID,
-					AllowUnknownAssets: true,
-					Owner:              owner,
-				}}
-				itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
-				run, err := uc.CreateRunByTemplateID(itemCtx, templateID, batchName, []string{item.AssetID}, opts...)
-				itemCancel()
-				if err != nil {
-					if errors.Is(err, context.Canceled) {
-						continue
-					}
-					errMsg := err.Error()
-					slog.Warn("batch job: asset failed", "assetID", item.AssetID, "err", errMsg)
-					_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "failed", "", errMsg)
-					_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
-				} else {
-					_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, "", "completed")
-					_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-
-	finalCtx, cancelFinal := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelFinal()
-
-	summary, err := uc.backfillRepo.SummarizeItemStatuses(finalCtx, jobID)
-	if err != nil {
-		slog.Warn("batch job: summarize failed", "batchID", jobID, "err", err)
-		_ = uc.backfillRepo.UpdateJobStatus(finalCtx, jobID, "failed")
-		return
-	}
-
-	status := "completed"
-	switch {
-	case ctx.Err() != nil:
-		status = "cancelled"
-	case summary.Failed > 0 && summary.Completed == 0:
-		status = "failed"
-	}
-	total := summary.Completed + summary.Failed + summary.Pending + summary.Running
-	if err := uc.backfillRepo.UpdateJobProgress(finalCtx, jobID, summary.Completed, summary.Failed, status); err != nil {
-		slog.Warn("batch job: update final progress failed", "batchID", jobID, "err", err)
-	}
-
-	slog.Info("batch job completed",
-		"batchID", jobID,
-		"total", total,
-		"completed", summary.Completed,
-		"failed", summary.Failed,
-	)
-}
