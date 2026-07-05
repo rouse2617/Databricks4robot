@@ -121,6 +121,7 @@ func setupCore(inf *infra) *coreHandlers {
 		inf.cfg.ArgoRunWebhookURL,
 		inf.cfg.ArgoRunWebhookTokenSecretName,
 		inf.cfg.ArgoRunWebhookTokenSecretKey,
+		inf.cfg.ArgoRunWebhookImage,
 	)
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,

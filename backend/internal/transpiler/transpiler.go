@@ -55,10 +55,14 @@ type Options struct {
 	// reaches a terminal phase. Empty disables the hook entirely (kill switch).
 	ExitHookURL string
 	// ExitHookTokenSecretName / ExitHookTokenSecretKey reference a Kubernetes
-	// Secret (in the workflow namespace) holding the webhook auth token, sent via
-	// valueFrom.secretKeyRef so the token is never embedded in the manifest.
+	// Secret (in the workflow namespace) holding the webhook auth token, injected
+	// as an env var via valueFrom.secretKeyRef so the token is never embedded in
+	// the manifest.
 	ExitHookTokenSecretName string
 	ExitHookTokenSecretKey  string
+	// ExitHookImage is the container image (must contain curl) used by the exit
+	// notify handler. Empty falls back to defaultExitNotifyImage.
+	ExitHookImage string
 }
 
 // ExitNotifyTemplateName is the template invoked by the workflow-level exit hook.
@@ -69,20 +73,29 @@ const ExitNotifyTemplateName = "databrew-exit-notify"
 // exitNotifyHeaderName is the HTTP header carrying the webhook auth token.
 const exitNotifyHeaderName = "X-Databrew-Webhook-Token"
 
-// buildExitNotifyTemplate builds a controller-executed HTTP template that pokes
-// DataBrew on workflow completion. It is best-effort: a short timeout keeps a
-// slow/unreachable endpoint from stalling the agent, and DataBrew treats the
-// call as a trigger (it re-reads the workflow for authoritative state), so the
-// body only needs to identify the workflow.
+// defaultExitNotifyImage is the fallback image for the exit notify handler.
+// It must contain curl. Overridable via Options.ExitHookImage.
+const defaultExitNotifyImage = "curlimages/curl:8.11.1"
+
+// buildExitNotifyTemplate builds a plain container template that pokes DataBrew
+// on workflow completion via curl. A container (not an Argo `http` template) is
+// used deliberately: the http template runs on the Argo agent pod, which on this
+// cluster cannot mount its service-account token (K8s 1.24+ dropped the legacy
+// secret) and hangs, stalling the workflow. A normal pod schedules fine and its
+// exit code is controlled here (always 0) so a webhook error never fails or
+// hangs the workflow. The token is injected via env valueFrom.secretKeyRef so it
+// never lands in the manifest; DataBrew treats the call as a trigger and re-reads
+// authoritative state, so the body only needs to identify the workflow.
 func buildExitNotifyTemplate(opts *Options) wfv1.Template {
-	timeout := int64(10)
-	headers := wfv1.HTTPHeaders{
-		{Name: "Content-Type", Value: "application/json"},
+	image := opts.ExitHookImage
+	if image == "" {
+		image = defaultExitNotifyImage
 	}
+	env := []corev1.EnvVar{{Name: "DATABREW_WEBHOOK_URL", Value: opts.ExitHookURL}}
 	if opts.ExitHookTokenSecretName != "" && opts.ExitHookTokenSecretKey != "" {
-		headers = append(headers, wfv1.HTTPHeader{
-			Name: exitNotifyHeaderName,
-			ValueFrom: &wfv1.HTTPHeaderSource{
+		env = append(env, corev1.EnvVar{
+			Name: "DATABREW_WEBHOOK_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: opts.ExitHookTokenSecretName},
 					Key:                  opts.ExitHookTokenSecretKey,
@@ -90,15 +103,20 @@ func buildExitNotifyTemplate(opts *Options) wfv1.Template {
 			},
 		})
 	}
+	// Best-effort: never fail the workflow on a webhook error (|| true, exit 0).
 	body := `{"workflowName":"{{workflow.name}}","namespace":"{{workflow.namespace}}","uid":"{{workflow.uid}}","phase":"{{workflow.status}}"}`
+	script := `curl -sS --max-time 10 -o /dev/null -w 'databrew webhook: HTTP %{http_code}\n' ` +
+		`-X POST "$DATABREW_WEBHOOK_URL" ` +
+		`-H 'Content-Type: application/json' ` +
+		`-H "` + exitNotifyHeaderName + `: $DATABREW_WEBHOOK_TOKEN" ` +
+		`-d '` + body + `' || true; exit 0`
 	return wfv1.Template{
 		Name: ExitNotifyTemplateName,
-		HTTP: &wfv1.HTTP{
-			Method:         "POST",
-			URL:            opts.ExitHookURL,
-			Headers:        headers,
-			TimeoutSeconds: &timeout,
-			Body:           body,
+		Container: &corev1.Container{
+			Image:   image,
+			Command: []string{"sh", "-c"},
+			Args:    []string{script},
+			Env:     env,
 		},
 	}
 }

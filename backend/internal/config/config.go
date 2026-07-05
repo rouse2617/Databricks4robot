@@ -147,8 +147,9 @@ type Config struct {
 	// ArgoRunWebhookURL empty disables exit-hook injection (poll-only fallback).
 	ArgoRunWebhookURL             string
 	ArgoRunWebhookToken           string // backend-side token to validate inbound webhook calls
-	ArgoRunWebhookTokenSecretName string // K8s Secret name referenced by the workflow hook header
+	ArgoRunWebhookTokenSecretName string // K8s Secret name referenced by the workflow hook env
 	ArgoRunWebhookTokenSecretKey  string // key within that Secret
+	ArgoRunWebhookImage           string // container image (with curl) for the exit-notify handler
 	// Run status watcher (now a reconcile backstop behind the push path).
 	PipelineRunWatcherIntervalSec int32
 	PipelineRunWatcherScanLimit   int32
@@ -260,6 +261,7 @@ func Load() *Config {
 		ArgoRunWebhookToken:           getenv("ARGO_RUN_WEBHOOK_TOKEN", ""),
 		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),
 		ArgoRunWebhookTokenSecretKey:  getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_KEY", "token"),
+		ArgoRunWebhookImage:           getenv("ARGO_RUN_WEBHOOK_IMAGE", "curlimages/curl:8.11.1"),
 		PipelineRunWatcherIntervalSec: getenvInt32("PIPELINE_RUN_WATCHER_INTERVAL_SEC", 30),
 		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
 
