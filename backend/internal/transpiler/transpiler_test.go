@@ -766,6 +766,13 @@ func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
 	if tmpl.Container.Image == "" {
 		t.Fatalf("notify container must set an image")
 	}
+	// Minimal, explicit resource footprint (curl once-off).
+	if tmpl.Container.Resources.Requests.Cpu().IsZero() || tmpl.Container.Resources.Requests.Memory().IsZero() {
+		t.Fatalf("notify container must set minimal cpu/memory requests, got %+v", tmpl.Container.Resources)
+	}
+	if tmpl.Container.Resources.Limits.Cpu().IsZero() || tmpl.Container.Resources.Limits.Memory().IsZero() {
+		t.Fatalf("notify container must set cpu/memory limits, got %+v", tmpl.Container.Resources)
+	}
 	joined := strings.Join(tmpl.Container.Args, " ")
 	if !strings.Contains(joined, "curl") || !strings.Contains(joined, "$DATABREW_WEBHOOK_URL") {
 		t.Fatalf("notify container must curl the webhook url: %q", joined)

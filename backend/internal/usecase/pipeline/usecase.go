@@ -1556,6 +1556,12 @@ func (uc *Usecase) appendWorkflowEvents(ctx context.Context, run *models.Pipelin
 
 func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun, nodes map[string]wfv1.NodeStatus) {
 	for id, node := range nodes {
+		// Skip the DataBrew exit-notify hook node (CYB-3058): it is infrastructure,
+		// not a business step, and must not surface as an extra node/pod in the run
+		// timeline or pods view (it is already excluded from runNodesFromWorkflow).
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
 		displayName := node.DisplayName
 		if displayName == "" {
 			displayName = node.Name

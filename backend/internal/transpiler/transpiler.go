@@ -117,6 +117,19 @@ func buildExitNotifyTemplate(opts *Options) wfv1.Template {
 			Command: []string{"sh", "-c"},
 			Args:    []string{script},
 			Env:     env,
+			// Minimal footprint: a curl once-off needs almost nothing. Explicit
+			// tiny requests/limits keep it predictable and cheap (and avoid a
+			// LimitRange assigning large defaults).
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10m"),
+					corev1.ResourceMemory: resource.MustParse("32Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+			},
 		},
 	}
 }
