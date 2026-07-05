@@ -169,6 +169,8 @@ func setupCore(inf *infra) *coreHandlers {
 	})
 	dispatcher.Start(context.Background())
 	slog.Info("backfill dispatcher started")
+	// Exposed so main can drain it gracefully on shutdown.
+	dispatcherStop := dispatcher.Stop
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
@@ -214,5 +216,6 @@ func setupCore(inf *infra) *coreHandlers {
 		workflow:          workflowHandler,
 		storage:           storageHandler,
 		assetUC:           assetUsecase,
+		dispatcherStop:    dispatcherStop,
 	}
 }

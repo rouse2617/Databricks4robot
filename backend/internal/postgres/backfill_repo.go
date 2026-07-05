@@ -1070,21 +1070,32 @@ func (r *BackfillRepo) UpdateItemDispatchFields(ctx context.Context, itemID, _ s
 // 'dead', 'legacy_skip') are EXPLICITLY excluded from the WHERE clause
 // — the same SQL defense as the plan section "游标铁律".
 func (r *BackfillRepo) ResetStaleDispatchedItems(ctx context.Context, leaseSec, maxAttempts int) (int, error) {
+	// leaseSec is intentionally unused in the predicate: the lease already
+	// encodes its own expiry (set to NOW()+leaseSec at claim), so a row is
+	// stale the instant dispatch_lease_expires_at < NOW(). Subtracting another
+	// leaseSec would double a dead instance's recovery time.
+	_ = leaseSec
+	// A stale row that has already burned all its attempts (e.g. the worker
+	// crashed on the final attempt, between MarkDispatchSubmitting and the
+	// outcome) must go to the absorbing 'dead' state — neither ClaimNextDispatch
+	// nor a plain reset-to-pending would ever pick it up again, so it would
+	// otherwise strand the batch. Fresh rows reset to 'pending' for re-claim.
 	const q = `
 		WITH reclaimed AS (
 			UPDATE backfill_items
-			SET dispatch_state='pending',
+			SET dispatch_state=CASE WHEN attempts >= $1 THEN 'dead' ELSE 'pending' END,
 			    dispatch_lease_expires_at=NULL,
-			    dispatch_last_error='lease expired'
+			    dispatch_last_error='lease expired',
+			    status=CASE WHEN attempts >= $1 THEN 'failed' ELSE status END,
+			    finished_at=CASE WHEN attempts >= $1 THEN NOW() ELSE finished_at END
 			WHERE dispatch_state IN ('claimed', 'submitting')
-			  AND dispatch_lease_expires_at < NOW() - ($1 || ' seconds')::interval
-			  AND attempts < $2
+			  AND dispatch_lease_expires_at < NOW()
 			RETURNING id
 		)
 		SELECT COUNT(*) FROM reclaimed`
 	db := dbFromCtx(ctx, r.c.db)
 	var count int
-	if err := db.QueryRow(ctx, q, leaseSec, maxAttempts).Scan(&count); err != nil {
+	if err := db.QueryRow(ctx, q, maxAttempts).Scan(&count); err != nil {
 		return 0, fmt.Errorf("postgres BackfillRepo.ResetStaleDispatchedItems: %w", err)
 	}
 	return count, nil

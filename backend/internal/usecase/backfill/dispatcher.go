@@ -56,12 +56,17 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
-
 // rng is the package-local pseudo-random source. The seed is fixed
 // at startup so jitter is reproducible across runs (test stability);
 // backoff intervals are seconds-scale and the source has plenty
 // of internal state, so production de-correlation is unaffected.
-var rng = rand.New(rand.NewSource(0xdabbad00))
+//
+// A *rand.Rand is NOT safe for concurrent use, and backoffForAttempt
+// runs from N worker goroutines — rngMu serialises access.
+var (
+	rngMu sync.Mutex
+	rng   = rand.New(rand.NewSource(0xdabbad00))
+)
 
 // DispatcherConfig is the tunables for the dispatcher loop.
 // Defaults are enforced by `DispatcherConfig.normalized()`. All times are
@@ -275,10 +280,15 @@ func (d *Dispatcher) tick(ctx context.Context) {
 		case d.jobs <- item:
 			d.logger.Debug("dispatch queued", "item_id", item.ID, "asset_id", item.AssetID, "wf", item.WorkflowNamePlanned)
 		default:
-			d.logger.Warn("dispatch channel full, dropping claim (lease will expire)",
+			// Channel full → this replica is saturated (backpressure). STOP
+			// claiming for this tick: continuing would strand up to BatchSize
+			// freshly-claimed rows in 'claimed' (lease held) that no other
+			// healthy replica can pick up until the lease expires. Leave the
+			// rest of the queue for replicas with free workers; the reaper
+			// reclaims the one row we just claimed once its lease lapses.
+			d.logger.Warn("dispatch channel full, backing off ticker (lease will expire)",
 				"item_id", item.ID, "buffer_size", d.cfg.JobBufferSize)
-			// Note: we don't release the lease ourselves here. The
-			// reaper on the next tick will reset it back to 'pending'.
+			return
 		}
 	}
 }
@@ -333,16 +343,29 @@ func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem)
 		wfName = deriveWfNameFallback(item)
 	}
 
-	// 3. Resolve runtime params from job filter_json (best-effort).
+	// 3. Resolve runtime params from the job. templateID is REQUIRED —
+	// items carry no template of their own, so without the job's
+	// template the submit below resolves nothing and would dead-letter
+	// the whole batch. targetId/version are best-effort.
 	targetID := ""
+	templateID := ""
 	templateVersion := 0
 	if item.JobID != "" {
 		if job, _ := d.repo.FindJobByID(ctx, item.JobID); job != nil {
+			templateID = strings.TrimSpace(job.TemplateID)
 			templateVersion = job.TemplateVersion
 			if f, ok := job.FilterJSON["targetId"].(string); ok {
 				targetID = strings.TrimSpace(f)
 			}
 		}
+	}
+	if templateID == "" {
+		// Cannot dispatch without a template. Treat as retryable (the job
+		// row may be mid-write / transiently unreadable); exhausted rows
+		// dead-letter via markFailure rather than looping forever.
+		logger.Warn("no templateID resolved for item", "item_id", item.ID, "job_id", item.JobID)
+		d.markFailure(ctx, item, "template not resolved for job")
+		return
 	}
 
 	// 4. Update runtime fields on the row so we have a self-consistent
@@ -354,7 +377,7 @@ func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem)
 	if item.PipelineRunID != nil {
 		preallocRunID = strings.TrimSpace(*item.PipelineRunID)
 	}
-	dep, err := d.pipelineUC.DeployByTemplateID(ctx, "", "", []string{item.AssetID}, pipelineUC.DeployOptions{
+	dep, err := d.pipelineUC.DeployByTemplateID(ctx, templateID, "", []string{item.AssetID}, pipelineUC.DeployOptions{
 		BatchJobID:               item.JobID,
 		TemplateVersion:          templateVersion,
 		TargetID:                 targetID,
@@ -397,17 +420,33 @@ func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem)
 	case isPermanentDeployError(err):
 		// Template config wrong / asset not found / etc. No retry.
 		logger.Warn("permanent error, marking dead", "item_id", item.ID, "err", err)
-		_ = d.repo.MarkDispatchDead(ctx, item.ID, item.Attempts+1, err.Error())
+		_ = d.repo.MarkDispatchDead(ctx, item.ID, item.Attempts, err.Error())
 
 	default:
-		// Retryable. Exponential backoff via lease (Decision B).
-		attempts := item.Attempts // MarkDispatchFailedRetryable will accept the next attempts number
-		backoff := d.backoffForAttempt(attempts)
+		// Retryable — but only until attempts are exhausted, after which the
+		// row MUST reach the absorbing 'dead' state. Neither ClaimNextDispatch
+		// nor the reaper touch a row at attempts >= MaxAttempts, so a purely
+		// 'failed' terminal would strand the item and hang the batch forever.
 		logger.Warn("retryable failure",
-			"item_id", item.ID, "attempts", attempts,
-			"backoff_sec", int(backoff.Seconds()), "err", err)
-		_ = d.repo.MarkDispatchFailedRetryable(ctx, item.ID, attempts, err.Error(), int(backoff.Seconds()))
+			"item_id", item.ID, "attempts", item.Attempts, "err", err)
+		d.markFailure(ctx, item, err.Error())
 	}
+}
+
+// markFailure records a non-permanent submit failure. While attempts remain
+// it parks the row in 'failed' with an exponential-backoff lease (Decision B);
+// once attempts reach MaxAttempts it transitions to the absorbing 'dead' state
+// so the item leaves the claimable set and the batch can converge.
+//
+// item.Attempts already reflects this claim's increment (ClaimNextDispatch does
+// attempts+1), so it is the count of attempts consumed so far.
+func (d *Dispatcher) markFailure(ctx context.Context, item *models.BackfillItem, reason string) {
+	if item.Attempts >= d.cfg.MaxAttempts {
+		_ = d.repo.MarkDispatchDead(ctx, item.ID, item.Attempts, reason)
+		return
+	}
+	backoff := d.backoffForAttempt(item.Attempts)
+	_ = d.repo.MarkDispatchFailedRetryable(ctx, item.ID, item.Attempts, reason, int(backoff.Seconds()))
 }
 
 // backoffForAttempt returns backoff for the (about-to-be-recorded) next
@@ -423,12 +462,18 @@ func (d *Dispatcher) backoffForAttempt(attempts int) time.Duration {
 	if dur > d.cfg.BackoffMax {
 		dur = d.cfg.BackoffMax
 	}
-	// Jitter ±10% (deterministic — see rng var above).
-	jitter := time.Duration(rng.Int63n(int64(dur) / 5))
-	if rng.Intn(2) == 0 {
-		dur += jitter
-	} else {
-		dur -= jitter
+	// Jitter ±20% (deterministic — see rng var above). rng is a *rand.Rand
+	// (not concurrency-safe) shared across workers, so guard with rngMu.
+	if bound := int64(dur) / 5; bound > 0 {
+		rngMu.Lock()
+		jitter := time.Duration(rng.Int63n(bound))
+		add := rng.Intn(2) == 0
+		rngMu.Unlock()
+		if add {
+			dur += jitter
+		} else {
+			dur -= jitter
+		}
 	}
 	if dur < d.cfg.BackoffBase {
 		dur = d.cfg.BackoffBase

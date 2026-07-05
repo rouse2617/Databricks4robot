@@ -95,8 +95,13 @@ type coreHandlers struct {
 	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
-		storage           *storageH.Handler
+	storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
+
+	// dispatcherStop drains the backfill dispatcher on shutdown (Stop()
+	// closes the ticker + waits for in-flight submits to finish). Stored as
+	// a func so main.go needs no dependency on the backfill usecase package.
+	dispatcherStop func()
 }
 
 // optional holds components that are not required for the core API to function.
@@ -128,6 +133,11 @@ func main() {
 	defer inf.close()
 
 	core := setupCore(inf)
+	// Drain the dispatcher before inf.close() tears down the DB pool (defers
+	// run LIFO, so registering this after inf.close() makes it run first).
+	if core.dispatcherStop != nil {
+		defer core.dispatcherStop()
+	}
 	opt := setupOptional(inf, core)
 	defer opt.close()
 

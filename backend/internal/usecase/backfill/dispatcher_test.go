@@ -1,12 +1,16 @@
 package backfill
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -146,3 +150,102 @@ func TestDispatcher_deriveWfNameFallback_dns1123ish(t *testing.T) {
 // so a downstream refactor that drops the rand import also drops our
 // reference here, intentionally.
 var _ = rand.New
+
+// recordingRepo embeds the BackfillRepository interface and overrides only
+// the methods the dispatcher touches, recording how they were called. Any
+// un-overridden method panics on the nil embedded interface, which keeps the
+// tests honest about the exact surface they exercise.
+type recordingRepo struct {
+	repository.BackfillRepository
+
+	job *models.BackfillJob
+
+	deadCalls     int
+	deadAttempts  int
+	retryCalls    int
+	retryAttempts int
+}
+
+func (r *recordingRepo) MarkDispatchDead(_ context.Context, _ string, attempts int, _ string) error {
+	r.deadCalls++
+	r.deadAttempts = attempts
+	return nil
+}
+
+func (r *recordingRepo) MarkDispatchFailedRetryable(_ context.Context, _ string, attempts int, _ string, _ int) error {
+	r.retryCalls++
+	r.retryAttempts = attempts
+	return nil
+}
+
+func (r *recordingRepo) MarkDispatchSubmitting(_ context.Context, _ string, _ int) error { return nil }
+
+func (r *recordingRepo) FindJobByID(_ context.Context, _ string) (*models.BackfillJob, error) {
+	return r.job, nil
+}
+
+func (r *recordingRepo) UpdateItemDispatchFields(_ context.Context, _ string, _ string, _ int, _ string, _ int) error {
+	return nil
+}
+
+func newTestDispatcher(repo repository.BackfillRepository) *Dispatcher {
+	return &Dispatcher{
+		repo:   repo,
+		cfg:    DispatcherConfig{MaxAttempts: 3, LeaseSec: 60, BackoffBase: time.Second, BackoffMax: 30 * time.Second},
+		logger: slog.Default(),
+	}
+}
+
+// markFailure must dead-letter a row once its attempts hit MaxAttempts;
+// otherwise the row would stay 'failed' forever (ClaimNextDispatch and the
+// reaper both skip attempts >= MaxAttempts) and the batch would never converge.
+func TestDispatcher_markFailure_deadAtMaxAttempts(t *testing.T) {
+	repo := &recordingRepo{}
+	d := newTestDispatcher(repo)
+
+	// attempts below the ceiling → retryable.
+	d.markFailure(context.Background(), &models.BackfillItem{ID: "a", Attempts: 2}, "boom")
+	if repo.retryCalls != 1 || repo.deadCalls != 0 {
+		t.Fatalf("attempts=2: got retry=%d dead=%d, want retry=1 dead=0", repo.retryCalls, repo.deadCalls)
+	}
+
+	// attempts at the ceiling → absorbing dead.
+	d.markFailure(context.Background(), &models.BackfillItem{ID: "b", Attempts: 3}, "boom")
+	if repo.deadCalls != 1 {
+		t.Fatalf("attempts=3: got dead=%d, want 1", repo.deadCalls)
+	}
+	if repo.deadAttempts != 3 {
+		t.Fatalf("dead attempts recorded = %d, want 3 (claim already incremented; no extra +1)", repo.deadAttempts)
+	}
+}
+
+// processItem must NOT dead-letter (or panic on the nil pipelineUC) when the
+// job's templateID can't be resolved — it should retry. Regression guard for
+// the empty-templateID bug that would otherwise dead-letter every item.
+func TestDispatcher_processItem_missingTemplateIsRetryable(t *testing.T) {
+	repo := &recordingRepo{job: &models.BackfillJob{ID: "j"}} // TemplateID intentionally empty
+	d := newTestDispatcher(repo)                              // pipelineUC nil: must not be reached
+
+	d.processItem(slog.Default(), &models.BackfillItem{ID: "x", JobID: "j", AssetID: "a", Attempts: 1})
+
+	if repo.retryCalls != 1 || repo.deadCalls != 0 {
+		t.Fatalf("missing template: got retry=%d dead=%d, want retry=1 dead=0", repo.retryCalls, repo.deadCalls)
+	}
+}
+
+// backoffForAttempt is called from N concurrent workers and reads a shared
+// *rand.Rand. Run under `go test -race` to prove rngMu closes the data race.
+func TestDispatcher_backoffForAttempt_concurrentSafe(t *testing.T) {
+	d := &Dispatcher{cfg: DispatcherConfig{BackoffBase: time.Second, BackoffMax: 30 * time.Second}}
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = d.backoffForAttempt(n%5 + 1)
+			}
+		}(i)
+	}
+	wg.Wait()
+}

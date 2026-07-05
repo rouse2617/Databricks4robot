@@ -3503,6 +3503,11 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		deployOpts.DryRun = opts[0].DryRun
 		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
 		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
+		// The Phase 1 idempotency hinge is only armed if the caller's
+		// deterministic name reaches Deploy. Without this line the dispatcher's
+		// PreallocatedWorkflowName is silently dropped and every submit gets a
+		// random name, reopening the orphan window the refactor exists to close.
+		deployOpts.PreallocatedWorkflowName = opts[0].PreallocatedWorkflowName
 		deployOpts.ConfigSelection = opts[0].ConfigSelection
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
