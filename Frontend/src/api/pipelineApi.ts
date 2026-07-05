@@ -86,6 +86,8 @@ export interface PipelineRun extends Deployment {
 	totalEstimatedCost?: number | null;
 	batchJobId?: string;
 	nodeProgress?: PipelineRunNodeProgress;
+	/** Source video duration in seconds (from video_durations; may be absent). */
+	videoDurationSec?: number;
 }
 
 export interface PipelineRunListResponse {

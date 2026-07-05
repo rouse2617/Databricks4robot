@@ -81,6 +81,9 @@ type Usecase struct {
 	argoRunWebhookTokenSecretKey  string
 	argoRunWebhookImage           string
 
+	// videoDurations looks up source-video durations by asset_id (CYB-3059).
+	videoDurations videoDurationLookup
+
 	// batchCancels holds cancel funcs for in-flight batch submission
 	// goroutines so StopBatchRuns can halt further run creation.
 	batchCancelMu sync.Mutex
@@ -248,6 +251,58 @@ func (uc *Usecase) SetArgoRunWebhook(url, secretName, secretKey, image string) {
 	uc.argoRunWebhookTokenSecretName = strings.TrimSpace(secretName)
 	uc.argoRunWebhookTokenSecretKey = strings.TrimSpace(secretKey)
 	uc.argoRunWebhookImage = strings.TrimSpace(image)
+}
+
+// videoDurationLookup returns source-video durations (seconds) by video_id.
+type videoDurationLookup interface {
+	GetByVideoIDs(ctx context.Context, videoIDs []string) (map[string]float64, error)
+}
+
+// SetVideoDurationRepo wires the video_durations lookup used to enrich the
+// batch subtask runs list with the source video's duration (CYB-3059).
+func (uc *Usecase) SetVideoDurationRepo(r videoDurationLookup) {
+	uc.videoDurations = r
+}
+
+// attachVideoDurations enriches each run with its source video's duration,
+// looked up by asset_id. Best-effort: on error or missing rows the field stays
+// nil (some videos simply have no recorded duration).
+func (uc *Usecase) attachVideoDurations(ctx context.Context, items []models.PipelineRun) {
+	if uc.videoDurations == nil || len(items) == 0 {
+		return
+	}
+	seen := make(map[string]struct{})
+	for i := range items {
+		for _, a := range items[i].AssetIDs {
+			if a != "" {
+				seen[a] = struct{}{}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	durs, err := uc.videoDurations.GetByVideoIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("attachVideoDurations failed", "err", err)
+		return
+	}
+	if len(durs) == 0 {
+		return
+	}
+	for i := range items {
+		for _, a := range items[i].AssetIDs {
+			if d, ok := durs[a]; ok {
+				dd := d
+				items[i].VideoDurationSec = &dd
+				break
+			}
+		}
+	}
 }
 
 func defaultExecutionTargetServiceAccount() string {
@@ -3654,6 +3709,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		normalizeActiveRunRuntimeFields(items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
+			uc.attachVideoDurations(ctx, items)
 		}
 		annotateRunDiagnostics(items)
 		// The default list view keeps per-run nodes so callers can render the
