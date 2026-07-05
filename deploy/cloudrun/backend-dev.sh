@@ -50,21 +50,19 @@ DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
 ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-http://10.2.1.211:2746}"
 # Completed Argo workflow CR retention (secondsAfterCompletion). Default 30 days.
 ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-2592000}"
-# Argo run status push webhook (CYB-3058). SAFE-OFF BY DEFAULT: URL empty means
-# no exit hook is injected into workflows (zero behavior change for other users
-# on shared dev). The token secret is still bound so the webhook route exists and
-# can be smoke-tested (401/400/404) without affecting any workflow.
-#
-# ROLLOUT (after isolated hook validation on dev): set
-#   ARGO_RUN_WEBHOOK_URL_OVERRIDE=https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/pipeline-runs/webhook
-#   PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE=30
-# Kill switch: clear ARGO_RUN_WEBHOOK_URL_OVERRIDE to instantly disable the hook.
-ARGO_RUN_WEBHOOK_URL_OVERRIDE="${ARGO_RUN_WEBHOOK_URL_OVERRIDE:-}"
+# Argo run status push webhook (CYB-3058). ENABLED: the container curl exit hook
+# is injected into every backend-initiated workflow and pokes this URL on
+# terminal phase; DataBrew re-reads authoritative state from Argo. Validated
+# end-to-end on dev (real run → HTTP 200 → run status pushed). The token is read
+# from Secret Manager (backend) / K8s Secret databrew-run-webhook-token
+# (workflow, present in cyber-databrew-dev, video-proc-dev, video-proc-prod).
+# Kill switch: set ARGO_RUN_WEBHOOK_URL_OVERRIDE="" to instantly disable the hook.
+ARGO_RUN_WEBHOOK_URL_OVERRIDE="${ARGO_RUN_WEBHOOK_URL_OVERRIDE:-https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/pipeline-runs/webhook}"
 ARGO_RUN_WEBHOOK_TOKEN_SECRET="${ARGO_RUN_WEBHOOK_TOKEN_SECRET:-cyber-databrew-dev-argo-run-webhook-token}"
 ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION="${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION:-latest}"
-# Keep the run status watcher at the current 3s cadence until push is enabled;
-# raise to 30 in the same change that sets ARGO_RUN_WEBHOOK_URL_OVERRIDE.
-PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE:-3}"
+# Push is now the primary status signal; the watcher is a low-frequency reconcile
+# backstop. Set to 3 to temporarily restore high-frequency polling if needed.
+PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE:-30}"
 # Conservative dev execution ceilings. These are backend deploy-time guards for
 # user-defined pipeline component resources; execution targets may override via quota_policy.
 PIPELINE_RESOURCE_MAX_CPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE:-8}"
