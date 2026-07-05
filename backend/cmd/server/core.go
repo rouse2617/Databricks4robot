@@ -156,9 +156,10 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillUC := backfillUCPkg.NewWithPostgres(backfillRepo, puc, pg)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
-	// Phase 4 Commit C2: dispatcher is the only path. The legacy
-	// go runItems pool / reaper / startup-scan have been deleted.
-	dispatcher := backfillUCPkg.NewDispatcher(backfillRepo, puc, backfillUCPkg.DispatcherConfig{
+	// Phase 4 Commit D: Dispatcher (pure orchestration kernel) + BackfillTaskHandler
+	// (business logic) are now decoupled via the TaskHandler interface, eliminating
+	// circular dependencies and enabling horizontal extension to new runtimes.
+	dispatcherCfg := backfillUCPkg.DispatcherConfig{
 		Tick:          5 * time.Second,
 		LeaseSec:      60,
 		MaxAttempts:   3,
@@ -166,7 +167,9 @@ func setupCore(inf *infra) *coreHandlers {
 		JobBufferSize: 64,
 		BackoffBase:   1 * time.Second,
 		BackoffMax:    30 * time.Second,
-	})
+	}
+	taskHandler := backfillUCPkg.NewBackfillTaskHandler(backfillRepo, puc, dispatcherCfg)
+	dispatcher := backfillUCPkg.NewDispatcher(backfillRepo, taskHandler, dispatcherCfg)
 	dispatcher.Start(context.Background())
 	slog.Info("backfill dispatcher started")
 	// Exposed so main can drain it gracefully on shutdown.

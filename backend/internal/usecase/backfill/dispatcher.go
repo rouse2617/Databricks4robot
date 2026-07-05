@@ -41,16 +41,11 @@ package backfill
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"math/rand"
-	"strings"
 	"sync"
 	"time"
-
-	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -67,6 +62,17 @@ var (
 	rngMu sync.Mutex
 	rng   = rand.New(rand.NewSource(0xdabbad00))
 )
+
+// TaskHandler encapsulates the business logic of processing a claimed backfill item.
+// The Dispatcher is decoupled from concrete business implementations via this interface.
+type TaskHandler interface {
+	// Handle processes a single backfill item. It is responsible for:
+	// - Reading job context (template, parameters)
+	// - Invoking the appropriate business handler (e.g., workflow deployment)
+	// - Transitioning the item to the correct state (submitted, failed, or dead)
+	// - Returning error only if the item processing failed catastrophically (not retryable)
+	Handle(ctx context.Context, item *models.BackfillItem) error
+}
 
 // DispatcherConfig is the tunables for the dispatcher loop.
 // Defaults are enforced by `DispatcherConfig.normalized()`. All times are
@@ -142,12 +148,20 @@ func (c DispatcherConfig) normalized() DispatcherConfig {
 	return c
 }
 
-// Dispatcher is the long-running instance of the dispatch loop.
-// One should be created and started per backend replica.
+// Dispatcher is the long-running instance of the outbox dispatch loop.
+// It is a purely generic, orchestration-agnostic Outbox engine that:
+// - Claims items atomically via FOR UPDATE SKIP LOCKED
+// - Manages lease lifetimes and exponential backoff windows
+// - Distributes claimed items to a worker pool via buffered channel
+// - Reaps stale leases via the configured reaper interval
+//
+// Business logic (what to do with each item) is completely decoupled
+// via the TaskHandler interface, eliminating circular dependencies and
+// enabling horizontal extension to new runtimes (K8s, Databricks, etc).
 type Dispatcher struct {
-	repo       repository.BackfillRepository
-	pipelineUC *pipelineUC.Usecase
-	cfg        DispatcherConfig
+	repo    repository.BackfillRepository
+	handler TaskHandler // Decoupled via interface, not concrete implementation
+	cfg     DispatcherConfig
 
 	jobs   chan *models.BackfillItem
 	stopCh chan struct{}
@@ -163,11 +177,11 @@ type Dispatcher struct {
 
 // NewDispatcher builds the dispatcher struct. The loop is not started
 // until Start is called.
-func NewDispatcher(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, cfg DispatcherConfig) *Dispatcher {
+func NewDispatcher(repo repository.BackfillRepository, handler TaskHandler, cfg DispatcherConfig) *Dispatcher {
 	cfg = cfg.normalized()
 	return &Dispatcher{
 		repo:          repo,
-		pipelineUC:    pipelineUC,
+		handler:       handler,
 		cfg:           cfg,
 		jobs:          make(chan *models.BackfillItem, cfg.JobBufferSize),
 		stopCh:        make(chan struct{}),
@@ -312,12 +326,10 @@ func (d *Dispatcher) workerLoop(idx int) {
 	logger.Debug("worker exit: channel closed")
 }
 
-// processItem is the per-item workflow: heartbeat → Deploy → outcome
-// dispatch. The Phase 1 idempotency hinge (Deploy.Phase 1.5 adopts on
-// AlreadyExists, rejects on Terminating) is invoked implicitly via
-// DeployByTemplateID. The Phase 1 EOFError / 409 detection in
-// submitRuntimeWorkflow means we don't need to special-case anything
-// here — pipe the Outcome out via the state machine.
+// processItem is the pure orchestration gateway: it creates a lease-scoped context
+// and delegates all business logic to the injected TaskHandler. This keeps the
+// Dispatcher agnostic to concrete business implementations and eliminates
+// circular dependencies.
 func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem) {
 	// Per-item context with the lease's remaining lifetime as the deadline.
 	// -5 seconds for safety margin between worker timeout and lease expiry.
@@ -328,174 +340,19 @@ func (d *Dispatcher) processItem(logger *slog.Logger, item *models.BackfillItem)
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 
-	// 1. Refresh lease + state=submitting (heartbeat before slow submit).
-	if err := d.repo.MarkDispatchSubmitting(ctx, item.ID, d.cfg.LeaseSec); err != nil {
-		logger.Warn("mark submitting", "item_id", item.ID, "err", err)
-		return // leave lease, reaper will reset
-	}
-
-	// 2. Resolve deterministic workflow name. Phase 1's batch
-	// placeholder is already deterministic per-asset; if it's
-	// missing (rare: a row mutated externally), derive a fresh one.
-	wfName := strings.TrimSpace(item.WorkflowNamePlanned)
-	if wfName == "" && item.PipelineRunID != nil {
-		// Fallback: only happens if migration ran without our setter.
-		wfName = deriveWfNameFallback(item)
-	}
-
-	// 3. Resolve runtime params from the job. templateID is REQUIRED —
-	// items carry no template of their own, so without the job's
-	// template the submit below resolves nothing and would dead-letter
-	// the whole batch. targetId/version are best-effort.
-	targetID := ""
-	templateID := ""
-	templateVersion := 0
-	if item.JobID != "" {
-		if job, _ := d.repo.FindJobByID(ctx, item.JobID); job != nil {
-			templateID = strings.TrimSpace(job.TemplateID)
-			templateVersion = job.TemplateVersion
-			if f, ok := job.FilterJSON["targetId"].(string); ok {
-				targetID = strings.TrimSpace(f)
-			}
-		}
-	}
-	if templateID == "" {
-		// Cannot dispatch without a template. Treat as retryable (the job
-		// row may be mid-write / transiently unreadable); exhausted rows
-		// dead-letter via markFailure rather than looping forever.
-		logger.Warn("no templateID resolved for item", "item_id", item.ID, "job_id", item.JobID)
-		d.markFailure(ctx, item, "template not resolved for job")
-		return
-	}
-
-	// 4. Update runtime fields on the row so we have a self-consistent
-	// record before submit (helps debug if submit crashes the worker).
-	_ = d.repo.UpdateItemDispatchFields(ctx, item.ID, "", templateVersion, targetID, d.cfg.LeaseSec)
-
-	// 5. Submit via the Phase 1 idempotency hinge.
-	preallocRunID := ""
-	if item.PipelineRunID != nil {
-		preallocRunID = strings.TrimSpace(*item.PipelineRunID)
-	}
-	dep, err := d.pipelineUC.DeployByTemplateID(ctx, templateID, "", []string{item.AssetID}, pipelineUC.DeployOptions{
-		BatchJobID:               item.JobID,
-		TemplateVersion:          templateVersion,
-		TargetID:                 targetID,
-		PreallocatedRunID:        preallocRunID,
-		PreallocatedWorkflowName: wfName,
-		AllowUnknownAssets:       true,
-	})
-
-	// 6. Outcome dispatch.
-	switch {
-	case err == nil:
-		argoUID := ""
-		argoName := wfName
-		if dep != nil {
-			argoUID = dep.ID
-			if n := strings.TrimSpace(dep.WorkflowName); n != "" {
-				argoName = n
-			}
-		}
-		if mErr := d.repo.MarkDispatched(ctx, item.ID, argoName, argoUID); mErr != nil {
-			logger.Warn("mark dispatched", "item_id", item.ID, "err", mErr)
-		}
-		// Sync the legacy columns too (backfill_items.pipeline_run_id /
-		// workflow_name) so ReportBatchSubtaskFailure and SyncJobProgress
-		// keep working while we still have legacy paths in Commit A.
-		if argoUID != "" && argoName != "" {
-			_ = d.repo.UpdateItemPipelineRun(ctx, item.ID, argoUID, argoName, "running")
-		}
-		logger.Info("dispatched",
-			"item_id", item.ID, "asset_id", item.AssetID, "argo_uid", argoUID, "wf", argoName)
-
-	case errors.Is(err, pipelineUC.ErrWorkflowBeingDeleted):
-		// Phase 1 Terminating-during-adopt guard. Park back to pending
-		// and let the next claim retry against a clean slot. Short
-		// retry lease so we revisit sooner than the full backoff
-		// schedule.
-		logger.Info("terminating object, reset to pending", "item_id", item.ID)
-		_ = d.repo.MarkDispatchFailedRetryable(ctx, item.ID, item.Attempts, "terminating object", 1)
-
-	case isPermanentDeployError(err):
-		// Template config wrong / asset not found / etc. No retry.
-		logger.Warn("permanent error, marking dead", "item_id", item.ID, "err", err)
-		_ = d.repo.MarkDispatchDead(ctx, item.ID, item.Attempts, err.Error())
-
-	default:
-		// Retryable — but only until attempts are exhausted, after which the
-		// row MUST reach the absorbing 'dead' state. Neither ClaimNextDispatch
-		// nor the reaper touch a row at attempts >= MaxAttempts, so a purely
-		// 'failed' terminal would strand the item and hang the batch forever.
-		logger.Warn("retryable failure",
-			"item_id", item.ID, "attempts", item.Attempts, "err", err)
-		d.markFailure(ctx, item, err.Error())
+	// Delegate all business logic to the handler. The handler is responsible for:
+	// - Reading job context and resolving runtime parameters
+	// - Invoking business services (e.g., workflow deployment)
+	// - Transitioning item states (submitted, failed, or dead)
+	if err := d.handler.Handle(ctx, item); err != nil {
+		// If handler.Handle returns non-nil, it signals a transient failure;
+		// the handler itself manages state transitions, so we just log here.
+		logger.Warn("handler returned error", "item_id", item.ID, "err", err)
 	}
 }
-
-// markFailure records a non-permanent submit failure. While attempts remain
-// it parks the row in 'failed' with an exponential-backoff lease (Decision B);
-// once attempts reach MaxAttempts it transitions to the absorbing 'dead' state
-// so the item leaves the claimable set and the batch can converge.
-//
-// item.Attempts already reflects this claim's increment (ClaimNextDispatch does
-// attempts+1), so it is the count of attempts consumed so far.
-func (d *Dispatcher) markFailure(ctx context.Context, item *models.BackfillItem, reason string) {
-	if item.Attempts >= d.cfg.MaxAttempts {
-		_ = d.repo.MarkDispatchDead(ctx, item.ID, item.Attempts, reason)
-		return
-	}
-	backoff := d.backoffForAttempt(item.Attempts)
-	_ = d.repo.MarkDispatchFailedRetryable(ctx, item.ID, item.Attempts, reason, int(backoff.Seconds()))
-}
-
-// backoffForAttempt returns backoff for the (about-to-be-recorded) next
-// attempt index. Jitter is ~20% to avoid retry storms under partial
-// recovery of downstream components.
-func (d *Dispatcher) backoffForAttempt(attempts int) time.Duration {
-	if attempts < 1 {
-		attempts = 1
-	}
-	// 2^(attempts-1)
-	exp := math.Pow(2, float64(attempts-1))
-	dur := time.Duration(float64(d.cfg.BackoffBase) * exp)
-	if dur > d.cfg.BackoffMax {
-		dur = d.cfg.BackoffMax
-	}
-	// Jitter ±20% (deterministic — see rng var above). rng is a *rand.Rand
-	// (not concurrency-safe) shared across workers, so guard with rngMu.
-	if bound := int64(dur) / 5; bound > 0 {
-		rngMu.Lock()
-		jitter := time.Duration(rng.Int63n(bound))
-		add := rng.Intn(2) == 0
-		rngMu.Unlock()
-		if add {
-			dur += jitter
-		} else {
-			dur -= jitter
-		}
-	}
-	if dur < d.cfg.BackoffBase {
-		dur = d.cfg.BackoffBase
-	}
-	return dur
-}
-
-// isPermanentDeployError reports whether err comes from a category that
-// should NOT be retried (template missing, asset validation failure,
-// target resolution failure). These are typically deploy-side config
-// bugs that no amount of retry fixes.
-//
-// Pipelines lacking these sentinel errors should treat any failure as
-// retryable. We match conservatively — when in doubt, retry.
-func isPermanentDeployError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, pipelineUC.ErrTemplateNotFound) ||
-		errors.Is(err, pipelineUC.ErrInvalidArgument) ||
-		errors.Is(err, pipelineUC.ErrWorkflowUnavailable)
-}
+// NOTE: Backoff, error classification, and failure handling logic has been
+// moved to BackfillTaskHandler. The Dispatcher is now a pure orchestration
+// kernel with no business logic dependencies.
 
 // deriveWfNameFallback is a defence-in-depth path: if a row reaches the
 // dispatcher without workflow_name_planned populated (e.g. legacy

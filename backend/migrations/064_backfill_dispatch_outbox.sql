@@ -40,7 +40,10 @@ ALTER TABLE backfill_items
         -- exponential-backoff window for retryable failures
         -- (Decision B, "no-perception backoff lock"): the lease field
         -- doubles as the retry gate via ClaimNextDispatch's WHERE clause.
-    ADD COLUMN dispatch_last_error         TEXT;
+    ADD COLUMN dispatch_last_error         TEXT,
+        -- Failure attempt counter. Incremented on each claim; transitions
+        -- to 'dead' when attempts >= MaxAttempts (set by dispatcher).
+    ADD COLUMN attempts                    INT         NOT NULL DEFAULT 0;
 
 -- Optional bigserial — strictly for cold-archive water-mark. The plan
 -- has it as the single-source cursor for the legacy archive sweep;

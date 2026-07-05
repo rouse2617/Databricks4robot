@@ -925,7 +925,7 @@ FROM (
 // ClaimNextDispatch atomically picks the oldest ready backfill_item
 // using FOR UPDATE SKIP LOCKED and stamps the claimer's lease on it.
 func (r *BackfillRepo) ClaimNextDispatch(ctx context.Context, leaseSec, maxAttempts int) (*models.BackfillItem, error) {
-	const q = `
+	q := `
 		WITH picked AS (
 			SELECT id FROM backfill_items
 			WHERE dispatch_state IN ('pending', 'failed')
@@ -937,13 +937,17 @@ func (r *BackfillRepo) ClaimNextDispatch(ctx context.Context, leaseSec, maxAttem
 		)
 		UPDATE backfill_items bi
 		SET dispatch_state='claimed',
-		    dispatch_lease_expires_at=NOW() + ($1 || ' seconds')::interval,
+		    dispatch_lease_expires_at=NOW() + make_interval(secs => $1::float8),
 		    attempts=attempts + 1
 		FROM picked
 		WHERE bi.id = picked.id
-		RETURNING ` + backfillItemSelectCols
+		RETURNING bi.id, bi.job_id, bi.asset_id, bi.status,
+		  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.attempts,
+		  bi.started_at, bi.finished_at, bi.created_at,
+		  bi.dispatch_state, bi.dispatch_generation, bi.workflow_name_planned,
+		  bi.dispatch_lease_expires_at, bi.dispatch_last_error`
 	db := dbFromCtx(ctx, r.c.db)
-	item, err := scanBackfillItem(db.QueryRow(ctx, q, leaseSec, maxAttempts))
+	item, err := scanBackfillItem(db.QueryRow(ctx, q, float64(leaseSec), maxAttempts))
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return nil, nil
@@ -956,13 +960,13 @@ func (r *BackfillRepo) ClaimNextDispatch(ctx context.Context, leaseSec, maxAttem
 // MarkDispatchSubmitting refreshes the lease (cheap heartbeat) and
 // marks the row as actively being submitted. Idempotent.
 func (r *BackfillRepo) MarkDispatchSubmitting(ctx context.Context, itemID string, leaseSec int) error {
-	const q = `
+	q := `
 		UPDATE backfill_items
 		SET dispatch_state='submitting',
-		    dispatch_lease_expires_at=NOW() + ($2 || ' seconds')::interval
+		    dispatch_lease_expires_at=NOW() + make_interval(secs => $2::float8)
 		WHERE id=$1 AND dispatch_state IN ('claimed', 'submitting')`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, itemID, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, float64(leaseSec)); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatchSubmitting: %w", err)
 	}
 	return nil
@@ -1007,17 +1011,17 @@ func (r *BackfillRepo) MarkDispatched(ctx context.Context, itemID, argoWorkflowN
 // row at NOW()+leaseSec — the lease IS the backoff window (Decision B).
 // Idempotent and only fires for rows still in a claimable state.
 func (r *BackfillRepo) MarkDispatchFailedRetryable(ctx context.Context, itemID string, attempts int, lastErr string, leaseSec int) error {
-	const q = `
+	q := `
 		UPDATE backfill_items
 		SET dispatch_state='failed',
-		    dispatch_lease_expires_at=NOW() + ($4 || ' seconds')::interval,
+		    dispatch_lease_expires_at=NOW() + make_interval(secs => $4::float8),
 		    attempts=$2,
 		    dispatch_last_error=$3,
 		    error_message=$3
 		WHERE id=$1
 		  AND dispatch_state IN ('claimed', 'submitting', 'failed')`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, itemID, attempts, lastErr, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, attempts, lastErr, float64(leaseSec)); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.MarkDispatchFailedRetryable: %w", err)
 	}
 	return nil
@@ -1052,13 +1056,13 @@ func (r *BackfillRepo) MarkDispatchDead(ctx context.Context, itemID string, atte
 // values. Keeps the in-memory claim in alignment with what the
 // worker is actually doing.
 func (r *BackfillRepo) UpdateItemDispatchFields(ctx context.Context, itemID, _ string, templateVersion int, _ string, leaseSec int) error {
-	const q = `
+	q := `
 		UPDATE backfill_items
-		SET template_version = COALESCE(NULLIF($3, 0), template_version),
-		    dispatch_lease_expires_at = NOW() + ($5 || ' seconds')::interval
+		SET template_version = COALESCE(NULLIF($2, 0), template_version),
+		    dispatch_lease_expires_at = NOW() + make_interval(secs => $3::float8)
 		WHERE id=$1`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, itemID, templateVersion, leaseSec); err != nil {
+	if err := db.Exec(ctx, q, itemID, templateVersion, float64(leaseSec)); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateItemDispatchFields: %w", err)
 	}
 	return nil

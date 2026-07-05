@@ -57,9 +57,9 @@ type BackfillItem struct {
 	//               longer treats this as a meaningful state.
 	DispatchState        string     `json:"dispatchState,omitempty"`          // above enum
 	DispatchGeneration   int64      `json:"dispatchGeneration,omitempty"`     // bumped on rerun
-	WorkflowNamePlanned  string     `json:"workflowNamePlanned,omitempty"`    // deterministic wfname (Phase 1)
+	WorkflowNamePlanned  *string    `json:"workflowNamePlanned,omitempty"`    // deterministic wfname (Phase 1)
 	DispatchLeaseExpires *time.Time `json:"dispatchLeaseExpiresAt,omitempty"` // active lease wall-clock
-	DispatchLastError    string     `json:"dispatchLastError,omitempty"`      // for observability
+	DispatchLastError    *string    `json:"dispatchLastError,omitempty"`      // for observability
 }
 
 type BatchNodeSummary struct {
