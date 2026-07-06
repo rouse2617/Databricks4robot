@@ -160,6 +160,43 @@ describe("useWorkflowDetail", () => {
 		});
 	});
 
+	it("fetches run ledger data exactly once per mount, not twice", async () => {
+		// Regression test: loadWorkflow's post-getWorkflow refreshDetailData()
+		// and loadRunEvents' own mount effect used to both independently
+		// trigger the same run-ledger fetch (CYB-3068).
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Succeeded",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+		mockGetRunByWorkflowName.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Succeeded",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+			finishedAt: "2026-06-03T00:10:00Z",
+		});
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.status).toBe("Succeeded"),
+		);
+
+		expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledTimes(1);
+		expect(mockListRunEvents).toHaveBeenCalledTimes(1);
+		expect(mockListRunAssetNodes).toHaveBeenCalledTimes(1);
+		expect(mockGetRunCostSummary).toHaveBeenCalledTimes(1);
+		expect(mockListRunInputs).toHaveBeenCalledTimes(1);
+		expect(mockListRunOutputs).toHaveBeenCalledTimes(1);
+		expect(mockGetRunRuntime).toHaveBeenCalledTimes(1);
+	});
+
 	it("loads run-id detail and resolves runtime workflow for terminal runs", async () => {
 		mockGetRun.mockResolvedValue({
 			id: "run-1",
@@ -402,7 +439,10 @@ describe("useWorkflowDetail", () => {
 		});
 
 		expect(mockGetWorkflow).toHaveBeenCalledTimes(2);
-		expect(mockGetRunByWorkflowName).toHaveBeenCalledTimes(4);
+		// One mount + one poll tick = 2 ledger fetches, not 4: loadWorkflow and
+		// loadRunEvents both used to independently trigger the same ledger load
+		// on every cycle (see CYB-3068); skipNextRunEventsLoadRef now dedupes it.
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledTimes(2);
 	});
 
 	it("maps non-404 API errors to error load error", async () => {
