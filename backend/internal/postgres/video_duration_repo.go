@@ -44,3 +44,38 @@ func (r *VideoDurationRepo) GetByVideoIDs(ctx context.Context, videoIDs []string
 	}
 	return out, nil
 }
+
+// Upsert writes video_id -> duration_sec rows idempotently (CYB-3072). Called by
+// the Grace sync loop; existing rows are updated in place. Batched to keep the
+// statement size bounded for large syncs.
+func (r *VideoDurationRepo) Upsert(ctx context.Context, durations map[string]float64) error {
+	if len(durations) == 0 {
+		return nil
+	}
+	db := dbFromCtx(ctx, r.c.db)
+	const q = `
+	INSERT INTO video_durations (video_id, duration_sec)
+	SELECT unnest($1::text[]), unnest($2::float8[])
+	ON CONFLICT (video_id) DO UPDATE
+	  SET duration_sec = EXCLUDED.duration_sec, updated_at = now()`
+	const chunk = 1000
+	ids := make([]string, 0, len(durations))
+	for id := range durations {
+		ids = append(ids, id)
+	}
+	for i := 0; i < len(ids); i += chunk {
+		end := i + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batchIDs := ids[i:end]
+		batchDur := make([]float64, len(batchIDs))
+		for j, id := range batchIDs {
+			batchDur[j] = durations[id]
+		}
+		if err := db.Exec(ctx, q, batchIDs, batchDur); err != nil {
+			return fmt.Errorf("postgres VideoDurationRepo.Upsert: %w", err)
+		}
+	}
+	return nil
+}

@@ -63,6 +63,13 @@ ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION="${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION:-
 # Push is now the primary status signal; the watcher is a low-frequency reconcile
 # backstop. Set to 3 to temporarily restore high-frequency polling if needed.
 PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE:-30}"
+# Grace video-duration sync (CYB-3072). URL + username are non-sensitive env; the
+# password is the whole grace-api-dev Secret Manager JSON mounted as GRACE_PASSWORD
+# (the backend extracts AUTH_PASSWORD). Empty GRACE_API_URL disables the sync loop.
+GRACE_API_URL_OVERRIDE="${GRACE_API_URL_OVERRIDE:-https://dev.cyber-grace.pages.dev/api}"
+GRACE_USERNAME_OVERRIDE="${GRACE_USERNAME_OVERRIDE:-grace-service-dev}"
+GRACE_PASSWORD_SECRET="${GRACE_PASSWORD_SECRET:-grace-api-dev}"
+GRACE_PASSWORD_SECRET_VERSION="${GRACE_PASSWORD_SECRET_VERSION:-latest}"
 # Conservative dev execution ceilings. These are backend deploy-time guards for
 # user-defined pipeline component resources; execution targets may override via quota_policy.
 PIPELINE_RESOURCE_MAX_CPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE:-8}"
@@ -329,6 +336,11 @@ else
   remove_es_password_secret=true
 fi
 
+if [[ -n "${GRACE_PASSWORD_SECRET}" ]]; then
+  remove_env "GRACE_PASSWORD" "${ENV_KV_FILE}"
+  secret_mappings+=("GRACE_PASSWORD=${GRACE_PASSWORD_SECRET}:${GRACE_PASSWORD_SECRET_VERSION}")
+fi
+
 if [[ -n "${DB_PASSWORD_SECRET}" ]]; then
   remove_env "DB_PASSWORD" "${ENV_KV_FILE}"
   secret_mappings+=("DB_PASSWORD=${DB_PASSWORD_SECRET}:${DB_PASSWORD_SECRET_VERSION}")
@@ -391,6 +403,8 @@ remove_env "ARGO_AUTH_TOKEN" "${ENV_KV_FILE}"
 [[ -n "${ARGO_SERVER_URL_OVERRIDE}" ]] && upsert_env "ARGO_SERVER_URL" "${ARGO_SERVER_URL_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE}" ]] && upsert_env "ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION" "${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ARGO_RUN_WEBHOOK_URL_OVERRIDE}" ]] && upsert_env "ARGO_RUN_WEBHOOK_URL" "${ARGO_RUN_WEBHOOK_URL_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${GRACE_API_URL_OVERRIDE}" ]] && upsert_env "GRACE_API_URL" "${GRACE_API_URL_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${GRACE_USERNAME_OVERRIDE}" ]] && upsert_env "GRACE_USERNAME" "${GRACE_USERNAME_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE}" ]] && upsert_env "PIPELINE_RUN_WATCHER_INTERVAL_SEC" "${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE}" "${ENV_KV_FILE}"
 if [[ -n "${ARGO_RUN_WEBHOOK_TOKEN_SECRET}" ]]; then
   remove_env "ARGO_RUN_WEBHOOK_TOKEN" "${ENV_KV_FILE}"

@@ -168,6 +168,13 @@ type Config struct {
 	// PricingConfigPath points to the GCP pricing YAML for cost estimation.
 	// Empty means cost estimation is skipped.
 	PricingConfigPath string
+
+	// Grace API (CYB-3072). Reusable client config; video-duration sync is the
+	// first consumer. Empty URL/creds disables the Grace sync loop entirely.
+	GraceAPIURL                  string
+	GraceUsername                string
+	GracePassword                string // plain or JSON {"AUTH_PASSWORD":...} from grace-api-dev
+	VideoDurationSyncIntervalSec int32
 }
 
 func Load() *Config {
@@ -278,6 +285,11 @@ func Load() *Config {
 		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
 
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
+
+		GraceAPIURL:                  getenv("GRACE_API_URL", ""),
+		GraceUsername:                getenv("GRACE_USERNAME", ""),
+		GracePassword:                getenv("GRACE_PASSWORD", ""),
+		VideoDurationSyncIntervalSec: getenvInt32("VIDEO_DURATION_SYNC_INTERVAL_SEC", 600),
 	}
 }
 

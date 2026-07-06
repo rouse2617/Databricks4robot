@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/grace"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
@@ -135,7 +136,8 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.SetRunEventRepo(pipelineRunEventRepo)
 	puc.SetRunFactRepositories(runRelationRepo, runInputRepo)
 	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
-	puc.SetVideoDurationRepo(postgres.NewVideoDurationRepo(pg))
+	videoDurationRepo := postgres.NewVideoDurationRepo(pg)
+	puc.SetVideoDurationRepo(videoDurationRepo)
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
@@ -163,6 +165,18 @@ func setupCore(inf *infra) *coreHandlers {
 		watcherScanLimit = 100
 	}
 	puc.StartRunEventWatcher(context.Background(), watcherInterval, watcherScanLimit)
+
+	// Grace video-duration sync (CYB-3072): DataBrew actively pulls durations
+	// from Grace and upserts video_durations on a background loop. Best-effort;
+	// disabled when GRACE_* is unconfigured. Reusable grace.Client can grow other
+	// Grace data needs later.
+	if graceClient := grace.NewClient(grace.ConfigFromEnv()); graceClient.Enabled() {
+		syncInterval := time.Duration(inf.cfg.VideoDurationSyncIntervalSec) * time.Second
+		grace.NewSyncer(graceClient, videoDurationRepo).StartSyncLoop(context.Background(), syncInterval)
+		slog.Info("grace video duration sync enabled", "intervalSec", inf.cfg.VideoDurationSyncIntervalSec)
+	} else {
+		slog.Info("grace video duration sync disabled (GRACE_API_URL/USERNAME/PASSWORD not set)")
+	}
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
 	puc.SetBackfillRepo(backfillRepo)
