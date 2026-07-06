@@ -8,7 +8,7 @@ Transpile and execute pipeline runs as Argo Workflows, including cost attributio
 
 ### Requirement: Pipeline run pods carry cost-tracking labels
 
-The system SHALL attach labels identifying the batch job, template, and owner to every pod created for a submitted pipeline run, whenever the corresponding identifier is known at submission time.
+The system SHALL attach labels identifying the batch job, template, and owner to every pod created for a submitted pipeline run, whenever the corresponding identifier is known at submission time — including for backfill batch items, whose owner is sourced from the owning job's creator.
 
 ### Requirement: Cost-tracking label values remain valid Kubernetes labels
 
