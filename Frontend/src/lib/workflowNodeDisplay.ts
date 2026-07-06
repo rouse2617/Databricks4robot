@@ -12,6 +12,31 @@ export function truncateMiddle(text: string, maxLength: number): string {
 const UUID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Mirror of backend transpiler.stepSlug (CYB-3076): lowercase, [a-z0-9] with
+// other runs collapsed to '-', trimmed, truncated to 30 chars. Keep in sync.
+const STEP_SLUG_MAX_LEN = 30;
+
+function stepSlug(componentName: string): string {
+	const slug = componentName
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return slug.length > STEP_SLUG_MAX_LEN
+		? slug.slice(0, STEP_SLUG_MAX_LEN).replace(/-+$/g, "")
+		: slug;
+}
+
+// Hex payload of a node id (strip the "node-" prefix and separators), used to
+// disambiguate steps that share a component name. Mirrors transpiler.nodeUUIDHex.
+function nodeHex(nodeId: string): string {
+	return nodeId
+		.toLowerCase()
+		.trim()
+		.replace(/^node-/, "")
+		.replace(/[_-]/g, "");
+}
+
 function addPipelineNodeLabel(
 	lookup: Map<string, string>,
 	key: string | undefined,
@@ -26,6 +51,7 @@ function addPipelineNodeLabelVariants(
 	lookup: Map<string, string>,
 	nodeId: string,
 	label: string,
+	componentName?: string,
 ) {
 	const normalized = nodeId.trim();
 	if (!normalized) return;
@@ -40,6 +66,17 @@ function addPipelineNodeLabelVariants(
 		(withoutStep.startsWith("node-") || UUID_PATTERN.test(withoutStep))
 	) {
 		addPipelineNodeLabel(lookup, withoutStep, label);
+	}
+
+	// Readable template names (CYB-3076): step-<component-slug>[-<uuid8>].
+	const slug = stepSlug(componentName?.trim() ?? "");
+	if (slug) {
+		addPipelineNodeLabel(lookup, `step-${slug}`, label);
+		const hex = nodeHex(normalized);
+		if (hex) {
+			addPipelineNodeLabel(lookup, `step-${slug}-${hex.slice(0, 8)}`, label);
+			addPipelineNodeLabel(lookup, `step-${slug}-${hex}`, label);
+		}
 	}
 
 	if (withoutStep.startsWith("node-")) {
@@ -66,8 +103,9 @@ export function buildPipelineNodeLabelLookup(
 		return lookup;
 	}
 	for (const node of pipeline.nodes) {
-		const label = node.component?.name?.trim() || node.id;
-		addPipelineNodeLabelVariants(lookup, node.id, label);
+		const componentName = node.component?.name?.trim() || "";
+		const label = componentName || node.id;
+		addPipelineNodeLabelVariants(lookup, node.id, label, componentName);
 	}
 	return lookup;
 }

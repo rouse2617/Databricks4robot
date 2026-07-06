@@ -167,7 +167,7 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-gpu-step" {
+		if tmpl.Name != "step-gpu" {
 			continue
 		}
 		if tmpl.Container == nil {
@@ -190,7 +190,7 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("step-gpu-step template not found")
+	t.Fatal("step-gpu template not found")
 }
 
 func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
@@ -230,7 +230,7 @@ func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-a" {
+		if tmpl.Name != "step-worker" {
 			continue
 		}
 		if got := tmpl.NodeSelector["workload"]; got != "databrew" {
@@ -239,7 +239,7 @@ func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
 		assertTemplateToleration(t, tmpl, "environment", "dev")
 		return
 	}
-	t.Fatal("step-a template not found")
+	t.Fatal("step-worker template not found")
 }
 
 func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
@@ -285,7 +285,7 @@ func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
 	}
 	var mounted bool
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-secret-step" || tmpl.Container == nil {
+		if tmpl.Name != "step-secret" || tmpl.Container == nil {
 			continue
 		}
 		for _, mount := range tmpl.Container.VolumeMounts {
@@ -359,7 +359,7 @@ func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-script-step" || tmpl.Script == nil {
+		if tmpl.Name != "step-script" || tmpl.Script == nil {
 			continue
 		}
 		for _, mount := range tmpl.Script.VolumeMounts {
@@ -369,7 +369,7 @@ func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
 		}
 		t.Fatalf("expected script volume mount, got %#v", tmpl.Script.VolumeMounts)
 	}
-	t.Fatal("step-script-step script template not found")
+	t.Fatal("step-script script template not found")
 }
 
 func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
@@ -432,7 +432,7 @@ func TestTranspileNormalizesDuplicatedShellArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if got := tmpl.Container.Args; len(got) != 1 || got[0] != "echo ok" {
 				t.Fatalf("args = %#v, want single script body", got)
 			}
@@ -462,7 +462,7 @@ func TestTranspileSkipsUnconsumedOutputFileContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if len(tmpl.Outputs.Parameters) != 0 {
 				t.Fatalf("outputs = %+v, want none for unconsumed output port", tmpl.Outputs.Parameters)
 			}
@@ -495,7 +495,7 @@ func TestTranspileDeclaresOutputWhenCommandWritesOutputFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if len(tmpl.Outputs.Parameters) != 1 || tmpl.Outputs.Parameters[0].Name != "output" {
 				t.Fatalf("outputs = %+v, want output parameter", tmpl.Outputs.Parameters)
 			}
@@ -547,7 +547,7 @@ func TestTranspileRetryStrategy(t *testing.T) {
 
 	// Find the node template (not the DAG template)
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.RetryStrategy == nil {
 				t.Fatal("expected retry strategy")
 			}
@@ -578,7 +578,7 @@ func TestTranspileActiveDeadlineSeconds(t *testing.T) {
 	}
 
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.ActiveDeadlineSeconds == nil {
 				t.Fatal("expected activeDeadlineSeconds")
 			}
@@ -610,7 +610,7 @@ func TestTranspileRetryAndTimeout(t *testing.T) {
 	}
 
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.RetryStrategy == nil || tmpl.RetryStrategy.Limit.IntValue() != 2 {
 				t.Fatal("expected retry limit 2")
 			}
@@ -703,11 +703,11 @@ func TestTranspileUsesCanonicalStepTemplateName(t *testing.T) {
 	if dag == nil || dag.DAG == nil || len(dag.DAG.Tasks) != 1 {
 		t.Fatalf("expected one DAG task, got %#v", dag)
 	}
-	if dag.DAG.Tasks[0].Name != "step-1" {
-		t.Fatalf("task name = %q, want step-1", dag.DAG.Tasks[0].Name)
+	if dag.DAG.Tasks[0].Name != "step-sleep" {
+		t.Fatalf("task name = %q, want step-sleep", dag.DAG.Tasks[0].Name)
 	}
-	if dag.DAG.Tasks[0].Template != "step-1" {
-		t.Fatalf("task template = %q, want step-1", dag.DAG.Tasks[0].Template)
+	if dag.DAG.Tasks[0].Template != "step-sleep" {
+		t.Fatalf("task template = %q, want step-sleep", dag.DAG.Tasks[0].Template)
 	}
 }
 

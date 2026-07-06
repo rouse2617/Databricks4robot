@@ -223,16 +223,16 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	// Build node input specs: for each node, which input params come from where
 	nodeInputs := buildInputSpecs(p)
 	outputConsumers := buildOutputConsumers(p)
-	nodeTemplates := make(map[string]string)
-	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts)
+	// Single source of truth for template (and therefore pod) names, covering
+	// top-level and nested sub-nodes. Readable "step-<component>" names make raw
+	// pod names identifiable by business step (CYB-3076).
+	nodeTemplates := buildStepTemplateNames(p.Nodes)
+	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts, nodeTemplates)
 	if err != nil {
 		return nil, fmt.Errorf("build node templates: %w", err)
 	}
 	for _, tmpl := range allTmpls {
 		wf.Spec.Templates = append(wf.Spec.Templates, tmpl)
-	}
-	for _, node := range p.Nodes {
-		nodeTemplates[node.ID] = templateName(node.ID)
 	}
 
 	dagTmpl := buildDAGTemplate(p.Nodes, p.Edges, nodeTemplates, nodeInputs)
@@ -474,7 +474,7 @@ func componentWritesOutputPath(c Component, outputName string) bool {
 
 // buildContainerTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
-func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
+func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -485,7 +485,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		pullPolicy = corev1.PullIfNotPresent
 	}
 	tmpl := wfv1.Template{
-		Name: templateName(node.ID),
+		Name: nodeTemplates[node.ID],
 		Container: &corev1.Container{
 			Image:           node.Component.Image,
 			Command:         node.Component.Command,
@@ -617,7 +617,7 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 			for _, is := range inputs {
 				params = append(params, wfv1.Parameter{
 					Name:  is.paramName,
-					Value: wfv1.AnyStringPtr(fmt.Sprintf("{{tasks.%s.outputs.parameters.%s}}", templateName(is.srcNode), is.srcPort)),
+					Value: wfv1.AnyStringPtr(fmt.Sprintf("{{tasks.%s.outputs.parameters.%s}}", nodeTemplates[is.srcNode], is.srcPort)),
 				})
 			}
 			task.Arguments = wfv1.Arguments{Parameters: params}
@@ -635,10 +635,10 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 // buildAllNodeTemplates recursively builds templates for a list of nodes.
 // For container nodes returns 1 template; for sub-graph nodes returns N+1
 // templates (1 DAG template + N leaf templates for sub-nodes).
-func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options) ([]wfv1.Template, error) {
+func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	var all []wfv1.Template
 	for _, node := range nodes {
-		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts)
+		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts, nodeTemplates)
 		if err != nil {
 			return nil, err
 		}
@@ -649,39 +649,36 @@ func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputCo
 
 // buildNodeTemplates returns all templates for a single node.
 // For sub-graph nodes this recursively includes sub-node templates.
-func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) ([]wfv1.Template, error) {
+func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	if len(node.SubNodes) > 0 {
-		return buildSubGraphTemplates(node, inputs, opts)
+		return buildSubGraphTemplates(node, inputs, opts, nodeTemplates)
 	}
 	if node.Component.Mode == "script" {
-		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts)}, nil
+		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts, nodeTemplates)}, nil
 	}
-	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts)}, nil
+	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts, nodeTemplates)}, nil
 }
 
 // buildSubGraphTemplates builds templates for a sub-graph node.
-// Returns container templates for sub-nodes plus the DAG template.
-func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+// Returns container templates for sub-nodes plus the DAG template. Template
+// names come from the shared nodeTemplates map (built over the full flat node
+// set, so it already holds every sub-node's readable name).
+func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
 	subInputs := buildInputSpecs(subPipe)
 	subOutputConsumers := buildOutputConsumers(subPipe)
 
 	var templates []wfv1.Template
 	for _, subNode := range node.SubNodes {
-		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts)
+		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts, nodeTemplates)
 		if err != nil {
 			return nil, err
 		}
 		templates = append(templates, tms...)
 	}
 
-	subTemplateNames := make(map[string]string)
-	for _, subNode := range node.SubNodes {
-		subTemplateNames[subNode.ID] = templateName(subNode.ID)
-	}
-
-	dagTmpl := buildDAGTemplate(node.SubNodes, node.SubEdges, subTemplateNames, subInputs)
-	dagTmpl.Name = templateName(node.ID)
+	dagTmpl := buildDAGTemplate(node.SubNodes, node.SubEdges, nodeTemplates, subInputs)
+	dagTmpl.Name = nodeTemplates[node.ID]
 	templates = append(templates, *dagTmpl)
 	return templates, nil
 }
@@ -693,7 +690,7 @@ func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv
 //   - Argo writes source to a temp file and runs `command < tmpfile`
 //   - Stdout is automatically captured as outputs.result
 //   - File-based output params use valueFrom.path (same as container mode)
-func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
+func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -726,7 +723,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 	}
 
 	tmpl := wfv1.Template{
-		Name: templateName(node.ID),
+		Name: nodeTemplates[node.ID],
 		Script: &wfv1.ScriptTemplate{
 			Container: corev1.Container{
 				Image:           node.Component.Image,
