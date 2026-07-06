@@ -25,3 +25,7 @@ The system SHALL fall back to querying the live Argo API when the data needed to
 ### Requirement: WorkflowDetailPage 加载 run ledger 数据不重复请求
 
 The system SHALL fetch a run's ledger sub-resources (events/asset-nodes/cost-summary/inputs/outputs/runtime) at most once per mount, manual refresh, or poll tick, rather than once per independent trigger path.
+
+### Requirement: 批量任务终态飞书通知
+
+The system SHALL send a Feishu text notification exactly once when a batch (backfill) job transitions from a non-terminal status to a terminal status (`completed` or `failed`), regardless of outcome, including a summary of total/succeeded/failed item counts and a link to the job detail page. This SHALL hold even when multiple backend instances observe the same transition concurrently — exactly one notification is sent. The feature SHALL be a no-op (no error, no network call) when no webhook is configured.
