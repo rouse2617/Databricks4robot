@@ -16,7 +16,7 @@ The system SHALL sanitize any identifier before using it as a label value, so th
 
 ### Requirement: 终态 run 查询 workflow 详情不再直连 Argo
 
-The system SHALL avoid querying the live Argo API for a workflow's detail view when the corresponding run has already reached a terminal state and the underlying workflow object still exists.
+The system SHALL avoid querying the live Argo API for a workflow's detail view when the corresponding run has already reached a terminal state and the underlying workflow object still exists. This SHALL hold for pipelines that declare CPU/memory resource requests or limits on any node, not only for resource-free pipelines.
 
 ### Requirement: 降级路径数据不完整时安全回退,不返回残缺响应
 
