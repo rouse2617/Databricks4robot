@@ -21,3 +21,7 @@ The system SHALL avoid querying the live Argo API for a workflow's detail view w
 ### Requirement: 降级路径数据不完整时安全回退,不返回残缺响应
 
 The system SHALL fall back to querying the live Argo API when the data needed to construct a degraded (non-Argo) response is missing or invalid, rather than returning a response with silently missing or incorrect fields.
+
+### Requirement: WorkflowDetailPage 加载 run ledger 数据不重复请求
+
+The system SHALL fetch a run's ledger sub-resources (events/asset-nodes/cost-summary/inputs/outputs/runtime) at most once per mount, manual refresh, or poll tick, rather than once per independent trigger path.
