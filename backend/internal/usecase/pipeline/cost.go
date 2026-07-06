@@ -187,9 +187,22 @@ func lookupHourlyRate(pricing *PricingConfig, instanceType, gpuType, provisionin
 	return &result
 }
 
-// ComputeRunCost sums the estimated cost across all nodes in a pipeline run.
-// Uses the stored cost on each node (computed during Argo status refresh)
-// rather than recomputing from resourcesDuration so historical costs are stable.
+// isLeafPodNode reports whether a run node is a real executed pod (a leaf) whose
+// cost should be counted, as opposed to an aggregate node (DAG, Steps, StepGroup,
+// TaskGroup, Retry) whose resourcesDuration is a rollup of its children. Summing
+// aggregate nodes on top of their pods double-counts the cost (CYB-3073).
+func isLeafPodNode(n models.PipelineRunNode) bool {
+	if n.Type == "Pod" {
+		return true
+	}
+	// Tolerate older/blank-typed rows that still carry a pod name.
+	return n.Type == "" && n.PodName != ""
+}
+
+// ComputeRunCost sums the estimated cost across the leaf (Pod) nodes of a run.
+// Aggregate nodes (DAG/Steps/...) are skipped so the total is not double-counted
+// and matches the per-step breakdown. Uses the stored per-node cost (computed
+// during Argo status refresh) so historical costs are stable.
 func ComputeRunCost(run *models.PipelineRun, pricing *PricingConfig) *float64 {
 	if run == nil || len(run.Nodes) == 0 {
 		return nil
@@ -197,9 +210,11 @@ func ComputeRunCost(run *models.PipelineRun, pricing *PricingConfig) *float64 {
 	var total float64
 	hasCost := false
 	for _, n := range run.Nodes {
-		cost := n.EstimatedCostUSD
-		if cost != nil {
-			total += *cost
+		if !isLeafPodNode(n) {
+			continue
+		}
+		if n.EstimatedCostUSD != nil {
+			total += *n.EstimatedCostUSD
 			hasCost = true
 		}
 	}
