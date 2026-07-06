@@ -541,6 +541,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		TargetID:           targetID,
 		AllowUnknownAssets: true,
 		PreallocatedRunID:  runID,
+		Owner:              job.CreatedBy,
 	}
 	if job != nil && job.FilterJSON != nil {
 		deployOpts.TargetID = stringFromBackfillFilter(job.FilterJSON, "targetId", "target_id", "executionTargetId", "execution_target_id")
