@@ -18,6 +18,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
@@ -1166,8 +1167,10 @@ func batchNodeOrderFromPipeline(pipeline map[string]interface{}) map[string]int 
 	if len(rawNodes) == 0 {
 		return nil
 	}
+	type nodeMeta struct{ id, component string }
 	nodeKeys := make([]string, 0, len(rawNodes))
 	nodeSet := make(map[string]struct{}, len(rawNodes))
+	metaByKey := make(map[string]nodeMeta, len(rawNodes))
 	for _, raw := range rawNodes {
 		node, _ := raw.(map[string]interface{})
 		id, _ := node["id"].(string)
@@ -1178,19 +1181,49 @@ func batchNodeOrderFromPipeline(pipeline map[string]interface{}) map[string]int 
 		if _, exists := nodeSet[key]; !exists {
 			nodeSet[key] = struct{}{}
 			nodeKeys = append(nodeKeys, key)
+			metaByKey[key] = nodeMeta{id: id, component: batchNodeComponentName(node)}
 		}
 	}
 	if len(nodeKeys) == 0 {
 		return nil
 	}
+	var out map[string]int
 	if order := batchNodeOrderFromEdges(pipeline, nodeKeys, nodeSet); len(order) > 0 {
-		return order
+		out = order
+	} else {
+		out = make(map[string]int, len(nodeKeys))
+		for i, key := range nodeKeys {
+			out[key] = i + 1
+		}
 	}
-	out := make(map[string]int, len(nodeKeys))
-	for i, key := range nodeKeys {
-		out[key] = i + 1
+	// Alias the readable template names (step-<component>[-<uuid8>]) to the same
+	// order so node-summary ordering works whether a node was stored under the
+	// legacy step-node-<uuid> name or the readable name (CYB-3076). No migration.
+	for key, meta := range metaByKey {
+		order, ok := out[key]
+		if !ok {
+			continue
+		}
+		for _, cand := range transpiler.StepCandidateKeys(meta.component, meta.id) {
+			nk := normalizeBatchPipelineNodeID(cand)
+			if nk == "" {
+				continue
+			}
+			if _, exists := out[nk]; !exists {
+				out[nk] = order
+			}
+		}
 	}
 	return out
+}
+
+func batchNodeComponentName(node map[string]interface{}) string {
+	comp, _ := node["component"].(map[string]interface{})
+	if comp == nil {
+		return ""
+	}
+	name, _ := comp["name"].(string)
+	return name
 }
 
 func batchNodeOrderFromEdges(pipeline map[string]interface{}, nodeKeys []string, nodeSet map[string]struct{}) map[string]int {

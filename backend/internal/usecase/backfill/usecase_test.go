@@ -451,6 +451,45 @@ func TestBatchNodeOrderFromPipeline_PrefersDagEdges(t *testing.T) {
 	}
 }
 
+func TestBatchNodeOrderFromPipeline_DualFormat(t *testing.T) {
+	// Readable pod names (CYB-3076): nodes carry uuid ids + component names.
+	// Both the new readable template name and the legacy step-node-<uuid> name
+	// must resolve to the same DAG order.
+	order := batchNodeOrderFromPipeline(map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id":        "node-aaaaaaaa-0000-0000-0000-000000000001",
+				"component": map[string]interface{}{"name": "head-track"},
+			},
+			map[string]interface{}{
+				"id":        "node-bbbbbbbb-0000-0000-0000-000000000002",
+				"component": map[string]interface{}{"name": "transcode"},
+			},
+		},
+		"edges": []interface{}{
+			map[string]interface{}{
+				"source": "node-aaaaaaaa-0000-0000-0000-000000000001",
+				"target": "node-bbbbbbbb-0000-0000-0000-000000000002",
+			},
+		},
+	})
+
+	// New readable format.
+	if got := order[normalizeBatchPipelineNodeID("step-head-track")]; got != 1 {
+		t.Fatalf("new-format step-head-track order = %d, want 1", got)
+	}
+	if got := order[normalizeBatchPipelineNodeID("step-transcode")]; got != 2 {
+		t.Fatalf("new-format step-transcode order = %d, want 2", got)
+	}
+	// Legacy format for historical runs (stored as step-node-<uuid>).
+	if got := order[normalizeBatchPipelineNodeID("step-node-aaaaaaaa-0000-0000-0000-000000000001")]; got != 1 {
+		t.Fatalf("legacy head-track order = %d, want 1", got)
+	}
+	if got := order[normalizeBatchPipelineNodeID("step-node-bbbbbbbb-0000-0000-0000-000000000002")]; got != 2 {
+		t.Fatalf("legacy transcode order = %d, want 2", got)
+	}
+}
+
 func TestCreateBackfill_1000Assets_ReturnsPendingImmediately(t *testing.T) {
 	repo := &trackingBackfillRepo{}
 	uc := New(repo, nil)

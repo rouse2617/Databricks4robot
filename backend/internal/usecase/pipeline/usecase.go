@@ -3220,7 +3220,6 @@ func (uc *Usecase) Deploy(
 		pipeName = name
 	}
 
-	wfName := pipeName + "-" + uuid.New().String()[:8]
 	depID := uuid.New().String()
 	templateID := ""
 	templateVersion := 0
@@ -3237,6 +3236,11 @@ func (uc *Usecase) Deploy(
 			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
 		}
 	}
+	// Workflow name = run id (depID). The Argo pod name is <wfName>-<step>-<hash>,
+	// so leading with the run id lets any pod map straight to /runs/<id>
+	// (CYB-3076). depID is a UUID → a valid RFC1123 name. pipeName is retained
+	// for the run's display name only.
+	wfName := depID
 	resolveTargetID := ""
 	if len(opts) > 0 {
 		resolveTargetID = opts[0].TargetID

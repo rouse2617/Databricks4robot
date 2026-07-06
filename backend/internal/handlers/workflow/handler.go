@@ -19,6 +19,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -378,18 +379,17 @@ func lookupWorkflowNodeRuntimeInfo(run *models.PipelineRun, templateName string)
 	if run == nil || len(run.PipelineJSON) == 0 {
 		return nil
 	}
-	nodeID := strings.TrimSpace(templateName)
-	nodeID = strings.TrimPrefix(nodeID, "step-")
-	if nodeID == "" {
+	tmpl := strings.TrimSpace(templateName)
+	if tmpl == "" {
 		return nil
 	}
-	if info, ok := findWorkflowNodeRuntimeInfo(run.PipelineJSON["nodes"], nodeID); ok {
+	if info, ok := findWorkflowNodeRuntimeInfo(run.PipelineJSON["nodes"], tmpl); ok {
 		return &info
 	}
 	return nil
 }
 
-func findWorkflowNodeRuntimeInfo(rawNodes any, targetID string) (workflowNodeRuntimeMetadata, bool) {
+func findWorkflowNodeRuntimeInfo(rawNodes any, templateName string) (workflowNodeRuntimeMetadata, bool) {
 	nodes, ok := interfaceSlice(rawNodes)
 	if !ok {
 		return workflowNodeRuntimeMetadata{}, false
@@ -399,19 +399,35 @@ func findWorkflowNodeRuntimeInfo(rawNodes any, targetID string) (workflowNodeRun
 		if !ok {
 			continue
 		}
-		nodeID, _ := node["id"].(string)
-		if strings.TrimSpace(nodeID) == targetID {
+		if workflowNodeMatchesTemplate(node, templateName) {
 			return workflowNodeRuntimeMetadata{
 				VersionLabel: firstWorkflowNodeString(node, "componentVersionLabel", "versionLabel", "releaseLabel", "tag"),
 				SourceCommit: firstWorkflowNodeString(node, "sourceCommit", "commit"),
 				Image:        firstWorkflowNodeString(node, "image"),
 			}, true
 		}
-		if info, ok := findWorkflowNodeRuntimeInfo(node["sub_nodes"], targetID); ok {
+		if info, ok := findWorkflowNodeRuntimeInfo(node["sub_nodes"], templateName); ok {
 			return info, true
 		}
 	}
 	return workflowNodeRuntimeMetadata{}, false
+}
+
+// workflowNodeMatchesTemplate reports whether a stored Argo template name maps
+// to this definition node, accepting both the readable step-<component>[-<uuid8>]
+// names and the legacy step-<nodeID> form (CYB-3076, dual-format, no migration).
+func workflowNodeMatchesTemplate(node map[string]any, templateName string) bool {
+	nodeID, _ := node["id"].(string)
+	componentName := ""
+	if component, ok := node["component"].(map[string]any); ok {
+		componentName, _ = component["name"].(string)
+	}
+	for _, cand := range transpiler.StepCandidateKeys(componentName, nodeID) {
+		if cand == templateName {
+			return true
+		}
+	}
+	return false
 }
 
 func firstWorkflowNodeString(node map[string]any, keys ...string) string {
