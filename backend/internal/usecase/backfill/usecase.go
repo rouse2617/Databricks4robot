@@ -1509,6 +1509,12 @@ func formatBatchJobNotificationText(job *models.BackfillJob, status string, summ
 		"【批量任务完成】%s\n状态：%s\n总数：%d　成功：%d　失败：%d",
 		name, status, job.TotalCount, summary.Completed, summary.Failed,
 	)
+	if job.CreatedBy != "" {
+		text += fmt.Sprintf("\n创建人：%s", job.CreatedBy)
+	}
+	if !job.CreatedAt.IsZero() {
+		text += fmt.Sprintf("\n耗时：%s", time.Since(job.CreatedAt).Round(time.Second))
+	}
 	if frontendBaseURL != "" {
 		text += fmt.Sprintf("\n链接：%s/pipeline/batch/%s", strings.TrimRight(frontendBaseURL, "/"), job.ID)
 	}
