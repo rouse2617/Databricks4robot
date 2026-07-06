@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -48,6 +49,8 @@ func TestSyncJobProgress_NotifiesOnceWhenJobCompletes(t *testing.T) {
 			Name:       "my-batch",
 			Status:     "running",
 			TotalCount: 2,
+			CreatedBy:  "alice@cyberorigin.ai",
+			CreatedAt:  time.Now().Add(-90 * time.Second),
 		},
 		items: []models.BackfillItem{
 			{ID: "item-1", JobID: jobID, Status: "completed"},
@@ -69,7 +72,7 @@ func TestSyncJobProgress_NotifiesOnceWhenJobCompletes(t *testing.T) {
 		t.Fatalf("expected exactly 1 notification, got %d", got)
 	}
 	text := notifier.lastCall()
-	for _, want := range []string{"my-batch", "completed", "总数：2", "成功：2", "失败：0", "https://dev.example.com/pipeline/batch/job-1"} {
+	for _, want := range []string{"my-batch", "completed", "总数：2", "成功：2", "失败：0", "创建人：alice@cyberorigin.ai", "耗时：1m3", "https://dev.example.com/pipeline/batch/job-1"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("notification text missing %q; got: %s", want, text)
 		}
