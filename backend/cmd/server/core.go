@@ -146,6 +146,8 @@ func setupCore(inf *infra) *coreHandlers {
 		slog.Warn("runtime config projection store disabled", "err", err)
 	} else {
 		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
+		// Price pipeline step costs by the node's real machine type (CYB-3073).
+		puc.SetNodeInstanceResolver(k8s.NewNodeInstanceResolver(clientset))
 	}
 	if inf.cfg.PricingConfigPath != "" {
 		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)

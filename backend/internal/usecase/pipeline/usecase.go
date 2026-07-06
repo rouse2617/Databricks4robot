@@ -84,6 +84,10 @@ type Usecase struct {
 	// videoDurations looks up source-video durations by asset_id (CYB-3059).
 	videoDurations videoDurationLookup
 
+	// nodeResolver resolves a node's real machine type for accurate per-pod cost
+	// pricing (CYB-3073); nil falls back to the default GPU-pool rate.
+	nodeResolver nodeInstanceResolver
+
 	// batchCancels holds cancel funcs for in-flight batch submission
 	// goroutines so StopBatchRuns can halt further run creation.
 	batchCancelMu sync.Mutex
@@ -262,6 +266,47 @@ type videoDurationLookup interface {
 // batch subtask runs list with the source video's duration (CYB-3059).
 func (uc *Usecase) SetVideoDurationRepo(r videoDurationLookup) {
 	uc.videoDurations = r
+}
+
+// nodeInstanceResolver resolves a node name to its machine type / accelerator /
+// provisioning for cost pricing (CYB-3073).
+type nodeInstanceResolver interface {
+	ResolveNodeInstance(ctx context.Context, nodeName string) (instanceType, accelerator, provisioning string)
+}
+
+// SetNodeInstanceResolver wires per-node instance-type resolution so pipeline
+// step costs are priced by the node's real machine type instead of the default
+// GPU-pool rate. Nil keeps the previous default behavior.
+func (uc *Usecase) SetNodeInstanceResolver(r nodeInstanceResolver) {
+	uc.nodeResolver = r
+}
+
+// enrichResourcesDurationWithNode annotates a node's resourcesDuration with the
+// real instance_type / gpu_type / provisioning (looked up by host node) so
+// resourcesDurationToCost prices it correctly. Best-effort: an unresolved node
+// is left unchanged and keeps the default pricing.
+func (uc *Usecase) enrichResourcesDurationWithNode(ctx context.Context, node *models.PipelineRunNode) {
+	if uc.nodeResolver == nil || node == nil || strings.TrimSpace(node.HostNodeName) == "" {
+		return
+	}
+	it, acc, prov := uc.nodeResolver.ResolveNodeInstance(ctx, node.HostNodeName)
+	if it == "" {
+		return
+	}
+	rd := node.ResourcesDuration
+	if rd == nil {
+		rd = map[string]interface{}{}
+	}
+	rd["instance_type"] = it
+	if acc != "" {
+		rd["gpu_type"] = acc
+	} else {
+		rd["gpu_type"] = "none"
+	}
+	if prov != "" {
+		rd["provisioning"] = prov
+	}
+	node.ResourcesDuration = rd
 }
 
 // attachVideoDurations enriches each run with its source video's duration,
@@ -1864,6 +1909,7 @@ func (uc *Usecase) replaceRunNodesFromWorkflow(ctx context.Context, run *models.
 	}
 	for i := range nodes {
 		if uc.pricing != nil {
+			uc.enrichResourcesDurationWithNode(ctx, &nodes[i])
 			nodes[i].EstimatedCostUSD = resourcesDurationToCost(nodes[i].ResourcesDuration, uc.pricing)
 		}
 	}

@@ -741,6 +741,9 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
     SELECT SUM(n.estimated_cost_usd)
     FROM pipeline_run_nodes n
     WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+      -- CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+      -- rollup resourcesDuration and would double-count the total.
+      AND (n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))
   ) AS total_estimated_cost`
 	}
 	return `COALESCE(pr.id, bi.id) AS id,
@@ -769,6 +772,9 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
     SELECT SUM(n.estimated_cost_usd)
     FROM pipeline_run_nodes n
     WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+      -- CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+      -- rollup resourcesDuration and would double-count the total.
+      AND (n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))
   ) AS total_estimated_cost`
 }
 
