@@ -3086,6 +3086,55 @@ func applyCyberpipeNodeCompatibilityAliases(pipe *transpiler.Pipeline) {
 	walk(pipe.Nodes)
 }
 
+// costTrackingLabelPrefix namespaces cost-attribution labels so they read
+// clearly in GKE Cost Allocation / BigQuery billing export alongside Argo's
+// and GKE's own labels (workflows.argoproj.io/*, topology.kubernetes.io/*).
+const costTrackingLabelPrefix = "cyber-databrew/"
+
+// buildCostTrackingLabels returns the pod labels used for GKE Cost Allocation
+// attribution, skipping any identifier that is unknown (empty) rather than
+// emitting an empty-valued label.
+func buildCostTrackingLabels(batchJobID, templateID, owner string) map[string]string {
+	labels := map[string]string{}
+	if v := sanitizeLabelValue(batchJobID); v != "" {
+		labels[costTrackingLabelPrefix+"batch-job-id"] = v
+	}
+	if v := sanitizeLabelValue(templateID); v != "" {
+		labels[costTrackingLabelPrefix+"template-id"] = v
+	}
+	if v := sanitizeLabelValue(owner); v != "" {
+		labels[costTrackingLabelPrefix+"owner"] = v
+	}
+	return labels
+}
+
+// sanitizeLabelValue coerces raw into a valid Kubernetes label value:
+// [a-zA-Z0-9] at each end, only [-_.a-zA-Z0-9] in between, max 63 chars.
+// Owner identifiers are emails, so "@" is escaped rather than dropped to
+// keep the value legible (e.g. "a@b.com" -> "a-at-b.com").
+func sanitizeLabelValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == '@':
+			b.WriteString("-at-")
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := b.String()
+	if len(out) > 63 {
+		out = out[:63]
+	}
+	return strings.Trim(out, "-_.")
+}
+
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
 // assetIDs are passed as workflow-level parameters (F4.1).
@@ -3130,10 +3179,14 @@ func (uc *Usecase) Deploy(
 	templateID := ""
 	templateVersion := 0
 	dryRun := false
+	costBatchJobID := ""
+	costOwner := ""
 	if len(opts) > 0 {
 		templateID = opts[0].TemplateID
 		templateVersion = opts[0].TemplateVersion
 		dryRun = opts[0].DryRun
+		costBatchJobID = opts[0].BatchJobID
+		costOwner = opts[0].Owner
 		if strings.TrimSpace(opts[0].PreallocatedRunID) != "" {
 			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
 		}
@@ -3256,6 +3309,8 @@ func (uc *Usecase) Deploy(
 		ExitHookTokenSecretName: uc.argoRunWebhookTokenSecretName,
 		ExitHookTokenSecretKey:  uc.argoRunWebhookTokenSecretKey,
 		ExitHookImage:           uc.argoRunWebhookImage,
+
+		PodLabels: buildCostTrackingLabels(costBatchJobID, templateID, costOwner),
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {

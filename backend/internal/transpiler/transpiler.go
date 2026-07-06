@@ -63,6 +63,12 @@ type Options struct {
 	// ExitHookImage is the container image (must contain curl) used by the exit
 	// notify handler. Empty falls back to defaultExitNotifyImage.
 	ExitHookImage string
+
+	// PodLabels are applied verbatim to every pod created for this workflow (via
+	// Spec.PodMetadata), for cost-attribution via GKE Cost Allocation. Callers own
+	// sanitizing values to valid Kubernetes label syntax before setting this field;
+	// Transpile does not validate or mutate it. Nil/empty is a no-op.
+	PodLabels map[string]string
 }
 
 // ExitNotifyTemplateName is the template invoked by the workflow-level exit hook.
@@ -182,6 +188,9 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	}
 	for _, s := range opts.ImagePullSecrets {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
+	}
+	if len(opts.PodLabels) > 0 {
+		wf.Spec.PodMetadata = &wfv1.Metadata{Labels: opts.PodLabels}
 	}
 
 	// Workflow-level exit hook: poke DataBrew on terminal phase (push status).
