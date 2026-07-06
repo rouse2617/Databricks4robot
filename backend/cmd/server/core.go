@@ -189,7 +189,7 @@ func setupCore(inf *infra) *coreHandlers {
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	workflowHandler.SetPodClient(inf.podClient)
 	workflowHandler.SetExecClient(inf.execClient)
-	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo)
+	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo, pipelineRunNodeRepo)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler

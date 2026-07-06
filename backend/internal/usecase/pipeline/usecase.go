@@ -5286,6 +5286,13 @@ func isActiveDeploymentStatus(status string) bool {
 	}
 }
 
+// IsActiveDeploymentStatus is the exported form of isActiveDeploymentStatus,
+// for callers outside this package (e.g. the legacy workflow handler) that
+// need to apply the exact same active-vs-terminal check as the Run Kernel path.
+func IsActiveDeploymentStatus(status string) bool {
+	return isActiveDeploymentStatus(status)
+}
+
 // isSucceededRunStatus reports whether the run status is a successful terminal
 // state. Success is final in Argo (a workflow never un-succeeds), so it is the
 // only status protected by the monotonicity guard in persistRunObservation.

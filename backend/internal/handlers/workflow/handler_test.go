@@ -650,7 +650,7 @@ func TestGetWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
 			WorkflowName:  "wf-video",
 			ArgoNamespace: "video-proc-dev",
 		},
-	}}, nil)
+	}}, nil, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-video", nil)
@@ -1242,7 +1242,7 @@ func TestResubmitWorkflow_CreatesPipelineRunLedger(t *testing.T) {
 	}}
 	eventRepo := &mockRunEventRepo{}
 	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
-	h.SetRunRepositories(runRepo, eventRepo)
+	h.SetRunRepositories(runRepo, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
@@ -1298,7 +1298,7 @@ func TestResubmitWorkflow_DoesNotDuplicateExistingLedger(t *testing.T) {
 		"source-wf-gthtk": existingRun,
 	}}
 	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
-	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
@@ -1323,7 +1323,7 @@ func TestStopWorkflow_SyncsPipelineRunLedger(t *testing.T) {
 	eventRepo := &mockRunEventRepo{}
 	client := &mockWorkflowClient{}
 	h := New(client, "argo")
-	h.SetRunRepositories(runRepo, eventRepo)
+	h.SetRunRepositories(runRepo, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-1/stop", nil)
@@ -1363,7 +1363,7 @@ func TestStopWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
 	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{"wf-video": run}}
 	client := &mockWorkflowClient{}
 	h := New(client, "default")
-	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-video/stop", nil)
@@ -1622,7 +1622,7 @@ func TestCreateTerminalSession_DisabledByDefault(t *testing.T) {
 		ID:             "run-1",
 		WorkflowName:   "test-wf",
 		TargetSnapshot: map[string]interface{}{},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))
@@ -1655,7 +1655,7 @@ func TestCreateTerminalSession_AllowedPolicyCreatesSession(t *testing.T) {
 				"allowedCommands": []interface{}{"sh", "pwd"},
 			},
 		},
-	}}, eventRepo)
+	}}, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
@@ -1702,7 +1702,7 @@ func TestCreateTerminalSession_ResourceDefaultsPolicyCreatesSession(t *testing.T
 				},
 			},
 		},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
@@ -1747,7 +1747,7 @@ func TestTerminateTerminalSession(t *testing.T) {
 		TargetSnapshot: map[string]interface{}{
 			"terminal": map[string]interface{}{"enabled": true},
 		},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	createReq := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))

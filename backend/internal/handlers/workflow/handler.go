@@ -19,6 +19,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
 const (
@@ -38,6 +39,7 @@ type Handler struct {
 	namespace       string
 	runRepo         repository.PipelineRunRepository
 	runEventRepo    repository.PipelineRunEventRepository
+	runNodeRepo     repository.PipelineRunNodeRepository
 	terminalStore   *terminalSessionStore
 	terminalNowFunc func() time.Time
 	sseRingBuffers  *ringBufferStore
@@ -91,9 +93,10 @@ func (h *Handler) SetArchiveStore(store ArchiveLogStore) {
 	h.archiveStore = store
 }
 
-func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository) {
+func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository, runNodeRepo repository.PipelineRunNodeRepository) {
 	h.runRepo = runRepo
 	h.runEventRepo = eventRepo
+	h.runNodeRepo = runNodeRepo
 }
 
 // ListWorkflows handles GET /api/v1/workflows
@@ -203,8 +206,23 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	ctx := c.Request.Context()
+
+	// CYB-3063: for a run that has already reached a terminal state, avoid
+	// querying the live Argo API — reconstruct an equivalent response from
+	// already-persisted data instead. Active runs, runs with no matching
+	// record, and reconstruction failures all fall through to the original
+	// direct-Argo path unchanged.
+	run, _ := h.findPipelineRunByWorkflow(ctx, name)
+	if run != nil && !pipelineUC.IsActiveDeploymentStatus(run.Status) {
+		if wf, runNodes, ok := h.reconstructWorkflowFromDB(ctx, run); ok {
+			h.respondWorkflowDetail(c, run, wf, runNodes)
+			return
+		}
+	}
+
+	namespace := h.namespaceForWorkflow(ctx, c, name)
+	wf, err := h.wfClient.GetWorkflow(ctx, name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -213,8 +231,21 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	run, _ := h.findPipelineRunByWorkflow(c.Request.Context(), wf.Name)
+	if run == nil {
+		run, _ = h.findPipelineRunByWorkflow(ctx, wf.Name)
+	}
+	h.respondWorkflowDetail(c, run, wf, nil)
+}
+
+// respondWorkflowDetail renders the GetWorkflow response from a *wfv1.Workflow,
+// whether it came from a live Argo query or reconstructWorkflowFromDB.
+// runNodesForBackfill, when non-nil, supplies Inputs/Outputs/ResourcesDuration
+// for the DB-reconstructed path (see backfillNodeItemDataFields).
+func (h *Handler) respondWorkflowDetail(c *gin.Context, run *models.PipelineRun, wf *wfv1.Workflow, runNodesForBackfill []models.PipelineRunNode) {
 	nodes := buildWorkflowDetailNodes(h, run, wf)
+	if runNodesForBackfill != nil {
+		nodes = backfillNodeItemDataFields(nodes, runNodesForBackfill)
+	}
 	created := workflowTimeString(wf.CreationTimestamp.Time)
 	resp := gin.H{
 		"name":              wf.Name,
