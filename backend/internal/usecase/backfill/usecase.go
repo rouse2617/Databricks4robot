@@ -32,6 +32,7 @@ var maxConcurrentBatchItems = func() int {
 	}
 	return 5
 }()
+
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and
@@ -59,13 +60,35 @@ type Usecase struct {
 	resultRepo repository.BackfillResultRepository
 	assetRepo  repository.AssetRepository
 	pipelineUC *pipelineUC.Usecase
-	pgClient any // *postgres.Client — set via NewWithPostgres
+	pgClient   any // *postgres.Client — set via NewWithPostgres
 
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
 	reaperStop chan struct{}
 	reaperWg   sync.WaitGroup
+
+	// Batch job completion Feishu notification (CYB-3071). notifier nil
+	// disables the feature entirely (no claim, no send).
+	notifier        Notifier
+	frontendBaseURL string
+}
+
+// Notifier is the minimal capability this package needs to deliver a
+// completion message. It is declared here (not imported from a notification
+// provider package) so backfill has no compile-time dependency on any
+// specific delivery mechanism; *feishu.Client satisfies this structurally.
+type Notifier interface {
+	SendText(ctx context.Context, text string) error
+}
+
+// SetNotifier configures the sender used for batch-job completion
+// notifications and the base URL used to build the job detail link in the
+// message. Passing a nil sender disables the feature (matches the zero-value
+// default, so this call is optional).
+func (uc *Usecase) SetNotifier(sender Notifier, frontendBaseURL string) {
+	uc.notifier = sender
+	uc.frontendBaseURL = strings.TrimSpace(frontendBaseURL)
 }
 
 // New creates a Usecase without transaction support.
@@ -1428,9 +1451,68 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 	if latestJob.PilotPhase == "running" && jobStatus == "completed" {
 		_ = uc.repo.UpdateJobPilotPhase(ctx, jobID, jobStatus, "done")
 		uc.ensureBatchParentRunByID(ctx, jobID)
+		uc.notifyJobTerminalIfNeeded(ctx, latestJob, jobStatus, summary)
 		return nil
 	}
-	return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
+	if err := uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus); err != nil {
+		return err
+	}
+	uc.notifyJobTerminalIfNeeded(ctx, latestJob, jobStatus, summary)
+	return nil
+}
+
+// isTerminalBackfillStatus reports whether a batch job status is one that
+// deriveJobStatus can settle on and that the watcher will stop re-scanning
+// (see FindIncompleteJobs, which only selects status='running' jobs) — i.e.
+// this transition will not be observed again.
+func isTerminalBackfillStatus(status string) bool {
+	return status == "completed" || status == "failed"
+}
+
+// notifyJobTerminalIfNeeded sends a completion notification exactly once when
+// a job crosses from non-terminal into a terminal status. previousJob must
+// reflect the job's status *before* this sync pass; newStatus is the status
+// about to be (or just) persisted. Safe to call unconditionally: it no-ops
+// when no notifier is configured, when the job was already terminal, when
+// the new status is not terminal, or when a concurrent caller already
+// claimed the notification for this job.
+func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *models.BackfillJob, newStatus string, summary repository.BackfillItemStatusSummary) {
+	if uc.notifier == nil || previousJob == nil {
+		return
+	}
+	if isTerminalBackfillStatus(previousJob.Status) || !isTerminalBackfillStatus(newStatus) {
+		return
+	}
+	claimed, err := uc.repo.ClaimJobNotification(ctx, previousJob.ID)
+	if err != nil {
+		slog.Warn("backfill: claim job notification failed", "jobID", previousJob.ID, "err", err)
+		return
+	}
+	if !claimed {
+		return
+	}
+	text := formatBatchJobNotificationText(previousJob, newStatus, summary, uc.frontendBaseURL)
+	if err := uc.notifier.SendText(ctx, text); err != nil {
+		slog.Warn("backfill: send completion notification failed", "jobID", previousJob.ID, "err", err)
+	}
+}
+
+// formatBatchJobNotificationText builds the Feishu message body for a batch
+// job reaching a terminal status. Kept in this package (not the notify
+// provider package) since it is specific to what a batch job is.
+func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, frontendBaseURL string) string {
+	name := job.Name
+	if strings.TrimSpace(name) == "" {
+		name = job.ID
+	}
+	text := fmt.Sprintf(
+		"【批量任务完成】%s\n状态：%s\n总数：%d　成功：%d　失败：%d",
+		name, status, job.TotalCount, summary.Completed, summary.Failed,
+	)
+	if frontendBaseURL != "" {
+		text += fmt.Sprintf("\n链接：%s/pipeline/batch/%s", strings.TrimRight(frontendBaseURL, "/"), job.ID)
+	}
+	return text
 }
 
 // fetchBatchRunsByIDMap retrieves runs for a batch job in a single query

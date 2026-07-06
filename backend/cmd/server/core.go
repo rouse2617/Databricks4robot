@@ -23,6 +23,7 @@ import (
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
@@ -168,6 +169,12 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+	// Batch job completion Feishu notification (CYB-3071). Empty webhook URL
+	// disables it; feishu.Client.SendText becomes a no-op in that case.
+	backfillUC.SetNotifier(
+		feishu.NewClient(feishu.Config{WebhookURL: inf.cfg.BackfillNotifyFeishuWebhookURL}),
+		inf.cfg.FrontendBaseURL,
+	)
 	backfillUC.StartReaper()
 	backfillUC.ResumeIncompleteBatches(context.Background())
 	backfillHandler := backfillH.New(backfillUC)

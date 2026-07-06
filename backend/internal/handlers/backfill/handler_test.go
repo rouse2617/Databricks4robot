@@ -27,8 +27,11 @@ func (missingJobRepo) FindJobByID(_ context.Context, _ string) (*models.Backfill
 }
 func (missingJobRepo) UpdateJobStatus(_ context.Context, _, _ string) error        { return nil }
 func (missingJobRepo) UpdateJobPilotPhase(_ context.Context, _, _, _ string) error { return nil }
-func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error        { return nil }
-func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error           { return nil }
+func (missingJobRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
+func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
 func (missingJobRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
 	return nil
 }

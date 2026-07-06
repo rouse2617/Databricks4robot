@@ -158,6 +158,28 @@ func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilo
 	return nil
 }
 
+// ClaimJobNotification atomically claims the completion-notification slot for
+// a job: it returns true only for the one caller that flips
+// notification_sent_at from NULL to now(), across any number of concurrent
+// backend instances racing on the same job. Callers that lose the race (or
+// call again for an already-notified job) get false with no error.
+func (r *BackfillRepo) ClaimJobNotification(ctx context.Context, id string) (bool, error) {
+	const q = `
+	UPDATE backfill_jobs
+	SET notification_sent_at = NOW()
+	WHERE id = $1 AND notification_sent_at IS NULL
+	RETURNING id`
+	db := dbFromCtx(ctx, r.c.db)
+	var claimedID string
+	if err := db.QueryRow(ctx, q, id).Scan(&claimedID); err != nil {
+		if errors.Is(err, errNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("postgres BackfillRepo.ClaimJobNotification: %w", err)
+	}
+	return true, nil
+}
+
 // IncrementCompleted increments the completed_count for a backfill job.
 func (r *BackfillRepo) IncrementCompleted(ctx context.Context, id string) error {
 	const q = `UPDATE backfill_jobs SET completed_count = completed_count + 1, updated_at = NOW() WHERE id = $1`

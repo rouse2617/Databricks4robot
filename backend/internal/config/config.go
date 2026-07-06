@@ -150,6 +150,14 @@ type Config struct {
 	ArgoRunWebhookTokenSecretName string // K8s Secret name referenced by the workflow hook env
 	ArgoRunWebhookTokenSecretKey  string // key within that Secret
 	ArgoRunWebhookImage           string // container image (with curl) for the exit-notify handler
+
+	// Batch job completion Feishu notification (CYB-3071).
+	// BackfillNotifyFeishuWebhookURL empty disables the notification entirely.
+	BackfillNotifyFeishuWebhookURL string
+	// FrontendBaseURL builds links in notification messages. Not tied to any
+	// single notification feature; empty omits the link rather than erroring.
+	FrontendBaseURL string
+
 	// Run status watcher (now a reconcile backstop behind the push path).
 	PipelineRunWatcherIntervalSec int32
 	PipelineRunWatcherScanLimit   int32
@@ -262,6 +270,10 @@ func Load() *Config {
 		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),
 		ArgoRunWebhookTokenSecretKey:  getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_KEY", "token"),
 		ArgoRunWebhookImage:           getenv("ARGO_RUN_WEBHOOK_IMAGE", "curlimages/curl:8.11.1"),
+
+		BackfillNotifyFeishuWebhookURL: getenv("BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL", ""),
+		FrontendBaseURL:                getenv("FRONTEND_BASE_URL", ""),
+
 		PipelineRunWatcherIntervalSec: getenvInt32("PIPELINE_RUN_WATCHER_INTERVAL_SEC", 30),
 		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
 

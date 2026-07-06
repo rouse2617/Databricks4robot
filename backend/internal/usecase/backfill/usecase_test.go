@@ -52,6 +52,9 @@ func (m *mockBackfillRepo) UpdateJobPilotPhase(_ context.Context, id, status, pi
 	}
 	return nil
 }
+func (m *mockBackfillRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (m *mockBackfillRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
 func (m *mockBackfillRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
 func (m *mockBackfillRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
@@ -549,6 +552,9 @@ func (r *trackingBackfillRepo) UpdateJobStatus(_ context.Context, _ string, stat
 	}
 	return nil
 }
+func (r *trackingBackfillRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (r *trackingBackfillRepo) UpdateJobPilotPhase(_ context.Context, _ string, status, pilotPhase string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -730,7 +736,6 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
-
 
 func (r *trackingBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
 	return nil, nil

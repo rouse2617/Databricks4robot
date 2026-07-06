@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,12 @@ type pausedSyncRepo struct {
 	job             *models.BackfillJob
 	items           []models.BackfillItem
 	findJobByIDHook func()
+
+	// notifyMu/notified give ClaimJobNotification real exactly-once claim
+	// semantics (unlike the other stub mocks in this package, which always
+	// return false) so tests can exercise the CYB-3071 notification path.
+	notifyMu sync.Mutex
+	notified bool
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
@@ -41,6 +48,15 @@ func (r *pausedSyncRepo) UpdateJobStatus(_ context.Context, id, status string) e
 		r.job.Status = status
 	}
 	return nil
+}
+func (r *pausedSyncRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {
+	r.notifyMu.Lock()
+	defer r.notifyMu.Unlock()
+	if r.notified {
+		return false, nil
+	}
+	r.notified = true
+	return true, nil
 }
 func (r *pausedSyncRepo) UpdateJobPilotPhase(_ context.Context, id, status, pilotPhase string) error {
 	if r.job != nil && r.job.ID == id {

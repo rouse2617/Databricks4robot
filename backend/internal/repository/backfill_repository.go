@@ -17,6 +17,12 @@ type BackfillRepository interface {
 	IncrementCompleted(ctx context.Context, id string) error
 	IncrementFailed(ctx context.Context, id string) error
 
+	// ClaimJobNotification atomically claims the completion-notification slot
+	// for a job (notification_sent_at IS NULL -> now()). Returns true only for
+	// the caller that performs the claim; concurrent/repeat callers get false
+	// with no error, so at most one caller ever proceeds to send.
+	ClaimJobNotification(ctx context.Context, id string) (bool, error)
+
 	// Item operations.
 	SaveItem(ctx context.Context, item *models.BackfillItem) error
 	SaveItems(ctx context.Context, items []models.BackfillItem) error
