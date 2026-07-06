@@ -32,7 +32,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
-	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // Sentinel errors.
@@ -3317,7 +3317,13 @@ func (uc *Usecase) Deploy(
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
 
-	manifestBytes, err := yaml.Marshal(wf)
+	// sigsyaml (sigs.k8s.io/yaml) round-trips through encoding/json first, so it
+	// correctly calls resource.Quantity's MarshalJSON (producing e.g. "500m")
+	// instead of yaml.v3's default reflection, which only sees Quantity's
+	// exported Format field and silently drops the actual numeric value — see
+	// CYB-3065. Must stay paired with the sigsyaml.Unmarshal callers
+	// (reconstruct_from_db.go, resource_usage.go) for round-trip fidelity.
+	manifestBytes, err := sigsyaml.Marshal(wf)
 	if err != nil {
 		return nil, fmt.Errorf("marshal manifest: %w", err)
 	}

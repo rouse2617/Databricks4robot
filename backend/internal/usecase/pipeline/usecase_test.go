@@ -982,7 +982,7 @@ func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") || !strings.Contains(manifest, "/workspace/configs/effective.yaml") {
 		t.Fatalf("expected config env path in manifest, got %s", manifest)
 	}
-	if !strings.Contains(manifest, "subpath: effective.yaml") {
+	if !strings.Contains(manifest, "subPath: effective.yaml") {
 		t.Fatalf("expected config subPath mount in manifest, got %s", manifest)
 	}
 }
@@ -1239,8 +1239,8 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	}
 	for _, want := range []string{
 		store.lastProjection.VolumeName,
-		"subpath: 01-step-a-a.yaml",
-		"subpath: 02-step-b-b.yaml",
+		"subPath: 01-step-a-a.yaml",
+		"subPath: 02-step-b-b.yaml",
 		"value: cfg-a",
 		"value: cfg-b",
 		"value: asset-a",
@@ -1521,7 +1521,7 @@ func TestDeploy_UsesDefaultExecutionTargetServiceAccountFromEnv(t *testing.T) {
 	if dep == nil || dep.Manifest == nil {
 		t.Fatal("expected manifest on dry-run deployment")
 	}
-	if !strings.Contains(*dep.Manifest, "serviceaccountname: cyber-databrew-backend-argo") {
+	if !strings.Contains(*dep.Manifest, "serviceAccountName: cyber-databrew-backend-argo") {
 		t.Fatalf("expected manifest service account, got %s", *dep.Manifest)
 	}
 	if dep.ExecutionTarget == nil || dep.ExecutionTarget.ServiceAccount != "cyber-databrew-backend-argo" {

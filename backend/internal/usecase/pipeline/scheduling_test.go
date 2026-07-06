@@ -64,7 +64,7 @@ func TestDeploy_AppliesExecutionTargetSchedulingDefaults(t *testing.T) {
 	}
 	manifest := *dep.Manifest
 	for _, want := range []string{
-		"serviceaccountname: workflow-runner",
+		"serviceAccountName: workflow-runner",
 		"namespace: video-proc-dev",
 		"cloud.google.com/gke-accelerator: nvidia-l4",
 		"key: nvidia.com/gpu",
