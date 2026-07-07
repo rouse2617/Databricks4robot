@@ -37,3 +37,7 @@ The system SHALL treat a run that has reached a definitive terminal failure — 
 ### Requirement: 提交前失败的运行 UI 准确反映"未创建 workflow"
 
 The frontend SHALL distinguish, in the run detail degraded-mode banner and the batch node overview, a run/batch that failed before ever creating a runtime workflow from one whose workflow existed but is no longer available. It SHALL NOT imply TTL cleanup or "still syncing" for a terminal run/batch that never produced a workflow or nodes.
+
+### Requirement: 画布节点配置支持 GPU 与计算档位覆盖
+
+The pipeline design canvas node-config override panel SHALL expose GPU (count) and compute-tier fields alongside CPU/memory/disk, prefilled from the node's stored values and persisted back on save, consistent with the component-definition form.
