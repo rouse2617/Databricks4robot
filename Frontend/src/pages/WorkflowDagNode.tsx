@@ -15,6 +15,7 @@ import {
 	STATUS_ICONS,
 	WORKFLOW_PHASE_LABELS,
 } from "../lib/constants";
+import { formatDuration } from "../lib/workflow-utils";
 import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import "./WorkflowDagNode.css";
 
@@ -113,6 +114,13 @@ export function WorkflowDagNode({
 	const phaseLabel =
 		WORKFLOW_PHASE_LABELS[phase as keyof typeof WORKFLOW_PHASE_LABELS] || phase;
 	const relTime = getNodeRelativeTime(workflowNode);
+	// Per-step run duration (finished - started; time-so-far while running).
+	// formatDuration returns "-" when there is no valid span.
+	const durationLabel = formatDuration(
+		workflowNode.startedAt,
+		workflowNode.finishedAt,
+	);
+	const hasDuration = durationLabel !== "-";
 	const isRunning = phase === "Running";
 	const isFailed = phase === "Failed" || phase === "Error";
 	const messageSummary = isFailed
@@ -190,12 +198,30 @@ export function WorkflowDagNode({
 					{relTime ? (
 						<Tooltip
 							title={
-								workflowNode.startedAt
-									? dayjs(workflowNode.startedAt).format("YYYY-MM-DD HH:mm:ss")
-									: ""
+								<div>
+									{workflowNode.startedAt ? (
+										<div>
+											开始：
+											{dayjs(workflowNode.startedAt).format(
+												"YYYY-MM-DD HH:mm:ss",
+											)}
+										</div>
+									) : null}
+									{workflowNode.finishedAt ? (
+										<div>
+											完成：
+											{dayjs(workflowNode.finishedAt).format(
+												"YYYY-MM-DD HH:mm:ss",
+											)}
+										</div>
+									) : null}
+									{hasDuration ? <div>耗时：{durationLabel}</div> : null}
+								</div>
 							}
 						>
-							<span className="workflow-dag-node__time">{relTime}</span>
+							<span className="workflow-dag-node__time">
+								{hasDuration ? `${durationLabel} · ${relTime}` : relTime}
+							</span>
 						</Tooltip>
 					) : null}
 				</div>
