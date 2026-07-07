@@ -2560,6 +2560,21 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		if errors.Is(err, argo.ErrNotFound) {
 			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
 				if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
+					// The `run` parameter may be a stale snapshot (e.g. from a
+					// list-view refresh fetched moments before the resource
+					// guard rejected this submission). Confirm the currently
+					// persisted status is still active before reviving it as
+					// Pending -- otherwise this overwrites a just-produced
+					// terminal Failed/Error with a blank-message Pending that
+					// then polls a workflow that will never exist (CYB-3080).
+					if uc.runRepo != nil {
+						if current, ferr := uc.runRepo.FindByID(ctx, run.ID); ferr == nil && current != nil &&
+							!isActiveDeploymentStatus(current.Status) {
+							slog.Info("refreshRunStatus: skip stale-revive, run already terminal",
+								"runID", run.ID, "persistedStatus", current.Status)
+							return
+						}
+					}
 					run.Message = ""
 					uc.persistRunObservation(ctx, run)
 				}
