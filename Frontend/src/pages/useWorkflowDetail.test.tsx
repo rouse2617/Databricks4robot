@@ -396,7 +396,12 @@ describe("useWorkflowDetail", () => {
 		act(() => {
 			result.current.startFollowLogs();
 		});
-		expect(mockGetWorkflowLogStreamUrl).toHaveBeenCalledWith("wf-1", "node-1");
+		// The stream URL now also receives a params object (container/window opts).
+		expect(mockGetWorkflowLogStreamUrl).toHaveBeenCalledWith(
+			"wf-1",
+			"node-1",
+			expect.anything(),
+		);
 	});
 
 	it("keeps polling ledger data when workflow is missing but run is still active", async () => {
@@ -562,7 +567,7 @@ describe("useWorkflowDetail", () => {
 		});
 
 		await waitFor(() =>
-			expect(result.current.logState.content).toBe("hello\n"),
+			expect(result.current.logState.lines.join("\n")).toBe("hello\n"),
 		);
 
 		expect(result.current.logState.response?.pagination?.available).toBe(false);
@@ -613,7 +618,7 @@ describe("useWorkflowDetail", () => {
 		act(() => {
 			result.current.selectNode(node ?? null);
 		});
-		await waitFor(() => expect(result.current.logState.content).toBe(""));
+		await waitFor(() => expect(result.current.logState.lines.join("\n")).toBe(""));
 
 		act(() => {
 			result.current.startFollowLogs();
@@ -626,8 +631,12 @@ describe("useWorkflowDetail", () => {
 			);
 		});
 
-		await waitFor(() =>
-			expect(result.current.logState.content).toContain("hello\n"),
+		// Streamed lines are buffered and flushed on a 1s interval, so allow
+		// more than the default 1s waitFor window.
+		await waitFor(
+			() =>
+				expect(result.current.logState.lines.join("\n")).toContain("hello"),
+			{ timeout: 3000 },
 		);
 		expect(result.current.logState.followStatus).toBe("connected");
 	});
@@ -674,7 +683,7 @@ describe("useWorkflowDetail", () => {
 		act(() => {
 			result.current.selectNode(node ?? null);
 		});
-		await waitFor(() => expect(result.current.logState.content).toBe(""));
+		await waitFor(() => expect(result.current.logState.lines.join("\n")).toBe(""));
 
 		vi.useFakeTimers();
 		act(() => {

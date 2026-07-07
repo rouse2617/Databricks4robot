@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Asset } from "../../api/types";
 import type { PreviewManifest } from "../../lib/assets/assetsDiscoveryTypes";
@@ -63,7 +64,9 @@ describe("AssetPreviewHero", () => {
 			dsParams: { url: "https://example.com/a.mcap", asset_id: "asset-001" },
 		};
 		const { container } = render(
-			<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />,
+			<MemoryRouter>
+				<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />
+			</MemoryRouter>,
 		);
 		const video = container.querySelector("video");
 		expect(video).not.toBeNull();
@@ -79,7 +82,9 @@ describe("AssetPreviewHero", () => {
 			mode: "none",
 		};
 		const { container } = render(
-			<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />,
+			<MemoryRouter>
+				<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />
+			</MemoryRouter>,
 		);
 		expect(container.querySelector("video")).toBeNull();
 		expect(screen.getAllByText("暂无预览").length).toBeGreaterThan(0);
@@ -87,10 +92,12 @@ describe("AssetPreviewHero", () => {
 
 	it("labels delivery_count as completed deliveries", () => {
 		render(
-			<AssetPreviewHero
-				asset={makeAsset({ delivery_count: 2 })}
-				previewManifest={null}
-			/>,
+			<MemoryRouter>
+				<AssetPreviewHero
+					asset={makeAsset({ delivery_count: 2 })}
+					previewManifest={null}
+				/>
+			</MemoryRouter>,
 		);
 		expect(screen.getByText("已完成交付")).toBeTruthy();
 		expect(screen.queryByText("Deliveries")).toBeNull();
