@@ -3159,16 +3159,19 @@ const costTrackingLabelPrefix = "cyber-databrew/"
 // buildCostTrackingLabels returns the pod labels used for GKE Cost Allocation
 // attribution, skipping any identifier that is unknown (empty) rather than
 // emitting an empty-valued label.
-func buildCostTrackingLabels(batchJobID, templateID, owner string) map[string]string {
+func buildCostTrackingLabels(owner, runID, assetID string) map[string]string {
 	labels := map[string]string{}
-	if v := sanitizeLabelValue(batchJobID); v != "" {
-		labels[costTrackingLabelPrefix+"batch-job-id"] = v
-	}
-	if v := sanitizeLabelValue(templateID); v != "" {
-		labels[costTrackingLabelPrefix+"template-id"] = v
-	}
 	if v := sanitizeLabelValue(owner); v != "" {
 		labels[costTrackingLabelPrefix+"owner"] = v
+	}
+	// run-id attributes real GCP cost (BigQuery billing export) to a single run;
+	// asset-id to the one video it processed, joinable to video_durations by
+	// asset_id (CYB-3118). Both are omitted when unknown/ambiguous.
+	if v := sanitizeLabelValue(runID); v != "" {
+		labels[costTrackingLabelPrefix+"run-id"] = v
+	}
+	if v := sanitizeLabelValue(assetID); v != "" {
+		labels[costTrackingLabelPrefix+"asset-id"] = v
 	}
 	return labels
 }
@@ -3243,13 +3246,11 @@ func (uc *Usecase) Deploy(
 	templateID := ""
 	templateVersion := 0
 	dryRun := false
-	costBatchJobID := ""
 	costOwner := ""
 	if len(opts) > 0 {
 		templateID = opts[0].TemplateID
 		templateVersion = opts[0].TemplateVersion
 		dryRun = opts[0].DryRun
-		costBatchJobID = opts[0].BatchJobID
 		costOwner = opts[0].Owner
 		if strings.TrimSpace(opts[0].PreallocatedRunID) != "" {
 			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
@@ -3362,6 +3363,14 @@ func (uc *Usecase) Deploy(
 		return nil, err
 	}
 
+	// A run around exactly one asset is one video; label its cost with that
+	// asset id (CYB-3118). Ambiguous (multi-asset) / no-asset runs are left
+	// unlabelled so per-video billing stays unambiguous.
+	costAssetID := ""
+	if len(assetIDs) == 1 && assetIDs[0] != "no-asset" {
+		costAssetID = assetIDs[0]
+	}
+
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
 		Name:                 wfName,
@@ -3379,7 +3388,7 @@ func (uc *Usecase) Deploy(
 		ExitHookTokenSecretKey:  uc.argoRunWebhookTokenSecretKey,
 		ExitHookImage:           uc.argoRunWebhookImage,
 
-		PodLabels: buildCostTrackingLabels(costBatchJobID, templateID, costOwner),
+		PodLabels: buildCostTrackingLabels(costOwner, depID, costAssetID),
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {

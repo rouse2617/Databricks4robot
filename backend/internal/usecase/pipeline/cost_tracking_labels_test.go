@@ -7,12 +7,13 @@ import (
 
 // Covers spec scenario: "Batch run submitted with a known batch job, template, and owner".
 func TestBuildCostTrackingLabels_AllKnown(t *testing.T) {
-	labels := buildCostTrackingLabels("batch-123", "tpl-456", "ruipeng.huang@cyberorigin.ai")
+	labels := buildCostTrackingLabels("ruipeng.huang@cyberorigin.ai",
+		"019f3957-e0d5-7641-94d1-844cd0b6bc77", "019f3958-97a5-7a00-a2ba-6c9d7702e463")
 
 	want := map[string]string{
-		"cyber-databrew/batch-job-id": "batch-123",
-		"cyber-databrew/template-id":  "tpl-456",
-		"cyber-databrew/owner":        "ruipeng.huang-at-cyberorigin.ai",
+		"cyber-databrew/owner":    "ruipeng.huang-at-cyberorigin.ai",
+		"cyber-databrew/run-id":   "019f3957-e0d5-7641-94d1-844cd0b6bc77",
+		"cyber-databrew/asset-id": "019f3958-97a5-7a00-a2ba-6c9d7702e463",
 	}
 	if len(labels) != len(want) {
 		t.Fatalf("labels = %v, want %v", labels, want)
@@ -24,21 +25,21 @@ func TestBuildCostTrackingLabels_AllKnown(t *testing.T) {
 	}
 }
 
-// Covers spec scenario: "Ad-hoc run submitted with no batch association".
+// A no-asset run (asset-id omitted) still gets run-id; empty owner is skipped.
 func TestBuildCostTrackingLabels_SkipsUnknownIdentifiers(t *testing.T) {
-	labels := buildCostTrackingLabels("", "tpl-456", "")
+	labels := buildCostTrackingLabels("", "run-abc", "")
 
-	if _, ok := labels["cyber-databrew/batch-job-id"]; ok {
-		t.Errorf("expected no batch-job-id label when BatchJobID is empty, got %v", labels)
-	}
 	if _, ok := labels["cyber-databrew/owner"]; ok {
 		t.Errorf("expected no owner label when Owner is empty, got %v", labels)
 	}
-	if labels["cyber-databrew/template-id"] != "tpl-456" {
-		t.Errorf("expected template-id label to still be present, got %v", labels)
+	if _, ok := labels["cyber-databrew/asset-id"]; ok {
+		t.Errorf("expected no asset-id label when assetID is empty, got %v", labels)
+	}
+	if labels["cyber-databrew/run-id"] != "run-abc" {
+		t.Errorf("expected run-id label to be present, got %v", labels)
 	}
 	if len(labels) != 1 {
-		t.Errorf("expected exactly 1 label (template-id only), got %v", labels)
+		t.Errorf("expected exactly 1 label (run-id only), got %v", labels)
 	}
 }
 
