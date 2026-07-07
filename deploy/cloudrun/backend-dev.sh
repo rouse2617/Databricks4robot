@@ -60,6 +60,14 @@ ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS
 ARGO_RUN_WEBHOOK_URL_OVERRIDE="${ARGO_RUN_WEBHOOK_URL_OVERRIDE:-https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/pipeline-runs/webhook}"
 ARGO_RUN_WEBHOOK_TOKEN_SECRET="${ARGO_RUN_WEBHOOK_TOKEN_SECRET:-cyber-databrew-dev-argo-run-webhook-token}"
 ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION="${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION:-latest}"
+# Batch job completion Feishu notification (CYB-3071). The webhook is a credential,
+# so it is injected from Secret Manager (like ARGO_RUN_WEBHOOK_TOKEN) rather than a
+# plain env var that --env-vars-file would wipe on every deploy. Empty
+# BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET disables injection. FRONTEND_BASE_URL builds
+# the links in that notification; it is a public URL so it stays plain.
+BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET="${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET:-cyber-databrew-dev-backfill-feishu-webhook}"
+BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET_VERSION="${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET_VERSION:-latest}"
+FRONTEND_BASE_URL_OVERRIDE="${FRONTEND_BASE_URL_OVERRIDE:-https://cyber-databrew-dev.cyberorigin.ai}"
 # Push is now the primary status signal; the watcher is a low-frequency reconcile
 # backstop. Set to 3 to temporarily restore high-frequency polling if needed.
 PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE:-30}"
@@ -409,6 +417,13 @@ remove_env "ARGO_AUTH_TOKEN" "${ENV_KV_FILE}"
 if [[ -n "${ARGO_RUN_WEBHOOK_TOKEN_SECRET}" ]]; then
   remove_env "ARGO_RUN_WEBHOOK_TOKEN" "${ENV_KV_FILE}"
   secret_mappings+=("ARGO_RUN_WEBHOOK_TOKEN=${ARGO_RUN_WEBHOOK_TOKEN_SECRET}:${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION}")
+fi
+[[ -n "${FRONTEND_BASE_URL_OVERRIDE}" ]] && upsert_env "FRONTEND_BASE_URL" "${FRONTEND_BASE_URL_OVERRIDE}" "${ENV_KV_FILE}"
+if [[ -n "${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET}" ]]; then
+  # Remove any plain value first: Cloud Run rejects an env var set as both a literal
+  # and a secret. The secret becomes the single source of truth for the webhook.
+  remove_env "BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL" "${ENV_KV_FILE}"
+  secret_mappings+=("BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL=${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET}:${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET_VERSION}")
 fi
 [[ -n "${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE}" ]] && upsert_env "PIPELINE_RESOURCE_MAX_CPU" "${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE}" ]] && upsert_env "PIPELINE_RESOURCE_MAX_MEMORY" "${PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE}" "${ENV_KV_FILE}"
