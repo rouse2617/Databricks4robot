@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,10 @@ type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
 	SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error
+	// SyncJob force-syncs a batch job's progress (terminal detection + once-only
+	// completion notification). Used to cascade a child run's terminal status
+	// push up to its parent batch (CYB-3078).
+	SyncJob(ctx context.Context, jobID string) error
 }
 
 // Handler bundles the pipeline endpoints.
@@ -827,7 +832,27 @@ func (h *Handler) HandleRunWebhook(c *gin.Context) {
 		httpresp.NotFound(c, "RUN_NOT_FOUND", "no run found for workflow")
 		return
 	}
+	// Cascade a terminal batch-child run up to its parent batch so the batch
+	// finalizes + notifies immediately on the last child's exit hook, without
+	// waiting for the reconcile backstop or a page open (CYB-3078, fast path).
+	if h.batchRuns != nil && run.BatchJobID != nil && isTerminalRunStatus(run.Status) {
+		if jobID := strings.TrimSpace(*run.BatchJobID); jobID != "" {
+			if err := h.batchRuns.SyncJob(c.Request.Context(), jobID); err != nil {
+				slog.Warn("run webhook: batch sync cascade failed", "jobID", jobID, "runID", run.ID, "err", err)
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"runId": run.ID, "status": run.Status})
+}
+
+// isTerminalRunStatus reports whether an Argo run phase is terminal.
+func isTerminalRunStatus(status string) bool {
+	switch status {
+	case "Succeeded", "Failed", "Error":
+		return true
+	default:
+		return false
+	}
 }
 
 // RetryRunRuntime handles POST /api/v1/runs/:id/retry.

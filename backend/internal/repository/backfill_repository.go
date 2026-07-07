@@ -58,6 +58,11 @@ type BackfillRepository interface {
 	// FindIncompleteJobs returns all backfill jobs that are still running
 	// and have at least one pending item. Used for startup recovery.
 	FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error)
+
+	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
+	// oldest first, regardless of whether items are still pending. Used by the
+	// reconcile backstop to finalize + notify jobs whose children have finished.
+	FindActiveJobs(ctx context.Context, limit int) ([]models.BackfillJob, error)
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

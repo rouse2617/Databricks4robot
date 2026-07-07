@@ -162,6 +162,11 @@ type Config struct {
 	PipelineRunWatcherIntervalSec int32
 	PipelineRunWatcherScanLimit   int32
 
+	// Batch job reconcile backstop (CYB-3078): finalizes + notifies batch jobs
+	// whose children finished, independent of the exit hook or a page open.
+	BackfillReconcileIntervalSec int32
+	BackfillReconcileScanLimit   int32
+
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
 
@@ -283,6 +288,9 @@ func Load() *Config {
 
 		PipelineRunWatcherIntervalSec: getenvInt32("PIPELINE_RUN_WATCHER_INTERVAL_SEC", 30),
 		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
+
+		BackfillReconcileIntervalSec: getenvInt32("BACKFILL_RECONCILE_INTERVAL_SEC", 60),
+		BackfillReconcileScanLimit:   getenvInt32("BACKFILL_RECONCILE_SCAN_LIMIT", 200),
 
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
 

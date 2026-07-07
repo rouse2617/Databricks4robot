@@ -92,6 +92,10 @@ func (m *mockBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Bac
 	return nil, nil
 }
 
+func (m *mockBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -785,6 +789,10 @@ func (r *trackingBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeout
 }
 
 func (r *trackingBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
+func (r *trackingBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 
