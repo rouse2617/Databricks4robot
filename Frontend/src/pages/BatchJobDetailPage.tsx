@@ -828,6 +828,9 @@ export default function BatchJobDetailPage() {
 
 	// 计算真实的批次状态（基于节点概览数据）
 	const actualStatus = job ? computeActualBatchStatus(job, nodeSummary) : null;
+	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
+	const batchTerminal =
+		actualStatus === "completed" || actualStatus === "failed";
 
 	if (loading && !job) {
 		return <Skeleton active paragraph={{ rows: 8 }} />;
@@ -1210,7 +1213,11 @@ export default function BatchJobDetailPage() {
 					<Alert
 						type="info"
 						showIcon
-						message="节点状态仍在同步中，概览会随刷新更新"
+						message={
+							batchTerminal
+								? "该批次已结束，部分或全部子任务未产生节点进度（例如提交前失败）"
+								: "节点状态仍在同步中，概览会随刷新更新"
+						}
 						style={{ marginBottom: 12 }}
 					/>
 				) : null}
@@ -1222,7 +1229,11 @@ export default function BatchJobDetailPage() {
 						rowKey="pipelineNodeId"
 						dataSource={nodeSummary?.nodes ?? []}
 						loading={nodeSummaryLoading}
-						locale={{ emptyText: "节点进度尚未生成" }}
+						locale={{
+							emptyText: batchTerminal
+								? "无节点进度（子任务未产生节点）"
+								: "节点进度尚未生成",
+						}}
 						pagination={false}
 						columns={[
 							{

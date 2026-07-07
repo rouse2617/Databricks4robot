@@ -601,6 +601,10 @@ describe("WorkflowDetailPage", () => {
 					workflowName: "wf-expired",
 					pipelineName: "asset-pipeline",
 					status: "Error",
+					// A genuinely TTL-cleaned workflow existed in Argo and was
+					// assigned a UID (persisted by DataBrew), distinguishing it from
+					// a run that failed before any workflow was created (CYB-3082).
+					argoWorkflowUid: "wf-expired-uid",
 					nodeCount: 1,
 					createdAt: "2026-06-03T00:00:00Z",
 					finishedAt: "2026-06-03T00:10:00Z",
@@ -667,6 +671,51 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.getAllByText("wf-expired").length).toBeGreaterThan(0);
 		expect(screen.getByText("video-proc-dev")).toBeInTheDocument();
 		expect(screen.queryByText("未找到工作流")).not.toBeInTheDocument();
+	});
+
+	it("explains runs that failed before any workflow was created", () => {
+		// A run rejected before submission (e.g. by the resource guard) is
+		// terminally failed but never obtained an Argo workflow UID. The banner
+		// must not imply TTL cleanup — the workflow never existed (CYB-3082).
+		mockWorkflowDetailState({
+			workflow: null,
+			loading: false,
+			loadError: {
+				kind: "not_found",
+				message: "workflow not found",
+			},
+			runEventState: {
+				run: {
+					id: "run-rejected",
+					workflowName: "youxin-all-batch-abc123",
+					pipelineName: "youxin-all",
+					status: "Failed",
+					nodeCount: 0,
+					createdAt: "2026-06-03T00:00:00Z",
+					finishedAt: "2026-06-03T00:00:05Z",
+					blockingReason: "resource_incompatible",
+					blockingMessage:
+						'执行目标 "Default Argo target"不支持该资源规格：节点 "head-track" 请求 cpu=14000m',
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(
+			screen.getByText("该运行在提交到 Runtime 前失败，未创建底层 workflow"),
+		).toBeInTheDocument();
+		expect(screen.getByText(/该运行未生成底层 workflow/)).toBeInTheDocument();
+		// Must NOT show the TTL-cleanup wording for a never-created workflow.
+		expect(
+			screen.queryByText(
+				"底层 Runtime 已不可用，正在展示 DataBrew 历史账本",
+			),
+		).not.toBeInTheDocument();
 	});
 
 	it("explains pending Runs that have not been submitted to runtime", () => {
