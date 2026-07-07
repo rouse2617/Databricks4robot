@@ -2093,14 +2093,33 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 	// Monotonicity guard (CYB-3058): a run that has already succeeded must not be
 	// regressed to an active phase by a late or out-of-order observation (e.g. a
 	// delayed poll snapshot landing after a push-triggered terminal apply). Only
-	// success is guarded — Argo never un-succeeds a workflow — while Error/Failed
-	// remain revivable (misclassification recovery, e.g. TTL-cleanup false
-	// positives handled by reconcileMisclassifiedRunFromArgo).
+	// success is guarded here — Argo never un-succeeds a workflow. Error/Failed
+	// remain revivable ONLY as misclassification recovery (TTL-cleanup false
+	// positives, which carry a stale-unavailable message); a definitive failure
+	// is guarded separately below.
 	if isSucceededRunStatus(existing.Status) && isActiveDeploymentStatus(run.Status) {
 		slog.Warn("persistRunObservation: ignoring active-status regression on succeeded run",
 			"runID", run.ID,
 			"workflowName", run.WorkflowName,
 			"succeededStatus", existing.Status,
+			"incomingStatus", run.Status,
+		)
+		*run = *existing
+		return
+	}
+	// Monotonicity guard (CYB-3080): a run rejected before submission (e.g. by the
+	// resource guard) is Failed/Error with a real, non-transient message and will
+	// never have an Argo workflow. The "waiting for workflow creation" heuristic
+	// (isPendingBatchWorkflowCreation matches any placeholder batch name) would
+	// otherwise revive it to Pending with the message wiped, leaving it to poll a
+	// workflow that cannot exist. Unlike a misclassification (stale-unavailable
+	// message), a definitive failure is final and must not be regressed to active.
+	if isDefinitiveTerminalFailure(existing) && isActiveDeploymentStatus(run.Status) {
+		slog.Warn("persistRunObservation: ignoring active-status regression on definitively-failed run",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"failedStatus", existing.Status,
+			"failedMessage", existing.Message,
 			"incomingStatus", run.Status,
 		)
 		*run = *existing
@@ -5359,6 +5378,27 @@ func isSucceededRunStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// isDefinitiveTerminalFailure reports whether a run represents a permanent
+// pre-submission or terminal failure that must never be revived to an active
+// status — as opposed to a transient/misclassified terminal state that may
+// legitimately be recovered. The distinguishing signal is the message: a real
+// failure (e.g. the resource guard rejecting an over-spec node before the
+// workflow is ever created) carries a substantive error message, while a
+// misclassification (TTL-cleanup false positive, awaiting-deploy placeholder)
+// carries one of the known stale/transient "workflow unavailable" messages.
+func isDefinitiveTerminalFailure(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(run.Status)) {
+	case "failed", "error":
+	default:
+		return false
+	}
+	msg := strings.TrimSpace(run.Message)
+	return msg != "" && !isStaleWorkflowUnavailableMessage(msg)
 }
 
 func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {
