@@ -33,3 +33,7 @@ The system SHALL send a Feishu text notification exactly once when a batch (back
 ### Requirement: 确定性失败的 run 不被复活逻辑倒退覆盖
 
 The system SHALL treat a run that has reached a definitive terminal failure — a `Failed`/`Error` status carrying a real, non-transient error message (e.g. rejected by the resource guard before any workflow is created) — as final, and SHALL NOT regress it back to an active status (`Pending`/`Running`) via any "waiting for workflow creation" or misclassification-recovery heuristic. A terminal state carrying a known stale/transient "workflow unavailable" message is a misclassification, not a definitive failure, and MAY still be recovered.
+
+### Requirement: 提交前失败的运行 UI 准确反映"未创建 workflow"
+
+The frontend SHALL distinguish, in the run detail degraded-mode banner and the batch node overview, a run/batch that failed before ever creating a runtime workflow from one whose workflow existed but is no longer available. It SHALL NOT imply TTL cleanup or "still syncing" for a terminal run/batch that never produced a workflow or nodes.
