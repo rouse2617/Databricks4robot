@@ -99,8 +99,17 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 
 // FindAllJobs returns all backfill jobs ordered by created_at DESC.
 func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	q := `SELECT ` + backfillJobSelectCols + `
+	// Enrich the list with each job's subtask run span (earliest start, latest
+	// finish) so the UI can show a real run duration that excludes submit/queue/
+	// pause waiting. MIN/MAX ignore NULL item timestamps, so jobs whose subtasks
+	// never started yield NULL spans.
+	q := `SELECT ` + backfillJobSelectCols + `,
+	  rs.run_started_at, rs.run_finished_at
 	FROM backfill_jobs
+	LEFT JOIN (
+	  SELECT job_id, MIN(started_at) AS run_started_at, MAX(finished_at) AS run_finished_at
+	  FROM backfill_items GROUP BY job_id
+	) rs ON rs.job_id = backfill_jobs.id
 	ORDER BY created_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
@@ -110,13 +119,37 @@ func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, e
 	defer rows.Close()
 	var out []models.BackfillJob
 	for rows.Next() {
-		j, err := scanBackfillJob(rows)
+		j, err := scanBackfillJobWithRunSpan(rows)
 		if err != nil {
 			return nil, fmt.Errorf("postgres BackfillRepo.FindAllJobs scan: %w", err)
 		}
 		out = append(out, *j)
 	}
 	return out, nil
+}
+
+// scanBackfillJobWithRunSpan scans the base job columns plus the aggregated
+// subtask run span (run_started_at, run_finished_at). Used by list queries that
+// LEFT JOIN the per-job MIN(started_at)/MAX(finished_at) of backfill_items.
+func scanBackfillJobWithRunSpan(rs rowScanner) (*models.BackfillJob, error) {
+	var (
+		j          models.BackfillJob
+		filterJSON []byte
+	)
+	if err := rs.Scan(
+		&j.ID, &j.Name, &j.TemplateID, &filterJSON,
+		&j.TotalCount, &j.CompletedCount, &j.FailedCount, &j.Status,
+		&j.TemplateVersion, &j.PilotCount, &j.PilotPhase,
+		&j.CreatedAt, &j.UpdatedAt,
+		&j.CreatedBy, &j.FinishedAt,
+		&j.RunStartedAt, &j.RunFinishedAt,
+	); err != nil {
+		return nil, err
+	}
+	if len(filterJSON) > 0 {
+		_ = json.Unmarshal(filterJSON, &j.FilterJSON)
+	}
+	return &j, nil
 }
 
 // FindJobByID returns a backfill job by id, or (nil, nil) when not found.
@@ -150,7 +183,9 @@ func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) e
 }
 
 func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error {
-	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW() WHERE id = $1`
+	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW(),
+	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status, pilotPhase); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobPilotPhase: %w", err)
@@ -521,7 +556,8 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 // UpdateJobProgress updates aggregate counters and job status.
 func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
 	const q = `UPDATE backfill_jobs SET
-	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW()
+	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW(),
+	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
 	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, completed, failed, status); err != nil {

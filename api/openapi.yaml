@@ -3091,6 +3091,8 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true, description: "set when status reaches completed or failed" }
+        runStartedAt: { type: string, format: date-time, nullable: true, description: "list view only: earliest subtask start (MIN of item started_at)" }
+        runFinishedAt: { type: string, format: date-time, nullable: true, description: "list view only: latest subtask finish (MAX of item finished_at); use runFinishedAt - runStartedAt for real run duration excluding queue/pause waiting" }
     BackfillItem:
       type: object
       properties:

@@ -20,6 +20,12 @@ type BackfillJob struct {
 	CreatedAt       time.Time              `json:"createdAt"`
 	UpdatedAt       time.Time              `json:"updatedAt"`
 	FinishedAt      *time.Time             `json:"finishedAt,omitempty"`
+	// RunStartedAt / RunFinishedAt are the subtask run span (earliest subtask
+	// start, latest subtask finish), populated only by list queries. They let the
+	// UI show a real run duration that excludes submit/queue/pause waiting, unlike
+	// finished_at - created_at (wall-clock). Nil when no subtask has started.
+	RunStartedAt  *time.Time `json:"runStartedAt,omitempty"`
+	RunFinishedAt *time.Time `json:"runFinishedAt,omitempty"`
 }
 
 // BackfillItem represents a single asset being processed in a backfill job.
@@ -98,17 +104,17 @@ type BatchNodeFailureListResult struct {
 }
 
 type BackfillItemAttempt struct {
-	RunID           string                  `json:"runId"`
-	AttemptNo       int                     `json:"attemptNo"`
-	Status          string                  `json:"status"`
-	TemplateVersion int                     `json:"templateVersion,omitempty"`
-	WorkflowName    string                  `json:"workflowName,omitempty"`
-	Message         string                  `json:"message,omitempty"`
+	RunID           string                   `json:"runId"`
+	AttemptNo       int                      `json:"attemptNo"`
+	Status          string                   `json:"status"`
+	TemplateVersion int                      `json:"templateVersion,omitempty"`
+	WorkflowName    string                   `json:"workflowName,omitempty"`
+	Message         string                   `json:"message,omitempty"`
 	NodeProgress    *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
-	IsCurrent       bool                    `json:"isCurrent"`
-	StartedAt       *time.Time              `json:"startedAt,omitempty"`
-	FinishedAt      *time.Time              `json:"finishedAt,omitempty"`
-	CreatedAt       time.Time               `json:"createdAt"`
+	IsCurrent       bool                     `json:"isCurrent"`
+	StartedAt       *time.Time               `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time               `json:"finishedAt,omitempty"`
+	CreatedAt       time.Time                `json:"createdAt"`
 }
 
 type BackfillItemAttemptsResult struct {
