@@ -379,10 +379,11 @@ describe("PipelinePage", () => {
 		expect(screen.getByText("导入")).toBeInTheDocument();
 	});
 
-	it("hides the pipeline name input on the design canvas", () => {
+	it("shows the pipeline name input with the default name on the design canvas", () => {
+		// The designer now manages an editable pipeline name on the canvas,
+		// defaulting to "my-pipeline" (designerReducer initial state).
 		renderPage();
-		expect(screen.queryByLabelText("流水线名称")).not.toBeInTheDocument();
-		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
+		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 
 	// ── Tab switching ───────────────────────────────────────────────
@@ -416,7 +417,8 @@ describe("PipelinePage", () => {
 			pageSize: 20,
 		});
 		renderPage();
-		fireEvent.click(screen.getByText("管理已保存的流水线"));
+		// The saved-pipelines view is now the "流水线 / 部署与管理" tab (DeployPanel).
+		fireEvent.click(screen.getByRole("tab", { name: /部署与管理/ }));
 		await waitFor(() => {
 			expect(screen.getByText("流水线管理")).toBeInTheDocument();
 			expect(screen.getByText("saved-flow")).toBeInTheDocument();
@@ -500,15 +502,18 @@ describe("PipelinePage", () => {
 		expect(msg.error).toHaveBeenCalledWith("无效的 JSON");
 	});
 
-	it("does nothing on cancelled import", () => {
+	it("does nothing on cancelled import", async () => {
 		renderPage();
-		fireEvent.click(screen.getByText("导入"));
+		// The design canvas (and its 导入 toolbar button) is lazy-loaded, so wait
+		// for it before interacting.
+		fireEvent.click(await screen.findByText("导入"));
 		const modal = document.querySelector(".ant-modal");
 		expect(modal).toBeTruthy();
 		fireEvent.click(
 			within(modal as HTMLElement).getByRole("button", { name: /取.*消/ }),
 		);
-		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
+		// Cancelling import leaves the designer's default pipeline untouched.
+		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 
 	// ── Save ────────────────────────────────────────────────────────
@@ -958,13 +963,15 @@ describe("PipelinePage", () => {
 	});
 
 	it("handles empty sessionStorage gracefully", () => {
+		// No stored draft -> designer renders its default pipeline (no crash).
 		renderPage();
-		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
+		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 
 	it("handles invalid JSON in sessionStorage gracefully", () => {
+		// Malformed draft is ignored -> designer falls back to its default.
 		sessionStorage.setItem("pipeline-edit", "{bad json");
 		renderPage();
-		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
+		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 });
