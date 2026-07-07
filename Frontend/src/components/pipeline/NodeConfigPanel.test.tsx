@@ -257,4 +257,33 @@ describe("NodeConfigPanel", () => {
 		});
 		expect(onCancel).toHaveBeenCalled();
 	});
+
+	it("shows and persists node-level GPU and compute tier overrides", async () => {
+		const node = makeNode();
+		node.data.gpu = "1";
+		node.data.computeTier = "gpu-l4";
+		const onSave = vi.fn();
+		const onCancel = vi.fn();
+
+		render(
+			<NodeConfigPanel open node={node} onCancel={onCancel} onSave={onSave} />,
+		);
+
+		await waitFor(() => expect(mockListRuntimeMounts).toHaveBeenCalled());
+
+		// Existing per-node GPU / compute-tier overrides are shown (CYB-3093).
+		expect(screen.getByLabelText("GPU")).toHaveValue("1");
+		expect(screen.getByLabelText("计算档位")).toHaveValue("gpu-l4");
+
+		fireEvent.change(screen.getByLabelText("GPU"), { target: { value: "2" } });
+		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+		await waitFor(() => {
+			expect(onSave).toHaveBeenCalledWith(
+				"node-1",
+				expect.objectContaining({ gpu: "2", computeTier: "gpu-l4" }),
+			);
+		});
+		expect(onCancel).toHaveBeenCalled();
+	});
 });

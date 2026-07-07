@@ -63,6 +63,8 @@ type FormValues = {
 	cpu: string;
 	memory: string;
 	disk: string;
+	gpu: string;
+	computeTier: string;
 };
 
 const DEFAULT_INPUT_PORTS: Port[] = [{ name: "input", type: "asset" }];
@@ -480,6 +482,8 @@ export function NodeConfigPanel({
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
 			disk: node.data.disk || "",
+			gpu: node.data.gpu || "",
+			computeTier: node.data.computeTier || "",
 		});
 		setRuntimeSecretAdvancedKeys(
 			node.data.runtimeSecrets?.length ? ["runtime-secrets"] : [],
@@ -711,6 +715,8 @@ export function NodeConfigPanel({
 			cpu: values.cpu || "",
 			memory: values.memory || "",
 			disk: values.disk || "",
+			gpu: values.gpu || "",
+			computeTier: values.computeTier || "",
 		};
 
 		onSave(node.id, nextData);
@@ -1117,6 +1123,12 @@ export function NodeConfigPanel({
 					</Form.Item>
 					<Form.Item label="磁盘" name="disk">
 						<Input placeholder="1Gi" />
+					</Form.Item>
+					<Form.Item label="GPU" name="gpu">
+						<Input placeholder="数量，例如 1、2" />
+					</Form.Item>
+					<Form.Item label="计算档位" name="computeTier">
+						<Input placeholder="gpu-l4" />
 					</Form.Item>
 				</div>
 				<Collapse
