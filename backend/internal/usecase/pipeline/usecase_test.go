@@ -3503,6 +3503,58 @@ func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.
 	}
 }
 
+// TestRefreshRunStatus_DoesNotReviveAlreadyTerminalRunFromStaleSnapshot guards
+// CYB-3080: a run correctly rejected by the resource guard (Failed + a clear
+// message) must not be reverted to Pending by a stale in-memory snapshot (e.g.
+// from a list-view refresh fetched moments earlier) hitting the
+// "wait for workflow creation" grace period on a NotFound response.
+func TestRefreshRunStatus_DoesNotReviveAlreadyTerminalRunFromStaleSnapshot(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	const resourceRejectionMessage = `invalid argument: 执行目标 "Default Argo target"不支持该资源规格：节点 "head-track-pycuvslam" 请求 cpu=14000m，最大可用 cpu=8`
+
+	// Persisted truth: the resource guard already rejected this run.
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "pipeline-batch-1",
+				Status:       "Failed",
+				Message:      resourceRejectionMessage,
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	// The caller's snapshot is stale: captured before the resource guard
+	// rejected the run, so it still shows Pending.
+	staleSnapshot := &models.PipelineRun{
+		ID:           "run-1",
+		WorkflowName: "pipeline-batch-1",
+		Status:       "Pending",
+		Message:      staleWorkflowTTLCleanupMessage,
+		BatchJobID:   &batchJobID,
+		CreatedAt:    runRepo.byID["run-1"].CreatedAt,
+	}
+
+	uc.refreshRunStatus(ctx, staleSnapshot)
+
+	persisted := runRepo.byID["run-1"]
+	if persisted.Status != "Failed" {
+		t.Fatalf("expected persisted status to stay Failed, got %q", persisted.Status)
+	}
+	if persisted.Message != resourceRejectionMessage {
+		t.Fatalf("expected persisted message to stay the resource rejection message, got %q", persisted.Message)
+	}
+}
+
 func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testing.T) {
 	ctx := context.Background()
 	createdAt := time.Now().UTC().Add(-10 * time.Minute)
