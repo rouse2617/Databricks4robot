@@ -876,7 +876,12 @@ export default function BatchJobDetailPage() {
 						<Title level={4} style={{ margin: 0 }}>
 							{job.name}
 						</Title>
-						<Text type="secondary">批次 ID: {job.id}</Text>
+						<Text type="secondary">
+							批次 ID:{" "}
+							<Text type="secondary" copyable={{ text: job.id }}>
+								{job.id}
+							</Text>
+						</Text>
 					</div>
 					<Space wrap>
 						{actualStatus === "running" ? (
@@ -1011,7 +1016,14 @@ export default function BatchJobDetailPage() {
 					column={{ xs: 1, sm: 2, md: 3 }}
 					style={{ marginTop: 16 }}
 					items={[
-						{ label: "模板", children: templateName },
+						{
+							label: "模板",
+							children: templateName ? (
+								<Text copyable={{ text: templateName }}>{templateName}</Text>
+							) : (
+								templateName
+							),
+						},
 						{
 							label: "状态",
 							children: (

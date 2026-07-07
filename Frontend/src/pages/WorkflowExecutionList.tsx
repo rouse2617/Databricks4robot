@@ -1149,7 +1149,11 @@ export function WorkflowExecutionList({
 					const templateName = record.templateName?.trim();
 					return (
 						<div style={{ minWidth: 0 }}>
-							<Typography.Text strong ellipsis={{ tooltip: name }}>
+							<Typography.Text
+								strong
+								copyable={{ text: name }}
+								ellipsis={{ tooltip: name }}
+							>
 								{name}
 							</Typography.Text>
 							<Typography.Text
@@ -1245,24 +1249,43 @@ export function WorkflowExecutionList({
 								const assetId = getWorkflowLabel(record.labels, "asset_id");
 								if (!assetId) return "—";
 								if (isCanonicalAssetId(assetId)) {
-									return <AssetIdLink id={assetId} />;
+									return (
+										<span
+											style={{
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 4,
+											}}
+										>
+											<AssetIdLink id={assetId} />
+											<Typography.Text copyable={{ text: assetId }} />
+										</span>
+									);
 								}
 								return (
 									<Tooltip title={assetId}>
-										<Typography.Text
-											code
+										<span
 											style={{
-												display: "inline-block",
-												fontSize: 12,
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 4,
 												maxWidth: 190,
-												overflow: "hidden",
-												textOverflow: "ellipsis",
-												verticalAlign: "bottom",
-												whiteSpace: "nowrap",
 											}}
 										>
-											{assetId}
-										</Typography.Text>
+											<Typography.Text
+												code
+												style={{
+													flex: "0 1 auto",
+													fontSize: 12,
+													overflow: "hidden",
+													textOverflow: "ellipsis",
+													whiteSpace: "nowrap",
+												}}
+											>
+												{assetId}
+											</Typography.Text>
+											<Typography.Text copyable={{ text: assetId }} />
+										</span>
 									</Tooltip>
 								);
 							},
