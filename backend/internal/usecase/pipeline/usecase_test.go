@@ -3503,58 +3503,6 @@ func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.
 	}
 }
 
-// TestRefreshRunStatus_DoesNotReviveAlreadyTerminalRunFromStaleSnapshot guards
-// CYB-3080: a run correctly rejected by the resource guard (Failed + a clear
-// message) must not be reverted to Pending by a stale in-memory snapshot (e.g.
-// from a list-view refresh fetched moments earlier) hitting the
-// "wait for workflow creation" grace period on a NotFound response.
-func TestRefreshRunStatus_DoesNotReviveAlreadyTerminalRunFromStaleSnapshot(t *testing.T) {
-	ctx := context.Background()
-	batchJobID := "batch-1"
-	const resourceRejectionMessage = `invalid argument: 执行目标 "Default Argo target"不支持该资源规格：节点 "head-track-pycuvslam" 请求 cpu=14000m，最大可用 cpu=8`
-
-	// Persisted truth: the resource guard already rejected this run.
-	runRepo := &mockRunRepo{
-		byID: map[string]*models.PipelineRun{
-			"run-1": {
-				ID:           "run-1",
-				WorkflowName: "pipeline-batch-1",
-				Status:       "Failed",
-				Message:      resourceRejectionMessage,
-				BatchJobID:   &batchJobID,
-				CreatedAt:    time.Now().UTC(),
-			},
-		},
-	}
-	wfClient := &mockWorkflowClient{}
-	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
-		return nil, argo.ErrNotFound
-	}
-	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
-	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
-
-	// The caller's snapshot is stale: captured before the resource guard
-	// rejected the run, so it still shows Pending.
-	staleSnapshot := &models.PipelineRun{
-		ID:           "run-1",
-		WorkflowName: "pipeline-batch-1",
-		Status:       "Pending",
-		Message:      staleWorkflowTTLCleanupMessage,
-		BatchJobID:   &batchJobID,
-		CreatedAt:    runRepo.byID["run-1"].CreatedAt,
-	}
-
-	uc.refreshRunStatus(ctx, staleSnapshot)
-
-	persisted := runRepo.byID["run-1"]
-	if persisted.Status != "Failed" {
-		t.Fatalf("expected persisted status to stay Failed, got %q", persisted.Status)
-	}
-	if persisted.Message != resourceRejectionMessage {
-		t.Fatalf("expected persisted message to stay the resource rejection message, got %q", persisted.Message)
-	}
-}
-
 func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testing.T) {
 	ctx := context.Background()
 	createdAt := time.Now().UTC().Add(-10 * time.Minute)
@@ -5100,5 +5048,99 @@ func TestPersistRunObservation_SucceededNotRegressedToActive(t *testing.T) {
 	}
 	if stale.Status != "Succeeded" {
 		t.Fatalf("returned run should reflect terminal status, got %q", stale.Status)
+	}
+}
+
+const resourceRejectionMessage = `invalid argument: 执行目标 "Default Argo target"不支持该资源规格：节点 "head-track-pycuvslam" 请求 cpu=14000m，最大可用 cpu=8`
+
+// TestPersistRunObservation_DefinitiveFailureNotRegressedToActive guards
+// CYB-3080 at the central choke point: a run rejected before submission (real
+// Failed + a substantive message) must not be reverted to an active phase by a
+// "waiting for workflow creation" revival, which would leave it polling a
+// workflow that will never exist.
+func TestPersistRunObservation_DefinitiveFailureNotRegressedToActive(t *testing.T) {
+	ctx := context.Background()
+	existing := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Failed", Message: resourceRejectionMessage}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": existing},
+		byWf: map[string]*models.PipelineRun{"wf-1": existing},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	// A "still waiting for workflow creation" observation tries to revive it.
+	revive := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Pending", Message: ""}
+	uc.persistRunObservation(ctx, revive)
+
+	if runRepo.byID["run-1"].Status != "Failed" {
+		t.Fatalf("definitively-failed run must not regress to active, got %q", runRepo.byID["run-1"].Status)
+	}
+	if runRepo.byID["run-1"].Message != resourceRejectionMessage {
+		t.Fatalf("failure message must be preserved, got %q", runRepo.byID["run-1"].Message)
+	}
+	if revive.Status != "Failed" {
+		t.Fatalf("returned run should reflect the preserved terminal status, got %q", revive.Status)
+	}
+}
+
+// TestPersistRunObservation_MisclassifiedFailureStillRevivable confirms the new
+// guard does NOT over-block: a terminal run whose message is a known
+// stale/transient "workflow unavailable" message (TTL-cleanup false positive)
+// is a misclassification, not a definitive failure, and remains revivable.
+func TestPersistRunObservation_MisclassifiedFailureStillRevivable(t *testing.T) {
+	ctx := context.Background()
+	existing := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Error", Message: staleWorkflowTTLCleanupMessage}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": existing},
+		byWf: map[string]*models.PipelineRun{"wf-1": existing},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	revive := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Running", Message: ""}
+	uc.persistRunObservation(ctx, revive)
+
+	if runRepo.byID["run-1"].Status != "Running" {
+		t.Fatalf("misclassified (stale-message) run should stay revivable, got %q", runRepo.byID["run-1"].Status)
+	}
+}
+
+// TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun
+// reproduces the actual reported path (batch detail page → GetRun →
+// reconcileMisclassifiedRunFromArgo): a resource-guard-rejected batch subtask
+// run has a placeholder "-batch-" workflow name and no UID, so the
+// "pending creation" heuristic matches it; without the persist guard it gets
+// revived to Pending. It must stay Failed. (CYB-3080)
+func TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	existing := &models.PipelineRun{
+		ID:           "run-1",
+		WorkflowName: "youxin-all-batch-82470acae720", // placeholder batch name, no UID
+		Status:       "Failed",
+		Message:      resourceRejectionMessage,
+		BatchJobID:   &batchJobID,
+		CreatedAt:    time.Now().UTC(), // within the creation grace period
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{"run-1": existing},
+		byWf: map[string]*models.PipelineRun{"youxin-all-batch-82470acae720": existing},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	// Operate on a fresh copy, as GetRun does after FindByID.
+	run := *existing
+	uc.reconcileMisclassifiedRunFromArgo(ctx, &run)
+
+	if runRepo.byID["run-1"].Status != "Failed" {
+		t.Fatalf("resource-rejected run must stay Failed, got %q", runRepo.byID["run-1"].Status)
+	}
+	if runRepo.byID["run-1"].Message != resourceRejectionMessage {
+		t.Fatalf("failure message must be preserved, got %q", runRepo.byID["run-1"].Message)
 	}
 }

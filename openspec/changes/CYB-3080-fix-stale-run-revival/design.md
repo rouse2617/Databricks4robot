@@ -1,56 +1,69 @@
 # Design — CYB-3080
 
 ## Architecture Context
-- 触发链路（dev 上真实复现）：批量任务子任务提交 → 资源守卫判定节点 CPU 请求（14 核）超过执行目标上限（8 核）→ run 正确标记 `Failed`，带清楚的中文错误信息（`persistRunObservation` 记录）。
-- 几乎同一时刻，批次列表页（`/runs?executionView=batch`）触发 `GET /api/v1/pipelines`/`GET /api/v1/backfill` 分页查询，逐个 run 走 `RefreshRunForList`（`usecase.go:2343`）→ `refreshRunStatus`（`usecase.go:2537`）。
-- `RefreshRunForList` 收到的 `run` 参数来自这次列表查询自己的快照，可能是在资源守卫写入 `Failed` **之前**取到的（仍是 `Pending`）。
-- `refreshRunStatus` 完全基于这个（可能过时的）`run.Status`/`run.Message` 做判断：`GetWorkflow` 返回 NotFound → `shouldWaitForWorkflowCreation` → `isPendingBatchWorkflowCreation`（末尾 `return strings.EqualFold(run.Status, "Pending")`，直接读内存字段）→ 判定"值得等待创建" → 清空 `run.Message` → `persistRunObservation(ctx, run)`，把 DB 里刚刚正确写入的 `Failed` + 清楚消息，覆盖成 `Pending` + 空消息。
-- `persistRunObservation`（`usecase.go:2079`）本身第一步就会 `uc.runRepo.FindByID` 拿到当前最新的 `existing`，但现有的 monotonicity guard 只保护 `existing.Status` 是 `Succeeded` 的情况（`usecase.go:2099`），没有保护"当前已经是终态 Failed，传入的是过时 Pending"这种情况——这条"等待创建"路径的语义跟 `reconcileMisclassifiedRunFromArgo` 的"TTL 清理误判恢复"完全不同，不该共用同一个"Failed 可复活"的默认放行。
+- 触发链路（dev 上真实复现两次）：批量任务子任务提交 → 资源守卫判定节点 CPU 请求（14 核）超过执行目标上限（8 核）→ run 正确标记 `Failed`，带清楚的中文错误信息（`RecordBatchSubtaskFailure` → `persistRunObservation`）。子任务 run 没有 Argo workflow（提交前就被拦下），也没有 `ArgoWorkflowUID`，workflow 名是占位名（含 `-batch-`）。
+- 批次详情页 / 列表页读取 run 走 `GetRun`（`usecase.go:3987`），它依次调用 `refreshPipelineRunStatus` → `reconcileTerminalRunFromLedger` → `reconcileMisclassifiedRunFromArgo`。
+- `reconcileMisclassifiedRunFromArgo`（`usecase.go:2287`）对 `Failed`/`Error` 的 run 会进入一段"可能只是 workflow 还没创建好，先等等"的宽容期复活逻辑：
+  ```go
+  if isPendingBatchWorkflowCreation(run) && shouldWaitForWorkflowCreation(run, now) {
+      run.Status = "Pending"; run.Message = ""; run.FinishedAt = nil
+      uc.persistRunObservation(ctx, run)
+      return
+  }
+  ```
+- 病根在 `isPendingBatchWorkflowCreation`（`usecase.go:5398`）：只要 run 有 BatchJobID、没有 UID、workflow 名是占位名（`isBatchSubtaskPlaceholderWorkflowName` = 名字含 `-batch-`），就返回 `true` —— **完全不看 `run.Status` 是不是已经 `Failed`**。于是一个被资源守卫确定性拒绝的 run，被当成"还在等创建"反复复活成 `Pending`、错误信息被清空，之后无限轮询一个永远不会存在的 workflow，表现为"静默卡住"。
+
+## 为什么 PR #300 的修法是错的
+PR #300 把守卫加在了 `refreshRunStatus`。但在 `GetRun` 路径里，`refreshRunStatus` 对一个（从 DB 新鲜读出的）`Failed` run 在函数第一行 `!isActiveDeploymentStatus(run.Status)` 就直接 return 了 —— 根本走不到那段守卫。真正复活它的是 `reconcileMisclassifiedRunFromArgo`。所以 PR #300 修的是一条对本 bug 不生效的路径，dev 上复现依旧失败。本次回退该改动。
 
 ## Goals
-- 消除这一类"过时内存快照覆盖掉刚产生的真实终态"的竞态,而不影响 `reconcileMisclassifiedRunFromArgo` 现有的、有意为之的误判恢复能力。
+- 在**唯一的收敛点**修复：所有复活最终都经过 `persistRunObservation`，在那里用 DB 中的权威状态（而非调用方传入的内存对象）判定，一处覆盖全部路径。
+- 不破坏 `reconcileMisclassifiedRunFromArgo` 既有的、有意为之的误判恢复（TTL 清理误判）能力。
 
 ## Non-Goals
-- 不改资源守卫本身的判定逻辑或上限配置。
-- 不改 `PauseJob`/`StopRun` 失败时不重置 item 的 gap（独立问题）。
-- 不为了这个修复引入通用的"所有终态一律不可复活"规则——`Failed`/`Error` 在别的场景下仍需要可复活（TTL 误判恢复）。
+- 不改资源守卫本身的判定逻辑或上限配置（那是模板/配额问题，见后续关于动态容量的讨论）。
+- 不改 `PauseJob`/`StopRun` 失败时不重置 item 的 gap（独立问题，另行跟进）。
 
 ## Affected Modules
-- `backend/internal/usecase/pipeline/usecase.go`：`refreshRunStatus` 的 `errors.Is(err, argo.ErrNotFound)` 分支。
+- `backend/internal/usecase/pipeline/usecase.go`：
+  - `persistRunObservation`：新增一条与既有 `Succeeded` 单调性护栏并列的护栏。
+  - 新增 `isDefinitiveTerminalFailure` 辅助函数。
+  - 回退 PR #300 加在 `refreshRunStatus` 的 re-fetch 守卫。
 
 ## Architecture Decision
 
-### Decision: `refreshRunStatus` 在"等待创建复活"前重新核对当前持久化状态
-- **Approach**：进入 `shouldWaitForWorkflowCreation` 分支后、在真正调用 `persistRunObservation` 复活为 Pending 之前，用 `uc.runRepo.FindByID(ctx, run.ID)` 重新读一次当前状态。如果当前持久化状态已经不是"活跃/待创建"（例如已经是 `Failed`/`Error`/`Succeeded`），说明这份 run 在拿到手之后已经被别的路径终态化了，直接跳过复活、不清空消息、不覆盖，`return`。只有当前持久化状态确认仍然是活跃/`Pending` 时，才继续走原来的"等待创建"逻辑。
-- **Alternative**：在 `persistRunObservation` 里扩大 monotonicity guard,让它对所有终态（不只是 `Succeeded`）都拒绝被"活跃状态"覆盖。
-- **Rationale**：选择前者而不是后者，是因为 `persistRunObservation` 的 `Failed`/`Error` 可复活行为是 `reconcileMisclassifiedRunFromArgo` 依赖的既有语义（TTL 清理误判恢复,注释里写明是有意为之)，不能不分场景地关掉。这次的 bug 只出在"等待创建"这一条路径上，应该在这条路径自己的入口处做防护,不牵动 `persistRunObservation` 的通用契约。
-- **Trade-off**：多一次 `FindByID` 调用（每次进入这个分支时）,但这个分支只在 NotFound 时才会走到,不是高频路径,可以接受。
+### Decision: 在 persistRunObservation 增加"确定性失败不可倒退"单调性护栏
+- **Approach**：`persistRunObservation` 一进来就用 `runRepo.FindByID` 读到权威的 `existing`。既有护栏（CYB-3058）只保护 `existing.Status == Succeeded` 不被倒退成活跃态。新增并列的一条：若 `existing` 是"确定性终态失败"（`Failed`/`Error` 且带真实、非瞬时的错误信息）而传入的是活跃态（Pending/Running/…），则拒绝倒退，`*run = *existing` 后返回。
+- **判定"确定性失败" vs "可恢复误判"**：用**消息**区分。
+  - 确定性失败（资源拒绝等）：`Failed`/`Error` + 非空且**不是** `isStaleWorkflowUnavailableMessage` 的真实消息 → 不可复活。
+  - 误判（TTL 清理假阳性、awaiting-deploy 占位）：带 `isStaleWorkflowUnavailableMessage` 认得的占位消息 → 仍可复活，行为不变。
+- **Alternative**：改 `isPendingBatchWorkflowCreation` 让它对 `Failed` 返回 false。也能修，但它有 4 个调用点、语义是"是否在等创建"，改它需要逐一验证每个点的下游行为；而 `persistRunObservation` 是所有复活的唯一写入收敛点，改这一处最小、最集中、且天然免疫"调用方传入过时快照"（它读的是 DB）。
+- **Rationale**：镜像已经存在且被充分理解的 `Succeeded` 护栏，认知负担低；一处修复覆盖 `reconcileMisclassifiedRunFromArgo` / `refreshRunStatus` / `markRunWorkflowNotFound` 等所有会调用 `persistRunObservation` 的路径。
+- **Trade-off**：`persistRunObservation` 每次多一个廉价的内存判断（`existing` 本来就已经查出来了，不新增 DB 调用）。
 
-## Pseudocode（改动范围）
-
+## Pseudocode（核心改动）
 ```go
-if errors.Is(err, argo.ErrNotFound) {
-    if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
-        if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
-            // NEW: don't trust the possibly-stale `run` snapshot — confirm the
-            // persisted state is still active before reviving it as Pending.
-            if current, ferr := uc.runRepo.FindByID(ctx, run.ID); ferr == nil && current != nil &&
-                !isActiveDeploymentStatus(current.Status) {
-                slog.Info("refreshRunStatus: skip stale-revive, run already terminal",
-                    "runID", run.ID, "persistedStatus", current.Status)
-                return
-            }
-            run.Message = ""
-            uc.persistRunObservation(ctx, run)
-        }
-        return
+// persistRunObservation, after the existing Succeeded guard:
+if isDefinitiveTerminalFailure(existing) && isActiveDeploymentStatus(run.Status) {
+    slog.Warn("persistRunObservation: ignoring active-status regression on definitively-failed run", ...)
+    *run = *existing
+    return
+}
+
+func isDefinitiveTerminalFailure(run *models.PipelineRun) bool {
+    if run == nil { return false }
+    switch strings.ToLower(strings.TrimSpace(run.Status)) {
+    case "failed", "error":
+    default:
+        return false
     }
-    uc.markRunWorkflowNotFound(ctx, run)
+    msg := strings.TrimSpace(run.Message)
+    return msg != "" && !isStaleWorkflowUnavailableMessage(msg)
 }
 ```
 
 ## Risks / Trade-offs
 | Risk | Impact | Mitigation |
 |---|---|---|
-| 额外一次 DB 读 | 轻微延迟增加 | 只发生在 NotFound + 判定需要等待创建这个窄分支,频率低 |
-| 误判恢复场景被误伤 | `reconcileMisclassifiedRunFromArgo` 的合法复活被挡住 | 这次改动只影响"等待创建"这一条路径,不touch `reconcileMisclassifiedRunFromArgo` 自己的判断逻辑 |
+| 护栏过度拦截，挡住合法复活 | 误判恢复（TTL 清理假阳性）失效 | 用消息区分：占位/瞬时消息不算确定性失败，仍可复活；已有 `TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification` + 新增 `TestPersistRunObservation_MisclassifiedFailureStillRevivable` 双重锁定 |
+| 真实运行时失败（带真实消息）被永久钉死 | 若 Argo 真的又把它跑起来则无法反映 | Argo 不会 un-fail 一个真实失败；真实失败本就该终态，需要重跑走新 run/retry，不靠倒退本 run 状态 |

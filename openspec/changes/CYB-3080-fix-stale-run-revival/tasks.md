@@ -1,22 +1,26 @@
 # Tasks — CYB-3080
 
 ## Implementation
-- [ ] [backend] `refreshRunStatus`：进入 `shouldWaitForWorkflowCreation` → `isPendingBatchWorkflowCreation` 的"等待创建"分支后，在清空 `run.Message` / 调用 `persistRunObservation` 之前，用 `uc.runRepo.FindByID` 重新核对当前持久化状态；如果当前状态已经不是 `isActiveDeploymentStatus`，跳过复活，直接返回。
+- [x] [backend] 回退 PR #300 加在 `refreshRunStatus` 的 re-fetch 守卫（targets 了一条对本 bug 不生效的路径）。
+- [x] [backend] 新增 `isDefinitiveTerminalFailure`（`Failed`/`Error` 且带真实、非 stale-unavailable 消息）。
+- [x] [backend] `persistRunObservation` 新增并列于 `Succeeded` 护栏的"确定性失败不可倒退成活跃态"单调性护栏。
 
 ## Local verification
-- [ ] `cd backend && go test ./internal/usecase/pipeline/...`
+- [x] `cd backend && go test ./internal/usecase/pipeline/...`
 - [ ] `cd backend && go test ./...`
 - [ ] `make fmt && make vet`
 
 ### 测试要点
-- [ ] 复现场景：run 的当前持久化状态是 `Failed`（带消息），但传入 `refreshRunStatus` 的内存快照仍是 `Pending`——验证不会被复活覆盖，`Failed` + 原始消息保持不变。
-- [ ] 回归场景：run 当前持久化状态确实仍是 `Pending`/活跃——验证"等待创建"逻辑照常工作，不受这次改动影响。
-- [ ] `reconcileMisclassifiedRunFromArgo` 现有测试全部保持通过（确认这次改动没有影响误判恢复路径）。
+- [x] `TestPersistRunObservation_DefinitiveFailureNotRegressedToActive`：Failed+真实消息 被 Pending 复活 → 拦截，保持 Failed+消息。
+- [x] `TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun`：复现真实路径（占位 `-batch-` 名 + 真实资源拒绝消息），保持 Failed。
+- [x] `TestPersistRunObservation_MisclassifiedFailureStillRevivable`：stale-unavailable 消息的 Error run 仍可复活（护栏不过度拦截）。
+- [x] 既有 `TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification` 保持通过（误判恢复端到端不受影响）。
+- [x] 已用 `git stash` 验证：去掉 fix 后两个确定性失败测试失败（复现 bug），misclassification 测试仍通过。
 
 ## Deploy verification
 - [ ] 部署 backend dev。
-- [ ] 在 dev 上用一个会被资源守卫拒绝的流水线（或直接复现之前卡住的场景）验证：run 被判定 `Failed` 后，即使批次列表页/轮询继续刷新，也不会被冲回 `Pending`。
+- [ ] 用同一个会被资源守卫拒绝的模板（`77b53ea3-...`，含 14 核节点）重新提交一个最小批次。
+- [ ] 跨多个轮询周期（1–2 分钟）确认对应 run 稳定停在 `Failed` 且保留资源拒绝消息，不再被冲回 `Pending`。
 
 ## PR
-- [ ] PR 描述包含 Linear ID（CYB-3080）与 OpenSpec change-id。
-- [ ] 说明这是在排查 CYB-3071 相关问题时发现的独立 bug。
+- [ ] PR 描述包含 Linear ID（CYB-3080）与 OpenSpec change-id，说明这是对 PR #300 的纠正（改在 `persistRunObservation` 收敛点，回退 `refreshRunStatus` 误改）。
