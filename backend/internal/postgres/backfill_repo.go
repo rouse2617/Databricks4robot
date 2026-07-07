@@ -1024,3 +1024,42 @@ func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backfil
 	}
 	return jobs, nil
 }
+
+// FindActiveJobs returns non-terminal, non-paused batch jobs (running, pending,
+// pilot_running, …) up to limit, oldest first. Unlike FindIncompleteJobs it does
+// not require pending items — the reconcile backstop (CYB-3078) must also catch
+// jobs whose items are all dispatched and merely waiting on Argo to finish.
+func (r *BackfillRepo) FindActiveJobs(ctx context.Context, limit int) ([]models.BackfillJob, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	const q = `
+	SELECT bj.id, bj.template_id, bj.name, bj.status,
+	  bj.completed_count, bj.failed_count, bj.total_count,
+	  bj.pilot_phase, bj.pilot_count,
+	  bj.filter_json, bj.created_at, bj.updated_at
+	FROM backfill_jobs bj
+	WHERE bj.status NOT IN ('completed', 'failed', 'paused')
+	ORDER BY bj.created_at ASC
+	LIMIT $1`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindActiveJobs: %w", err)
+	}
+	defer rows.Close()
+	var jobs []models.BackfillJob
+	for rows.Next() {
+		var j models.BackfillJob
+		if err := rows.Scan(
+			&j.ID, &j.TemplateID, &j.Name, &j.Status,
+			&j.CompletedCount, &j.FailedCount, &j.TotalCount,
+			&j.PilotPhase, &j.PilotCount,
+			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindActiveJobs scan: %w", err)
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}

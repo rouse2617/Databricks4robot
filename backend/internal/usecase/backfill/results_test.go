@@ -119,6 +119,10 @@ func (s *stubBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Bac
 	return nil, nil
 }
 
+func (s *stubBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
 func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ string) error {
 	for i := range s.items {
 		if s.items[i].ID == id {

@@ -69,6 +69,9 @@ type Usecase struct {
 	reaperStop chan struct{}
 	reaperWg   sync.WaitGroup
 
+	reconcileStop chan struct{}
+	reconcileWg   sync.WaitGroup
+
 	// Batch job completion Feishu notification (CYB-3071). notifier nil
 	// disables the feature entirely (no claim, no send).
 	notifier        Notifier
@@ -135,6 +138,65 @@ func (uc *Usecase) StopReaper() {
 		close(uc.reaperStop)
 	}
 	uc.reaperWg.Wait()
+}
+
+// SyncJob force-syncs a batch job's progress from its child runs, flipping it to
+// a terminal status and sending the once-only completion notification if all
+// children have finished. Safe to call repeatedly (notification is claimed
+// atomically). Used by the run-status webhook cascade (CYB-3078, fast path).
+func (uc *Usecase) SyncJob(ctx context.Context, jobID string) error {
+	return uc.syncJobProgressForce(ctx, jobID)
+}
+
+// StartJobReconciler launches the reconcile backstop (CYB-3078): every interval
+// it force-syncs each non-terminal batch job, so a job whose children finished
+// in the background is finalized + notified without a user opening its page and
+// without depending on the exit hook firing. Runs until StopJobReconciler.
+func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	if scanLimit <= 0 {
+		scanLimit = 200
+	}
+	uc.reconcileStop = make(chan struct{})
+	uc.reconcileWg.Add(1)
+	go func() {
+		defer uc.reconcileWg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-uc.reconcileStop:
+				return
+			case <-ticker.C:
+				uc.reconcileActiveJobs(context.Background(), scanLimit)
+			}
+		}
+	}()
+}
+
+// StopJobReconciler signals the reconcile goroutine to stop and waits for it.
+func (uc *Usecase) StopJobReconciler() {
+	if uc.reconcileStop != nil {
+		close(uc.reconcileStop)
+	}
+	uc.reconcileWg.Wait()
+}
+
+// reconcileActiveJobs force-syncs every non-terminal batch job once. Best-effort:
+// a per-job failure is logged and does not stop the sweep.
+func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
+	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
+	if err != nil {
+		slog.Warn("job reconciler: find active jobs failed", "err", err)
+		return
+	}
+	for _, job := range jobs {
+		if err := uc.syncJobProgressForce(ctx, job.ID); err != nil {
+			slog.Warn("job reconciler: sync failed", "jobID", job.ID, "err", err)
+		}
+	}
 }
 
 // ResumeIncompleteBatches scans for running batch jobs with pending items

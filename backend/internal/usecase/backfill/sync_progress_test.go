@@ -102,6 +102,13 @@ func (r *pausedSyncRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backf
 	return nil, nil
 }
 
+func (r *pausedSyncRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
+	if r.job != nil && r.job.Status != "completed" && r.job.Status != "failed" && r.job.Status != "paused" {
+		return []models.BackfillJob{*r.job}, nil
+	}
+	return nil, nil
+}
+
 func (r *pausedSyncRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range r.items {
 		if r.items[i].ID == id {

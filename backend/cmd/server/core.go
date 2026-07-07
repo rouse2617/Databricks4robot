@@ -192,6 +192,12 @@ func setupCore(inf *infra) *coreHandlers {
 		inf.cfg.FrontendBaseURL,
 	)
 	backfillUC.StartReaper()
+	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
+	// finished, without depending on the exit hook or a user opening the page.
+	backfillUC.StartJobReconciler(
+		time.Duration(inf.cfg.BackfillReconcileIntervalSec)*time.Second,
+		int(inf.cfg.BackfillReconcileScanLimit),
+	)
 	backfillUC.ResumeIncompleteBatches(context.Background())
 	backfillHandler := backfillH.New(backfillUC)
 

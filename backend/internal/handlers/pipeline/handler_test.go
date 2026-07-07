@@ -559,6 +559,8 @@ func setupRouter(h *Handler) *gin.Engine {
 type mockBatchSubtaskReconciler struct {
 	reconcileCalls int
 	syncCalls      int
+	syncJobCalls   int
+	syncJobIDs     []string
 }
 
 func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, string) error {
@@ -572,6 +574,12 @@ func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) 
 
 func (m *mockBatchSubtaskReconciler) SyncBatchView(context.Context, string, []models.PipelineRun) error {
 	m.syncCalls++
+	return nil
+}
+
+func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
+	m.syncJobCalls++
+	m.syncJobIDs = append(m.syncJobIDs, jobID)
 	return nil
 }
 
