@@ -29,3 +29,7 @@ The system SHALL fetch a run's ledger sub-resources (events/asset-nodes/cost-sum
 ### Requirement: 批量任务终态飞书通知
 
 The system SHALL send a Feishu text notification exactly once when a batch (backfill) job transitions from a non-terminal status to a terminal status (`completed` or `failed`), regardless of outcome, including a summary of total/succeeded/failed item counts and a link to the job detail page. This SHALL hold even when multiple backend instances observe the same transition concurrently — exactly one notification is sent. The feature SHALL be a no-op (no error, no network call) when no webhook is configured.
+
+### Requirement: 确定性失败的 run 不被复活逻辑倒退覆盖
+
+The system SHALL treat a run that has reached a definitive terminal failure — a `Failed`/`Error` status carrying a real, non-transient error message (e.g. rejected by the resource guard before any workflow is created) — as final, and SHALL NOT regress it back to an active status (`Pending`/`Running`) via any "waiting for workflow creation" or misclassification-recovery heuristic. A terminal state carrying a known stale/transient "workflow unavailable" message is a misclassification, not a definitive failure, and MAY still be recovered.
