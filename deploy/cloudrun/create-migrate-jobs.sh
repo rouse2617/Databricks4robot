@@ -52,6 +52,10 @@ echo "    vpc-connector:$VPC_CONNECTOR"
 echo "    sa:           $SA"
 echo "    db:           $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME (password from $DB_SECRET)"
 
+# Maps the DB_PASSWORD env var to a Secret Manager secret NAME; the actual
+# password lives in Secret Manager, not in this repo.
+DB_PASSWORD_SECRET="DB_PASSWORD=${DB_SECRET}:latest"  # pragma: allowlist secret
+
 gcloud run jobs create "$JOB_NAME" \
   --image="$IMAGE" \
   --region="$REGION" \
@@ -59,7 +63,7 @@ gcloud run jobs create "$JOB_NAME" \
   --service-account="$SA" \
   --vpc-connector="$VPC_CONNECTOR" \
   --vpc-egress=private-ranges-only \
-  --set-secrets="DB_PASSWORD=${DB_SECRET}:latest" \
+  --set-secrets="$DB_PASSWORD_SECRET" \
   --set-env-vars="DB_HOST=$DB_HOST,DB_PORT=$DB_PORT,DB_USER=$DB_USER,DB_NAME=$DB_NAME,DB_SSLMODE=disable" \
   --max-retries=0 \
   --task-timeout=600 \

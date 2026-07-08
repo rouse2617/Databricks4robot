@@ -66,14 +66,14 @@ db-migrate-hash-check:
 
 db-migrate-apply:
 	@if [ -z "$(DB_URL)" ]; then \
-		echo "ERROR: DB_URL is required. Usage: make db-migrate-apply DB_URL=postgres://user:pass@host:5432/db?sslmode=disable"; \
+		echo "ERROR: DB_URL is required. Usage: make db-migrate-apply DB_URL=postgres://HOST:5432/db?sslmode=disable"; \
 		exit 1; \
 	fi
 	$(ATLAS) migrate apply $(ATLAS_COMMON_FLAGS) --env $(ATLAS_MIGRATE_ENV) --url "$(DB_URL)"
 
 db-migrate-status:
 	@if [ -z "$(DB_URL)" ]; then \
-		echo "ERROR: DB_URL is required. Usage: make db-migrate-status DB_URL=postgres://user:pass@host:5432/db?sslmode=disable"; \
+		echo "ERROR: DB_URL is required. Usage: make db-migrate-status DB_URL=postgres://HOST:5432/db?sslmode=disable"; \
 		exit 1; \
 	fi
 	$(ATLAS) migrate status $(ATLAS_COMMON_FLAGS) --env $(ATLAS_MIGRATE_ENV) --url "$(DB_URL)"
