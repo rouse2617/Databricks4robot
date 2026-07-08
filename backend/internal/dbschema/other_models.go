@@ -76,7 +76,7 @@ type AuditEvent struct {
 	Action         string    `gorm:"column:action;type:text;not null" json:"action"`
 	ResourceType   string    `gorm:"column:resource_type;type:text;not null" json:"resource_type"`
 	ResourceIDs    string    `gorm:"column:resource_ids;type:text[];not null" json:"resource_ids"`
-	RequestSummary string    `gorm:"column:request_summary;type:jsonb;not null;default:'{}'" json:"request_summary"`
+	RequestSummary string    `gorm:"column:request_summary;type:jsonb;not null;default:'{}'" json:"request_summary"` // drift fix: was not null
 	RequestID      string    `gorm:"column:request_id;type:text" json:"request_id,omitempty"`
 	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null;default:now()" json:"created_at"`
 }
@@ -85,7 +85,7 @@ func (AuditEvent) TableName() string { return "audit_events" }
 
 // ESSyncCheckpoint — `es_sync_checkpoint` table.
 type ESSyncCheckpoint struct {
-	ShardID    int       `gorm:"column:shard_id;type:integer;primaryKey" json:"shard_id"`
+	ShardID    int64     `gorm:"column:shard_id;type:bigint;primaryKey;autoIncrement" json:"shard_id"` // drift fix: was integer
 	AppliedSeq int64     `gorm:"column:applied_seq;type:bigint;not null" json:"applied_seq"`
 	UpdatedAt  time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:now()" json:"updated_at"`
 }

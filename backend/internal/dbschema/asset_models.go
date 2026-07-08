@@ -14,56 +14,54 @@ import (
 // regex, etc.) and indexes are NOT expressible in GORM tags and are
 // expected to remain in SQL migrations. Atlas `migrate diff` will
 // report these as drift; the team accepts this known gap.
+//
+// Note: API-only / derived fields like `duration_sec`, `seg_type`,
+// `env`, `task`, `algo_results`, `tags`, `lifecycle_meta`, `files_json`
+// exist on the business type (internal/models/asset.go) but are NOT
+// real SQL columns. They are NOT included here; if migrated to GORM
+// they should live in a separate "view" type.
 type Asset struct {
-	AssetID         string     `gorm:"column:asset_id;type:text;primaryKey" json:"asset_id"`
-	McapFileID      string     `gorm:"column:mcap_file_id;type:text" json:"mcap_file_id"`
-	SegmentLocator  string     `gorm:"column:segment_locator;type:char(40)" json:"segment_locator,omitempty"`
-	StartTimestampNs int64      `gorm:"column:start_timestamp_ns;type:bigint;not null" json:"start_timestamp_ns"`
-	EndTimestampNs   int64      `gorm:"column:end_timestamp_ns;type:bigint;not null" json:"end_timestamp_ns"`
-	DurationSec      float64    `gorm:"column:duration_sec;type:double precision" json:"duration_sec"`
-	Reviewer         string     `gorm:"column:reviewer;type:text" json:"reviewer"`
-	Owner            string     `gorm:"column:owner;type:text" json:"owner"`
-	SegType          string     `gorm:"column:seg_type;type:text" json:"type,omitempty"`
-	Env              string     `gorm:"column:env;type:text" json:"env,omitempty"`
-	Task             string     `gorm:"column:task;type:text" json:"task,omitempty"`
-	LastDeliveredAt  *time.Time `gorm:"column:last_delivered_at;type:timestamptz" json:"last_delivered_at,omitempty"`
-	LastDeliveredTo  string     `gorm:"column:last_delivered_to;type:text" json:"last_delivered_to,omitempty"`
-	DeliveryCount    int        `gorm:"column:delivery_count;type:integer" json:"delivery_count"`
-	AlgoResults      string     `gorm:"column:algo_results;type:jsonb" json:"algo_results,omitempty"`
-	Tags             string     `gorm:"column:tags;type:jsonb" json:"tags,omitempty"`
-	Files            string     `gorm:"column:files;type:jsonb" json:"files,omitempty"`
-	LifecycleMeta    string     `gorm:"column:lifecycle_meta;type:jsonb" json:"lifecycle_meta,omitempty"`
-	AssetType        string     `gorm:"column:asset_type;type:text;default:'segment';not null" json:"asset_type"`
-	LifecycleState   string     `gorm:"column:lifecycle_state;type:text;default:'created';not null" json:"lifecycle_state"`
-	IsDeleted        bool       `gorm:"column:is_deleted;type:boolean;default:false" json:"is_deleted"`
-	DurationMs       int64      `gorm:"column:duration_ms;type:bigint;default:0;not null" json:"duration_ms"`
-	StorageURI       string     `gorm:"column:storage_uri;type:text;default:'';not null" json:"storage_uri,omitempty"`
-	ThumbURI         string     `gorm:"column:thumb_uri;type:text;default:'';not null" json:"thumb_uri,omitempty"`
-	RetentionTier    string     `gorm:"column:retention_tier;type:text;default:'';not null" json:"retention_tier,omitempty"`
-	ExpireAt         *time.Time `gorm:"column:expire_at;type:timestamptz" json:"expire_at,omitempty"`
-	AssetLevel       int        `gorm:"column:asset_level;type:integer;default:0;not null" json:"asset_level"`
-	ParentAssetID    string     `gorm:"column:parent_asset_id;type:text" json:"parent_asset_id,omitempty"`
-	RootAssetID      string     `gorm:"column:root_asset_id;type:text" json:"root_asset_id,omitempty"`
-	SegmentIndex     *int       `gorm:"column:segment_index;type:integer" json:"segment_index,omitempty"`
-	ParentStartOffsetMs *int64  `gorm:"column:parent_start_offset_ms;type:bigint" json:"parent_start_offset_ms,omitempty"`
-	ParentEndOffsetMs   *int64  `gorm:"column:parent_end_offset_ms;type:bigint" json:"parent_end_offset_ms,omitempty"`
-	SplitMethod         string  `gorm:"column:split_method;type:text" json:"split_method,omitempty"`
-	SplitAlgoName       string  `gorm:"column:split_algo_name;type:text" json:"split_algo_name,omitempty"`
-	SplitAlgoVersion    string  `gorm:"column:split_algo_version;type:text" json:"split_algo_version,omitempty"`
-	SplitRunID          string  `gorm:"column:split_run_id;type:text" json:"split_run_id,omitempty"`
-	SplitReason         string  `gorm:"column:split_reason;type:text" json:"split_reason,omitempty"`
-	Metadata            string  `gorm:"column:metadata;type:jsonb;default:'{}';not null" json:"metadata,omitempty"`
-	FilesJSON           string  `gorm:"column:files_json;type:jsonb" json:"files_json,omitempty"`
-	AlgoInputsURIs      string  `gorm:"column:algo_inputs_uris;type:jsonb;default:'{}';not null" json:"algo_inputs_uris,omitempty"`
-	AnnotInputsURIs     string  `gorm:"column:annot_inputs_uris;type:jsonb;default:'{}';not null" json:"annot_inputs_uris,omitempty"`
-	TenantID            string  `gorm:"column:tenant_id;type:text" json:"tenant_id,omitempty"`
-	ProjectID           string  `gorm:"column:project_id;type:text" json:"project_id,omitempty"`
-	LogicalAssetID      string  `gorm:"column:logical_asset_id;type:text" json:"logical_asset_id,omitempty"`
-	Revision            *int64  `gorm:"column:revision;type:bigint" json:"revision,omitempty"`
-	IsCurrent           *bool   `gorm:"column:is_current;type:boolean" json:"is_current,omitempty"`
+	AssetID            string     `gorm:"column:asset_id;type:text;primaryKey" json:"asset_id"`
+	McapFileID         string     `gorm:"column:mcap_file_id;type:text" json:"mcap_file_id"`
+	SegmentLocator     string     `gorm:"column:segment_locator;type:char(40)" json:"segment_locator,omitempty"`
+	StartTimestampNs   int64      `gorm:"column:start_timestamp_ns;type:bigint;not null" json:"start_timestamp_ns"`
+	EndTimestampNs     int64      `gorm:"column:end_timestamp_ns;type:bigint;not null" json:"end_timestamp_ns"`
+	Reviewer           string     `gorm:"column:reviewer;type:text;default:'';not null" json:"reviewer"`
+	Owner              string     `gorm:"column:owner;type:text;default:'';not null" json:"owner"`
+	LastDeliveredAt    *time.Time `gorm:"column:last_delivered_at;type:timestamptz" json:"last_delivered_at,omitempty"`
+	LastDeliveredTo    string     `gorm:"column:last_delivered_to;type:text;default:'';not null" json:"last_delivered_to,omitempty"`
+	DeliveryCount      int        `gorm:"column:delivery_count;type:integer;default:0;not null" json:"delivery_count"`
+	Files              string     `gorm:"column:files;type:jsonb;default:'{}';not null" json:"files,omitempty"`
+	AssetType          string     `gorm:"column:asset_type;type:text;default:'segment';not null" json:"asset_type"`
+	LifecycleState     string     `gorm:"column:lifecycle_state;type:text;default:'created';not null" json:"lifecycle_state"`
+	IsDeleted          bool       `gorm:"column:is_deleted;type:boolean;default:false" json:"is_deleted"`
+	DurationMs         int64      `gorm:"column:duration_ms;type:bigint;default:0;not null" json:"duration_ms"`
+	StorageURI         string     `gorm:"column:storage_uri;type:text;default:'';not null" json:"storage_uri,omitempty"`
+	ThumbURI           string     `gorm:"column:thumb_uri;type:text;default:'';not null" json:"thumb_uri,omitempty"`
+	RetentionTier      string     `gorm:"column:retention_tier;type:text;default:'';not null" json:"retention_tier,omitempty"`
+	ExpireAt           *time.Time `gorm:"column:expire_at;type:timestamptz" json:"expire_at,omitempty"`
+	AssetLevel         int        `gorm:"column:asset_level;type:integer;default:0;not null" json:"asset_level"`
+	ParentAssetID      string     `gorm:"column:parent_asset_id;type:text" json:"parent_asset_id,omitempty"`
+	RootAssetID        string     `gorm:"column:root_asset_id;type:text" json:"root_asset_id,omitempty"`
+	SegmentIndex       *int       `gorm:"column:segment_index;type:integer" json:"segment_index,omitempty"`
+	ParentStartOffsetMs *int64    `gorm:"column:parent_start_offset_ms;type:bigint" json:"parent_start_offset_ms,omitempty"`
+	ParentEndOffsetMs   *int64    `gorm:"column:parent_end_offset_ms;type:bigint" json:"parent_end_offset_ms,omitempty"`
+	SplitMethod         string    `gorm:"column:split_method;type:text" json:"split_method,omitempty"`
+	SplitAlgoName       string    `gorm:"column:split_algo_name;type:text" json:"split_algo_name,omitempty"`
+	SplitAlgoVersion    string    `gorm:"column:split_algo_version;type:text" json:"split_algo_version,omitempty"`
+	SplitRunID          string    `gorm:"column:split_run_id;type:text" json:"split_run_id,omitempty"`
+	SplitReason         string    `gorm:"column:split_reason;type:text" json:"split_reason,omitempty"`
+	Metadata            string    `gorm:"column:metadata;type:jsonb;default:'{}';not null" json:"metadata,omitempty"`
+	AlgoInputsURIs      string    `gorm:"column:algo_inputs_uris;type:jsonb;default:'{}';not null" json:"algo_inputs_uris,omitempty"`
+	AnnotInputsURIs     string    `gorm:"column:annot_inputs_uris;type:jsonb;default:'{}';not null" json:"annot_inputs_uris,omitempty"`
+	TenantID            string    `gorm:"column:tenant_id;type:text" json:"tenant_id,omitempty"`
+	ProjectID           string    `gorm:"column:project_id;type:text" json:"project_id,omitempty"`
+	LogicalAssetID      string    `gorm:"column:logical_asset_id;type:text" json:"logical_asset_id,omitempty"`
+	Revision            *int64    `gorm:"column:revision;type:bigint" json:"revision,omitempty"`
+	IsCurrent           *bool     `gorm:"column:is_current;type:boolean" json:"is_current,omitempty"`
 	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null" json:"created_at"`
 	UpdatedAt           time.Time `gorm:"column:updated_at;type:timestamptz;not null" json:"updated_at"`
-	Version             int64   `gorm:"column:version;type:bigint;default:1" json:"version"`
+	Version             int64     `gorm:"column:version;type:bigint;default:1" json:"version"`
 }
 
 func (Asset) TableName() string { return "assets" }
@@ -76,12 +74,13 @@ type LogicalAsset struct {
 	DisplayName     string    `gorm:"column:display_name;type:text" json:"display_name,omitempty"`
 	Description     string    `gorm:"column:description;type:text" json:"description,omitempty"`
 	Owner           string    `gorm:"column:owner;type:text" json:"owner,omitempty"`
-	Status          string    `gorm:"column:status;type:text;default:'active';not null" json:"status"`
-	CurrentRevision int64     `gorm:"column:current_revision;type:bigint;default:1;not null" json:"current_revision"`
-	TotalRevisions  int64     `gorm:"column:total_revisions;type:bigint;default:0" json:"total_revisions"`
-	Metadata        string    `gorm:"column:metadata;type:jsonb" json:"metadata,omitempty"`
-	CreatedAt       time.Time `gorm:"column:created_at;type:timestamptz" json:"created_at"`
-	UpdatedAt       time.Time `gorm:"column:updated_at;type:timestamptz" json:"updated_at"`
+	Status          string    `gorm:"column:status;type:text;not null;default:'active'" json:"status"`
+	CurrentRevision int64     `gorm:"column:current_revision;type:bigint;not null;default:1" json:"current_revision"`
+	TotalRevisions  int64     `gorm:"column:total_revisions;type:bigint;not null;default:1" json:"total_revisions"`     // drift fix: was default:0
+	Metadata        string    `gorm:"column:metadata;type:jsonb;not null;default:'{}'" json:"metadata,omitempty"`              // drift fix: was no not null
+	Extra           string    `gorm:"column:extra;type:jsonb;not null;default:'{}'" json:"extra,omitempty"`                  // drift fix: was missing
+	CreatedAt       time.Time `gorm:"column:created_at;type:timestamptz;not null;default:now()" json:"created_at"`        // drift fix
+	UpdatedAt       time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:now()" json:"updated_at"`        // drift fix
 }
 
 func (LogicalAsset) TableName() string { return "logical_assets" }
