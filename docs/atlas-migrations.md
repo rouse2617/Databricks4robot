@@ -87,9 +87,9 @@ prod 向 dev 基线对齐 = 单独的 forward 迁移（手写），逐项 review
 ## 紧急救援
 
 ```bash
-DB_URL=postgres://user:pass@host/db?sslmode=disable make db-migrate-status
+DB_URL=... make db-migrate-status            # 查状态；DB_URL 为完整连接串
 psql "$DB_URL" -c "SELECT * FROM atlas_schema_revisions ORDER BY version"
-DB_URL=... make db-migrate-apply            # 重跑最新一条
+DB_URL=... make db-migrate-apply             # 重跑最新一条
 ```
 
 ## 与 cyber-grace 对齐点
