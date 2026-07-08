@@ -1,0 +1,172 @@
+name: DB migrate lint
+
+# Atlas migration hygiene gate. Runs on every PR that touches backend/migrations/.
+# Three checks:
+#   1. atlas.sum integrity — `atlas migrate validate` (catches tampered files)
+#   2. Fresh-DB apply      — every migration applies cleanly to a clean Postgres
+#   3. Ordering guard      — new files sort strictly after the latest on main
+#                            (catches the 063 / 063 collision pattern)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/migrations/**"
+      - "backend/atlas/**"
+      - ".github/workflows/db-migrate-lint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-lint:
+    name: Atlas migration lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cyber_databrew_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DB_URL: postgres://postgres:postgres@localhost:5432/cyber_databrew_test?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. atlas.sum integrity check (CI gate).
+      - name: Atlas validate (checksum integrity)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/backend:/work" \
+            -w /work \
+            arigaio/atlas:latest \
+            migrate validate --config file:///work/atlas/atlas.hcl --env migrate
+
+      # 2. Fresh-DB apply — every migration must apply cleanly.
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U postgres && exit 0
+            sleep 2
+          done
+          echo "Postgres did not become ready"
+          exit 1
+
+      - name: Atlas apply on fresh DB
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${{ github.workspace }}/backend:/work" \
+            -w /work \
+            -e DB_URL \
+            arigaio/atlas:latest \
+            migrate apply --config file:///work/atlas/atlas.hcl --env migrate
+
+      # 3. Ordering guard — every new migration in this PR must sort strictly
+      #    after the latest migration already on main. Prevents duplicate / out-
+      #    of-order prefixes (the 063/063 collision is the motivating bug).
+      - name: Check migration ordering
+        run: |
+          set -euo pipefail
+
+          # Migration filenames on main (excluding atlas.sum / archive).
+          mapfile -t main_files < <(
+            git ls-tree -r --name-only origin/main -- backend/migrations/ 2>/dev/null \
+              | grep -E '^backend/migrations/[0-9]+_' \
+              | sed 's#^backend/migrations/##' \
+              | sort
+          )
+
+          # Migration filenames on this PR (current HEAD).
+          mapfile -t head_files < <(
+            git ls-tree -r --name-only HEAD -- backend/migrations/ \
+              | grep -E '^backend/migrations/[0-9]+_' \
+              | sed 's#^backend/migrations/##' \
+              | sort
+          )
+
+          if [[ ${#main_files[@]} -eq 0 ]]; then
+            echo "No existing migrations on main — skipping ordering check."
+            exit 0
+          fi
+
+          # Largest numeric prefix on main.
+          main_max=0
+          for f in "${main_files[@]}"; do
+            n="${f%%_*}"
+            if (( n > main_max )); then main_max=$n; fi
+          done
+          echo "main latest migration prefix: $main_max"
+
+          # New files in this PR: anything in HEAD but not on main.
+          new_files=()
+          for f in "${head_files[@]}"; do
+            skip=0
+            for m in "${main_files[@]}"; do
+              if [[ "$f" == "$m" ]]; then skip=1; break; fi
+            done
+            (( skip == 0 )) && new_files+=("$f")
+          done
+
+          if [[ ${#new_files[@]} -eq 0 ]]; then
+            echo "No new migrations in this PR."
+            exit 0
+          fi
+
+          echo "New migrations in this PR:"
+          for f in "${new_files[@]}"; do echo "  - $f"; done
+
+          bad=0
+          for f in "${new_files[@]}"; do
+            n="${f%%_*}"
+            if (( n <= main_max )); then
+              echo "::error file=backend/migrations/$f::prefix $n is not strictly greater than main's latest $main_max — would collide or reorder. Rename to a higher prefix."
+              bad=1
+            fi
+          done
+          exit $bad
+
+      # 4. Pro-tier lint on the latest migration (optional — gated on ATLAS_TOKEN
+      #    secret being configured). Atlas Pro uploads the lint report to
+      #    Atlas Cloud and prints a shareable URL. Without a token, this step
+      #    is skipped; the other three checks above still gate the PR.
+      - name: Atlas lint (Pro, --web)
+        if: ${{ env.ATLAS_TOKEN != '' }}
+        env:
+          ATLAS_TOKEN: ${{ secrets.ATLAS_TOKEN }}
+        run: |
+          # `--web` requires a dev-url (Atlas spins up a Postgres container).
+          # Reuse the CI postgres service started above.
+          set -euo pipefail
+          REPORT_URL=$(docker run --rm \
+            --network host \
+            -v "${{ github.workspace }}/backend:/work" \
+            -w /work \
+            -e ATLAS_TOKEN \
+            -e DB_URL \
+            arigaio/atlas:latest \
+            migrate lint \
+              --config file:///work/atlas/atlas.hcl \
+              --env migrate \
+              --dev-url "$DB_URL" \
+              --latest 1 \
+              --web 2>&1 | tee /tmp/lint.out | tail -1)
+          if [[ "$REPORT_URL" =~ ^https:// ]]; then
+            echo "::notice title=Atlas Pro lint report::$REPORT_URL"
+          fi
