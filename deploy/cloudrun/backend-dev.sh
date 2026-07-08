@@ -68,6 +68,10 @@ ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION="${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION:-
 BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET="${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET:-cyber-databrew-dev-backfill-feishu-webhook}"
 BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET_VERSION="${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET_VERSION:-latest}"
 FRONTEND_BASE_URL_OVERRIDE="${FRONTEND_BASE_URL_OVERRIDE:-https://cyber-databrew-dev.cyberorigin.ai}"
+# ADMIN_EMAILS (CYB-3154): comma-separated emails that get role=admin on web
+# email-login, granting the "*" scope set (so they can manage API keys). Plain,
+# non-sensitive config; baked in here so --env-vars-file deploys don't wipe it.
+ADMIN_EMAILS_OVERRIDE="${ADMIN_EMAILS_OVERRIDE:-ruipeng.huang@cyberorigin.ai}"
 # Push is now the primary status signal; the watcher is a low-frequency reconcile
 # backstop. Set to 3 to temporarily restore high-frequency polling if needed.
 PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE:-30}"
@@ -419,6 +423,7 @@ if [[ -n "${ARGO_RUN_WEBHOOK_TOKEN_SECRET}" ]]; then
   secret_mappings+=("ARGO_RUN_WEBHOOK_TOKEN=${ARGO_RUN_WEBHOOK_TOKEN_SECRET}:${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION}")
 fi
 [[ -n "${FRONTEND_BASE_URL_OVERRIDE}" ]] && upsert_env "FRONTEND_BASE_URL" "${FRONTEND_BASE_URL_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${ADMIN_EMAILS_OVERRIDE}" ]] && upsert_env "ADMIN_EMAILS" "${ADMIN_EMAILS_OVERRIDE}" "${ENV_KV_FILE}"
 if [[ -n "${BACKFILL_NOTIFY_FEISHU_WEBHOOK_SECRET}" ]]; then
   # Remove any plain value first: Cloud Run rejects an env var set as both a literal
   # and a secret. The secret becomes the single source of truth for the webhook.
