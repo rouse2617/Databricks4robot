@@ -145,10 +145,134 @@ DB_URL=... atlas migrate apply --config atlas/atlas.hcl --env migrate
 
 ## Pro 套餐限制说明
 
-Atlas Cloud **Registry**（`atlas migrate push` 把迁移目录上传 + drift detection）**只在 Team 及以上套餐可用**，Pro 不行。本仓库当前只用 Pro，所以：
+Atlas Cloud **Registry**（`atlas migrate push` 把迁移目录上传 + hosted drift detection）**只在 Team 及以上套餐可用**，Pro 不行。本仓库当前只用 Pro，所以：
 
-- 没有 drift detection workflow（db-drift-check.yml 已删除）
 - 没有 hosted migration directory（migrations 仍在 repo 内的 `backend/migrations/`）
+- 没有 hosted drift detection；改用本地 `atlas migrate diff` + CI drift check（见下）
 - 唯一 Pro-unlock 的特性：`migrate lint --web`（报告上传 Atlas Cloud）
 
-如果未来想开 drift detection，需要公司把 Atlas Cloud 升到 Team。
+如果未来想开 hosted drift detection，需要公司把 Atlas Cloud 升到 Team。
+
+## Schema 改动流程（GORM 模式）
+
+cyber-databrew 用 [GORM](https://gorm.io) struct 作为 schema 真源（cyber-grace 模式）。`backend/internal/dbschema/*.go` 里的 struct 反映数据库表的最终状态；`atlas migrate diff --env gorm` 会基于这些 struct 自动生成对应的 SQL migration。
+
+### 加一个新列
+
+1. 改 `backend/internal/dbschema/*.go` 里对应 struct，加新字段 + gorm tag：
+
+   ```go
+   type Asset struct {
+       // ... 已有字段 ...
+       E2ETestColumn string `gorm:"column:e2e_test_column;type:text" json:"e2e_test_column,omitempty"`
+   }
+   ```
+
+2. 本地跑 `atlas migrate diff <name> --env gorm` 生成 SQL：
+
+   ```bash
+   cd backend
+   atlas migrate diff add_e2e_test_column --env gorm \
+     --config file://atlas/atlas.hcl
+   ```
+
+   会在 `migrations/` 下生成 `YYYYMMDDHHMMSS_add_e2e_test_column.sql`，含 `ALTER TABLE assets ADD COLUMN e2e_test_column text;`。
+
+3. **重要**：检查生成的 SQL 是否符合预期。GORM 表达不了的东西（CHECK 约束、INDEX、TRIGGER、FUNCTION、PARTITION）Atlas 会忽略——这些得**手动**写在 migration SQL 里。
+
+4. Commit 三个一起：
+   - 改了的 GORM model
+   - 生成的 migration SQL
+   - 更新的 `migrations/atlas.sum`（跑 `cd backend && atlas migrate hash --env migrate --config file://atlas/atlas.hcl`）
+
+5. PR 触发：
+   - `db-migrate-lint.yml`（hash + fresh-DB apply + 排序校验 + Pro lint）
+   - `db-drift-check.yml`（新增表才 fail；修改已有表只发 PR comment）
+
+### 加一张新表
+
+1. 在 `backend/internal/dbschema/` 写新 struct（参考其他表的风格）
+2. 在 `dbschema/registry.go` 的 `AllModels()` 注册
+3. `atlas migrate diff <name> --env gorm`
+4. CI drift check 会因为检测到新表而 fail —— 正常，**确认这是预期**后给 PR 加 comment 说明
+
+### 改 enum / CHECK 约束
+
+GORM **不能**表达 CHECK 约束。手写 migration：
+
+```sql
+-- 064_change_lifecycle_enum.sql
+ALTER TABLE assets DROP CONSTRAINT IF EXISTS chk_lifecycle_state;
+ALTER TABLE assets ADD CONSTRAINT chk_lifecycle_state CHECK (
+  lifecycle_state IN ('created', 'processing', 'ready', 'delivered',
+                      'archived', 'superseded', 'failed', 'rejected',
+                      'new_state')  -- 加上新值
+);
+```
+
+同时**必须**更新 `internal/dbschema/` 里相关 struct 的注释（GORM tag 表达不了），让团队知道 CHECK 约束存在。
+
+### 改外键 / 索引 / 触发器 / 函数
+
+GORM 同样表达不了。**完全手写** migration，对应修改 GORM struct 加注释说明。
+
+### 删字段
+
+GORM model 删字段 → `migrate diff` 生成 `DROP COLUMN` SQL。**注意**：如果代码还在用这个字段，编译会挂。删之前先：
+
+1. 找代码里所有引用（`internal/postgres/`、`internal/usecase/`、`internal/handlers/`）
+2. 改成不读这个字段
+3. compile + 跑测试
+4. 然后 GORM model 删字段 + 跑 `migrate diff`
+
+### Atlas Cloud drift check (CI)
+
+`.github/workflows/db-drift-check.yml` 在 PR 改 dbschema/migrations/atlas 时跑：
+
+- 提取 PR diff 的 `CREATE TABLE` 列表
+- 对比 baseline（`.atlas-drift-baseline.sql`）
+- **新表**（PR 有 baseline 没有）→ fail
+- 已有表的修改 → post PR comment（**不 fail**），让团队 review
+
+baseline 当前包含 45 张表 + 3 个 uniqueIndex（共 48 个 CREATE statement）。`asset_events`/`asset_events_default`（partition）不在 GORM models 里。
+
+修了一张表（缩 drift）后，重新生成 baseline：
+
+```bash
+cd backend
+rm -rf /tmp/atlas-baseline && mkdir -p /tmp/atlas-baseline
+atlas migrate diff baseline --env gorm \
+  --config file://atlas/atlas.hcl \
+  --dir file:///tmp/atlas-baseline
+cp /tmp/atlas-baseline/2026*.sql ../.atlas-drift-baseline.sql
+# commit
+```
+
+### 验证 workflow（手动 e2e 测试）
+
+```bash
+# 1. 改 GORM model
+# 2. 跑 diff 到 SCRATCH（不污染 repo migrations/）
+cd backend
+atlas migrate diff test_name --env gorm \
+  --config file://atlas/atlas.hcl \
+  --dir file:///tmp/atlas-e2e
+
+# 3. 看生成的 SQL
+less /tmp/atlas-e2e/*.sql
+
+# 4. 撤销 GORM 改动（如果只是测试 workflow）
+git checkout -- internal/dbschema/
+```
+
+### 已知 gap（GORM 表达不了，保留在 SQL）
+
+- **CHECK 约束**（lifecycle_state enum、asset_id regex 等）
+- **外键**（GORM 不会在 diff 里 emit FK）
+- **索引**（非 unique 索引，unique 索引通过 `uniqueIndex` tag 可以）
+- **触发器**（set_updated_at、trg_logical_assets_type_immutable）
+- **函数**（event_retention_cleanup、sync_databrew_run_from_pipeline）
+- **表分区**（`asset_events` + 它的 monthly partition）
+- **GENERATED 列**（`source_version_norm` in asset_tags、`duration_ns` in algo_runs）
+
+这些在 SQL migration 里手写维护，不出现在 GORM models 里。CI drift check 的 baseline 模式会让这些不卡 PR，但 PR comment 还会展示。
