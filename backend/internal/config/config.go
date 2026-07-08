@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -39,9 +40,10 @@ type Config struct {
 
 	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
 	DatabrewToken               string
-	ComponentReleaseIngestToken string // CI-only token for component release ingest
-	JWTSecret                   string // HMAC-SHA256 secret for JWT signing
-	AllowedDomain               string // email domain allowlisted (e.g. "cyberorigin.ai")
+	ComponentReleaseIngestToken string   // CI-only token for component release ingest
+	JWTSecret                   string   // HMAC-SHA256 secret for JWT signing
+	AllowedDomain               string   // email domain allowlisted (e.g. "cyberorigin.ai")
+	AdminEmails                 []string // emails granted role=admin on email-login (ADMIN_EMAILS, comma-sep)
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -214,6 +216,7 @@ func Load() *Config {
 		ComponentReleaseIngestToken: getenv("COMPONENT_RELEASE_INGEST_TOKEN", getenv("DATABREW_CI_INGEST_TOKEN", "")),
 		JWTSecret:                   getenv("JWT_SECRET", "dev-jwt-secret"),
 		AllowedDomain:               getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
+		AdminEmails:                 splitCSVLower(getenv("ADMIN_EMAILS", "")),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -363,6 +366,33 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSVLower splits a comma-separated list, trimming + lowercasing each
+// non-empty element. Returns nil for empty input.
+func splitCSVLower(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.ToLower(strings.TrimSpace(p)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// IsAdminEmail reports whether an email is in the admin allowlist (ADMIN_EMAILS).
+func (c *Config) IsAdminEmail(email string) bool {
+	e := strings.ToLower(strings.TrimSpace(email))
+	for _, a := range c.AdminEmails {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 func getenvInt32(key string, fallback int32) int32 {

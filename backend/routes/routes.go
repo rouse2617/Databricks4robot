@@ -138,7 +138,11 @@ func RegisterAll(
 				return
 			}
 
-			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
+			role := "user"
+			if cfg.IsAdminEmail(email) {
+				role = "admin"
+			}
+			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, role, 24*time.Hour)
 			if err != nil {
 				httpresp.Internal(c, "failed to sign token")
 				return
@@ -149,7 +153,7 @@ func RegisterAll(
 				"authenticated": true,
 				"token":         jwtToken,
 				"email":         email,
-				"role":          "user",
+				"role":          role,
 			})
 		})
 
@@ -352,7 +356,9 @@ func RegisterAll(
 		// API key management (issue/list/revoke keys for SDK/API callers).
 		// Under admin auth; keys themselves carry scopes for least-privilege.
 		if apiKeyHandler != nil { // pragma: allowlist secret
-			keys := api.Group("/admin/api-keys", adminAuth)
+			// Admin-scoped: admin-role web sessions (ADMIN_EMAILS) and the
+			// legacy static token (both carry "*") pass; regular users get 403.
+			keys := api.Group("/admin/api-keys", middleware.RequireScope("apikeys:manage"))
 			keys.POST("", apiKeyHandler.Create)
 			keys.GET("", apiKeyHandler.List)
 			keys.DELETE("/:id", apiKeyHandler.Revoke)
