@@ -110,7 +110,9 @@ jobs:
           main_max=0
           for f in "${main_files[@]}"; do
             n="${f%%_*}"
-            if (( n > main_max )); then main_max=$n; fi
+            # 10# forces base-10: bash treats leading-zero prefixes (039/048/...)
+            # as octal, and 039 errors ("value too great for base").
+            if (( 10#$n > 10#$main_max )); then main_max=$n; fi
           done
           echo "main latest migration prefix: $main_max"
 
@@ -135,7 +137,7 @@ jobs:
           bad=0
           for f in "${new_files[@]}"; do
             n="${f%%_*}"
-            if (( n <= main_max )); then
+            if (( 10#$n <= 10#$main_max )); then
               echo "::error file=backend/migrations/$f::prefix $n is not strictly greater than main's latest $main_max — would collide or reorder. Rename to a higher prefix."
               bad=1
             fi
