@@ -6,6 +6,7 @@ import {
 	ForkOutlined,
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
+	KeyOutlined,
 	LogoutOutlined,
 	MenuFoldOutlined,
 	MenuUnfoldOutlined,
@@ -56,6 +57,7 @@ const menuItems = [
 		icon: <FundProjectionScreenOutlined />,
 		label: "指标检索",
 	},
+	{ key: "/api-keys", icon: <KeyOutlined />, label: "API 密钥" },
 	{ key: "/settings", icon: <SettingOutlined />, label: "设置" },
 ];
 
@@ -106,7 +108,7 @@ function resolvePageContainerClass(pathname: string): string {
 export default function AppLayout({ children }: { children: ReactNode }) {
 	const navigate = useNavigate();
 	const location = useLocation();
-	const { logout } = useAuth();
+	const { logout, user } = useAuth();
 	const siderWidth = 220;
 	const [collapsed, setCollapsed] = useState<boolean>(
 		() => localStorage.getItem("db.sider.collapsed") === "1",
@@ -180,7 +182,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						theme="dark"
 						mode="inline"
 						selectedKeys={[resolveSelectedKey(location.pathname)]}
-						items={menuItems}
+						items={menuItems.filter(
+							(m) =>
+								!("key" in m) ||
+								m.key !== "/api-keys" ||
+								user?.role === "admin",
+						)}
 						onClick={({ key }) => navigate(key)}
 						style={{ background: "transparent", borderRight: 0 }}
 					/>

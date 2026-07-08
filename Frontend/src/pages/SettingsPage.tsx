@@ -24,7 +24,6 @@ import {
 	type SearchAuditResult,
 } from "../api/admin";
 import { type SearchSyncStatusResponse, searchApi } from "../api/search";
-import ApiKeysManager from "../components/ApiKeysManager";
 import BronzeSyncStatusAlert from "../components/assets/BronzeSyncStatusAlert";
 import SearchSyncStatusAlert from "../components/assets/SearchSyncStatusAlert";
 import { useAuth } from "../hooks/useAuth";
@@ -307,10 +306,6 @@ export default function SettingsPage() {
 					<Descriptions.Item label="API 地址">/api/v1</Descriptions.Item>
 				</Descriptions>
 			</Card>
-
-			<div style={{ marginBottom: 16 }}>
-				<ApiKeysManager />
-			</div>
 
 			<Card
 				title={
