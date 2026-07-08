@@ -1,16 +1,31 @@
 name: DB GORM drift check
 
 # Verifies the GORM models in backend/internal/dbschema/ stay in sync with
-# the SQL migrations in backend/migrations/. Runs `atlas migrate diff
-# --env gorm` and fails on REAL drift (column-level changes); known gaps
-# (indexes, check constraints, triggers, functions) are filtered out
-# because GORM can't express them.
+# the SQL migrations in backend/migrations/.
+#
+# Two checks, both baseline-aware:
+#
+#  1. New tables. Extracts the set of "CREATE TABLE X" lines from the
+#     PR's diff and the baseline `.atlas-drift-baseline.sql`. Fails on
+#     any NEW table not in the baseline. (This catches "I added a GORM
+#     model but forgot to generate a migration".)
+#
+#  2. Drift visibility. Posts the full diff as a PR comment so the team
+#     can review column-level changes against the baseline. The diff
+#     itself is informational; the team decides in the PR whether the
+#     change is intentional.
+#
+# The baseline is committed at repo root: `.atlas-drift-baseline.sql`.
+# To regenerate: `atlas migrate diff baseline --env gorm --dir
+# file:///tmp/baseline && cp /tmp/baseline/<file>.sql
+# .atlas-drift-baseline.sql`.
 #
 # Runs on PRs touching:
 #   - backend/internal/dbschema/**   (GORM models)
 #   - backend/migrations/**          (SQL migrations)
 #   - backend/atlas/**              (atlas.hcl, atlas.sum)
 #   - .github/workflows/db-drift-check.yml
+#   - .atlas-drift-baseline.sql
 
 on:
   pull_request:
@@ -20,6 +35,7 @@ on:
       - "backend/migrations/**"
       - "backend/atlas/**"
       - ".github/workflows/db-drift-check.yml"
+      - ".atlas-drift-baseline.sql"
 
 permissions:
   contents: read
@@ -33,7 +49,7 @@ jobs:
         working-directory: backend
 
     env:
-      ATLAS_TOKEN: ${{ secrets.ATLAS_TOKEN }}  # optional; only needed for Pro lint upload
+      ATLAS_TOKEN: ${{ secrets.ATLAS_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,70 +61,115 @@ jobs:
           curl -sSf https://atlasgo.sh | sh
           echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
 
-      # Generate the candidate diff. We don't apply it; we just inspect it.
+      # Generate the PR's drift into a scratch dir (we don't apply).
       - name: Generate GORM diff
         id: diff
         run: |
-          # Use a scratch dir outside the repo to avoid polluting migrations/.
           SCRATCH=$(mktemp -d)
           trap 'rm -rf "$SCRATCH"' EXIT
-          atlas migrate diff scratch --env gorm --config file://atlas/atlas.hcl \
-            --dir "file://$SCRATCH" 2>&1 | tee /tmp/diff-output.txt | tail -5
-          # The above writes to $SCRATCH; copy to a known path for the next step.
-          if [ -f "$SCRATCH/$(ls -t "$SCRATCH" | head -1)" ]; then
-            cp "$SCRATCH"/* /tmp/ 2>/dev/null || true
+          # --dir override keeps the diff out of the repo's migrations/
+          # (otherwise it would pollute atlas.sum and show up as an
+          # unintended migration).
+          atlas migrate diff pr-drift --env gorm --config file://atlas/atlas.hcl \
+            --dir "file://$SCRATCH" > /tmp/atlas-stdout.txt 2>&1 || true
+          cat /tmp/atlas-stdout.txt | tail -3
+          PR_FILE=$(ls -t "$SCRATCH"/*.sql 2>/dev/null | head -1)
+          if [ -n "$PR_FILE" ]; then
+            cp "$PR_FILE" /tmp/pr-drift.sql
+            wc -l /tmp/pr-drift.sql
+            echo "diff_file=/tmp/pr-drift.sql" >> "$GITHUB_OUTPUT"
+          else
+            echo "diff_file=" >> "$GITHUB_OUTPUT"
           fi
 
-      # Real drift: column-level changes that GORM *can* express but got wrong.
-      # Known gaps (filtered out): DROP INDEX / DROP CONSTRAINT / DROP TRIGGER
-      # / DROP FUNCTION — these are intentional (GORM can't express them).
-      - name: Detect real drift
+      # Compare the PR's "CREATE TABLE" set against the baseline. Fail on
+      # any NEW table the PR introduces. (Modifications to existing
+      # tables are reported in the PR comment, not auto-failed.)
+      - name: Detect new tables
         id: detect
         run: |
           set -e
-          DIFF_FILE=$(ls -t /tmp/scratch*.sql 2>/dev/null | head -1)
-          if [ -z "$DIFF_FILE" ] || [ ! -s "$DIFF_FILE" ]; then
-            echo "✓ No migration diff produced (GORM matches migrations exactly)"
-            echo "drift_lines=0" >> "$GITHUB_OUTPUT"
+          BASELINE=../.atlas-drift-baseline.sql
+          PR_FILE="${{ steps.diff.outputs.diff_file }}"
+
+          if [ -z "$PR_FILE" ] || [ ! -s "$PR_FILE" ]; then
+            echo "✓ PR diff is empty (GORM matches migrations exactly)"
+            echo "new_tables=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Real drift = column-level changes only. Filter out known gaps.
-          REAL_DRIFT=$(grep -cE '^(ALTER TABLE|.*ADD COLUMN|.*DROP COLUMN|.*ADD PRIMARY KEY|.*ALTER COLUMN)' "$DIFF_FILE" || true)
+          # Extract "CREATE TABLE \"X\"" (or -- Create "X" table) from
+          # both. Atlas emits both forms: a -- comment header and the
+          # actual CREATE TABLE statement.
+          PR_TABLES=$(grep -E '^-- Create "[^"]+" table' "$PR_FILE" | sort -u || true)
+          BASE_TABLES=$(grep -E '^-- Create "[^"]+" table' "$BASELINE" | sort -u || true)
 
-          # Known gaps: indexes, constraints, triggers, functions, partitioned tables.
-          KNOWN_GAP=$(grep -cE '^-- (Drop index|Drop constraint|Drop "trg|Drop "(set_updated_at|sync_databrew_run_from_pipeline|event_retention_cleanup|asset_algo_statuses|trg_logical_assets_type_immutable))' "$DIFF_FILE" || true)
+          if [ -z "$PR_TABLES" ]; then
+            echo "✓ No new tables (PR diff is only ALTERs, no new CREATE TABLE)"
+            echo "new_tables=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          echo "::notice::GORM drift: $REAL_DRIFT real-drift lines, $KNOWN_GAP known-gap lines"
-          echo "drift_lines=$REAL_DRIFT" >> "$GITHUB_OUTPUT"
-          echo "known_gap_lines=$KNOWN_GAP" >> "$GITHUB_OUTPUT"
+          # Tables in PR but not in baseline = new.
+          NEW_TABLES=$(comm -23 <(echo "$PR_TABLES") <(echo "$BASE_TABLES") || true)
+          NEW_COUNT=$(echo "$NEW_TABLES" | grep -c . || true)
 
-          if [ "$REAL_DRIFT" -gt 0 ]; then
-            echo "::error::GORM model has $REAL_DRIFT lines of real drift from SQL migrations"
-            echo "::error::Diff file: $DIFF_FILE"
-            echo "::group::First 50 real-drift lines"
-            grep -E '^(ALTER TABLE|.*ADD COLUMN|.*DROP COLUMN|.*ADD PRIMARY KEY|.*ALTER COLUMN)' "$DIFF_FILE" | head -50
-            echo "::endgroup::"
+          echo "new_tables_count=$NEW_COUNT" >> "$GITHUB_OUTPUT"
+          echo "new_tables<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NEW_TABLES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          if [ "$NEW_COUNT" -gt 0 ]; then
+            echo "::error::PR introduces $NEW_COUNT new table(s) not in baseline:"
+            echo "$NEW_TABLES" | sed 's/^/  /'
+            echo
+            echo "::error::If you added a GORM model for a new table, you must also"
+            echo "::error::generate a new SQL migration via:"
+            echo "::error::  cd backend && atlas migrate diff <name> --env gorm"
+            echo "::error::and commit the generated SQL file alongside the model."
             exit 1
           fi
 
-          echo "✓ GORM models match SQL migrations (only known gaps remain)"
+          echo "✓ No new tables (matches baseline)"
 
-      # Optional: post the diff to PR as a comment for visibility.
+      # Post the PR diff as a comment for team review. Always (informational).
       - name: Comment on PR with diff summary
-        if: always() && steps.detect.outputs.drift_lines != '0'
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            const drift = '${{ steps.detect.outputs.drift_lines }}';
-            const known = '${{ steps.detect.outputs.known_gap_lines }}';
-            const body = `### Atlas GORM drift detected\n\n` +
-              `Real-drift lines: **${drift}** (column-level mismatches between \`internal/dbschema/*.go\` and \`migrations/*.sql\`)\n` +
-              `Known-gap lines: ${known} (index/constraint/trigger/function — GORM can't express these; expected)\n\n` +
-              `To fix: either update the GORM model to match the SQL, or update the SQL migration to match the model (and add a new migration if the change is meaningful). See \`docs/atlas-migrations.md\` for the workflow.`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: body
+            const newTables = `$(echo '${{ steps.detect.outputs.new_tables }}' | head -20)`;
+            const prFile = '${{ steps.diff.outputs.diff_file }}';
+            if (!prFile) return;
+            const fs = require('fs');
+            let diff = '';
+            try {
+              const buf = fs.readFileSync(prFile);
+              diff = buf.toString().split('\n').slice(0, 200).join('\n');
+            } catch (e) {}
+            const newTableLines = (newTables || '').split('\n').filter(l => l.startsWith('-- Create')).join('\n');
+            const body = `### Atlas GORM drift check\n\n` +
+              (newTableLines
+                ? `**${newTableLines.split('\n').length} new table(s) detected** — review above. CI failed; generate a migration with \`atlas migrate diff <name> --env gorm\`.\n\n`
+                : `No new tables (PR diff is only modifications to existing tables or known gaps).\n\n`) +
+              `Full diff (first 200 lines) for review:\n\n\`\`\`sql\n${diff}\n\`\`\`\n\n` +
+              `Baseline: \`.atlas-drift-baseline.sql\` at repo root.`;
+            const marker = '<!-- atlas-drift-bot -->';
+            // Avoid duplicate comments: list existing and update.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100
             });
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            const finalBody = marker + '\n' + body;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: finalBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: finalBody
+              });
+            }
