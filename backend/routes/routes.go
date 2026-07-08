@@ -18,6 +18,7 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	algoRunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
+	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
@@ -37,6 +38,7 @@ import (
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
 )
@@ -71,6 +73,8 @@ func RegisterAll(
 	workflowHandler *workflowH.Handler,
 	backfillHandler *backfillH.Handler,
 	storageHandler *storageH.Handler,
+	apiKeyRepo repository.APIKeyRepository,
+	apiKeyHandler *apikeyH.Handler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -221,16 +225,16 @@ func RegisterAll(
 		terminalAttach.GET("/pod-terminal/sessions/:id/attach", workflowHandler.AttachTerminalSession)
 	}
 
-	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
+	api := r.Group("/api/v1", middleware.Authenticate(cfg.DatabrewToken, cfg.JWTSecret, apiKeyRepo))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
 	}
 	{
 		assets := api.Group("/assets")
-		assets.POST("", assetHandler.Create)
+		assets.POST("", middleware.RequireScope("assets:write"), assetHandler.Create)
 		assets.GET("/:id", assetHandler.Get)
-		assets.PATCH("/:id", assetHandler.Update)
-		assets.DELETE("/:id", assetHandler.Delete)
+		assets.PATCH("/:id", middleware.RequireScope("assets:write"), assetHandler.Update)
+		assets.DELETE("/:id", middleware.RequireScope("assets:write"), assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
@@ -238,8 +242,8 @@ func RegisterAll(
 		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
-		assets.POST("/:id/tags", assetHandler.UpsertTag)
-		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
+		assets.POST("/:id/tags", middleware.RequireScope("assets:write"), assetHandler.UpsertTag)
+		assets.DELETE("/:id/tags/:key", middleware.RequireScope("assets:write"), assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
@@ -343,6 +347,15 @@ func RegisterAll(
 			internal := api.Group("/internal", adminAuth)
 			internal.DELETE("/assets/:id", purgeHandler.DeleteAssetHard)
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
+		}
+
+		// API key management (issue/list/revoke keys for SDK/API callers).
+		// Under admin auth; keys themselves carry scopes for least-privilege.
+		if apiKeyHandler != nil { // pragma: allowlist secret
+			keys := api.Group("/admin/api-keys", adminAuth)
+			keys.POST("", apiKeyHandler.Create)
+			keys.GET("", apiKeyHandler.List)
+			keys.DELETE("/:id", apiKeyHandler.Revoke)
 		}
 
 		// Actions (mcap → seg → action 第三层)

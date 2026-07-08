@@ -8,11 +8,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/routes"
 )
 
@@ -27,6 +29,15 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 	var pgPingFn func(context.Context) error
 	if inf.pg != nil {
 		pgPingFn = inf.pg.Ping
+	}
+
+	// Unified auth: API keys for SDK/API callers (postgres-backed).
+	var apiKeyRepo repository.APIKeyRepository
+	var apiKeyHandler *apikeyH.Handler
+	if inf.pg != nil {
+		akr := postgres.NewAPIKeyRepo(inf.pg)
+		apiKeyRepo = akr // pragma: allowlist secret
+		apiKeyHandler = apikeyH.New(akr) // pragma: allowlist secret
 	}
 
 	routes.RegisterAll(
@@ -56,6 +67,8 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.workflow,
 		core.backfill,
 		core.storage,
+		apiKeyRepo,
+		apiKeyHandler,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).
