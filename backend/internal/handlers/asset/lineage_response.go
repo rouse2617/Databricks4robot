@@ -2,10 +2,12 @@ package asset
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 )
 
 // lineageResponse is the JSON shape for GET /assets/{id}/lineage and provenance.lineage.
@@ -46,17 +48,27 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 
 	if h.pg != nil {
 		var mcapFileID, mcapURI, ingestState string
+		// mcap_files stores the object URI in `mcap_uri` (NOT `storage_uri`, which
+		// is a column on `assets`). Selecting the wrong column errored 42703 every
+		// call, so upstream was silently always empty (CYB-3227).
 		err := h.pg.QueryRow(ctx, `
-			SELECT mcap_file_id, COALESCE(storage_uri,''), COALESCE(ingest_state,'')
+			SELECT mcap_file_id, COALESCE(mcap_uri,''), COALESCE(ingest_state,'')
 			FROM mcap_files
 			WHERE mcap_file_id = (SELECT mcap_file_id FROM assets WHERE asset_id = $1)
 		`, assetID).Scan(&mcapFileID, &mcapURI, &ingestState)
-		if err == nil && mcapFileID != "" {
-			out.Upstream = gin.H{
-				"mcap_file_id": mcapFileID,
-				"mcap_uri":     mcapURI,
-				"ingest_state": ingestState,
+		switch {
+		case err == nil:
+			if mcapFileID != "" {
+				out.Upstream = gin.H{
+					"mcap_file_id": mcapFileID,
+					"mcap_uri":     mcapURI,
+					"ingest_state": ingestState,
+				}
 			}
+		case errors.Is(err, pgx.ErrNoRows):
+			// Asset has no upstream mcap (e.g. derived / grace assets) — leave empty.
+		default:
+			slog.Warn("lineage: upstream mcap query", "asset_id", assetID, "error", err)
 		}
 	}
 
