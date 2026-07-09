@@ -3439,11 +3439,39 @@ paths:
     patch:
       tags: [Assets]
       summary: Update asset
+      description: |
+        Partial update. All fields optional. `tags` and `files` use MERGE
+        semantics (provided keys are upserted; omitted keys are kept).
+        `storage_uri` / `thumb_uri` are set when provided. Emits `asset_updated`
+        (which also syncs the search index). (CYB-3232 added files/storage_uri/thumb_uri.)
       parameters:
         - in: path
           name: id
           required: true
           schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, description: "Legacy status (lifecycle_state wins if both set)" }
+                lifecycle_state: { type: string, description: "Lifecycle state" }
+                reviewer: { type: string }
+                owner: { type: string }
+                tags:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Merged into asset tags (upsert per key)"
+                files:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Merged into asset files (upsert per key), e.g. algo_input_*/annot_*/delivery_* URIs (CYB-3232)"
+                storage_uri: { type: string, description: "Set when provided (CYB-3232)" }
+                thumb_uri: { type: string, description: "Set when provided (CYB-3232)" }
+              example:
+                files: { algo_input_forward_stereo: "gs://bucket/forward_stereo/abc.mp4" }
+                storage_uri: "gs://bucket/segments/abc.mcap"
       responses:
         '200':
           description: OK

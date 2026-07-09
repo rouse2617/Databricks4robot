@@ -623,6 +623,9 @@ type UpdateInput struct {
 	Reviewer       *string
 	Owner          *string
 	Tags           map[string]string
+	Files          map[string]string // CYB-3232: merged into asset.Files (like Tags)
+	StorageURI     *string           // CYB-3232: set when non-nil
+	ThumbURI       *string           // CYB-3232: set when non-nil
 }
 
 type ListEventsInput struct {
@@ -1170,6 +1173,20 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 			a.Tags = map[string]string{}
 		}
 		a.Tags[k] = v
+	}
+	// CYB-3232: merge files (same merge semantics as tags) + optional storage/thumb
+	// pointers, giving a proper API update path instead of direct DB edits.
+	for k, v := range in.Files {
+		if a.Files == nil {
+			a.Files = map[string]string{}
+		}
+		a.Files[k] = v
+	}
+	if in.StorageURI != nil {
+		a.StorageURI = *in.StorageURI
+	}
+	if in.ThumbURI != nil {
+		a.ThumbURI = *in.ThumbURI
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {

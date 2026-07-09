@@ -809,6 +809,9 @@ func (h *Handler) Update(c *gin.Context) {
 		Reviewer       *string           `json:"reviewer"`
 		Owner          *string           `json:"owner"`
 		Tags           map[string]string `json:"tags"`
+		Files          map[string]string `json:"files"`       // CYB-3232: merge into asset files
+		StorageURI     *string           `json:"storage_uri"` // CYB-3232
+		ThumbURI       *string           `json:"thumb_uri"`   // CYB-3232
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -820,6 +823,9 @@ func (h *Handler) Update(c *gin.Context) {
 		Reviewer:       req.Reviewer,
 		Owner:          req.Owner,
 		Tags:           req.Tags,
+		Files:          req.Files,
+		StorageURI:     req.StorageURI,
+		ThumbURI:       req.ThumbURI,
 	})
 	if err != nil {
 		if !mapAssetError(c, err) {

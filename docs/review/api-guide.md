@@ -442,11 +442,18 @@ curl -X PATCH "$BASE/api/v1/assets/{asset_id}" \
   -d '{
     "reviewer": "bob",
     "lifecycle_state": "rejected",
-    "tags": {"quality": "poor"}
+    "tags": {"quality": "poor"},
+    "files": {"algo_input_forward_stereo": "gs://bucket/forward_stereo/abc.mp4"},
+    "storage_uri": "gs://bucket/segments/abc.mcap",
+    "thumb_uri": "gs://bucket/thumbs/abc.jpg"
   }'
 ```
 
 所有字段都是可选的，只更新传入的字段，不影响其他字段。
+
+- `tags` 和 `files` 为**合并语义**（传入的 key 逐个 upsert；未传的 key 保留）。要整体替换需另加开关。（CYB-3232 新增 `files`/`storage_uri`/`thumb_uri`）
+- `files` 常见 key：`raw_mcap`、`algo_input_*`、`annot_*`、`delivery_*` 等对象 URI。
+- PATCH 会发 `asset_updated` 事件，因此改动（含 files）会自动同步到搜索索引。
 
 并发安全：服务端使用乐观锁（`assets.version` CAS）。如果在你 GET 之后有其他写入提交，PATCH 会返回 `409 CONCURRENT_CONFLICT`，请重新拉取最新资产后再重试。
 
