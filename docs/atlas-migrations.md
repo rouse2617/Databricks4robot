@@ -102,3 +102,5 @@ DB_URL=... make db-migrate-apply             # 重跑最新一条
 ## Pro 套餐说明
 
 Atlas Cloud Registry / hosted drift detection 需 Team 套餐；本仓库用 Pro，仅解锁 `migrate lint --web`（报告上传 Atlas Cloud 出可分享 URL）。migrations 留在 repo 内的 `backend/migrations/`。
+
+<!-- dev deploy smoke verified: workflow migrate path now plain-apply only -->
