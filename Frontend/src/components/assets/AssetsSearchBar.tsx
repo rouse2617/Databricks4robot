@@ -49,12 +49,12 @@ export const SEARCH_FIELD_SPECS: SearchFieldSpec[] = [
 		type: "enum",
 		values: ["approved", "rejected", "superseded", "archived"],
 	},
-	{
-		key: "env",
-		label: "环境",
-		type: "enum",
-		values: ["kitchen", "outdoor", "warehouse", "office", "factory"],
-	},
+	// env is a data-driven, open-valued field (real values are Chinese scene
+	// labels like 家庭/工厂/学校, not a fixed English set), so it must NOT be a
+	// hardcoded enum — that rejected valid values. Free-form string like
+	// scene/task/batch; any current or future env value passes to the backend
+	// filter (CYB-3230).
+	{ key: "env", label: "环境", type: "string" },
 	{ key: "scene", label: "场景", type: "string" },
 	{ key: "task", label: "任务", type: "string" },
 	{ key: "batch", label: "批次", type: "string" },
