@@ -1307,7 +1307,7 @@ export default function DashboardPage() {
 	if (!pageReady) return <PageLoading />;
 
 	return (
-		<div style={{ maxWidth: 1400, paddingBottom: 8 }}>
+		<div style={{ maxWidth: 1600, margin: "0 auto", paddingBottom: 8 }}>
 			<div
 				style={{
 					marginBottom: 20,
@@ -1382,16 +1382,20 @@ export default function DashboardPage() {
 				/>
 			)}
 
-			<div>
-				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-					<Col xs={24} sm={12} lg={4} style={{ display: "flex" }}>
-						<KpiCard
-							title="资产总量"
-							value={metrics.assetTotal?.toLocaleString() ?? "—"}
-							hint="活跃资产（当前态）"
-							icon={<DatabaseOutlined />}
-						/>
-					</Col>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+					gap: 16,
+					marginBottom: 16,
+				}}
+			>
+				<KpiCard
+					title="资产总量"
+					value={metrics.assetTotal?.toLocaleString() ?? "—"}
+					hint="活跃资产（当前态）"
+					icon={<DatabaseOutlined />}
+				/>
 					<Col xs={24} sm={12} lg={4} style={{ display: "flex" }}>
 						<KpiCard
 							title="今日新增"
