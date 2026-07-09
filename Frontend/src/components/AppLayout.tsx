@@ -15,7 +15,6 @@ import {
 	SettingOutlined,
 	UnorderedListOutlined,
 	UserOutlined,
-	VideoCameraOutlined,
 } from "@ant-design/icons";
 import {
 	Avatar,
@@ -40,7 +39,6 @@ const menuItems = [
 	{ key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
 	{ type: "divider" as const },
 	{ key: "/assets", icon: <DatabaseOutlined />, label: "资产管理" },
-	{ key: "/preview", icon: <VideoCameraOutlined />, label: "视频预览" },
 	{ key: "/mcap-files", icon: <FileOutlined />, label: "MCAP 文件" },
 	{ type: "divider" as const },
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
@@ -75,7 +73,6 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/workflows")) return "/pipeline";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
-	if (pathname.startsWith("/preview")) return "/preview";
 	return "/assets";
 }
 
@@ -88,7 +85,7 @@ function isPipelinePagePath(pathname: string): boolean {
 }
 
 function isFullBleedPage(pathname: string): boolean {
-	return isPipelinePagePath(pathname) || pathname.startsWith("/preview");
+	return isPipelinePagePath(pathname);
 }
 
 function resolvePageContainerClass(pathname: string): string {
