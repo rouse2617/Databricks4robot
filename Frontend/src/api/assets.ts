@@ -57,6 +57,23 @@ export interface FoxgloveSourceResponse {
 	expires_at?: string;
 }
 
+export interface AssetMetadataResponse {
+	asset_id: string;
+	segment_locator: string;
+	lifecycle_state: string;
+	asset_metadata: Record<string, unknown> | null;
+	mcap_metadata: Record<string, unknown> | null;
+	grace_video_snapshot: Record<string, unknown> | null;
+	storage: {
+		gcs: Record<string, unknown> | null;
+		aliyun: Record<string, unknown> | null;
+	};
+	mcap_process_state: Record<string, unknown> | null;
+	collection: Record<string, unknown> | null;
+	process_info: Record<string, unknown> | null;
+	video_info: Record<string, unknown> | null;
+}
+
 function parseFilterParam(raw: string): QueryExpr | null {
 	const firstColon = raw.indexOf(":");
 	if (firstColon === -1) return null;
@@ -443,5 +460,10 @@ export const assetsApi = {
 	getProvenance: (assetId: string) =>
 		apiClient
 			.get<AssetProvenance>(`/assets/${assetId}/provenance`)
+			.then((r) => r.data),
+
+	getMetadata: (assetId: string) =>
+		apiClient
+			.get<AssetMetadataResponse>(`/assets/${assetId}/metadata`)
 			.then((r) => r.data),
 };

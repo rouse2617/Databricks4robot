@@ -1,5 +1,8 @@
-import { Card, Descriptions, Tag } from "antd";
+import { Card, Collapse, Descriptions, Spin, Tag } from "antd";
 import dayjs from "dayjs";
+import { useEffect, useState } from "react";
+import ReactJson from "react-json-view";
+import { assetsApi, type AssetMetadataResponse } from "../../api/assets";
 import type { Asset } from "../../api/types";
 import {
 	formatDurationSeconds,
@@ -13,6 +16,25 @@ interface Props {
 }
 
 export default function OverviewTab({ asset }: Props) {
+	const [metadata, setMetadata] = useState<AssetMetadataResponse | null>(null);
+	const [metadataLoading, setMetadataLoading] = useState(false);
+	const [metadataError, setMetadataError] = useState<string | null>(null);
+
+	useEffect(() => {
+		setMetadataLoading(true);
+		setMetadataError(null);
+		assetsApi
+			.getMetadata(asset.asset_id)
+			.then((data) => {
+				setMetadata(data);
+				setMetadataLoading(false);
+			})
+			.catch((err) => {
+				setMetadataError(err?.message || "加载元数据失败");
+				setMetadataLoading(false);
+			});
+	}, [asset.asset_id]);
+
 	return (
 		<Card size="small">
 			<Descriptions column={{ xs: 1, sm: 2 }} bordered size="small">
@@ -81,6 +103,34 @@ export default function OverviewTab({ asset }: Props) {
 					{formatDateTime(asset.updated_at)}
 				</Descriptions.Item>
 			</Descriptions>
+			<Collapse
+				style={{ marginTop: 16 }}
+				items={[
+					{
+						key: "metadata",
+						label: "高级 / 元数据",
+						children: (
+							<div>
+								{metadataLoading && <Spin />}
+								{metadataError && (
+									<div style={{ color: "#ff4d4f" }}>{metadataError}</div>
+								)}
+								{metadata && (
+									<ReactJson
+										src={metadata}
+										collapsed={1}
+										name={false}
+										enableClipboard={true}
+										displayDataTypes={false}
+										quotesOnKeys={false}
+										theme="rjv-default"
+									/>
+								)}
+							</div>
+						),
+					},
+				]}
+			/>
 		</Card>
 	);
 }
