@@ -1,0 +1,31 @@
+<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+  <!-- 灯笼外框 -->
+  <path d="M 60 40 L 140 40 Q 150 40 150 50 L 150 220 Q 150 230 140 230 L 60 230 Q 50 230 50 220 L 50 50 Q 50 40 60 40 Z"
+        fill="none" stroke="#1F2937" stroke-width="8" stroke-linejoin="round"/>
+
+  <!-- 灯笼上部分（黄色） -->
+  <path d="M 65 50 L 135 50 Q 142 50 142 57 L 142 130 Q 142 137 135 137 L 65 137 Q 58 137 58 130 L 58 57 Q 58 50 65 50 Z"
+        fill="#F4B740"/>
+
+  <!-- 灯笼下部分（深黄色） -->
+  <path d="M 70 140 L 130 140 Q 135 140 135 145 L 135 215 Q 135 220 130 220 L 70 220 Q 65 220 65 215 L 65 145 Q 65 140 70 140 Z"
+        fill="#D4841A"/>
+
+  <!-- 中间分隔线 -->
+  <path d="M 55 140 Q 100 145 145 140" fill="none" stroke="#1F2937" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- 火焰形状 -->
+  <g>
+    <!-- 左火焰 -->
+    <path d="M 95 65 Q 85 85 90 110 Q 95 95 100 80 Q 98 70 95 65 Z" fill="#FFFFFF" opacity="0.9"/>
+    <!-- 右火焰 -->
+    <path d="M 105 65 Q 115 85 110 110 Q 105 95 100 80 Q 102 70 105 65 Z" fill="#FFFFFF" opacity="0.9"/>
+    <!-- 火焰中心亮点 -->
+    <ellipse cx="100" cy="90" rx="8" ry="15" fill="#FFFFFF" opacity="0.7"/>
+  </g>
+
+  <!-- 吊环 -->
+  <circle cx="100" cy="25" r="8" fill="none" stroke="#1F2937" stroke-width="5"/>
+  <path d="M 100 8 Q 85 8 85 25 Q 85 40 100 40 Q 115 40 115 25 Q 115 8 100 8 Z"
+        fill="none" stroke="#1F2937" stroke-width="5" stroke-linecap="round"/>
+</svg>

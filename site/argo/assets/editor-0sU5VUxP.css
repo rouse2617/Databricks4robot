@@ -41,7 +41,7 @@
 	margin: 0;
 }
 .monaco-aria-container {
-	position: absolute !important;
+	position: absolute;
 	top: 0;
 	height: 1px;
 	width: 1px;
@@ -139,7 +139,7 @@
 }
 .monaco-scrollable-element > .scrollbar > .scra {
 	cursor: pointer;
-	font-size: 11px !important;
+	font-size: 11px;
 }
 .monaco-scrollable-element > .visible {
 	opacity: 1;
@@ -199,7 +199,7 @@
 	margin: 0;
 	padding: 0;
 	position: absolute;
-	outline: none !important;
+	outline: none;
 	resize: none;
 	border: none;
 	overflow: hidden;
@@ -263,8 +263,8 @@
 	box-sizing: border-box;
 }
 .mtkcontrol {
-	color: #fff !important;
-	background: #960000 !important;
+	color: #fff;
+	background: #960000;
 }
 .mtkoverflow {
 	background-color: var(
@@ -307,11 +307,11 @@
 	width: 100%;
 }
 .monaco-editor .mtkw {
-	color: var(--vscode-editorWhitespace-foreground) !important;
+	color: var(--vscode-editorWhitespace-foreground);
 }
 .monaco-editor .mtkz {
 	display: inline-block;
-	color: var(--vscode-editorWhitespace-foreground) !important;
+	color: var(--vscode-editorWhitespace-foreground);
 }
 .monaco-editor .lines-decorations {
 	position: absolute;
@@ -463,19 +463,19 @@
 	transition: all 80ms;
 }
 .monaco-editor .cursors-layer.cursor-block-outline-style > .cursor {
-	background: transparent !important;
+	background: transparent;
 	border-style: solid;
 	border-width: 1px;
 }
 .monaco-editor .cursors-layer.cursor-underline-style > .cursor {
 	border-bottom-width: 2px;
 	border-bottom-style: solid;
-	background: transparent !important;
+	background: transparent;
 }
 .monaco-editor .cursors-layer.cursor-underline-thin-style > .cursor {
 	border-bottom-width: 1px;
 	border-bottom-style: solid;
-	background: transparent !important;
+	background: transparent;
 }
 @keyframes monaco-cursor-smooth {
 	0%,
@@ -527,7 +527,7 @@
 }
 .monaco-editor .mwh {
 	position: absolute;
-	color: var(--vscode-editorWhitespace-foreground) !important;
+	color: var(--vscode-editorWhitespace-foreground);
 }
 .context-view {
 	position: absolute;
@@ -579,12 +579,12 @@
 	z-index: 14;
 }
 .monaco-list-row.scrolling {
-	display: none !important;
+	display: none;
 }
 .monaco-list.element-focused,
 .monaco-list.selection-single,
 .monaco-list.selection-multiple {
-	outline: 0 !important;
+	outline: 0;
 }
 .monaco-drag-image {
 	display: inline-block;
@@ -829,7 +829,7 @@
 .monaco-action-bar .action-item .action-label.separator {
 	width: 1px;
 	height: 16px;
-	margin: 5px 4px !important;
+	margin: 5px 4px;
 	cursor: default;
 	min-width: 1px;
 	padding: 0;
@@ -879,7 +879,7 @@
 	cursor: default;
 }
 .monaco-dropdown-with-primary {
-	display: flex !important;
+	display: flex;
 	flex-direction: row;
 	border-radius: 5px;
 }
@@ -915,7 +915,7 @@
 	background-size: 16px;
 }
 .monaco-dropdown-with-default {
-	display: flex !important;
+	display: flex;
 	flex-direction: row;
 	border-radius: 5px;
 }
@@ -1031,8 +1031,8 @@
 	cursor: n-resize;
 }
 .monaco-sash.disabled {
-	cursor: default !important;
-	pointer-events: none !important;
+	cursor: default;
+	pointer-events: none;
 }
 .monaco-sash.vertical {
 	cursor: ew-resize;
@@ -1107,7 +1107,7 @@
 	top: calc(50% - (var(--vscode-sash-hover-size) / 2));
 }
 .pointer-events-disabled {
-	pointer-events: none !important;
+	pointer-events: none;
 }
 .monaco-sash.debug {
 	background: #0ff;
@@ -1277,7 +1277,7 @@
 	margin-left: 0;
 	padding: 0;
 	opacity: 1;
-	background-size: 16px !important;
+	background-size: 16px;
 }
 .monaco-action-bar .checkbox-action-item {
 	display: flex;
@@ -1480,7 +1480,7 @@
 	padding-right: 6px;
 	flex-shrink: 0;
 	width: 16px;
-	display: flex !important;
+	display: flex;
 	align-items: center;
 	justify-content: center;
 	transform: translate(3px);
@@ -1514,10 +1514,10 @@
 	transition: top 0.3s;
 }
 .monaco-tree-type-filter.disabled {
-	top: -40px !important;
+	top: -40px;
 }
 .monaco-tree-type-filter-grab {
-	display: flex !important;
+	display: flex;
 	align-items: center;
 	justify-content: center;
 	cursor: grab;
@@ -1560,7 +1560,7 @@
 	.monaco-tree-sticky-row.monaco-list-row {
 	position: absolute;
 	width: 100%;
-	opacity: 1 !important;
+	opacity: 1;
 	overflow: hidden;
 	background-color: var(--vscode-sideBar-background);
 }
@@ -1568,7 +1568,7 @@
 	.monaco-scrollable-element
 	.monaco-tree-sticky-container
 	.monaco-tree-sticky-row:hover {
-	background-color: var(--vscode-list-hoverBackground) !important;
+	background-color: var(--vscode-list-hoverBackground);
 	cursor: pointer;
 }
 .monaco-list
@@ -1596,19 +1596,19 @@
 	line-height: 18px;
 }
 .monaco-text-button:focus {
-	outline-offset: 2px !important;
+	outline-offset: 2px;
 }
 .monaco-text-button:hover {
-	text-decoration: none !important;
+	text-decoration: none;
 }
 .monaco-button.disabled:focus,
 .monaco-button.disabled {
-	opacity: 0.4 !important;
+	opacity: 0.4;
 	cursor: default;
 }
 .monaco-text-button .codicon {
 	margin: 0 0.2em;
-	color: inherit !important;
+	color: inherit;
 }
 .monaco-text-button.monaco-text-button-with-short-label {
 	flex-direction: row;
@@ -1644,15 +1644,15 @@
 	cursor: default;
 }
 .monaco-button-dropdown > .monaco-button:focus {
-	outline-offset: -1px !important;
+	outline-offset: -1px;
 }
 .monaco-button-dropdown.disabled > .monaco-button.disabled,
 .monaco-button-dropdown.disabled > .monaco-button.disabled:focus,
 .monaco-button-dropdown.disabled > .monaco-button-dropdown-separator {
-	opacity: 0.4 !important;
+	opacity: 0.4;
 }
 .monaco-button-dropdown > .monaco-button.monaco-text-button {
-	border-right-width: 0 !important;
+	border-right-width: 0;
 }
 .monaco-button-dropdown .monaco-button-dropdown-separator {
 	padding: 4px 0;
@@ -1664,7 +1664,7 @@
 }
 .monaco-button-dropdown > .monaco-button.monaco-dropdown-button {
 	border: 1px solid var(--vscode-button-border, transparent);
-	border-left-width: 0 !important;
+	border-left-width: 0;
 	border-radius: 0 2px 2px 0;
 	display: flex;
 	align-items: center;
@@ -1692,7 +1692,7 @@
 .monaco-description-button .monaco-button-label > .codicon,
 .monaco-description-button .monaco-button-description > .codicon {
 	margin: 0 0.2em;
-	color: inherit !important;
+	color: inherit;
 }
 .monaco-button.default-colors,
 .monaco-button-dropdown.default-colors > .monaco-button {
@@ -2079,7 +2079,7 @@
 	padding-right: 6px;
 	width: 16px;
 	height: 22px;
-	line-height: inherit !important;
+	line-height: inherit;
 	display: inline-block;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
@@ -2175,7 +2175,7 @@
 }
 .monaco-list:focus .selected .monaco-icon-label,
 .monaco-list:focus .selected .monaco-icon-label:after {
-	color: inherit !important;
+	color: inherit;
 }
 .monaco-list-row.focused.selected .label-description,
 .monaco-list-row.selected .label-description {
@@ -2235,17 +2235,17 @@
 .monaco-editor.draggingUnchangedRegion.canMoveTop:not(.canMoveBottom) *,
 .monaco-editor .diff-hidden-lines .top.canMoveTop:not(.canMoveBottom),
 .monaco-editor .diff-hidden-lines .bottom.canMoveTop:not(.canMoveBottom) {
-	cursor: n-resize !important;
+	cursor: n-resize;
 }
 .monaco-editor.draggingUnchangedRegion:not(.canMoveTop).canMoveBottom *,
 .monaco-editor .diff-hidden-lines .top:not(.canMoveTop).canMoveBottom,
 .monaco-editor .diff-hidden-lines .bottom:not(.canMoveTop).canMoveBottom {
-	cursor: s-resize !important;
+	cursor: s-resize;
 }
 .monaco-editor.draggingUnchangedRegion.canMoveTop.canMoveBottom *,
 .monaco-editor .diff-hidden-lines .top.canMoveTop.canMoveBottom,
 .monaco-editor .diff-hidden-lines .bottom.canMoveTop.canMoveBottom {
-	cursor: ns-resize !important;
+	cursor: ns-resize;
 }
 .monaco-editor .diff-hidden-lines .top {
 	transform: translateY(4px);
@@ -2280,7 +2280,7 @@
 }
 .monaco-editor .diff-hidden-lines .center a:hover .codicon {
 	cursor: pointer;
-	color: var(--vscode-editorLink-activeForeground) !important;
+	color: var(--vscode-editorLink-activeForeground);
 }
 .monaco-editor .diff-hidden-lines div.breadcrumb-item {
 	cursor: pointer;
@@ -2374,9 +2374,9 @@
 .monaco-diff-editor .insert-sign,
 .monaco-editor .delete-sign,
 .monaco-diff-editor .delete-sign {
-	font-size: 11px !important;
-	opacity: 0.7 !important;
-	display: flex !important;
+	font-size: 11px;
+	opacity: 0.7;
+	display: flex;
 	align-items: center;
 }
 .monaco-editor.hc-black .insert-sign,
@@ -2529,7 +2529,7 @@
 	vertical-align: middle;
 }
 .monaco-diff-editor .diff-review-spacer > .codicon {
-	font-size: 9px !important;
+	font-size: 9px;
 }
 .monaco-diff-editor .diff-review-actions {
 	display: inline-block;

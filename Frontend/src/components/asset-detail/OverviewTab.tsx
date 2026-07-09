@@ -2,7 +2,7 @@ import { Card, Collapse, Descriptions, Spin, Tag } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import ReactJson from "react-json-view";
-import { assetsApi, type AssetMetadataResponse } from "../../api/assets";
+import { type AssetMetadataResponse, assetsApi } from "../../api/assets";
 import type { Asset } from "../../api/types";
 import {
 	formatDurationSeconds,

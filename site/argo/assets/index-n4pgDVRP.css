@@ -25,12 +25,12 @@ i {
 	line-height: 1;
 }
 [data-icon]:before {
-	font-family: argo-icon !important;
+	font-family: argo-icon;
 	content: attr(data-icon);
-	font-style: normal !important;
-	font-weight: 400 !important;
-	font-variant: normal !important;
-	text-transform: none !important;
+	font-style: normal;
+	font-weight: 400;
+	font-variant: normal;
+	text-transform: none;
 	speak: none;
 	line-height: 1;
 	-webkit-font-smoothing: antialiased;
@@ -38,11 +38,11 @@ i {
 }
 [class^="argo-icon-"]:before,
 [class*=" argo-icon-"]:before {
-	font-family: argo-icon !important;
-	font-style: normal !important;
-	font-weight: 400 !important;
-	font-variant: normal !important;
-	text-transform: none !important;
+	font-family: argo-icon;
+	font-style: normal;
+	font-weight: 400;
+	font-variant: normal;
+	text-transform: none;
 	speak: none;
 	line-height: 1;
 	-webkit-font-smoothing: antialiased;
@@ -8466,7 +8466,7 @@ select {
 .mqa-display img,
 .mqa-display embed,
 .mqa-display object {
-	max-width: none !important;
+	max-width: none;
 }
 [data-whatinput="mouse"] button {
 	outline: 0;
@@ -8494,10 +8494,10 @@ textarea {
 	font-family: inherit;
 }
 .is-visible {
-	display: block !important;
+	display: block;
 }
 .is-hidden {
-	display: none !important;
+	display: none;
 }
 .align-left {
 	justify-content: flex-start;
@@ -10370,38 +10370,38 @@ code {
 	}
 }
 .show-for-print {
-	display: none !important;
+	display: none;
 }
 @media print {
 	* {
-		background: transparent !important;
-		color: #000 !important;
+		background: transparent;
+		color: #000;
 		-webkit-print-color-adjust: economy;
 		print-color-adjust: economy;
-		box-shadow: none !important;
-		text-shadow: none !important;
+		box-shadow: none;
+		text-shadow: none;
 	}
 	.show-for-print {
-		display: block !important;
+		display: block;
 	}
 	.hide-for-print {
-		display: none !important;
+		display: none;
 	}
 	table.show-for-print {
-		display: table !important;
+		display: table;
 	}
 	thead.show-for-print {
-		display: table-header-group !important;
+		display: table-header-group;
 	}
 	tbody.show-for-print {
-		display: table-row-group !important;
+		display: table-row-group;
 	}
 	tr.show-for-print {
-		display: table-row !important;
+		display: table-row;
 	}
 	td.show-for-print,
 	th.show-for-print {
-		display: table-cell !important;
+		display: table-cell;
 	}
 	a,
 	a:visited {
@@ -10431,7 +10431,7 @@ code {
 		page-break-inside: avoid;
 	}
 	img {
-		max-width: 100% !important;
+		max-width: 100%;
 	}
 	@page {
 		margin: 0.5cm;
@@ -10451,7 +10451,7 @@ code {
 	}
 }
 .hide {
-	display: none !important;
+	display: none;
 }
 .invisible {
 	visibility: hidden;
@@ -10461,164 +10461,164 @@ code {
 }
 @media print, screen and (max-width: 39.99875em) {
 	.hide-for-small-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 0em), screen and (min-width: 40em) {
 	.show-for-small-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media print, screen and (min-width: 40em) {
 	.hide-for-medium {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 39.99875em) {
 	.show-for-medium {
-		display: none !important;
+		display: none;
 	}
 }
 @media print, screen and (min-width: 40em) and (max-width: 63.99875em) {
 	.hide-for-medium-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 39.99875em), screen and (min-width: 64em) {
 	.show-for-medium-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media print, screen and (min-width: 64em) {
 	.hide-for-large {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 63.99875em) {
 	.show-for-large {
-		display: none !important;
+		display: none;
 	}
 }
 @media print, screen and (min-width: 64em) and (max-width: 74.99875em) {
 	.hide-for-large-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 63.99875em), screen and (min-width: 75em) {
 	.show-for-large-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 75em) {
 	.hide-for-xlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 74.99875em) {
 	.show-for-xlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 75em) and (max-width: 89.99875em) {
 	.hide-for-xlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 74.99875em), screen and (min-width: 90em) {
 	.show-for-xlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 90em) {
 	.hide-for-xxlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 89.99875em) {
 	.show-for-xxlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 90em) and (max-width: 113.74875em) {
 	.hide-for-xxlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 89.99875em), screen and (min-width: 113.75em) {
 	.show-for-xxlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 113.75em) {
 	.hide-for-xxxlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 113.74875em) {
 	.show-for-xxxlarge {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (min-width: 113.75em) {
 	.hide-for-xxxlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (max-width: 113.74875em) {
 	.show-for-xxxlarge-only {
-		display: none !important;
+		display: none;
 	}
 }
 .show-for-sr,
 .show-on-focus {
-	position: absolute !important;
-	width: 1px !important;
-	height: 1px !important;
-	padding: 0 !important;
-	overflow: hidden !important;
-	clip: rect(0, 0, 0, 0) !important;
-	white-space: nowrap !important;
-	border: 0 !important;
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }
 .show-on-focus:active,
 .show-on-focus:focus {
-	position: static !important;
-	width: auto !important;
-	height: auto !important;
-	overflow: visible !important;
-	clip: auto !important;
-	white-space: normal !important;
+	position: static;
+	width: auto;
+	height: auto;
+	overflow: visible;
+	clip: auto;
+	white-space: normal;
 }
 .show-for-landscape,
 .hide-for-portrait {
-	display: block !important;
+	display: block;
 }
 @media screen and (orientation: landscape) {
 	.show-for-landscape,
 	.hide-for-portrait {
-		display: block !important;
+		display: block;
 	}
 }
 @media screen and (orientation: portrait) {
 	.show-for-landscape,
 	.hide-for-portrait {
-		display: none !important;
+		display: none;
 	}
 }
 .hide-for-landscape,
 .show-for-portrait {
-	display: none !important;
+	display: none;
 }
 @media screen and (orientation: landscape) {
 	.hide-for-landscape,
 	.show-for-portrait {
-		display: none !important;
+		display: none;
 	}
 }
 @media screen and (orientation: portrait) {
 	.hide-for-landscape,
 	.show-for-portrait {
-		display: block !important;
+		display: block;
 	}
 }
 .show-for-dark-mode {
@@ -10629,10 +10629,10 @@ code {
 }
 @media screen and (prefers-color-scheme: dark) {
 	.show-for-dark-mode {
-		display: block !important;
+		display: block;
 	}
 	.hide-for-dark-mode {
-		display: none !important;
+		display: none;
 	}
 }
 .show-for-ie {
@@ -10640,10 +10640,10 @@ code {
 }
 @media all and (-ms-high-contrast: none), (-ms-high-contrast: active) {
 	.show-for-ie {
-		display: block !important;
+		display: block;
 	}
 	.hide-for-ie {
-		display: none !important;
+		display: none;
 	}
 }
 .show-for-sticky {
@@ -10668,7 +10668,7 @@ body button,
 body a,
 body span,
 body input {
-	outline: none !important;
+	outline: none;
 }
 a,
 a:hover,
@@ -10726,7 +10726,7 @@ h2 {
 .argo-button--base:not(.disabled):not([disabled]):focus {
 	color: #f8fbfb;
 	background-color: #8fa4b1;
-	border: 1px solid #1fbdd0 !important;
+	border: 1px solid #1fbdd0;
 }
 .argo-button--base.disabled,
 .argo-button--base[disabled] {
@@ -10841,10 +10841,10 @@ h2 {
 	border-radius: 50%;
 }
 .argo-button--radius:hover {
-	background: #40d1e2 !important;
+	background: #40d1e2;
 }
 .argo-button--radius:focus {
-	background: #40d1e2 !important;
+	background: #40d1e2;
 }
 .argo-button--radius:not(.disabled):hover {
 	color: #fff;
@@ -10856,7 +10856,7 @@ h2 {
 	vertical-align: middle;
 }
 .argo-button--radius-2 {
-	min-width: 40px !important;
+	min-width: 40px;
 	width: 40px;
 	height: 40px;
 	border-radius: 50%;
@@ -10877,11 +10877,11 @@ h2 {
 }
 .argo-button--special:not(.disabled):hover {
 	color: #fff;
-	background: #00a2b3 !important;
+	background: #00a2b3;
 }
 .argo-button--special:not(.disabled):focus {
 	color: #fff;
-	background: #00a2b3 !important;
+	background: #00a2b3;
 }
 .argo-button[axButtonWave] {
 	overflow: hidden;
@@ -11294,7 +11294,7 @@ h2 {
 	display: block;
 }
 .argo-checkbox input:focus {
-	outline: 2px solid #1fbdd0 !important;
+	outline: 2px solid #1fbdd0;
 }
 .argo-checkbox input:disabled + span {
 	background-color: #f8fbfb;
@@ -11395,7 +11395,7 @@ h2 {
 	border: none;
 	border-bottom: 2px solid #ccc;
 	border-radius: 0;
-	box-shadow: none !important;
+	box-shadow: none;
 	background-color: inherit;
 	-webkit-appearance: none;
 }
@@ -11459,7 +11459,7 @@ h2 {
 	opacity: 0;
 }
 .tippy-iOS {
-	cursor: pointer !important;
+	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
 }
 .tippy-popper {
@@ -11613,8 +11613,8 @@ h2 {
 	color: #f07548;
 }
 .action-button--transparent > .action-button__background {
-	background: none !important;
-	border: none !important;
+	background: none;
+	border: none;
 }
 .action-button--dark > .action-button__background {
 	border: 1px solid #30303d;
@@ -12034,7 +12034,7 @@ h2 {
 }
 .argo-dropdown__content {
 	position: absolute;
-	left: 80px !important;
+	left: 80px;
 	z-index: 21;
 	padding: 1rem;
 	background-color: #fff;
@@ -12074,7 +12074,7 @@ h2 {
 	font-size: 14px;
 	color: #6d7f8b;
 	cursor: pointer;
-	border-bottom: none !important;
+	border-bottom: none;
 }
 .argo-dropdown__content.is-menu ul li i {
 	margin-right: 2px;
@@ -14057,17 +14057,17 @@ svg.react-flow__connectionline {
 	border: 1px solid var(--border-subtle);
 }
 .node-handle {
-	width: 8px !important;
-	height: 8px !important;
-	background: var(--void-3) !important;
-	border: 2px solid var(--border-strong) !important;
-	transition: all var(--transition-fast) !important;
-	border-radius: 50% !important;
+	width: 8px;
+	height: 8px;
+	background: var(--void-3);
+	border: 2px solid var(--border-strong);
+	transition: all var(--transition-fast);
+	border-radius: 50%;
 }
 .node-handle:hover {
-	border-color: var(--accent) !important;
-	background: var(--accent) !important;
-	box-shadow: 0 0 8px var(--accent-glow-strong) !important;
+	border-color: var(--accent);
+	background: var(--accent);
+	box-shadow: 0 0 8px var(--accent-glow-strong);
 }
 .config-panel {
 	width: 280px;
@@ -14670,63 +14670,63 @@ svg.react-flow__connectionline {
 	opacity: 0.4;
 }
 .react-flow__background {
-	opacity: 0.35 !important;
+	opacity: 0.35;
 }
 .react-flow__minimap {
-	background: var(--void-2) !important;
-	border: 1px solid var(--border-default) !important;
-	border-radius: var(--radius-sm) !important;
+	background: var(--void-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
 	overflow: hidden;
 }
 .react-flow__controls {
-	background: var(--void-2) !important;
-	border: 1px solid var(--border-default) !important;
-	border-radius: var(--radius-sm) !important;
+	background: var(--void-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
 	overflow: hidden;
-	box-shadow: var(--shadow-md) !important;
+	box-shadow: var(--shadow-md);
 }
 .react-flow__controls-button {
-	background: var(--void-2) !important;
-	border-bottom: 1px solid var(--border-subtle) !important;
-	fill: var(--text-secondary) !important;
-	transition: all var(--transition-fast) !important;
-	width: 28px !important;
-	height: 28px !important;
+	background: var(--void-2);
+	border-bottom: 1px solid var(--border-subtle);
+	fill: var(--text-secondary);
+	transition: all var(--transition-fast);
+	width: 28px;
+	height: 28px;
 }
 .react-flow__controls-button:hover {
-	background: var(--void-3) !important;
-	fill: var(--accent) !important;
+	background: var(--void-3);
+	fill: var(--accent);
 }
 .react-flow__edge-path {
-	stroke: var(--border-strong) !important;
-	stroke-width: 1.5 !important;
-	transition: stroke var(--transition-fast) !important;
+	stroke: var(--border-strong);
+	stroke-width: 1.5;
+	transition: stroke var(--transition-fast);
 }
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:focus .react-flow__edge-path {
-	stroke: var(--accent) !important;
-	stroke-width: 2 !important;
+	stroke: var(--accent);
+	stroke-width: 2;
 }
 .react-flow__edge:hover .react-flow__edge-path {
-	stroke: var(--accent-dim) !important;
+	stroke: var(--accent-dim);
 }
 .react-flow__handle {
-	width: 8px !important;
-	height: 8px !important;
-	background: var(--void-3) !important;
-	border: 2px solid var(--border-strong) !important;
-	border-radius: 50% !important;
-	transition: all var(--transition-fast) !important;
+	width: 8px;
+	height: 8px;
+	background: var(--void-3);
+	border: 2px solid var(--border-strong);
+	border-radius: 50%;
+	transition: all var(--transition-fast);
 }
 .react-flow__handle:hover {
-	border-color: var(--accent) !important;
-	background: var(--accent) !important;
-	box-shadow: 0 0 8px var(--accent-glow-strong) !important;
+	border-color: var(--accent);
+	background: var(--accent);
+	box-shadow: 0 0 8px var(--accent-glow-strong);
 }
 .react-flow__attribution {
-	background: transparent !important;
-	font-size: 9px !important;
-	opacity: 0.3 !important;
+	background: transparent;
+	font-size: 9px;
+	opacity: 0.3;
 }
 .status-badge {
 	font-size: small;
@@ -14819,7 +14819,7 @@ svg.react-flow__connectionline {
 	line-height: 24px;
 	display: inline-block;
 	vertical-align: middle;
-	overflow-x: auto !important;
+	overflow-x: auto;
 }
 .workflow-node-info__artifact-details span {
 	padding-right: 0.5em;
@@ -14843,7 +14843,7 @@ svg.react-flow__connectionline {
 	position: absolute;
 	left: 16px;
 	top: 8px;
-	font-size: 2em !important;
+	font-size: 2em;
 	z-index: 10;
 	height: 16px;
 	width: 16px;
@@ -16053,7 +16053,7 @@ svg.react-flow__connectionline {
 	height: 100%;
 }
 .workflows-list__timestamp {
-	white-space: break-spaces !important;
+	white-space: break-spaces;
 	line-height: normal;
 	align-items: center;
 	display: flex;
@@ -16187,7 +16187,7 @@ svg.react-flow__connectionline {
 	padding-left: 30px;
 }
 .workflows-list__table-row {
-	margin-left: -30px !important;
+	margin-left: -30px;
 }
 .workflows-list__search {
 	position: relative;
