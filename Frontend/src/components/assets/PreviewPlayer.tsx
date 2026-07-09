@@ -39,9 +39,11 @@ export default function PreviewPlayer({
 	const [errorState, setErrorState] = useState<{
 		url: string;
 		detail: string;
+		notFound: boolean;
 	} | null>(null);
-	const errorDetail =
-		errorState && url && errorState.url === url ? errorState.detail : null;
+	const activeError =
+		errorState && url && errorState.url === url ? errorState : null;
+	const errorDetail = activeError?.detail ?? null;
 	const userFacingError = errorDetail
 		? buildUserFacingError(errorDetail)
 		: null;
@@ -51,6 +53,19 @@ export default function PreviewPlayer({
 	}
 
 	if (url) {
+		// A 404 means the preview video simply hasn't been generated yet (e.g. a
+		// raw_mcap with no transcode) — a normal, non-alarming state — so show a
+		// neutral "暂无预览" instead of the "无法预览此资产" warning + tech details.
+		if (activeError?.notFound) {
+			return (
+				<Alert
+					type="info"
+					showIcon
+					message="暂无预览"
+					description="该资产的预览视频尚未生成。"
+				/>
+			);
+		}
 		if (errorDetail) {
 			return (
 				<Alert
@@ -87,9 +102,11 @@ export default function PreviewPlayer({
 					onError={async () => {
 						let detail =
 							"视频流加载失败（浏览器返回 MEDIA_ELEMENT_ERROR）。常见原因：MCAP 来自预览服务无访问权限的存储桶，或不是可解码的视频载荷。";
+						let notFound = false;
 						try {
 							const resp = await fetch(url, { credentials: "include" });
 							if (!resp.ok) {
+								notFound = resp.status === 404;
 								const body = await resp.text();
 								try {
 									const parsed = JSON.parse(body) as {
@@ -106,7 +123,7 @@ export default function PreviewPlayer({
 						} catch {
 							// fall back to the generic message above
 						}
-						setErrorState({ url, detail });
+						setErrorState({ url, detail, notFound });
 					}}
 				/>
 			</div>
