@@ -3869,6 +3869,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 	uc.refreshRunSummariesForList(ctx, items)
 	normalizeActiveRunRuntimeFields(items)
 	annotateRunDiagnostics(items)
+	uc.attachVideoDurations(ctx, items)
 	return items, len(items), nil
 }
 
