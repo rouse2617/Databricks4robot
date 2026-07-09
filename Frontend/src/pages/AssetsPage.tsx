@@ -39,7 +39,12 @@ const CreateDeliveryModal = lazy(
 	() => import("../components/deliveries/CreateDeliveryModal"),
 );
 
-import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
+import { queryApi } from "../api/query";
+import {
+	buildSelectAllIdsQueryRequest,
+	SELECT_ALL_MAX,
+	useAssetsDiscoveryReducer,
+} from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsHotkeys } from "../hooks/assets/useAssetsHotkeys";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
 import type { ViewMode } from "../lib/assets/assetsDiscoveryTypes";
@@ -467,9 +472,30 @@ export default function AssetsPage() {
 						onBatchTag={() => setBatchTagModalOpen(true)}
 						onBatchDeleteTag={() => setBatchDeleteTagModalOpen(true)}
 						onExportIds={() => setExportModalOpen(true)}
-						onSelectAllFiltered={() =>
-							dispatch({ type: "SELECT_ALL_FILTERED" })
-						}
+						onSelectAllFiltered={async () => {
+							// CYB-3231: resolve the matching asset_ids (capped) and select
+							// them explicitly, so the count and every bulk action reflect the
+							// full filtered set — not just the rows checked by hand.
+							try {
+								const data = await queryApi.run(
+									buildSelectAllIdsQueryRequest(state.queryState, SELECT_ALL_MAX),
+								);
+								const ids = (data.items ?? [])
+									.map((a) => a.asset_id)
+									.filter((id): id is string => Boolean(id));
+								dispatch({ type: "SET_SELECTED_IDS", payload: { ids } });
+								const total = state.resultsState.total ?? 0;
+								if (total > ids.length) {
+									void msg.warning(
+										`已选择前 ${ids.length} 条（上限 ${SELECT_ALL_MAX}），筛选结果共 ${total} 条，其余未选`,
+									);
+								} else {
+									void msg.success(`已选择全部 ${ids.length} 条`);
+								}
+							} catch {
+								void msg.error("全选失败，请重试");
+							}
+						}}
 						onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
 						disabledRunPipeline={!canRunPipelineForSelection}
 					/>

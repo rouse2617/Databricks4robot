@@ -426,6 +426,33 @@ describe("SELECT_ALL_FILTERED", () => {
 	});
 });
 
+// CYB-3231: "select all filtered" resolves ids then dispatches SET_SELECTED_IDS.
+describe("SET_SELECTED_IDS", () => {
+	it("replaces selectedIds with the given ids (explicit mode)", () => {
+		const result = assetsDiscoveryReducer(freshState(), {
+			type: "SET_SELECTED_IDS",
+			payload: { ids: ["a", "b", "c"] },
+		});
+		expect(Array.from(result.selectionState.selectedIds).sort()).toEqual([
+			"a",
+			"b",
+			"c",
+		]);
+		expect(result.selectionState.mode).toBe("explicit_rows");
+	});
+
+	it("empty ids clears selection (mode none)", () => {
+		const s = freshState();
+		s.selectionState = { selectedIds: new Set(["x"]), mode: "explicit_rows" };
+		const result = assetsDiscoveryReducer(s, {
+			type: "SET_SELECTED_IDS",
+			payload: { ids: [] },
+		});
+		expect(result.selectionState.selectedIds.size).toBe(0);
+		expect(result.selectionState.mode).toBe("none");
+	});
+});
+
 describe("CLEAR_SELECTION", () => {
 	it("resets selectedIds and mode", () => {
 		const s = freshState();

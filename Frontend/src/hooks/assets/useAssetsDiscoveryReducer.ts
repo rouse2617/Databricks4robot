@@ -138,6 +138,32 @@ function buildListQueryRequest(
 	};
 }
 
+/**
+ * CYB-3231: cap for "select all filtered results" — we resolve matching asset_ids
+ * client-side, so bound how many we pull to avoid unbounded id lists.
+ */
+export const SELECT_ALL_MAX = 1000;
+
+/**
+ * Build a query that returns just the asset_ids matching the current filters
+ * (same where/sort as the list), one page up to `limit`. Used to populate the
+ * selection for "select all filtered results".
+ */
+export function buildSelectAllIdsQueryRequest(
+	queryState: AssetsDiscoveryState["queryState"],
+	limit: number,
+): QueryRequest {
+	return {
+		schema_version: "v1",
+		mode: queryState.searchMode,
+		scope: { resource: "assets" },
+		select: { fields: ["asset_id"] },
+		where: buildStructuredQueryWhereExpr(queryState),
+		sort: buildStructuredQuerySort(queryState.sort),
+		page: { page: 1, page_size: limit, offset: 0, limit },
+	};
+}
+
 type FacetFilterSlice = Pick<
 	AssetsDiscoveryState["queryState"],
 	"searchMode" | "queryText" | "activeFilters" | "sort"

@@ -120,9 +120,12 @@ export type AssetsDiscoveryAction =
 	| { type: "VALIDATION_ERROR"; payload: { error: string } }
 	| { type: "TOGGLE_INSPECTOR"; payload: { open: boolean } }
 
-	// ── Selection (4) ──
+	// ── Selection (5) ──
 	| { type: "TOGGLE_ROW_SELECTION"; payload: { id: string } }
 	| { type: "SELECT_ALL_FILTERED" }
+	// CYB-3231: replace the selection with an explicit id set (used by
+	// "select all filtered results" after fetching the matching asset_ids).
+	| { type: "SET_SELECTED_IDS"; payload: { ids: string[] } }
 	| { type: "CLEAR_SELECTION" }
 	| { type: "SET_SELECTION_MODE"; payload: { mode: SelectionMode } }
 
