@@ -238,6 +238,47 @@ func TestUpdate_WritesTagProjectionAndLifecycleEvents(t *testing.T) {
 	}
 }
 
+// CYB-3232: PATCH files must merge into FilesJSON (the field the write path
+// serializes), preserving existing file keys and setting storage_uri/thumb_uri.
+func TestUpdate_MergesFilesAndPointers(t *testing.T) {
+	repo := newMockAssetRepo()
+	eventRepo := newMockAssetEventRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, newMockAssetTagRepo(), nil, eventRepo, nil, nil)
+
+	repo.assets["a1"] = &models.Asset{
+		AssetID:    "a1",
+		McapFileID: "mcap-files-001",
+		Status:     models.AssetStatusApproved,
+		Files:      map[string]string{"raw_mcap": "mcap-files-001"},
+		FilesJSON:  map[string]interface{}{"raw_mcap": "mcap-files-001"},
+	}
+
+	_, err := uc.Update(context.Background(), "a1", UpdateInput{
+		Files:      map[string]string{"algo_input_forward_stereo": "gs://b/x.mp4"},
+		StorageURI: ptrString("gs://b/seg.mcap"),
+		ThumbURI:   ptrString("gs://b/t.jpg"),
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	got := repo.assets["a1"]
+	// FilesJSON is what bindAssetJSONAndRefs serializes — the new key must be there,
+	// and the pre-existing key must be preserved (merge semantics).
+	if got.FilesJSON["algo_input_forward_stereo"] != "gs://b/x.mp4" {
+		t.Fatalf("FilesJSON missing merged key: %#v", got.FilesJSON)
+	}
+	if got.FilesJSON["raw_mcap"] != "mcap-files-001" {
+		t.Fatalf("FilesJSON dropped existing key: %#v", got.FilesJSON)
+	}
+	if got.StorageURI != "gs://b/seg.mcap" {
+		t.Fatalf("StorageURI = %q, want gs://b/seg.mcap", got.StorageURI)
+	}
+	if got.ThumbURI != "gs://b/t.jpg" {
+		t.Fatalf("ThumbURI = %q, want gs://b/t.jpg", got.ThumbURI)
+	}
+}
+
 func TestUpdate_WithLifecycleStateOnly_AppendsLifecycleChangedEvent(t *testing.T) {
 	repo := newMockAssetRepo()
 	eventRepo := newMockAssetEventRepo()

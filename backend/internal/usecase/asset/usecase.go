@@ -1176,11 +1176,18 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 	}
 	// CYB-3232: merge files (same merge semantics as tags) + optional storage/thumb
 	// pointers, giving a proper API update path instead of direct DB edits.
+	// The write path (bindAssetJSONAndRefs) serializes FilesJSON when it is
+	// non-nil (it is, after repo.Get), so we must merge into FilesJSON — updating
+	// only the derived Files map would be dropped on write. Keep both in sync.
 	for k, v := range in.Files {
 		if a.Files == nil {
 			a.Files = map[string]string{}
 		}
 		a.Files[k] = v
+		if a.FilesJSON == nil {
+			a.FilesJSON = map[string]interface{}{}
+		}
+		a.FilesJSON[k] = v
 	}
 	if in.StorageURI != nil {
 		a.StorageURI = *in.StorageURI
