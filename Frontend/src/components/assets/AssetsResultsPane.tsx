@@ -456,7 +456,7 @@ export default function AssetsResultsPane({
 				dataSource={items}
 				loading={loading}
 				size="small"
-				className={viewMode === "compact" ? "assets-table--compact" : undefined}
+				className={`assets-table${viewMode === "compact" ? " assets-table--compact" : ""}`}
 				scroll={{ x: 900 }}
 				rowClassName={(record, index) => {
 					if (record.asset_id === activePreviewId)

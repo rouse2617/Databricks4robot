@@ -591,6 +591,8 @@ export default function AssetQuickPreviewPane({
 				minHeight: 400,
 				maxHeight: "calc(100vh - 140px)",
 				overflow: "hidden",
+				borderLeft: "2px solid #1890ff",
+				boxShadow: "-4px 0 12px rgba(24, 144, 255, 0.12)",
 			}}
 			title={
 				<div

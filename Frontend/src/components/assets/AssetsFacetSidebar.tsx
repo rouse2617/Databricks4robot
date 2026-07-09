@@ -11,6 +11,7 @@ import {
 	Input,
 	InputNumber,
 	Switch,
+	Tag,
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -66,6 +67,7 @@ export const QUALITY_OPTIONS = [
 ];
 
 export const GROUP_KEYS = [
+	"quick",
 	"basic",
 	"capture",
 	"algorithm",
@@ -207,6 +209,67 @@ function CheckboxFacet({
 					</Checkbox>
 				))}
 			</Checkbox.Group>
+		</div>
+	);
+}
+
+function CheckableTagFacet({
+	label,
+	field,
+	options,
+	activeFilters,
+	onToggleFacet,
+	counts,
+	span = "full",
+}: {
+	label: string;
+	field: string;
+	options: string[];
+	activeFilters: FilterChip[];
+	onToggleFacet: (field: string, value: string) => void;
+	counts?: Record<string, number>;
+	span?: "full" | "half";
+}) {
+	const checked = getCheckedValues(activeFilters, field);
+	return (
+		<div style={facetFieldStyle(false, span)}>
+			<Text
+				type="secondary"
+				style={{ fontSize: 12, display: "block", marginBottom: 6 }}
+			>
+				{label}
+			</Text>
+			<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+				{options.map((opt) => {
+					const count = counts?.[opt];
+					const isChecked = checked.includes(opt);
+					const label = count !== undefined ? `${opt} (${count})` : opt;
+					return (
+						<Tag.CheckableTag
+							key={opt}
+							checked={isChecked}
+							onChange={() => onToggleFacet(field, opt)}
+							style={{
+								cursor: "pointer",
+								borderRadius: 16,
+								paddingInline: 10,
+								height: 28,
+								display: "flex",
+								alignItems: "center",
+								fontSize: 12,
+								lineHeight: "28px",
+								border: isChecked
+									? "1px solid #1890ff"
+									: "1px solid #d9d9d9",
+								background: isChecked ? "#e6f7ff" : "#fff",
+								color: isChecked ? "#1890ff" : "rgba(0,0,0,0.65)",
+							}}
+						>
+							{label}
+						</Tag.CheckableTag>
+					);
+				})}
+			</div>
 		</div>
 	);
 }
@@ -460,6 +523,7 @@ const GROUP_LABELS: Record<string, string> = {
 	algorithm: "算法",
 	delivery: "交付",
 	tags: "标签",
+	quick: "快速筛选",
 };
 
 const GROUP_FIELDS: Record<string, string[]> = {
@@ -477,7 +541,11 @@ const GROUP_FIELDS: Record<string, string[]> = {
 	algorithm: ["algo_status"],
 	delivery: ["has:delivery", "delivery_count"],
 	tags: ["tags_flat.priority", "tags_flat.quality", "tags_flat.scene"],
+	quick: ["asset_type", "algo_status"],
 };
+
+// Quick filter groups that should always be visible in horizontal layout
+const QUICK_FILTER_GROUPS = ["quick"];
 
 // ─── Main Component ───
 
@@ -512,6 +580,33 @@ export default function AssetsFacetSidebar({
 	}
 
 	const items = [
+		{
+			key: "quick",
+			label: GROUP_LABELS.quick,
+			children: (
+				<>
+					<CheckboxFacet
+						compact={compact}
+						label="资产类型"
+						field="asset_type"
+						options={ASSET_TYPE_OPTIONS}
+						activeFilters={activeFilters}
+						onToggleFacet={onToggleFacet}
+						counts={fieldCounts.asset_type}
+						span="half"
+					/>
+					<CheckableTagFacet
+						label="算法状态"
+						field="algo_status"
+						options={ALGO_STATUS_OPTIONS}
+						activeFilters={activeFilters}
+						onToggleFacet={onToggleFacet}
+						counts={fieldCounts.algo_status}
+						span="half"
+					/>
+				</>
+			),
+		},
 		{
 			key: "basic",
 			label: GROUP_LABELS.basic,
@@ -560,15 +655,6 @@ export default function AssetsFacetSidebar({
 			label: GROUP_LABELS.capture,
 			children: (
 				<>
-					<CheckboxFacet
-						compact={compact}
-						label="资产类型"
-						field="asset_type"
-						options={ASSET_TYPE_OPTIONS}
-						activeFilters={activeFilters}
-						onToggleFacet={onToggleFacet}
-						counts={fieldCounts.asset_type}
-					/>
 					{fieldCounts.env && Object.keys(fieldCounts.env).length > 0 && (
 						<CheckboxFacet
 							compact={compact}
@@ -641,12 +727,13 @@ export default function AssetsFacetSidebar({
 			key: "algorithm",
 			label: GROUP_LABELS.algorithm,
 			children: (
-				<CheckboxFacet
+				<CheckableTagFacet
 					label="算法状态"
 					field="algo_status"
 					options={ALGO_STATUS_OPTIONS}
 					activeFilters={activeFilters}
 					onToggleFacet={onToggleFacet}
+					counts={fieldCounts.algo_status}
 				/>
 			),
 		},
@@ -727,8 +814,13 @@ export default function AssetsFacetSidebar({
 
 	if (layout === "horizontal") {
 		const expandedGroupCount = horizontalItems.filter(
-			(item) => item.isExpanded,
+			(item) => item.isExpanded && !QUICK_FILTER_GROUPS.includes(item.key),
 		).length;
+		const quickGroup = horizontalItems.find((item) => item.key === "quick");
+		const otherGroups = horizontalItems.filter(
+			(item) => !QUICK_FILTER_GROUPS.includes(item.key),
+		);
+
 		return (
 			<div
 				style={{
@@ -737,6 +829,25 @@ export default function AssetsFacetSidebar({
 					gap: compact ? 8 : 12,
 				}}
 			>
+				{quickGroup && (
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns:
+								"repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+							gap: compact ? 10 : 12,
+							alignItems: "start",
+							padding: compact ? "10px 12px" : 12,
+							border: "1px solid #e5e7eb",
+							borderRadius: 10,
+							background: "#fff",
+							boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+						}}
+					>
+						{quickGroup.children}
+					</div>
+				)}
+
 				<div
 					style={{
 						display: "flex",
@@ -745,7 +856,7 @@ export default function AssetsFacetSidebar({
 						alignItems: "center",
 					}}
 				>
-					{horizontalItems.map((item) => (
+					{otherGroups.map((item) => (
 						<Badge
 							key={item.key}
 							count={item.activeCount}
@@ -785,7 +896,7 @@ export default function AssetsFacetSidebar({
 							paddingRight: compact ? 4 : 0,
 						}}
 					>
-						{horizontalItems
+						{otherGroups
 							.filter((item) => item.isExpanded)
 							.map((item) => (
 								<section
