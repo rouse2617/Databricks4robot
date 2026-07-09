@@ -722,9 +722,7 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.getByText(/该运行未生成底层 workflow/)).toBeInTheDocument();
 		// Must NOT show the TTL-cleanup wording for a never-created workflow.
 		expect(
-			screen.queryByText(
-				"底层 Runtime 已不可用，正在展示 DataBrew 历史账本",
-			),
+			screen.queryByText("底层 Runtime 已不可用，正在展示 DataBrew 历史账本"),
 		).not.toBeInTheDocument();
 	});
 

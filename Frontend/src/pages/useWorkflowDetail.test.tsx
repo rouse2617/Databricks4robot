@@ -618,7 +618,9 @@ describe("useWorkflowDetail", () => {
 		act(() => {
 			result.current.selectNode(node ?? null);
 		});
-		await waitFor(() => expect(result.current.logState.lines.join("\n")).toBe(""));
+		await waitFor(() =>
+			expect(result.current.logState.lines.join("\n")).toBe(""),
+		);
 
 		act(() => {
 			result.current.startFollowLogs();
@@ -634,8 +636,7 @@ describe("useWorkflowDetail", () => {
 		// Streamed lines are buffered and flushed on a 1s interval, so allow
 		// more than the default 1s waitFor window.
 		await waitFor(
-			() =>
-				expect(result.current.logState.lines.join("\n")).toContain("hello"),
+			() => expect(result.current.logState.lines.join("\n")).toContain("hello"),
 			{ timeout: 3000 },
 		);
 		expect(result.current.logState.followStatus).toBe("connected");
@@ -683,7 +684,9 @@ describe("useWorkflowDetail", () => {
 		act(() => {
 			result.current.selectNode(node ?? null);
 		});
-		await waitFor(() => expect(result.current.logState.lines.join("\n")).toBe(""));
+		await waitFor(() =>
+			expect(result.current.logState.lines.join("\n")).toBe(""),
+		);
 
 		vi.useFakeTimers();
 		act(() => {

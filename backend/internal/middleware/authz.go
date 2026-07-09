@@ -26,7 +26,7 @@ const (
 // types are added (e.g. "oidc", "mtls", "service-account").
 const (
 	AuthMethodJWT         = "jwt"
-	AuthMethodAPIKey      = "apikey"
+	AuthMethodAPIKey      = "apikey" // pragma: allowlist secret
 	AuthMethodStaticToken = "static-token"
 )
 

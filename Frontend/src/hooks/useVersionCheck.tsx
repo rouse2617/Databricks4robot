@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import { notification } from "antd";
+import { useEffect, useRef } from "react";
 
 interface VersionInfo {
 	version: string;
@@ -49,12 +49,9 @@ export function useVersionCheck(): void {
 		const checkVersion = async () => {
 			try {
 				// 加 cache-busting query 参数绕过 CDN 缓存
-				const response = await fetch(
-					`/version.json?t=${Date.now()}`,
-					{
-						cache: "no-store",
-					},
-				);
+				const response = await fetch(`/version.json?t=${Date.now()}`, {
+					cache: "no-store",
+				});
 
 				if (!response.ok) return;
 

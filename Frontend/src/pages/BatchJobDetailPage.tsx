@@ -376,9 +376,7 @@ function extractAssetIds(runs: RunChildSummary[]): string[] {
 function exportAssetIdsCsv(assetIds: string[], batchId: string): void {
 	const header = "assetId\n";
 	// CSV 中双引号需要转义为两个双引号
-	const rows = assetIds
-		.map((id) => `"${id.replace(/"/g, '""')}"`)
-		.join("\n");
+	const rows = assetIds.map((id) => `"${id.replace(/"/g, '""')}"`).join("\n");
 	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
 	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement("a");
@@ -974,9 +972,7 @@ export default function BatchJobDetailPage() {
 										}
 									} else if (key === "csv") {
 										exportAssetIdsCsv(assetIds, job.id);
-										message.success(
-											`已导出 ${assetIds.length} 个资产 ID`,
-										);
+										message.success(`已导出 ${assetIds.length} 个资产 ID`);
 									}
 								},
 							}}

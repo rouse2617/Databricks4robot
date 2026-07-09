@@ -17,11 +17,7 @@ import {
 import type { Dayjs } from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 
-import {
-	AVAILABLE_SCOPES,
-	type ApiKey,
-	apiKeysApi,
-} from "../api/apiKeys";
+import { type ApiKey, AVAILABLE_SCOPES, apiKeysApi } from "../api/apiKeys";
 import { useAuth } from "../hooks/useAuth";
 
 function fmt(ts?: string | null): string {
@@ -142,7 +138,11 @@ export default function ApiKeysManager() {
 				columns={[
 					{ title: "名称", dataIndex: "name", render: (v) => v || "—" },
 					{ title: "归属", dataIndex: "owner", render: (v) => v || "—" },
-					{ title: "前缀", dataIndex: "keyPrefix", render: (v) => <code>{v}</code> },
+					{
+						title: "前缀",
+						dataIndex: "keyPrefix",
+						render: (v) => <code>{v}</code>,
+					},
 					{
 						title: "Scopes",
 						dataIndex: "scopes",
@@ -242,8 +242,7 @@ export default function ApiKeysManager() {
 					{newKey}
 				</Typography.Paragraph>
 				<Typography.Text type="secondary">
-					调用方使用:{" "}
-					<code>Authorization: Bearer {"<key>"}</code>
+					调用方使用: <code>Authorization: Bearer {"<key>"}</code>
 				</Typography.Text>
 			</Modal>
 		</Card>
