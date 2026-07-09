@@ -93,8 +93,14 @@ export default function AssetsPage() {
 	const [isNarrow, setIsNarrow] = useState(() =>
 		typeof window !== "undefined" ? window.innerWidth < 1024 : false,
 	);
+	const [isUltraWide, setIsUltraWide] = useState(() =>
+		typeof window !== "undefined" ? window.innerWidth > 1800 : false,
+	);
 	useEffect(() => {
-		const handler = () => setIsNarrow(window.innerWidth < 1024);
+		const handler = () => {
+			setIsNarrow(window.innerWidth < 1024);
+			setIsUltraWide(window.innerWidth > 1800);
+		};
 		window.addEventListener("resize", handler);
 		return () => window.removeEventListener("resize", handler);
 	}, []);
@@ -153,7 +159,7 @@ export default function AssetsPage() {
 	};
 
 	return (
-		<div ref={containerRef}>
+		<div ref={containerRef} style={{ maxWidth: 1600, margin: "0 auto", padding: "0 16px" }}>
 			{msgCtx}
 
 			<Title level={4} style={{ margin: "0 0 12px 0" }}>
@@ -230,9 +236,13 @@ export default function AssetsPage() {
 				/>
 				<QuickFiltersRow
 					activeFilters={state.queryState.activeFilters}
-					onAddFilter={(chip) =>
-						dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
-					}
+					onAddFilter={(chip) => {
+						dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } });
+						// Auto-expand algorithm tab when algo_status is clicked
+						if (chip.field === "algo_status" && !state.facetUiState.expandedGroups.includes("algorithm")) {
+							dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group: "algorithm" } });
+						}
+					}}
 					onRemoveFilter={(id) =>
 						dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
 					}
@@ -590,7 +600,7 @@ export default function AssetsPage() {
 				{!isNarrow && (
 					<div
 						style={{
-							width: state.previewState.collapsed ? 36 : 320,
+							width: isUltraWide || !state.previewState.collapsed ? 320 : 36,
 							flexShrink: 0,
 							alignSelf: "flex-start",
 							position: "sticky",
@@ -604,8 +614,8 @@ export default function AssetsPage() {
 							fetchStatus={state.previewState.fetchStatus}
 							asset={previewAsset}
 							previewManifest={previewManifest}
-							collapsed={state.previewState.collapsed}
-							onCollapse={() => dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })}
+							collapsed={isUltraWide ? false : state.previewState.collapsed}
+							onCollapse={() => !isUltraWide && dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })}
 							onOpenDetail={(assetId) => {
 								const sp = serializeQueryStateToUrl(
 									state.queryState,

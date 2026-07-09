@@ -10,7 +10,10 @@ import {
 	Tag,
 	Tooltip,
 	Typography,
+	message,
+	Space,
 } from "antd";
+import { CopyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { useEffect, useRef, useState } from "react";
 import type { Asset } from "../../api/types";
@@ -19,6 +22,19 @@ import type { FetchStatus } from "../../lib/assets/assetsDiscoveryTypes";
 import ResultsEmptyState from "./ResultsEmptyState";
 
 const { Text } = Typography;
+
+async function copyToClipboard(value: string, label: string) {
+	try {
+		await navigator.clipboard.writeText(value);
+		message.success(`已复制${label}`);
+	} catch {
+		message.error("复制失败");
+	}
+}
+
+function formatShortId(value: string, keep = 8): string {
+	return value.length > keep ? `${value.slice(0, keep)}…` : value;
+}
 
 // ─── State colors & gradients ───
 
@@ -378,19 +394,34 @@ export default function AssetsCardView({
 										<div
 											style={{ display: "flex", alignItems: "center", gap: 8 }}
 										>
-											<Tooltip title="点击打开详情">
-												<Text
-													code
-													style={{
-														fontSize: 13,
-														fontWeight: 700,
-														color: "#111827",
-														cursor: "pointer",
-													}}
-												>
-													{asset.asset_id}
-												</Text>
-											</Tooltip>
+											<Space size={4}>
+												<Tooltip title="点击打开详情">
+													<Text
+														code
+														style={{
+															fontSize: 13,
+															fontWeight: 700,
+															color: "#111827",
+															cursor: "pointer",
+														}}
+													>
+														{formatShortId(asset.asset_id)}
+													</Text>
+												</Tooltip>
+												<Tooltip title="复制 Asset ID">
+													<button
+														type="button"
+														className="link-like-button row-hover-action"
+														aria-label={`复制 Asset ${asset.asset_id}`}
+														onClick={(e) => {
+															e.stopPropagation();
+															void copyToClipboard(asset.asset_id, " Asset ID");
+														}}
+													>
+														<CopyOutlined style={{ fontSize: 12 }} />
+													</button>
+												</Tooltip>
+											</Space>
 											<span
 												style={{
 													width: 7,
