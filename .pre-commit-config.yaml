@@ -41,3 +41,29 @@ repos:
         exclude: ^databrew-pipeline/
       - id: check-json
         exclude: ^databrew-pipeline/
+
+  # 4. Atlas migrations lint (local).
+  # Mirrors CI's db-migrate-lint.yml — replay every backend/migrations/*.sql
+  # on a fresh PG17 and verify atlas.sum. Catches: stale checksum after
+  # hand-editing a SQL file, broken DDL, missing extension declaration.
+  - repo: local
+    hooks:
+      - id: check-migration-validate
+        name: atlas migrate validate (fresh PG17 replay + atlas.sum)
+        language: system
+        entry: ./scripts/check_migration_validate.sh
+        pass_filenames: false
+        files: ^backend/migrations/(.*\.sql|atlas\.sum)$
+        require_serial: false
+
+  # 5. Block any schema change that doesn't land as a new migration file.
+  # Companion to #4: this one enforces the routing (only via migrations/),
+  # #4 verifies the SQL itself. Editing an already-applied migration, or
+  # sneaking runnable DDL into scripts/shell, both fail the commit.
+  - repo: local
+    hooks:
+      - id: no-manual-schema-change
+        name: schema changes only via backend/migrations/*
+        language: system
+        entry: ./scripts/check_no_manual_schema_change.sh
+        pass_filenames: false

@@ -131,7 +131,11 @@ When implementing a **new HTTP endpoint** (not modifying an existing one), follo
 
 ## Schema changes via Atlas migrations (mandatory)
 
-**Golden rule: every schema change lands as a migration file in `backend/migrations/` FIRST. Never run manual DDL (`ALTER`/`CREATE`/`DROP`) directly on a live dev/prod database.** Manual DDL creates untracked drift — the change is not in the repo, does not reach other environments through the normal flow, and makes dev and prod diverge. (This is exactly how the pre-2026-07 `node_runs`/`pipeline_definitions` drift and the ad-hoc `api_keys` table happened.)
+**Golden rule: every schema change lands as a migration file in `backend/migrations/` FIRST and reaches dev/prod ONLY through PR merge → CI deploy-migrate. Local developers, local scripts, ad-hoc `psql` sessions, and any other path are NOT authorized to mutate the dev/prod schema.**
+
+In practice: do not `psql` ALTER/CREATE/DROP/GRANT against dev/prod from a local terminal, a debug script, a notebook, or any other side channel. (This is exactly how the pre-2026-07 `node_runs`/`pipeline_definitions` drift and the ad-hoc `api_keys` table happened.) Manual DDL creates untracked drift — the change is not in the repo, does not reach other environments through the normal flow, and makes dev and prod diverge.
+
+**Hotfix exception:** production emergencies use the standard `hotfix-approved` label flow — see [Workflow constraints](#workflow-constraints) and `docs/agents/WORKFLOWS.md` — which is the one authorized shortcut, still tracked through PR → CI, still requiring a second reviewer on off-limits changes.
 
 **Migrations are hand-written SQL.** The GORM structs in `backend/internal/dbschema/` are reference/ORM only — they are **not** the migration source, and `atlas migrate diff --env gorm` is **not** used: GORM cannot express this schema's CHECK constraints, triggers, functions, partitions, trigram indexes, or GENERATED columns, and diffing against it emits destructive output. Write those objects by hand in the migration.
 
