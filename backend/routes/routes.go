@@ -335,16 +335,22 @@ func RegisterAll(
 		}
 
 		if adminRoutesEnabled && adminHandler != nil {
+			// Destructive admin ops: static admin/databrew token only.
 			admin := api.Group("/admin", adminAuth)
 			admin.POST("/search/reindex", adminHandler.SearchReindex)
 			admin.POST("/search/reindex-jobs", adminHandler.SearchReindexCreateJob)
-			admin.GET("/search/reindex-jobs", adminHandler.SearchReindexListJobs)
-			admin.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
 			admin.POST("/search/reindex-jobs/:id/stop", adminHandler.SearchReindexStopJob)
 			admin.POST("/search/reindex-jobs/:id/resume", adminHandler.SearchReindexResumeJob)
 			admin.POST("/search/reindex-jobs/:id/abandon", adminHandler.SearchReindexAbandonJob)
-			admin.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
-			admin.GET("/search/audit", adminHandler.SearchAudit)
+
+			// CYB-3229: read-only admin search views are also reachable by an
+			// admin-role web session (ADMIN_EMAILS) via Authenticate, not just the
+			// static token. No destructive capability here.
+			adminRO := api.Group("/admin", middleware.AdminTokenOrAdminRole(cfg.AdminToken, cfg.DatabrewToken, cfg.Env))
+			adminRO.GET("/search/reindex-jobs", adminHandler.SearchReindexListJobs)
+			adminRO.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
+			adminRO.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
+			adminRO.GET("/search/audit", adminHandler.SearchAudit)
 		}
 
 		// Internal admin (hard delete). Requires ADMIN_TOKEN in production.

@@ -154,3 +154,26 @@ func AdminTokenAuth(adminToken, databrewToken, env string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// AdminTokenOrAdminRole guards READ-ONLY admin endpoints. It allows the request
+// when the already-authenticated principal has the admin role (e.g. an
+// ADMIN_EMAILS web session resolved by Authenticate on the parent group), and
+// otherwise falls back to the static-token check (AdminTokenAuth).
+//
+// This lets web admins view read-only admin data (e.g. reindex history) without
+// the static admin token, WITHOUT widening destructive admin/internal endpoints,
+// which must keep using AdminTokenAuth directly (CYB-3229).
+//
+// Must be mounted under a group that already ran Authenticate (which populates the
+// Principal); when no admin-role principal is present it degrades to the token
+// check, so token/DatabrewToken callers keep working unchanged.
+func AdminTokenOrAdminRole(adminToken, databrewToken, env string) gin.HandlerFunc {
+	tokenAuth := AdminTokenAuth(adminToken, databrewToken, env)
+	return func(c *gin.Context) {
+		if p, ok := GetPrincipal(c); ok && p.Role == "admin" {
+			c.Next()
+			return
+		}
+		tokenAuth(c)
+	}
+}
