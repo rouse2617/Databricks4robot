@@ -376,6 +376,61 @@ components:
           additionalProperties: true
         expires_at: { type: string }
 
+    # ── AssetMetadata ──────────────────────────────────────────────────────
+    AssetMetadataResponse:
+      type: object
+      description: Raw JSONB metadata trees + convenience fields extracted from mcap metadata
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        segment_locator: { type: string }
+        lifecycle_state: { type: string }
+        asset_metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Raw assets.metadata JSONB tree
+        mcap_metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Raw mcap_files.metadata JSONB tree (null if no mcap_files row)
+        grace_video_snapshot:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from asset_metadata.grace_video_snapshot
+        storage:
+          type: object
+          properties:
+            gcs:
+              type: object
+              additionalProperties: true
+              nullable: true
+            aliyun:
+              type: object
+              additionalProperties: true
+              nullable: true
+        mcap_process_state:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: mcap_files.process_state
+        collection:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.collection_meta
+        process_info:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.process_info
+        video_info:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.video_info
+
     # ── LogicalAsset ───────────────────────────────────────────────────────
     LogicalAsset:
       type: object
@@ -3421,6 +3476,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/metadata:
+    get:
+      tags: [Assets]
+      summary: Get asset metadata (JSONB trees + convenience fields)
+      description: |
+        Returns raw assets.metadata and mcap_files.metadata JSONB, plus convenience
+        fields (grace_video_snapshot, storage, collection, process_info, video_info)
+        lifted from mcap metadata for UI rendering.
+        Returns 200 with mcap_metadata=null if asset exists but has no mcap_files row.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetMetadataResponse' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/assets:batch_get:
     post:
       tags: [Assets]
