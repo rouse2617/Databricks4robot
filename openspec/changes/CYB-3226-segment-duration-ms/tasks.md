@@ -25,6 +25,6 @@
 
 ## Verify / ship
 - [x] Tier L: gofmt + `go vet` + `go test ./...` — all pass except pre-existing CYB-3155 pipeline cost tests
-- [ ] Commit + PR (body: CYB-3226 + OpenSpec change-id + API sync rows) + merge to dev
-- [ ] Deploy-verify on dev (post-merge, auto deploy-dev): (a) valid segment → `duration_ms > 0`; (b) end<=start → 422; (c) sub-1ms → 422
-- [ ] Update Linear CYB-3226 → Done with commit hash
+- [x] Commit + PR #331 (CYB-3226 + OpenSpec change-id + API sync rows) + merged to dev (`a89944aa`)
+- [x] Deploy-verify on dev (deployed revision): valid 60s create → `duration_ms=59999` (non-zero); end<=start → 422; sub-1ms → 422. (segment-create needs admin-token commit path scoped to an empty tenant, so the identical `Create`→`prepAssetForWrite` path was driven via `derived_asset` under the real user principal; verify asset soft-deleted)
+- [x] Update Linear CYB-3226 → Done with commit hash `a89944aa`
