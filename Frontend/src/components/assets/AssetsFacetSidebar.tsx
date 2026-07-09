@@ -823,7 +823,8 @@ export default function AssetsFacetSidebar({
 						style={{
 							display: "grid",
 							gridTemplateColumns:
-								"repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+								"repeat(auto-fit, minmax(200px, 280px))",
+							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
 							padding: compact ? "10px 12px" : 12,
@@ -877,7 +878,8 @@ export default function AssetsFacetSidebar({
 						style={{
 							display: "grid",
 							gridTemplateColumns:
-								"repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+								"repeat(auto-fit, minmax(240px, 280px))",
+							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
 							maxHeight: compact ? 320 : undefined,

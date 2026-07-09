@@ -319,6 +319,16 @@ export function tokenizeDraftText(text: string): QueryToken[] {
 
 // ─── Search Mode Options ───
 
+function getSearchPlaceholder(mode: SearchMode): string {
+	const placeholders: Record<SearchMode, string> = {
+		structured: "例如：env:warehouse algo_status:failed asset_type:video…",
+		keyword: "搜索关键词：Asset ID、MCAP、Owner、Tag 等…",
+		semantic: "用自然语言描述你要找什么…（例如：失败的视频处理）",
+		similar: "上传或指定资产 ID 来寻找相似内容…",
+	};
+	return placeholders[mode] ?? "输入搜索条件…";
+}
+
 const SEARCH_MODE_OPTIONS: {
 	value: SearchMode;
 	label: string;
@@ -412,7 +422,7 @@ export default function AssetsSearchBar({
 				{/* Search Input */}
 				<Input
 					id="assets-search-input"
-					placeholder="搜索 Asset、MCAP、Owner、Tag，或输入 env:warehouse algo_status:failed…"
+					placeholder={getSearchPlaceholder(searchMode)}
 					prefix={<SearchOutlined />}
 					value={draftText}
 					onChange={(e) => onDraftChange(e.target.value)}
