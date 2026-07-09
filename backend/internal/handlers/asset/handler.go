@@ -127,6 +127,94 @@ func (h *Handler) GetAssetTypeSchema(c *gin.Context) {
 	c.Data(http.StatusOK, "application/schema+json", schema)
 }
 
+// GetMetadata returns the raw `assets.metadata` and `mcap_files.metadata` JSONB
+// trees for an asset, plus a few convenience subtrees lifted from the mcap
+// metadata for quick UI rendering. Used by the asset detail page's
+// "Advanced / metadata" collapsible section.
+//
+// Auth: same as `GET /assets/:id` (any Authenticate-passing principal).
+//
+// 200 with mcap_metadata=null when the asset exists but has no mcap_files row
+// (e.g. a grace_video without an underlying mcap).
+//
+// @Summary      Get asset metadata
+// @Description  Return raw assets.metadata + mcap_files.metadata JSONB trees.
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/metadata [get]
+func (h *Handler) GetMetadata(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	a, err := h.uc.GetAll(c.Request.Context(), assetID)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+
+	// Best-effort mcap lookup; missing mcap_files row is not an error.
+	var mcapMeta map[string]interface{}
+	var mcapProcessState map[string]string
+	var gcsStorage, aliyunStorage map[string]interface{}
+	var collection, processInfo, videoInfo map[string]interface{}
+	if h.mcapRepo != nil && a.McapFileID != "" {
+		mf, mErr := h.mcapRepo.Get(c.Request.Context(), a.McapFileID)
+		if mErr == nil && mf != nil {
+			mcapMeta = mf.Metadata
+			mcapProcessState = mf.ProcessState
+			if sm, ok := mcapMeta["storage_meta"].(map[string]interface{}); ok {
+				if gcs, ok := sm["gcs"].(map[string]interface{}); ok {
+					gcsStorage = gcs
+				}
+				if ali, ok := sm["aliyun"].(map[string]interface{}); ok {
+					aliyunStorage = ali
+				}
+			}
+			if ci, ok := mcapMeta["collection_meta"].(map[string]interface{}); ok {
+				collection = ci
+			}
+			if pi, ok := mcapMeta["process_info"].(map[string]interface{}); ok {
+				processInfo = pi
+			}
+			if vi, ok := mcapMeta["video_info"].(map[string]interface{}); ok {
+				videoInfo = vi
+			}
+		}
+	}
+
+	var graceSnapshot map[string]interface{}
+	if a.Metadata != nil {
+		if gs, ok := a.Metadata["grace_video_snapshot"].(map[string]interface{}); ok {
+			graceSnapshot = gs
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"asset_id":              a.AssetID,
+		"segment_locator":      a.SegmentLocator,
+		"lifecycle_state":      a.LifecycleState,
+		"asset_metadata":       a.Metadata,
+		"mcap_metadata":        mcapMeta,
+		"grace_video_snapshot": graceSnapshot,
+		"storage": gin.H{
+			"gcs":    gcsStorage,
+			"aliyun": aliyunStorage,
+		},
+		"mcap_process_state": mcapProcessState,
+		"collection":         collection,
+		"process_info":       processInfo,
+		"video_info":         videoInfo,
+	})
+}
+
 // List returns assets with optional filters and pagination.
 // Deprecated: asset list queries should use POST /api/v1/queries/run.
 func (h *Handler) List(c *gin.Context) {

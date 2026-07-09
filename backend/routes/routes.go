@@ -237,6 +237,7 @@ func RegisterAll(
 		assets := api.Group("/assets")
 		assets.POST("", middleware.RequireScope("assets:write"), assetHandler.Create)
 		assets.GET("/:id", assetHandler.Get)
+		assets.GET("/:id/metadata", assetHandler.GetMetadata)
 		assets.PATCH("/:id", middleware.RequireScope("assets:write"), assetHandler.Update)
 		assets.DELETE("/:id", middleware.RequireScope("assets:write"), assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
