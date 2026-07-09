@@ -71,3 +71,5 @@ func AllModels() []any {
 		&VideoDuration{},
 	}
 }
+
+// touched: trigger deploy-dev to verify plain-apply migrate path is a no-op.
