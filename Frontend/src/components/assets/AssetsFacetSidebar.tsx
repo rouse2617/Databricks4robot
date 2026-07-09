@@ -584,27 +584,15 @@ export default function AssetsFacetSidebar({
 			key: "quick",
 			label: GROUP_LABELS.quick,
 			children: (
-				<>
-					<CheckboxFacet
-						compact={compact}
-						label="资产类型"
-						field="asset_type"
-						options={ASSET_TYPE_OPTIONS}
-						activeFilters={activeFilters}
-						onToggleFacet={onToggleFacet}
-						counts={fieldCounts.asset_type}
-						span="half"
-					/>
-					<CheckableTagFacet
-						label="算法状态"
-						field="algo_status"
-						options={ALGO_STATUS_OPTIONS}
-						activeFilters={activeFilters}
-						onToggleFacet={onToggleFacet}
-						counts={fieldCounts.algo_status}
-						span="half"
-					/>
-				</>
+				<CheckboxFacet
+					compact={compact}
+					label="资产类型"
+					field="asset_type"
+					options={ASSET_TYPE_OPTIONS}
+					activeFilters={activeFilters}
+					onToggleFacet={onToggleFacet}
+					counts={fieldCounts.asset_type}
+				/>
 			),
 		},
 		{
@@ -734,6 +722,7 @@ export default function AssetsFacetSidebar({
 					activeFilters={activeFilters}
 					onToggleFacet={onToggleFacet}
 					counts={fieldCounts.algo_status}
+					span="full"
 				/>
 			),
 		},

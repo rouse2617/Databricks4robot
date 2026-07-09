@@ -230,9 +230,13 @@ export default function AssetsPage() {
 				/>
 				<QuickFiltersRow
 					activeFilters={state.queryState.activeFilters}
-					onAddFilter={(chip) =>
-						dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
-					}
+					onAddFilter={(chip) => {
+						dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } });
+						// Auto-expand algorithm tab when algo_status is clicked
+						if (chip.field === "algo_status" && !state.facetUiState.expandedGroups.includes("algorithm")) {
+							dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group: "algorithm" } });
+						}
+					}}
 					onRemoveFilter={(id) =>
 						dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
 					}
