@@ -68,6 +68,7 @@ export const QUALITY_OPTIONS = [
 
 export const GROUP_KEYS = [
 	"quick",
+	"frequent",
 	"basic",
 	"capture",
 	"algorithm",
@@ -518,30 +519,30 @@ function SwitchFacet({
 // ─── Group Label Map ───
 
 const GROUP_LABELS: Record<string, string> = {
+	quick: "快速筛选",
+	frequent: "常用筛选",
 	basic: "基础",
 	capture: "采集",
 	algorithm: "算法",
 	delivery: "交付",
 	tags: "标签",
-	quick: "快速筛选",
 };
 
 const GROUP_FIELDS: Record<string, string[]> = {
-	basic: ["lifecycle_state", "retention_tier", "owner", "reviewer"],
+	quick: ["asset_type", "algo_status"],
+	frequent: ["owner", "retention_tier", "created_at"],
+	basic: ["lifecycle_state", "reviewer"],
 	capture: [
-		"asset_type",
 		"env",
 		"mcap.vendor_id",
 		"mcap.device_id",
 		"mcap.scene_id",
 		"duration_ms",
-		"created_at",
 		"updated_at",
 	],
 	algorithm: ["algo_status"],
 	delivery: ["has:delivery", "delivery_count"],
 	tags: ["tags_flat.priority", "tags_flat.quality", "tags_flat.scene"],
-	quick: ["asset_type", "algo_status"],
 };
 
 // Quick filter groups that should always be visible in horizontal layout
@@ -803,11 +804,12 @@ export default function AssetsFacetSidebar({
 
 	if (layout === "horizontal") {
 		const expandedGroupCount = horizontalItems.filter(
-			(item) => item.isExpanded && !QUICK_FILTER_GROUPS.includes(item.key),
+			(item) => item.isExpanded && !QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
 		).length;
 		const quickGroup = horizontalItems.find((item) => item.key === "quick");
+		const frequentGroup = horizontalItems.find((item) => item.key === "frequent");
 		const otherGroups = horizontalItems.filter(
-			(item) => !QUICK_FILTER_GROUPS.includes(item.key),
+			(item) => !QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
 		);
 
 		return (
@@ -835,6 +837,26 @@ export default function AssetsFacetSidebar({
 						}}
 					>
 						{quickGroup.children}
+					</div>
+				)}
+
+				{frequentGroup && (
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns:
+								"repeat(auto-fit, minmax(200px, 280px))",
+							justifyContent: "start",
+							gap: compact ? 10 : 12,
+							alignItems: "start",
+							padding: compact ? "10px 12px" : 12,
+							border: "1px solid #e5e7eb",
+							borderRadius: 10,
+							background: "#fff",
+							boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+						}}
+					>
+						{frequentGroup.children}
 					</div>
 				)}
 
