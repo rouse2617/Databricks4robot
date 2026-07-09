@@ -25,7 +25,7 @@ while IFS= read -r line; do STAGED+=("$line"); done < <(git diff --staged --name
 
 bad=0
 
-for entry in "${STAGED[@]}"; do
+for entry in "${STAGED[@]:-}"; do
   status="${entry%%	*}"
   path="${entry##*	}"
   # Renames are "old\tnew"; collapse to the new path.
