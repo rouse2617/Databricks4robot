@@ -47,3 +47,11 @@ algorithms:
       required_fields: []
       uri_required: false
       report_size: false
+  transcode:
+    description: "转码（MCAP 原始文件 → 算法输入视频）"
+    versions: ["1.0.0"]
+    depends_on: []
+    output:
+      required_fields: ["output_uri"]
+      uri_required: true
+      report_size: false
