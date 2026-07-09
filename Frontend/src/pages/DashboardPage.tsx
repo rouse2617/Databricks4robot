@@ -138,19 +138,14 @@ function KpiCard({
 						}}
 					>
 						<span
-							title={String(value)}
 							style={{
 								display: "block",
-								minWidth: 0,
-								maxWidth: "100%",
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-								whiteSpace: "nowrap",
 								fontSize: 28,
 								fontWeight: 700,
 								color: "var(--color-text)",
 								fontVariantNumeric: "tabular-nums",
 								lineHeight: 1.18,
+								whiteSpace: "nowrap",
 							}}
 						>
 							{value}
@@ -1307,7 +1302,7 @@ export default function DashboardPage() {
 	if (!pageReady) return <PageLoading />;
 
 	return (
-		<div style={{ maxWidth: 1600, margin: "0 auto", paddingBottom: 8 }}>
+		<div style={{ width: "100%", paddingBottom: 8 }}>
 			<div
 				style={{
 					marginBottom: 20,
@@ -1382,20 +1377,16 @@ export default function DashboardPage() {
 				/>
 			)}
 
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-					gap: 16,
-					marginBottom: 16,
-				}}
-			>
-				<KpiCard
-					title="资产总量"
-					value={metrics.assetTotal?.toLocaleString() ?? "—"}
-					hint="活跃资产（当前态）"
-					icon={<DatabaseOutlined />}
-				/>
+			<div>
+				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+					<Col xs={24} sm={12} lg={4} style={{ display: "flex" }}>
+						<KpiCard
+							title="资产总量"
+							value={metrics.assetTotal?.toLocaleString() ?? "—"}
+							hint="活跃资产（当前态）"
+							icon={<DatabaseOutlined />}
+						/>
+					</Col>
 					<Col xs={24} sm={12} lg={4} style={{ display: "flex" }}>
 						<KpiCard
 							title="今日新增"

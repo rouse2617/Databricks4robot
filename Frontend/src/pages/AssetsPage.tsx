@@ -159,7 +159,7 @@ export default function AssetsPage() {
 	};
 
 	return (
-		<div ref={containerRef} style={{ maxWidth: 1600, margin: "0 auto", padding: "0 16px" }}>
+		<div ref={containerRef} style={{ width: "100%", padding: "0 16px" }}>
 			{msgCtx}
 
 			<Title level={4} style={{ margin: "0 0 12px 0" }}>
