@@ -129,6 +129,22 @@ When implementing a **new HTTP endpoint** (not modifying an existing one), follo
 
 **Why:** Mismatched response shapes (e.g. backend returns `[{...}]`, frontend expects `{items: [...]}`) cause silent failures that only surface during live testing. Defining the contract first prevents this class of bug entirely.
 
+## Schema changes via Atlas migrations (mandatory)
+
+**Golden rule: every schema change lands as a migration file in `backend/migrations/` FIRST. Never run manual DDL (`ALTER`/`CREATE`/`DROP`) directly on a live dev/prod database.** Manual DDL creates untracked drift — the change is not in the repo, does not reach other environments through the normal flow, and makes dev and prod diverge. (This is exactly how the pre-2026-07 `node_runs`/`pipeline_definitions` drift and the ad-hoc `api_keys` table happened.)
+
+**Migrations are hand-written SQL.** The GORM structs in `backend/internal/dbschema/` are reference/ORM only — they are **not** the migration source, and `atlas migrate diff --env gorm` is **not** used: GORM cannot express this schema's CHECK constraints, triggers, functions, partitions, trigram indexes, or GENERATED columns, and diffing against it emits destructive output. Write those objects by hand in the migration.
+
+**Workflow to add/change a table or column:**
+
+1. Create `backend/migrations/<YYYYMMDDHHMMSS>_<name>.sql` (timestamp prefix from `date +%Y%m%d%H%M%S`, strictly later than the newest existing file). Use plain `ALTER`/`CREATE` — no `IF NOT EXISTS` for normal forward migrations. A new Postgres extension needs an explicit `CREATE EXTENSION IF NOT EXISTS …` (Atlas does not emit these — the `pg_trgm` gap bit us once).
+2. Update the Go struct that reads/writes the table.
+3. `cd backend && make db-migrate-hash` (recompute `atlas.sum`).
+4. `atlas migrate validate --env migrate --dev-url "docker://postgres/17/dev?search_path=public"` (fresh-PG17 replay of every migration + checksum) — this is what CI's `db-migrate-lint` runs.
+5. PR → merge to `dev` → `deploy-migrate` applies to live dev; prod gets it on `tag → main → deploy-prod`. Both envs are baselined, so deploy runs a plain `atlas migrate apply` (pending only).
+
+Never hand-edit `atlas.sum` or an already-applied migration file. Adopting a pre-existing DB into Atlas is a one-off `atlas migrate apply --baseline <version>` by hand, not a deploy step. Full runbook: [`docs/atlas-migrations.md`](../atlas-migrations.md).
+
 ## Migration check before deploy (mandatory)
 
 When a PR includes a new migration file (`backend/migrations/*.sql`):

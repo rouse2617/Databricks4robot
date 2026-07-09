@@ -220,28 +220,20 @@ jobs:
 
       - name: Execute migrate Job
         run: |
-          # First-run baseline: when the env var ATLAS_BASELINED=1 is missing
-          # on the Job, pass --baseline 000_initial.sql once so Atlas records
-          # the squashed baseline as applied without re-executing it.
-          # Note: Cloud Run Jobs env lives at spec.template.spec.template.spec
-          # (double .template.spec); the deploy workflow historically used a
-          # shorter path that always returned empty — fix is the full path.
-          BASELINE_FLAG=$(gcloud run jobs describe "${{ env.MIGRATE_JOB }}" \
-            --region="${{ env.REGION }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --format="value(spec.template.spec.template.spec.containers[0].env[?name=='ATLAS_BASELINED'].value)" 2>/dev/null)
-          if [[ "$BASELINE_FLAG" == "1" ]]; then
-            echo "Already baselined — applying pending only."
-            EXTRA=""
-          else
-            echo "First run — baselining to 000_initial.sql."
-            EXTRA="--baseline,000_initial.sql"
-          fi
+          # Apply pending migrations only — the Job's default entrypoint is
+          # `atlas migrate apply --env migrate`, so a plain execute (no --args)
+          # applies whatever is pending. prod is already baselined, so there is
+          # no first-run baseline gymnastics here.
+          #
+          # Adopting a NEW pre-existing (pre-Atlas) database is a deliberate,
+          # one-off `atlas migrate apply --baseline <version>` run by hand — see
+          # docs/atlas-migrations.md. It is intentionally NOT auto-run at deploy
+          # (the old hardcoded `--baseline 000_initial.sql` was removed when the
+          # baseline was reset to a single reverse-engineered snapshot).
           gcloud run jobs execute "${{ env.MIGRATE_JOB }}" \
             --region="${{ env.REGION }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --wait \
-            ${EXTRA:+--args="$EXTRA"}
+            --wait
 
   # ─── Frontend (Cloudflare Worker) ───────────────────────────────────────────
   deploy-frontend:
