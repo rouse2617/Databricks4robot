@@ -152,7 +152,7 @@ func TestCreate_WritesTagProjectionAndOutbox(t *testing.T) {
 	a, err := uc.Create(context.Background(), CreateInput{
 		McapFileID:       "mcap-create-001",
 		StartTimestampNs: 100,
-		EndTimestampNs:   200,
+		EndTimestampNs:   1000100,
 		Reviewer:         "alice",
 		Owner:            "team-a",
 		Tags:             map[string]string{"quality": "good"},
@@ -408,7 +408,7 @@ func TestCreate_SeedsInitialAlgoProjectionRows(t *testing.T) {
 	a, err := uc.Create(context.Background(), CreateInput{
 		McapFileID:       "mcap-seed-001",
 		StartTimestampNs: 100,
-		EndTimestampNs:   200,
+		EndTimestampNs:   1000100,
 		Reviewer:         "alice",
 		Owner:            "team-a",
 	})

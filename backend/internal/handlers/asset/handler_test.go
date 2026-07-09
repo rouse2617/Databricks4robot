@@ -367,7 +367,7 @@ func TestCreate(t *testing.T) {
 	w = doReq(t, r, http.MethodPost, "/assets", map[string]any{
 		"mcap_file_id":       "m1",
 		"start_timestamp_ns": 10,
-		"end_timestamp_ns":   20,
+		"end_timestamp_ns":   1000010,
 		"reviewer":           "r1",
 	})
 	if w.Code != http.StatusCreated {
@@ -390,7 +390,7 @@ func TestCreate(t *testing.T) {
 	w = doReq(t, r, http.MethodPost, "/assets", map[string]any{
 		"mcap_file_id":       "bad-format-mcap-id",
 		"start_timestamp_ns": 10,
-		"end_timestamp_ns":   20,
+		"end_timestamp_ns":   1000010,
 		"reviewer":           "r1",
 	})
 	if w.Code != http.StatusUnprocessableEntity {
@@ -406,7 +406,7 @@ func TestCreate(t *testing.T) {
 	w = doReq(t, r, http.MethodPost, "/assets", map[string]any{
 		"mcap_file_id":       "A1B2C3D4",
 		"start_timestamp_ns": 10,
-		"end_timestamp_ns":   20,
+		"end_timestamp_ns":   1000010,
 		"reviewer":           "r1",
 	})
 	if w.Code != http.StatusUnprocessableEntity {

@@ -101,7 +101,7 @@ func TestCreate_FirstVersionSetsLogicalFields(t *testing.T) {
 		AssetID:          "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 1,
-		EndTimestampNs:   2,
+		EndTimestampNs:   1000001,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})
@@ -139,7 +139,7 @@ func TestCreate_PromoteVersion(t *testing.T) {
 		LogicalAssetID:   "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 10,
-		EndTimestampNs:   20,
+		EndTimestampNs:   1000010,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})
@@ -179,7 +179,7 @@ func TestCreate_PromoteVersionWithGeneratedAssetID(t *testing.T) {
 		LogicalAssetID:   "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 10,
-		EndTimestampNs:   20,
+		EndTimestampNs:   1000010,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})

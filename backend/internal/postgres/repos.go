@@ -154,18 +154,25 @@ func prepAssetForWrite(a *models.Asset) {
 	if a.LifecycleState == "" {
 		a.LifecycleState = string(LifecycleReady)
 	}
+	// duration_ms is the canonical stored field. Callers may set it directly
+	// (child assets), provide only duration_sec (top-level / segment Create), or
+	// neither. Canonicalize it BEFORE SyncLegacyFields(), which re-derives
+	// duration_sec FROM duration_ms — otherwise a seconds-only value gets
+	// clobbered back to zero, which is why segments persisted duration_ms=0.
+	if a.DurationMs == 0 {
+		if a.DurationSec != 0 {
+			a.DurationMs = int64(a.DurationSec * 1000)
+		} else if a.EndTimestampNs > a.StartTimestampNs {
+			// Derive from the timestamp span, mirroring ComputeSegmentLocator above.
+			a.DurationMs = (a.EndTimestampNs - a.StartTimestampNs) / 1_000_000
+		}
+	}
 	a.SyncLegacyFields()
 	// SegType mirrors AssetType for API compat.
 	if a.AssetType != "" && a.SegType == "" {
 		a.SegType = a.AssetType
 	} else if a.SegType != "" && a.AssetType == "" {
 		a.AssetType = a.SegType
-	}
-	// duration_sec mirrors duration_ms for API compat.
-	if a.DurationMs != 0 && a.DurationSec == 0 {
-		a.DurationSec = float64(a.DurationMs) / 1000.0
-	} else if a.DurationSec != 0 && a.DurationMs == 0 {
-		a.DurationMs = int64(a.DurationSec * 1000)
 	}
 }
 

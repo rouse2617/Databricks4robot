@@ -1814,7 +1814,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: End timestamp in nanoseconds
+          description: "End timestamp in nanoseconds. Must be > start_timestamp_ns and the span must be >= 1ms (end - start >= 1_000_000 ns); otherwise 422 INVALID_STATE. (CYB-3226)"
           example: 1700000100000000000
         split_method:
           type: string
@@ -1838,7 +1838,7 @@ components:
         logical_asset_id: { type: string, description: "Logical asset group ID", example: "aaaaaaaa" }
         mcap_file_id: { $ref: '#/components/schemas/McapFileID', description: "Source MCAP file" }
         start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds", example: 1700000000000000000 }
-        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds", example: 1700000360000000000 }
+        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds. Must be > start_timestamp_ns and span >= 1ms (end - start >= 1_000_000 ns); else 422 INVALID_STATE. duration_ms is derived from the span. (CYB-3226)", example: 1700000360000000000 }
         reviewer: { type: string, description: "Reviewer name for the asset", example: "zhangsan" }
         owner: { type: string, description: "Owner name", example: "lisi" }
         type: { type: string, description: "Segment type (legacy)", example: "segment" }

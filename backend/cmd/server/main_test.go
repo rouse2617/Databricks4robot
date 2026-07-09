@@ -86,7 +86,7 @@ func TestNewAssetUsecaseInitializesAlgoStateForAllBackends(t *testing.T) {
 	asset, err := uc.Create(context.Background(), assetUC.CreateInput{
 		McapFileID:       "mcap-001",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 var (
 	ErrNotFound           = errors.New("asset not found")
 	ErrInvalidRange       = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
+	ErrDurationTooSmall   = errors.New("asset duration must be at least 1ms (end_timestamp_ns - start_timestamp_ns >= 1000000)")
 	ErrMcapFileIDRequired = errors.New("mcap_file_id is required")
 	ErrInvalidTag         = errors.New("invalid tag")
 	ErrTagSourceInvalid   = errors.New("invalid tag source")
@@ -31,6 +33,43 @@ var (
 	ErrMcapFileNotFound   = errors.New("mcap_file_id does not exist")
 	ErrCustomerNotFound   = errors.New("customer not found for customer.* tag namespace") // CYB-1070
 )
+
+// minAssetDurationNs is the smallest allowed asset span: below 1ms the derived
+// duration_ms rounds to 0 (the 0.0s bad-data class), so such writes are rejected.
+const minAssetDurationNs = 1_000_000
+
+// validateAssetTimeRange enforces the write-time invariants shared by every asset
+// create path: the range must be forward (end > start) and at least 1ms wide.
+func validateAssetTimeRange(startNs, endNs int64) error {
+	if endNs <= startNs {
+		return ErrInvalidRange
+	}
+	if endNs-startNs < minAssetDurationNs {
+		return ErrDurationTooSmall
+	}
+	return nil
+}
+
+// warnIfRangeOutsideParent logs (without rejecting) when a child asset's
+// [start,end] falls outside its already-loaded parent's [start,end] beyond a
+// small tolerance. Both ranges must share the same reference frame (file-relative
+// offsets). Warn-only per CYB-3226; hard enforcement + the segment-vs-raw_mcap
+// case (parent mcap uses an absolute-epoch frame) are a deferred follow-up — see
+// decisions.md.
+func warnIfRangeOutsideParent(ctx context.Context, childType, parentID string, childStart, childEnd, parentStart, parentEnd int64) {
+	if parentEnd <= parentStart {
+		return // parent range unknown; nothing to compare against
+	}
+	const toleranceNs = int64(1_000_000) // 1ms slack for rounding / whole-parent spans
+	if childStart < parentStart-toleranceNs || childEnd > parentEnd+toleranceNs {
+		slog.WarnContext(ctx, "asset time range falls outside parent range",
+			"asset_type", childType,
+			"parent_asset_id", parentID,
+			"child_start_ns", childStart, "child_end_ns", childEnd,
+			"parent_start_ns", parentStart, "parent_end_ns", parentEnd,
+		)
+	}
+}
 
 func mapCreateDBError(err error) error {
 	var pgErr *pgconn.PgError
@@ -808,8 +847,8 @@ func (u *Usecase) ListGlobalEvents(ctx context.Context, in ListEventsInput) (*Li
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
-	if in.EndTimestampNs <= in.StartTimestampNs {
-		return nil, ErrInvalidRange
+	if err := validateAssetTimeRange(in.StartTimestampNs, in.EndTimestampNs); err != nil {
+		return nil, err
 	}
 	if in.ParentAssetID != "" && !id.ValidateAssetID(in.ParentAssetID) {
 		return nil, ErrInvalidAssetID
@@ -984,8 +1023,8 @@ func splitMethodToRelation(splitMethod string) string {
 // asset_relations edge insertion. This is the usecase behind the layered API
 // (POST /assets/:id/{clips,actions,frames,tasks}).
 func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput) (*models.Asset, error) {
-	if in.EndTimestampNs <= in.StartTimestampNs {
-		return nil, ErrInvalidRange
+	if err := validateAssetTimeRange(in.StartTimestampNs, in.EndTimestampNs); err != nil {
+		return nil, err
 	}
 	if in.ParentAssetID == "" {
 		return nil, ErrNotFound
@@ -999,6 +1038,11 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 	if parent == nil {
 		return nil, ErrNotFound
 	}
+	// Warn-only: the child's range should sit within the parent's (same
+	// file-relative frame). Does not reject — see CYB-3226 decisions.md.
+	warnIfRangeOutsideParent(ctx, in.AssetType, in.ParentAssetID,
+		in.StartTimestampNs, in.EndTimestampNs,
+		parent.StartTimestampNs, parent.EndTimestampNs)
 
 	// Build the asset model with a zero ID; InsertNew + prepAssetForWrite will
 	// allocate timestamps and derive duration.
@@ -1292,8 +1336,8 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 	var created []string
 	for _, r := range in.Ranges {
 		startNs, endNs := r[0], r[1]
-		if endNs <= startNs {
-			return created, ErrInvalidRange
+		if err := validateAssetTimeRange(startNs, endNs); err != nil {
+			return created, err
 		}
 		a := &models.Asset{
 			McapFileID:       in.McapFileID,

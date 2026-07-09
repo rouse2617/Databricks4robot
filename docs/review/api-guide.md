@@ -308,8 +308,10 @@ curl -X POST "$BASE/api/v1/assets" \
 必填字段:
 - `mcap_file_id` — 关联的 MCAP 文件 ID
 - `start_timestamp_ns` — 起始时间戳 (纳秒, 不能为 0)
-- `end_timestamp_ns` — 结束时间戳 (必须 > start)
+- `end_timestamp_ns` — 结束时间戳 (必须 > start，且时长 ≥ 1ms，即 `end - start >= 1_000_000` ns；否则返回 `422 INVALID_STATE`)
 - `reviewer` — 审核人
+
+> 时间范围校验 (CYB-3226) 对所有资产写入生效：`POST /api/v1/assets`、`POST /api/v1/assets/:id/{clips,frames,tasks}`、以及批量 ranges 提交。`end <= start` 或时长 < 1ms（会取整成 `duration_ms=0`）均被拒绝，返回 `422 INVALID_STATE`。写入成功时后端会从 `end - start` 推导并持久化 `duration_ms`。
 
 可选字段: `owner`, `asset_type`, `env`, `task`, `tags`。可选 **`asset_id`**：若传入则须为 **8 位字母数字** 且全局唯一；不传则由服务端生成。
 

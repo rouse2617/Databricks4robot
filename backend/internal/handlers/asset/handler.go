@@ -198,7 +198,7 @@ func (h *Handler) GetMetadata(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"asset_id":              a.AssetID,
+		"asset_id":             a.AssetID,
 		"segment_locator":      a.SegmentLocator,
 		"lifecycle_state":      a.LifecycleState,
 		"asset_metadata":       a.Metadata,
@@ -878,7 +878,7 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 		Owner:      req.Owner,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) {
+		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) || errors.Is(err, assetUC.ErrDurationTooSmall) {
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), map[string]any{"partial": created})
 		} else if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())

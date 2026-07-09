@@ -26,7 +26,8 @@ func mapAssetError(c *gin.Context, err error) bool {
 	case errors.Is(err, assetUC.ErrCustomerNotFound):
 		httpresp.Unprocessable(c, httpresp.CodeCustomerNotFound, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrMcapFileIDRequired),
-		errors.Is(err, assetUC.ErrInvalidRange):
+		errors.Is(err, assetUC.ErrInvalidRange),
+		errors.Is(err, assetUC.ErrDurationTooSmall):
 		httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrLogicalAssetNotFound),
 		errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):
