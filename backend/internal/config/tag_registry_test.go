@@ -65,15 +65,35 @@ func TestLoadTagRegistry_Success(t *testing.T) {
 	}
 }
 
-func TestTagValidate_UnregisteredKey(t *testing.T) {
+// CYB-3246: open vocabulary — an unregistered key is accepted as a free-form
+// string tag (no longer rejected), so users can tag assets with arbitrary
+// semantic keys without editing tag_registry.yaml.
+func TestTagValidate_UnregisteredKeyAcceptedAsFreeform(t *testing.T) {
 	reg := &TagRegistry{tags: map[string]TagDef{
 		"priority": {Type: "enum", Values: []string{"high", "low"}},
 	}}
-	err := reg.Validate("unknown_key", "value")
-	if err == nil {
-		t.Fatal("expected error for unregistered key")
+	if err := reg.Validate("unknown_key", "任意语义值"); err != nil {
+		t.Fatalf("expected unregistered key to be accepted, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not registered") {
+	// Empty value is also acceptable for an open-vocabulary key.
+	if err := reg.Validate("another_key", ""); err != nil {
+		t.Fatalf("expected empty value for unregistered key to be accepted, got: %v", err)
+	}
+}
+
+// CYB-3246: open-vocabulary values are still bounded by the default max length.
+func TestTagValidate_UnregisteredKeyExceedsDefaultMaxLength(t *testing.T) {
+	reg := &TagRegistry{tags: map[string]TagDef{}}
+	// Exactly at the default limit is allowed.
+	if err := reg.Validate("freeform", strings.Repeat("a", DefaultUnregisteredTagMaxLength)); err != nil {
+		t.Fatalf("expected value at default max length to be accepted, got: %v", err)
+	}
+	// One over the limit is rejected.
+	err := reg.Validate("freeform", strings.Repeat("a", DefaultUnregisteredTagMaxLength+1))
+	if err == nil {
+		t.Fatal("expected error for unregistered value exceeding default max length")
+	}
+	if !strings.Contains(err.Error(), "exceeds max length") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
@@ -139,14 +159,29 @@ func TestTagValidate_StringNoMaxLength(t *testing.T) {
 	}
 }
 
+// CYB-3246: open-vocabulary keys must never auto-propagate to descendants —
+// only keys registered with propagation=descendants do.
+func TestShouldPropagate_UnregisteredKeyNeverPropagates(t *testing.T) {
+	reg := &TagRegistry{tags: map[string]TagDef{
+		"compliance.status": {Type: "enum", Values: []string{"approved"}, Propagation: "descendants"},
+	}}
+	if reg.ShouldPropagate("smoke_desc") {
+		t.Fatal("unregistered key must not propagate")
+	}
+	if !reg.ShouldPropagate("compliance.status") {
+		t.Fatal("registered descendants key should propagate")
+	}
+}
+
 // ── Property tests ───────────────────────────────────────────────────────────
 
-// Property 24: tag_registry 校验拒绝未注册 key
-// For any write to tags, when the tag key is not registered in tag_registry.yaml,
-// the operation should return an error. When the key is registered and type is enum,
-// the value must be in the values list, otherwise return an error.
-// **Validates: Requirements 13.4, 13.5**
-func TestProperty24_TagRegistryRejectsUnregisteredKeys(t *testing.T) {
+// Property 24: tag_registry 校验语义（CYB-3246 开放词汇后）
+// For any write to tags: an unregistered key is accepted as a free-form string
+// tag unless its value exceeds DefaultUnregisteredTagMaxLength. When the key is
+// registered and type is enum, the value must be in the values list; when type
+// is string it must respect max_length.
+// **Validates: Requirements 13.4, 13.5 (as MODIFIED by CYB-3246 open vocabulary)**
+func TestProperty24_TagRegistryOpenVocabularyAndEnumValidation(t *testing.T) {
 	// Build a known registry.
 	reg := &TagRegistry{tags: map[string]TagDef{
 		"priority": {Type: "enum", Values: []string{"critical", "high", "medium", "low"}},
@@ -181,9 +216,15 @@ func TestProperty24_TagRegistryRejectsUnregisteredKeys(t *testing.T) {
 		err := reg.Validate(key, value)
 
 		if !useRegistered {
-			// Unregistered key must always be rejected.
-			if err == nil {
-				t.Logf("expected error for unregistered key %q", key)
+			// Open vocabulary (CYB-3246): unregistered key is accepted as a
+			// free-form string tag, unless it exceeds the default max length.
+			tooLong := len(value) > DefaultUnregisteredTagMaxLength
+			if tooLong && err == nil {
+				t.Logf("expected error for over-long unregistered key %q (len=%d)", key, len(value))
+				return false
+			}
+			if !tooLong && err != nil {
+				t.Logf("expected pass for unregistered key %q (len=%d): %v", key, len(value), err)
 				return false
 			}
 			return true

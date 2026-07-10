@@ -321,6 +321,7 @@ Tags 校验规则:
 - `scene`: 枚举 `indoor | outdoor | warehouse | office | factory`
 - `task`, `batch`: 自由字符串
 - `notes`: 自由字符串, 最大 500 字节
+- **其它未注册 key**（CYB-3246 开放词汇）: 作为自由字符串标签接受, 最大 500 字节; 无需改 `tag_registry.yaml`。已注册 key 仍按上述定义严格校验。
 
 ### 1.2 获取资产
 
@@ -946,13 +947,19 @@ curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality" \
 # 5) 查询标签变更历史
 curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
   -H "X-Databrew-Token: $TOKEN"
+
+# 6) 开放词汇（CYB-3246）— 未注册 key 作为自由字符串接受，无需改 YAML
+curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"description","value":"高清城市街道场景 下午时段","source_type":"human","source_name":"ops_007"}'
 ```
 
 错误路径：
 
 | 状态 | 错误码 | 触发条件 |
 |------|--------|----------|
-| `422` | `INVALID_TAG` | key 未在 `tags{}` 注册 / enum 值不合法 |
+| `422` | `INVALID_TAG` | 已注册 enum key 的值不合法；或值超长（已注册 `notes` 等按其 `max_length`，未注册 key 超 500 字节） |
 | `422` | `TAG_SOURCE_INVALID` | `source_type` 未在 `tag_sources[]` 注册，或缺 `requires_source_name` / `requires_source_version` 要求的字段 |
 | `409` | `TAG_IMMUTABLE` | 对 `immutable: true` 来源（`algo_sdk` / `compliance`）的已有 `(key, source_type, source_version)` 再次写入 |
 | `404` | `ASSET_NOT_FOUND` | asset_id 不存在 |
