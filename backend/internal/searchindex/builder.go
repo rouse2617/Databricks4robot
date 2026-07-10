@@ -55,6 +55,8 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		"version":                a.Version,
 		"retention_tier":         a.RetentionTier,
 		"storage_uri":            a.StorageURI,
+		"thumb_uri":              a.ThumbURI,
+		"files":                  a.Files, // CYB-3233: object-key URIs (algo_input_*/annot_*/delivery_*/raw_mcap/…)
 		"owner":                  a.Owner,
 		"reviewer":               a.Reviewer,
 		"start_timestamp_ns":     a.StartTimestampNs,
@@ -174,6 +176,10 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			mcapObj := map[string]any{}
 			if mf.StartTimestampNs > 0 {
 				mcapObj["recorded_at"] = time.Unix(0, mf.StartTimestampNs).UTC().Format(time.RFC3339Nano)
+			}
+			// CYB-3233: mcap object URI (mcap_uri column scans into GCSPath).
+			if mf.GCSPath != "" {
+				mcapObj["mcap_uri"] = mf.GCSPath
 			}
 			doc["mcap"] = mcapObj
 		}
