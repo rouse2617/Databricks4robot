@@ -409,7 +409,10 @@ export default function AssetDetailPage() {
 			),
 			children: (
 				<Suspense fallback={TAB_FALLBACK}>
-					<LineageTab assetId={asset.asset_id} />
+					<LineageTab
+						assetId={asset.asset_id}
+						parentAssetId={asset.parent_asset_id}
+					/>
 				</Suspense>
 			),
 		},
