@@ -93,6 +93,9 @@ func (m *mockRelationWriter) InsertRelation(_ context.Context, srcAssetID, dstAs
 	})
 	return nil
 }
+func (m *mockRelationWriter) InsertRelationWithMetadata(ctx context.Context, srcAssetID, dstAssetID, relationType, relationRunID string, _ map[string]any) error {
+	return m.InsertRelation(ctx, srcAssetID, dstAssetID, relationType, relationRunID)
+}
 
 // ── SaveTemplate ──────────────────────────────────────────────────────────
 

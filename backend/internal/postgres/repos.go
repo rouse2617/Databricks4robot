@@ -52,11 +52,20 @@ func assetVersionInsertArgs(a *models.Asset) (logicalID interface{}, revision in
 }
 
 // InsertRelation inserts a generic asset_relations edge (parent→child direction).
+// InsertRelation inserts a generic asset_relations edge with empty metadata.
+// Thin wrapper over InsertRelationWithMetadata (CYB-3281).
 func (r *AssetRepo) InsertRelation(ctx context.Context, parentAssetID, childAssetID, relationType, runID string) error {
+	return r.InsertRelationWithMetadata(ctx, parentAssetID, childAssetID, relationType, runID, nil)
+}
+
+// InsertRelationWithMetadata inserts a generic asset_relations edge, persisting
+// caller-context metadata (split_method / run_id / deployment_id …) into the
+// asset_relations.metadata column (CYB-3281). metadata may be nil ('{}').
+func (r *AssetRepo) InsertRelationWithMetadata(ctx context.Context, parentAssetID, childAssetID, relationType, runID string, metadata map[string]any) error {
 	const q = `
 WITH inserted AS (
-  INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
-  VALUES ($1, $2, $3, NULLIF($4, ''))
+  INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id, metadata)
+  VALUES ($1, $2, $3, NULLIF($4, ''), $5::jsonb)
   ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING
   RETURNING parent_asset_id, child_asset_id, relation_type, run_id
 ),

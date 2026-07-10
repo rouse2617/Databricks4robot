@@ -81,6 +81,10 @@ func (r *versionedAssetRepo) InsertRelation(_ context.Context, parentID, childID
 	return nil
 }
 
+func (r *versionedAssetRepo) InsertRelationWithMetadata(ctx context.Context, parentID, childID, relType, runID string, _ map[string]any) error {
+	return r.InsertRelation(ctx, parentID, childID, relType, runID)
+}
+
 func hasEventForAsset(events []*models.AssetEvent, eventType, assetID string) bool {
 	for _, e := range events {
 		if e.EventType == eventType && e.AssetID == assetID {

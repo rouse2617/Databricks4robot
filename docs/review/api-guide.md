@@ -516,11 +516,22 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
   ],
   "lineage": {
     "asset_id": "bbbbbbbb",
-    "upstream": {"mcap_file_id": "z7zyx6sl"},
-    "downstream": {"algo_results": [], "deliveries": [], "eval_results": []}
+    "upstream": {
+      "mcap_file_id": "z7zyx6sl", "mcap_uri": "gs://…/x.mcap", "ingest_state": "summarized",
+      "asset_id": "z7zyx6sl", "asset_type": "raw_mcap", "root_asset_id": "z7zyx6sl",
+      "start_timestamp_ns": 0, "end_timestamp_ns": 0
+    },
+    "downstream": {
+      "algo_results": [], "deliveries": [], "eval_results": [],
+      "children": [
+        {"asset_id": "cccccccc", "asset_type": "segment", "parent_asset_id": "bbbbbbbb", "root_asset_id": "z7zyx6sl", "import_batch": "grace-sync-20260710"}
+      ]
+    }
   }
 }
 ```
+
+> **CYB-3281**：`upstream` 现在**在保留 raw-mcap 顶层字段**（`mcap_file_id`/`mcap_uri`/`ingest_state`，前端沿用)的同时,新增**直接父资产**(`asset_id`/`asset_type`/`root_asset_id`/`start`/`end`,来自 `assets.parent_asset_id`；segment 的父是 raw_mcap 资产,其 `asset_id == mcap_file_id`)。`downstream.children[]` 新增,列出直接子资产(mcap 下的 segment、seg 下的 action/frame),与 `algo_results`/`deliveries`/`eval_results` 并列。
 
 错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
 
