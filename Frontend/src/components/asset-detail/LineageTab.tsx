@@ -40,6 +40,12 @@ interface LineageData {
 			metric_key: string;
 			metric_value?: number;
 		}>;
+		// CYB-3293: child assets (clip/action/frame/task) under this asset.
+		children?: Array<{
+			asset_id: string;
+			asset_type?: string;
+			parent_asset_id?: string;
+		}>;
 	};
 }
 
@@ -354,6 +360,36 @@ export default function LineageTab({
 									</Text>
 									{e.metric_value !== undefined && (
 										<Tag style={{ marginLeft: 8 }}>{e.metric_value}</Tag>
+									)}
+								</List.Item>
+							)}
+						/>
+					)}
+				</div>
+
+				{/* CYB-3293: child assets (clip/action/frame/task) under this asset */}
+				<div>
+					<Text strong style={{ fontSize: 13 }}>
+						<LinkOutlined /> 子资产
+					</Text>
+					{!data.downstream.children ||
+					data.downstream.children.length === 0 ? (
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
+							暂无子资产
+						</div>
+					) : (
+						<List
+							size="small"
+							dataSource={data.downstream.children}
+							renderItem={(c) => (
+								<List.Item>
+									<Link onClick={() => navigate(`/assets/${c.asset_id}`)}>
+										<Text code style={{ fontSize: 12 }}>
+											{c.asset_id}
+										</Text>
+									</Link>
+									{c.asset_type && (
+										<Tag style={{ marginLeft: 8 }}>{c.asset_type}</Tag>
 									)}
 								</List.Item>
 							)}
