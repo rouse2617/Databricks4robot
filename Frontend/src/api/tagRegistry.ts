@@ -34,6 +34,8 @@ export interface TagRegistryEntry {
 	created_by?: string;
 	created_at?: string;
 	updated_at?: string;
+	// true for DB-managed (editable) definitions, false for read-only YAML baseline.
+	managed?: boolean;
 }
 
 export interface TagDefRequest {

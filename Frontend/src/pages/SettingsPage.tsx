@@ -2,7 +2,6 @@ import {
 	CloudSyncOutlined,
 	ExclamationCircleOutlined,
 	SettingOutlined,
-	TagsOutlined,
 	ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
@@ -27,7 +26,6 @@ import {
 import { type SearchSyncStatusResponse, searchApi } from "../api/search";
 import BronzeSyncStatusAlert from "../components/assets/BronzeSyncStatusAlert";
 import SearchSyncStatusAlert from "../components/assets/SearchSyncStatusAlert";
-import TagRegistryManager from "../components/settings/TagRegistryManager";
 import { useAuth } from "../hooks/useAuth";
 import { extractApiErrorMessage } from "../lib/apiError";
 
@@ -307,20 +305,6 @@ export default function SettingsPage() {
 					</Descriptions.Item>
 					<Descriptions.Item label="API 地址">/api/v1</Descriptions.Item>
 				</Descriptions>
-			</Card>
-
-			<Card
-				title={
-					<span>
-						<TagsOutlined style={{ marginRight: 8 }} />
-						标签管理
-					</span>
-				}
-				size="small"
-				style={{ marginBottom: 16 }}
-				data-testid="tag-registry-card"
-			>
-				<TagRegistryManager />
 			</Card>
 
 			<Card

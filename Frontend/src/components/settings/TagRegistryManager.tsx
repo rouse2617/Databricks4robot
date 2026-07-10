@@ -1,6 +1,5 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import {
-	Alert,
 	Button,
 	Form,
 	Input,
@@ -18,6 +17,7 @@ import {
 	type TagDefRequest,
 	type TagRegistryEntry,
 	tagRegistryAdminApi,
+	tagRegistryApi,
 } from "../../api/tagRegistry";
 import { extractApiErrorMessage } from "../../lib/apiError";
 
@@ -28,7 +28,9 @@ function statusFrom(err: unknown): number | undefined {
 export default function TagRegistryManager() {
 	const [items, setItems] = useState<TagRegistryEntry[]>([]);
 	const [loading, setLoading] = useState(false);
-	const [denied, setDenied] = useState(false);
+	// readOnly: non-admins can still VIEW the registry (via the public endpoint)
+	// but the create/edit/delete controls are hidden.
+	const [readOnly, setReadOnly] = useState(false);
 	const [modalOpen, setModalOpen] = useState(false);
 	const [editingKey, setEditingKey] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
@@ -42,10 +44,27 @@ export default function TagRegistryManager() {
 		try {
 			const list = await tagRegistryAdminApi.list();
 			setItems(list);
-			setDenied(false);
+			setReadOnly(false);
 		} catch (err) {
 			if (statusFrom(err) === 401) {
-				setDenied(true);
+				// Not an admin: fall back to the public read endpoint so the
+				// registry is still viewable; hide the management controls.
+				setReadOnly(true);
+				try {
+					const pub = await tagRegistryApi.list();
+					setItems(
+						pub.map((t) => ({
+							key: t.key,
+							description: t.description,
+							type: (t.type as "enum" | "string") ?? "string",
+							values: t.values,
+							max_length: t.max_length,
+							managed: false,
+						})),
+					);
+				} catch (e2) {
+					msg.error(extractApiErrorMessage(e2, "加载标签失败"));
+				}
 			} else {
 				msg.error(extractApiErrorMessage(err, "加载标签注册表失败"));
 			}
@@ -117,17 +136,6 @@ export default function TagRegistryManager() {
 		}
 	};
 
-	if (denied) {
-		return (
-			<Alert
-				type="info"
-				showIcon
-				message="需要管理员权限"
-				description="标签注册表管理仅对管理员开放（ADMIN_EMAILS 或 admin token）。未注册的自定义标签仍可在资产详情页自由添加（开放词汇）。"
-			/>
-		);
-	}
-
 	const columns = [
 		{
 			title: "Key",
@@ -168,27 +176,35 @@ export default function TagRegistryManager() {
 		{
 			title: "操作",
 			key: "actions",
-			width: 140,
-			render: (_: unknown, r: TagRegistryEntry) => (
-				<Space>
-					<Button
-						size="small"
-						icon={<EditOutlined />}
-						onClick={() => openEdit(r)}
-					>
-						编辑
-					</Button>
-					<Popconfirm
-						title={`删除标签 ${r.key}？`}
-						okText="删除"
-						cancelText="取消"
-						okButtonProps={{ danger: true }}
-						onConfirm={() => remove(r.key)}
-					>
-						<Button size="small" danger icon={<DeleteOutlined />} />
-					</Popconfirm>
-				</Space>
-			),
+			width: 160,
+			render: (_: unknown, r: TagRegistryEntry) => {
+				if (!r.managed) {
+					return <Tag>内置（只读）</Tag>;
+				}
+				if (readOnly) {
+					return <Tag color="green">受管</Tag>;
+				}
+				return (
+					<Space>
+						<Button
+							size="small"
+							icon={<EditOutlined />}
+							onClick={() => openEdit(r)}
+						>
+							编辑
+						</Button>
+						<Popconfirm
+							title={`删除标签 ${r.key}？`}
+							okText="删除"
+							cancelText="取消"
+							okButtonProps={{ danger: true }}
+							onConfirm={() => remove(r.key)}
+						>
+							<Button size="small" danger icon={<DeleteOutlined />} />
+						</Popconfirm>
+					</Space>
+				);
+			},
 		},
 	];
 
@@ -205,11 +221,15 @@ export default function TagRegistryManager() {
 			>
 				<span style={{ color: "var(--color-text-secondary)" }}>
 					受管标签（enum 允许值、string
-					长度、传播策略）即时生效，无需重启。未注册 key 仍走开放词汇。
+					长度、传播策略）即时生效，无需重启。「内置」为 YAML 基线只读；未注册
+					key 仍走开放词汇。
+					{readOnly ? "（只读：需要管理员权限才能编辑）" : ""}
 				</span>
-				<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-					新增标签
-				</Button>
+				{!readOnly && (
+					<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+						新增标签
+					</Button>
+				)}
 			</div>
 			<Table
 				rowKey="key"

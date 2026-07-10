@@ -54,6 +54,7 @@ import {
 	ContentLoadingState,
 } from "../components/common/PageContentState";
 import PoolManager from "../components/pipeline/PoolManager";
+import TagRegistryManager from "../components/settings/TagRegistryManager";
 import { COLUMN_LABELS } from "../lib/productVocabulary";
 
 const { Title, Text, Paragraph } = Typography;
@@ -969,15 +970,6 @@ export default function RegistryCenterPage() {
 			render: (v: string[]) => v?.join(", ") || "—",
 		},
 	];
-	const tagCols: ColumnsType<TagRegistryItem> = [
-		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
-		{ title: "类型", dataIndex: "type" },
-		{
-			title: "说明",
-			dataIndex: "description",
-			render: (v?: string) => v || "—",
-		},
-	];
 	const metricCols: ColumnsType<MetricRegistryItem> = [
 		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
 		{
@@ -1605,8 +1597,8 @@ export default function RegistryCenterPage() {
 											<Alert
 												type="info"
 												showIcon
-												message="这部分继续只读"
-												description="Algo / Tag / Metric / Lifecycle 仍是平台字典来源，用来约束校验、搜索和 UI 口径，不承担配置编辑职责。"
+												message="平台字典"
+												description="Algo / Metric / Lifecycle 是只读平台字典来源。Tag 注册表支持管理员在此增改删受管标签（enum 允许值、string 长度、传播策略），即时生效无需重启；「内置」为 YAML 基线只读，未注册 key 仍走开放词汇。"
 											/>
 
 											<Card size="small" title={`Lifecycle (${states.length})`}>
@@ -1632,16 +1624,9 @@ export default function RegistryCenterPage() {
 												</TableScrollBoundary>
 											</Card>
 
-											<Card size="small" title={`Tags (${tags.length})`}>
+											<Card size="small" title="Tags（受管标签）">
 												<TableScrollBoundary>
-													<Table
-														rowKey="key"
-														pagination={false}
-														size="small"
-														columns={tagCols}
-														dataSource={tags}
-														scroll={{ x: 680 }}
-													/>
+													<TagRegistryManager />
 												</TableScrollBoundary>
 											</Card>
 

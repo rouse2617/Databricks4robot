@@ -16,4 +16,7 @@ type TagRegistryEntry struct {
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Managed is true for DB-backed (editable) definitions and false for
+	// read-only YAML-baseline entries. Computed by the list handler; not stored.
+	Managed bool `json:"managed"`
 }
