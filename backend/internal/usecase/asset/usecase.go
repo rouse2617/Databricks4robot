@@ -1135,7 +1135,13 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 				return err
 			}
 			if relRepo, ok := u.repo.(repository.AssetRelationWriter); ok {
-				if err := relRepo.InsertRelation(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID); err != nil {
+				// CYB-3281: carry creation context into the edge metadata instead
+				// of leaving asset_relations.metadata as '{}'.
+				relMeta := map[string]any{"asset_type": in.AssetType}
+				if in.SplitMethod != "" {
+					relMeta["split_method"] = in.SplitMethod
+				}
+				if err := relRepo.InsertRelationWithMetadata(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID, relMeta); err != nil {
 					return err
 				}
 			}

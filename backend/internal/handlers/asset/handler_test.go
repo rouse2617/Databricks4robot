@@ -1661,12 +1661,19 @@ func TestBuildLineageResponse_happyPath(t *testing.T) {
 			{"eval-1", "accuracy", float64(0.95)},
 		},
 	}
+	// CYB-3281: downstream.children — (asset_id, asset_type, parent_asset_id, root_asset_id, import_batch)
+	childRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"act00001", "action", "aa111111", "root0001", "batch-x"},
+		},
+	}
 
 	q := &fakeAssetSQLQuerier{
 		queries: []assetSQLQueryResult{
 			{rows: algoRows},
 			{rows: delRows},
 			{rows: evalRows},
+			{rows: childRows},
 		},
 	}
 
@@ -1715,6 +1722,16 @@ func TestBuildLineageResponse_happyPath(t *testing.T) {
 	e0 := evals[0].(map[string]any)
 	if e0["eval_name"] != "eval-1" || e0["metric_value"] != float64(0.95) {
 		t.Fatalf("unexpected eval[0]: %v", e0)
+	}
+
+	// CYB-3281: downstream.children lists immediate child assets.
+	children := ds["children"].([]any)
+	if len(children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(children))
+	}
+	c0 := children[0].(map[string]any)
+	if c0["asset_id"] != "act00001" || c0["asset_type"] != "action" || c0["parent_asset_id"] != "aa111111" {
+		t.Fatalf("unexpected child[0]: %v", c0)
 	}
 
 	up := body["upstream"].(map[string]any)

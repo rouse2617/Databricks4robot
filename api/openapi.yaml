@@ -1708,8 +1708,37 @@ components:
       type: object
       properties:
         asset_id: { $ref: '#/components/schemas/AssetID' }
-        upstream: {}
-        downstream: {}
+        upstream:
+          type: object
+          description: >
+            Immediate upstream. Raw-mcap source fields stay at the top level;
+            CYB-3281 adds the immediate parent asset as sibling keys.
+          properties:
+            mcap_file_id: { type: string }
+            mcap_uri: { type: string }
+            ingest_state: { type: string }
+            asset_id: { type: string, description: "Immediate parent asset id (CYB-3281); for a segment this is the raw_mcap asset." }
+            asset_type: { type: string }
+            root_asset_id: { type: string }
+            start_timestamp_ns: { type: integer, format: int64 }
+            end_timestamp_ns: { type: integer, format: int64 }
+        downstream:
+          type: object
+          properties:
+            algo_results: { type: array, items: { type: object } }
+            deliveries: { type: array, items: { type: object } }
+            eval_results: { type: array, items: { type: object } }
+            children:
+              type: array
+              description: "Immediate child assets — segments under an mcap, actions/frames under a seg (CYB-3281)."
+              items:
+                type: object
+                properties:
+                  asset_id: { type: string }
+                  asset_type: { type: string }
+                  parent_asset_id: { type: string }
+                  root_asset_id: { type: string }
+                  import_batch: { type: string }
     ProvenanceEntry:
       type: object
       properties:
