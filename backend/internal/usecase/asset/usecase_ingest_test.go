@@ -86,6 +86,32 @@ func TestCreate_LifecycleDefaults(t *testing.T) {
 	}
 }
 
+// CYB-3267 Bug 2: Create sets duration_ms directly from the timestamp span
+// (the mock repo does not run prepAssetForWrite, so this isolates the
+// create-site assignment). Without the fix, DurationMs would be 0 here.
+func TestCreate_SetsDurationMsFromSpan(t *testing.T) {
+	repo := newMockAssetRepo()
+	uc := NewFull(repo, nil, buildTestAlgoRegistry(t))
+	ctx := context.Background()
+
+	asset, err := uc.Create(ctx, CreateInput{
+		McapFileID:       "mcap-test-001",
+		StartTimestampNs: 1_000_000_000,
+		EndTimestampNs:   3_000_000_000, // span = 2s
+		Reviewer:         "tester",
+		Owner:            "owner",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if asset.DurationMs != 2000 {
+		t.Errorf("DurationMs = %d, want 2000", asset.DurationMs)
+	}
+	if asset.DurationSec != 2 {
+		t.Errorf("DurationSec = %v, want 2", asset.DurationSec)
+	}
+}
+
 func TestCreate_DefaultAssetTypeWhenMissing(t *testing.T) {
 	repo := newMockAssetRepo()
 	uc := New(repo)
