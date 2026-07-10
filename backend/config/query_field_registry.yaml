@@ -45,6 +45,9 @@ resources:
       - field: mcap.vendor_id
         filter_engines: [postgres, elasticsearch]
         facet_engines: [elasticsearch]
+      - field: env
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
       - field: algo_status
         filter_engines: [postgres]
       - field: action.label
