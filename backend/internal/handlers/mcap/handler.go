@@ -114,6 +114,31 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 			if err := h.assetRepo.InsertNew(txCtx, placeholder); err != nil {
 				return err
 			}
+			// CYB-3297 Phase D: emit an asset-scoped event so the ES subscriber
+			// indexes the placeholder raw_mcap immediately. The mcap_file_created
+			// event below carries no asset_id and is dropped by the subscriber, so
+			// without this a newly ingested raw_mcap is invisible in search until
+			// the next full reindex.
+			if h.eventRepo != nil {
+				assetBody, _ := json.Marshal(map[string]any{
+					"asset_id":     placeholder.AssetID,
+					"asset_type":   "raw_mcap",
+					"mcap_file_id": placeholder.McapFileID,
+				})
+				if err := h.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+					EventType:     "asset_created",
+					AggregateType: "asset",
+					AssetID:       placeholder.AssetID,
+					McapFileID:    placeholder.McapFileID,
+					TenantID:      placeholder.TenantID,
+					ProjectID:     placeholder.ProjectID,
+					EventSource:   "backend",
+					RequestID:     requestID,
+					EventPayload:  assetBody,
+				}); err != nil {
+					return err
+				}
+			}
 		}
 		return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, requestID, map[string]any{
 			"mcap_file_id": f.McapFileID,
