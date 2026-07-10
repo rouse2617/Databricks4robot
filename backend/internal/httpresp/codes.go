@@ -34,4 +34,6 @@ const (
 	CodeUnsupportedOperator    = "UNSUPPORTED_OPERATOR"
 	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND"        // CYB-1070
 	CodeHierarchyViolation     = "ASSET_HIERARCHY_VIOLATION" // CYB-1164
+	CodeTagKeyExists           = "TAG_KEY_EXISTS"            // CYB-3246
+	CodeTagNotFound            = "TAG_NOT_FOUND"             // CYB-3246
 )

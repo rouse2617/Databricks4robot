@@ -1440,6 +1440,38 @@ components:
           type: array
           items: { type: string }
         max_length: { type: integer }
+    TagRegistryEntry:
+      type: object
+      description: Managed tag definition (CYB-3246 Phase 2). Superset of TagRegistryItem with propagation + audit columns.
+      properties:
+        key: { type: string }
+        description: { type: string }
+        type: { type: string, enum: [enum, string] }
+        values:
+          type: array
+          items: { type: string }
+        max_length: { type: integer }
+        propagation: { type: string, enum: [none, descendants] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TagDefRequest:
+      type: object
+      required: [key, type]
+      properties:
+        key:
+          type: string
+          description: Required on create; on update it is taken from the path and the body value is ignored.
+          example: severity
+        description: { type: string }
+        type: { type: string, enum: [enum, string] }
+        values:
+          type: array
+          items: { type: string }
+          description: Required and non-empty when type=enum.
+          example: [critical, high, medium, low]
+        max_length: { type: integer, description: "Applies when type=string; 0 = unlimited." }
+        propagation: { type: string, enum: [none, descendants], default: none }
     LifecycleState:
       type: object
       properties:
@@ -4819,6 +4851,118 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/TagRegistryItem' }
+  /api/v1/admin/tag-registry:
+    get:
+      tags: [Admin]
+      summary: List managed tag definitions (admin)
+      description: >-
+        Managed tag-registry CRUD (CYB-3246 Phase 2). Auth: static admin token
+        OR admin-role web session (AdminTokenOrAdminRole). Registered definitions
+        take effect for validation immediately (no restart). Unregistered keys
+        remain open-vocabulary free-form string tags and are not listed here.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    post:
+      tags: [Admin]
+      summary: Register a managed tag definition (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagDefRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '409':
+          description: Tag key already exists (TAG_KEY_EXISTS)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '422':
+          description: Validation failed (bad type, enum without values, missing key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/admin/tag-registry/{key}:
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Admin]
+      summary: Update a managed tag definition (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagDefRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Tag key not found (TAG_NOT_FOUND)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Admin]
+      summary: Delete a managed tag definition (admin)
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean }
+                  key: { type: string }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Tag key not found (TAG_NOT_FOUND)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
   /api/v1/metric-registry:
     get:
       tags: [Registry]

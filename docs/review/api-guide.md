@@ -969,6 +969,37 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
 - `DELETE /tags/{key}` 对不存在的 key 按幂等成功处理，但不会伪造 `tag_deleted` 事件。
 - `GET /tags/history` 仍是统一 `asset_events` 形状，过滤 `tag_upserted / tag_deleted`；event payload 含 `source_name` / `source_version` / `run_id`。
 
+#### 2.4.1 受管标签注册表 CRUD（Admin — CYB-3246 Phase 2）
+
+受管标签定义（enum 型及其允许值、string 型长度、传播策略）存于 DB，可通过 admin 接口自助注册/修改/删除，**无需改 `tag_registry.yaml` 或重启后端**。鉴权为 `AdminTokenOrAdminRole`（静态 admin token 或 `ADMIN_EMAILS` 网页会话）。写入后内存校验 map 立即刷新。未注册 key 仍走开放词汇（自由字符串），不出现在此表。
+
+```bash
+# 列出受管标签
+curl "$BASE/api/v1/admin/tag-registry" -H "X-Databrew-Token: $ADMIN_TOKEN"
+
+# 注册一个 enum 标签（即时生效，无需重启）
+curl -X POST "$BASE/api/v1/admin/tag-registry" \
+  -H "X-Databrew-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"severity","description":"严重程度","type":"enum","values":["critical","high","medium","low"]}'
+
+# 更新（key 取自路径；body 的 key 被忽略）
+curl -X PATCH "$BASE/api/v1/admin/tag-registry/severity" \
+  -H "X-Databrew-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"type":"enum","values":["critical","high","medium","low","info"]}'
+
+# 删除
+curl -X DELETE "$BASE/api/v1/admin/tag-registry/severity" -H "X-Databrew-Token: $ADMIN_TOKEN"
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `401` | `UNAUTHORIZED` | 非 admin token 且非 admin-role 会话 |
+| `409` | `TAG_KEY_EXISTS` | 创建的 key 已存在 |
+| `422` | `INVALID_ARGUMENT` | `type` 非 `enum`/`string`；`enum` 缺 `values`；缺 `key` |
+| `404` | `TAG_NOT_FOUND` | 更新/删除不存在的 key |
+
 ### 2.5 查询资产事件 / 算法事件子集
 
 ```bash
