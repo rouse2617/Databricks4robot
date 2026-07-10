@@ -417,7 +417,10 @@ export default function TagsTab({
 					))}
 				</Space>
 			) : (
-				<Empty description="暂无标签" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+				<Empty
+					description="暂无标签。可手动添加，或等待上游算法打标完成。"
+					image={Empty.PRESENTED_IMAGE_SIMPLE}
+				/>
 			)}
 
 			<div style={{ marginTop: 12 }}>

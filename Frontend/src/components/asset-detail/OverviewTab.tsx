@@ -1,4 +1,4 @@
-import { Card, Collapse, Descriptions, Spin, Tag } from "antd";
+import { Card, Collapse, Descriptions, Spin, Tag, Typography } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import ReactJson from "react-json-view";
@@ -10,6 +10,8 @@ import {
 	getLifecycleState,
 } from "../../lib/assetPresentation";
 import { formatDateTime } from "../../lib/dateTime";
+
+const { Text } = Typography;
 
 interface Props {
 	asset: Asset;
@@ -39,13 +41,33 @@ export default function OverviewTab({ asset }: Props) {
 		<Card size="small">
 			<Descriptions column={{ xs: 1, sm: 2 }} bordered size="small">
 				<Descriptions.Item label="Asset ID">
-					<code className="text-xs">{asset.asset_id}</code>
+					<Text code copyable className="text-xs">
+						{asset.asset_id}
+					</Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="MCAP File">
-					<code className="text-xs">{asset.mcap_file_id}</code>
+					{asset.mcap_file_id ? (
+						<Text code copyable className="text-xs">
+							{asset.mcap_file_id}
+						</Text>
+					) : (
+						<code className="text-xs">—</code>
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="Segment Locator">
-					<code className="text-xs">{asset.segment_locator ?? "—"}</code>
+					{asset.segment_locator ? (
+						<Text
+							code
+							copyable
+							ellipsis={{ tooltip: asset.segment_locator }}
+							className="text-xs"
+							style={{ maxWidth: "100%" }}
+						>
+							{asset.segment_locator}
+						</Text>
+					) : (
+						<code className="text-xs">—</code>
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="起始时间 (ns)">
 					{asset.start_timestamp_ns}

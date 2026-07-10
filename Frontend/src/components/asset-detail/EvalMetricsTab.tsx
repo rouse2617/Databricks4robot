@@ -25,7 +25,7 @@ export default function EvalMetricsTab(props: {
 	}
 
 	if (evalResults.length === 0 && metrics.length === 0) {
-		return <Empty description="暂无评测结果或指标" />;
+		return <Empty description="暂无评测结果。运行评测算法后在此展示。" />;
 	}
 
 	return (
