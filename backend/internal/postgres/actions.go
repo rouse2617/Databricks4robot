@@ -51,6 +51,7 @@ func scanAction(scanner rowScanner) (*models.Action, error) {
 		&a.Description, &attrsBytes,
 		&a.SourceType, &a.SourceName, &a.SourceVersion,
 		&a.RunID, &confidence, &a.ExternalID,
+		&a.TaskID,
 		&a.TenantID, &a.ProjectID,
 		&a.IsDeleted, &a.Version, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {

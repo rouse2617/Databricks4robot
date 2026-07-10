@@ -897,10 +897,14 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	// Schema-registered types (e.g. grace_video) may omit mcap_file_id; the
 	// DB column allows empty/NULL per assets_mcap_file_id_check.
 	a := &models.Asset{
-		AssetID:             "",
-		McapFileID:          mcapFileID,
-		StartTimestampNs:    in.StartTimestampNs,
-		EndTimestampNs:      in.EndTimestampNs,
+		AssetID:          "",
+		McapFileID:       mcapFileID,
+		StartTimestampNs: in.StartTimestampNs,
+		EndTimestampNs:   in.EndTimestampNs,
+		// CYB-3267: set duration_ms directly at the create site (like
+		// CreateChildAsset) so the canonical field is correct without relying on
+		// the downstream DurationSec*1000 round-trip in prepAssetForWrite.
+		DurationMs:          (in.EndTimestampNs - in.StartTimestampNs) / 1_000_000,
 		DurationSec:         float64(in.EndTimestampNs-in.StartTimestampNs) / 1e9,
 		Reviewer:            in.Reviewer,
 		Status:              models.AssetStatusApproved,
