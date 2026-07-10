@@ -74,6 +74,14 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		"lineage_relation_types": []string{},
 	}
 
+	// CYB-3268: action is a first-class asset but never traverses the
+	// created→processing→ready lifecycle. Omit lifecycle_state so ES facets don't
+	// surface a meaningless lifecycle:ready bucket for actions (PG hard-codes
+	// 'ready' only to satisfy the NOT NULL + CHECK column).
+	if a.AssetType == "action" {
+		delete(doc, "lifecycle_state")
+	}
+
 	if a.ParentAssetID != "" {
 		doc["parent_asset_id"] = a.ParentAssetID
 	}
@@ -201,47 +209,11 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		}
 	}
 
-	// actions[] nested: re-read the seg's full action set on every projection.
-	// CDC writes are at-least-once and reads are idempotent, so this is safe.
-	if b.Actions != nil {
-		actions, err := b.Actions.ListByAsset(ctx, assetID, repository.ActionListOptions{Limit: 1000})
-		if err != nil {
-			return nil, false, err
-		}
-		actionsNested := make([]map[string]any, 0, len(actions))
-		for _, ax := range actions {
-			if ax == nil {
-				continue
-			}
-			entry := map[string]any{
-				"action_id":   ax.ActionID,
-				"start_ns":    ax.StartNs,
-				"end_ns":      ax.EndNs,
-				"labels":      ax.Labels,
-				"source_type": ax.SourceType,
-			}
-			if ax.PrimaryLabel != "" {
-				entry["primary_label"] = ax.PrimaryLabel
-			}
-			if ax.Description != "" {
-				entry["description"] = ax.Description
-			}
-			if ax.SourceName != "" {
-				entry["source_name"] = ax.SourceName
-			}
-			if ax.RunID != "" {
-				entry["run_id"] = ax.RunID
-			}
-			if ax.Confidence != nil {
-				entry["confidence"] = *ax.Confidence
-			}
-			if !ax.UpdatedAt.IsZero() {
-				entry["updated_at"] = ax.UpdatedAt.UTC().Format(time.RFC3339Nano)
-			}
-			actionsNested = append(actionsNested, entry)
-		}
-		doc["actions"] = actionsNested
-	}
+	// CYB-3268: actions[] nested projection removed. Actions are now first-class
+	// assets (asset_type='action') with their own top-level ES docs, so the seg
+	// no longer carries a nested actions[] array. The Builder.Actions field is
+	// retained (unused) pending cleanup; stale actions[] on old docs are wiped by
+	// a one-off _update_by_query at deploy time.
 
 	return doc, true, nil
 }

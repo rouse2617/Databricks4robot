@@ -1238,7 +1238,15 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 
 ## 2.7 Action 段（seg 内时间分段标注）
 
-> 状态：**Phase 1 已上线**：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，可用 `expected_version` 做 CAS）。平台级反查 `GET /actions` 与 `GET /lookup` 仍在 §2.7.4 / §2.7.5 标记为「待上线」。
+> ⚠️ **v2 / BREAKING（CYB-3268，2026-07-10）**：`/assets/:id/actions` 的 **4 个方法（POST/GET/PATCH/DELETE）已统一切到一等资产实现**——读写 `assets` 表 `asset_type='action'` 行，不再走独立 `actions` 表。**响应 shape 变了**：老的 action 表行（`action_id` / `start_ns` / 顶层 `primary_label`）→ 一等资产行（`asset_id` / `asset_type='action'` / `parent_asset_id` / `start_timestamp_ns` / `metadata.*`）。字段映射与老 `actions` 表数据查询见 [`docs/agents/knowledge/action-first-class.md`](../agents/knowledge/action-first-class.md)。老 `actions` 表数据**不再经 API 暴露**（等单独 backfill issue）。下方 §2.7.1–2.7.3 的 v1 示例以本横幅为准替换 shape。
+>
+> v2 关键变化：
+> - **创建 body**：`createChildAssetRequest{start_timestamp_ns, end_timestamp_ns, split_method?, split_run_id?, metadata:{primary_label, labels, description, source_type, source_name, …}}`——action 富字段进 `metadata.*`；`primary_label`/`labels[]` 不在 `config/action_label_registry.yaml` 内返 `422 INVALID_ACTION`。
+> - **List** `GET /assets/:id/actions`：仅 `limit`/`offset` 分页（老的 `at`/`from`/`to` + server-side `label` 过滤已下线；label 过滤走客户端）。envelope 仍是 `{items, asset_id, total}`，但 item 是 asset 行。
+> - **PATCH/DELETE** `/:action_id`：校验 `asset_type='action'` + `parent_asset_id` 匹配 URL，跨 parent / 不存在 → **404**。
+> - `lifecycle_state` 对 action 恒为 `'ready'`（PG 兜底），ES doc 不写该字段（避免无意义 facet bucket）。
+>
+> 旧状态（v1，供参考）：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，`expected_version` CAS）。
 
 业务模型：`mcap → seg → action`。一条 action 是 seg 内某段时间窗上的一组标注（label + 描述 + 多源溯源）。
 
@@ -1256,17 +1264,22 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 将下面示例中的时间戳换成目标 seg 的 `GET /api/v1/assets/{asset_id}` 响应里真实区间内的值（可与父区间同量级，例如纳秒级绝对时间）。
 
 ```bash
+# v2 (CYB-3268): body = createChildAssetRequest; action 富字段进 metadata.*
 curl -X POST "$BASE/api/v1/assets/{asset_id}/actions" \
   -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
-    "start_ns": 1640056114776298435,
-    "end_ns":   1640056115776298435,
-    "primary_label": "pickup",
-    "labels": ["pickup", "left_hand"],
-    "description": "操作员从料盒中取出零件",
-    "source_type": "human",
-    "source_name": "annotator-001"
+    "start_timestamp_ns": 1640056114776298435,
+    "end_timestamp_ns":   1640056115776298435,
+    "metadata": {
+      "primary_label": "pickup",
+      "labels": ["pickup", "left_hand"],
+      "description": "操作员从料盒中取出零件",
+      "source_type": "human",
+      "source_name": "annotator-001"
+    }
   }'
+# → 201 { "asset_id": "…", "asset_type": "action", "parent_asset_id": "{asset_id}",
+#         "start_timestamp_ns": …, "metadata": { "primary_label": "pickup", … } }
 ```
 
 幂等：当前实现支持 `external_id`——同 `(asset_id, source_name, external_id)` 已存在时返回 `409 CONCURRENT_CONFLICT`（不自动覆盖；如需更新已有行请用 §2.7.2 的 PATCH）。`Idempotency-Key` header **未**在 actions 端点强制（与 `POST /deliveries` 不同）。
