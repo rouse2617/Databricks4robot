@@ -9,7 +9,7 @@ name: DB migrate lint
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "backend/migrations/**"
       - "backend/atlas/**"
@@ -85,9 +85,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Migration filenames on main (excluding atlas.sum / archive).
+          # Compare against the PR's actual base branch (main or dev), not a
+          # hardcoded main — otherwise a PR→dev would miss collisions with
+          # migrations already on dev but not yet merged to main. (CYB-3299)
+          BASE_REF="origin/${{ github.base_ref }}"
+          echo "base branch: $BASE_REF"
+
+          # Migration filenames on the base branch (excluding atlas.sum / archive).
           mapfile -t main_files < <(
-            git ls-tree -r --name-only origin/main -- backend/migrations/ 2>/dev/null \
+            git ls-tree -r --name-only "$BASE_REF" -- backend/migrations/ 2>/dev/null \
               | grep -E '^backend/migrations/[0-9]+_' \
               | sed 's#^backend/migrations/##' \
               | sort
@@ -114,7 +120,7 @@ jobs:
             # as octal, and 039 errors ("value too great for base").
             if (( 10#$n > 10#$main_max )); then main_max=$n; fi
           done
-          echo "main latest migration prefix: $main_max"
+          echo "base ($BASE_REF) latest migration prefix: $main_max"
 
           # New files in this PR: anything in HEAD but not on main.
           new_files=()
