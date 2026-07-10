@@ -382,12 +382,16 @@ func RegisterAll(
 			keys.DELETE("/:id", apiKeyHandler.Revoke)
 		}
 
-		// Actions (mcap → seg → action 第三层)
+		// Actions (mcap → seg → action 第三层) — CYB-3268: the 4 methods are now
+		// served as first-class assets (asset_type='action') by assetHandler on
+		// the assets table, unifying read+write. The legacy actionHandler is kept
+		// constructed for a future backfill issue but no longer routes here; the
+		// guard stays so routing tracks the action feature being wired.
 		if actionHandler != nil {
-			assets.POST("/:id/actions", actionHandler.Create)
-			assets.GET("/:id/actions", actionHandler.List)
-			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
-			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
+			assets.POST("/:id/actions", assetHandler.CreateAction)
+			assets.GET("/:id/actions", assetHandler.ListActions)
+			assets.PATCH("/:id/actions/:action_id", assetHandler.UpdateAction)
+			assets.DELETE("/:id/actions/:action_id", assetHandler.DeleteAction)
 		}
 
 		// Algo-runs (CYB-1018)

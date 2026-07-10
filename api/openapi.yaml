@@ -3871,7 +3871,13 @@ paths:
   /api/v1/assets/{id}/actions:
     post:
       tags: [Assets]
-      summary: Create action-type child asset under a parent (layered creation, CYB-1228)
+      summary: Create action-type child asset (first-class asset_type='action', CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): actions are first-class assets on the `assets` table.
+        Body is ChildAssetCreateRequest (start_timestamp_ns / end_timestamp_ns / metadata);
+        primary_label + labels[] travel in `metadata` and are validated against the
+        action-label registry (422 INVALID_ACTION). Response is an `Asset` row, not the
+        legacy actions-table shape.
       parameters:
         - in: path
           name: id
@@ -3889,7 +3895,96 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Asset' }
         '422':
-          description: Hierarchy violation or invalid domain state
+          description: Hierarchy violation, invalid domain state, or unregistered action label (INVALID_ACTION)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [Assets]
+      summary: List first-class action assets under a parent (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): reads the `assets` table (asset_type='action',
+        parent_asset_id={id}), not the legacy actions table. Envelope is
+        {items:[Asset], asset_id, total}. Label filtering is client-side.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, minimum: 1, maximum: 1000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        '200':
+          description: Action assets under the parent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
+                  asset_id: { type: string }
+                  total: { type: integer }
+  /api/v1/assets/{id}/actions/{action_id}:
+    patch:
+      tags: [Assets]
+      summary: Update a first-class action asset's metadata (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): updates an `assets` row (asset_type='action').
+        Cross-parent or missing action_id → 404; unregistered label → 422 INVALID_ACTION.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: path
+          name: action_id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated action asset
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '404':
+          description: Action not found or not under this parent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Assets]
+      summary: Soft-delete a first-class action asset (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): soft-deletes an `assets` row (asset_type='action').
+        Cross-parent or missing action_id → 404.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: path
+          name: action_id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      responses:
+        '204':
+          description: Action soft-deleted
+        '404':
+          description: Action not found or not under this parent
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

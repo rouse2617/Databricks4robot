@@ -32,6 +32,9 @@ var (
 	ErrInvalidMcapFileID  = errors.New("mcap_file_id must be exactly 8 alphanumeric characters")
 	ErrMcapFileNotFound   = errors.New("mcap_file_id does not exist")
 	ErrCustomerNotFound   = errors.New("customer not found for customer.* tag namespace") // CYB-1070
+	// ErrInvalidActionLabel is returned when an action asset's primary_label or
+	// labels[] are not in the action-label controlled vocabulary (CYB-3268).
+	ErrInvalidActionLabel = errors.New("invalid action label")
 )
 
 // minAssetDurationNs is the smallest allowed asset span: below 1ms the derived
@@ -111,6 +114,9 @@ type Usecase struct {
 	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
 	validator      *deliveryrules.AssetWriteValidator  // CYB-1164: hierarchy invariants
 	schemaRegistry *models.SchemaRegistry
+	// actionLabelRegistry validates action assets' controlled label vocabulary
+	// (CYB-3268). nil disables validation.
+	actionLabelRegistry *config.ActionLabelRegistry
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -174,6 +180,12 @@ func (u *Usecase) SetValidator(v *deliveryrules.AssetWriteValidator) {
 
 func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
 	u.schemaRegistry = r
+}
+
+// SetActionLabelRegistry wires the action-label controlled vocabulary used to
+// validate asset_type='action' creates/updates (CYB-3268). Pass nil to disable.
+func (u *Usecase) SetActionLabelRegistry(r *config.ActionLabelRegistry) {
+	u.actionLabelRegistry = r
 }
 
 func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
@@ -1033,6 +1045,14 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 	if err := validateAssetTimeRange(in.StartTimestampNs, in.EndTimestampNs); err != nil {
 		return nil, err
 	}
+	// CYB-3268: action is a first-class asset with a controlled label vocabulary.
+	// primary_label / labels[] travel in metadata; validate before persisting.
+	if in.AssetType == "action" && u.actionLabelRegistry != nil {
+		primary, labels := actionLabelsFromMetadata(in.Metadata)
+		if err := u.actionLabelRegistry.Validate(primary, labels); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidActionLabel, err)
+		}
+	}
 	if in.ParentAssetID == "" {
 		return nil, ErrNotFound
 	}
@@ -1074,6 +1094,14 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 		Files:            map[string]string{},
 		Tags:             map[string]string{},
 		AlgoResults:      map[string]string{},
+	}
+	// CYB-3268 (Plan A): action never traverses created→processing→ready, but
+	// lifecycle_state is NOT NULL + CHECK-constrained. Hard-code 'ready' so the
+	// column is valid; any "ready ⇒ deliverable" logic MUST exclude
+	// asset_type='action'. (prepAssetForWrite already defaults empty→ready; this
+	// makes the contract explicit rather than incidental.)
+	if in.AssetType == "action" {
+		a.LifecycleState = "ready"
 	}
 	if u.schemaRegistry != nil {
 		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
@@ -1441,4 +1469,142 @@ func (u *Usecase) ToggleFavorite(ctx context.Context, assetID string) (int, erro
 		return 0, fmt.Errorf("usage stats repository not configured")
 	}
 	return u.usageStatsRepo.ToggleFavorite(ctx, assetID)
+}
+
+// --- CYB-3268: action as a first-class asset (assets table, asset_type='action') ---
+
+// actionLabelsFromMetadata extracts primary_label + labels[] from a child-asset
+// metadata map for action-label-registry validation. Missing or wrong-typed
+// values coerce to empty so the registry rejects them consistently. JSON decodes
+// labels as []interface{}; a []string is also accepted for programmatic callers.
+func actionLabelsFromMetadata(md map[string]interface{}) (string, []string) {
+	if md == nil {
+		return "", nil
+	}
+	primary, _ := md["primary_label"].(string)
+	var labels []string
+	switch raw := md["labels"].(type) {
+	case []string:
+		labels = raw
+	case []interface{}:
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				labels = append(labels, s)
+			}
+		}
+	}
+	return primary, labels
+}
+
+// UpdateActionInput carries the mutable fields for PATCH /assets/:id/actions/:aid.
+type UpdateActionInput struct {
+	Metadata map[string]interface{}
+}
+
+// ListActionsByParent returns first-class action assets under parentID
+// (asset_type='action', parent_asset_id=parentID), ordered by start_timestamp_ns.
+// Backs GET /assets/:id/actions on the assets table (not the legacy actions
+// table). Returns the page plus the total count for the response envelope.
+func (u *Usecase) ListActionsByParent(ctx context.Context, parentID string, limit, offset int) ([]*models.Asset, int64, error) {
+	if parentID == "" {
+		return nil, 0, ErrNotFound
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	page := offset/limit + 1
+	items, total, err := u.repo.ListWithFilters(ctx,
+		"parent_asset_id = $1 AND asset_type = $2",
+		[]interface{}{parentID, "action"},
+		page, limit,
+		filter.OrderByClause{SQL: "start_timestamp_ns ASC"},
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	if items == nil {
+		items = []*models.Asset{}
+	}
+	return items, total, nil
+}
+
+// getActionForParent loads an action asset and enforces it belongs to parentID.
+// Returns ErrNotFound when the asset is missing, soft-deleted (repo.Get excludes
+// deleted), not an action, or owned by a different parent — a cross-parent
+// reference is a 404, not a 403.
+func (u *Usecase) getActionForParent(ctx context.Context, parentID, aid string) (*models.Asset, error) {
+	a, err := u.repo.Get(ctx, aid)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil || a.AssetType != "action" || a.ParentAssetID != parentID {
+		return nil, ErrNotFound
+	}
+	return a, nil
+}
+
+// UpdateActionAsset merges metadata into an action asset under parentID and
+// re-validates the controlled label vocabulary. Cross-parent / missing aid →
+// ErrNotFound (404). CYB-3268.
+func (u *Usecase) UpdateActionAsset(ctx context.Context, parentID, aid string, in UpdateActionInput) (*models.Asset, error) {
+	a, err := u.getActionForParent(ctx, parentID, aid)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Metadata) > 0 {
+		if a.Metadata == nil {
+			a.Metadata = map[string]interface{}{}
+		}
+		for k, v := range in.Metadata {
+			a.Metadata[k] = v
+		}
+	}
+	if u.actionLabelRegistry != nil {
+		primary, labels := actionLabelsFromMetadata(a.Metadata)
+		if primary != "" || len(labels) > 0 {
+			if verr := u.actionLabelRegistry.Validate(primary, labels); verr != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidActionLabel, verr)
+			}
+		}
+	}
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if serr := u.repo.Set(txCtx, a); serr != nil {
+			return serr
+		}
+		return u.appendAssetEvent(txCtx, "asset_updated", a, map[string]any{
+			"asset_id":        a.AssetID,
+			"lifecycle_state": a.LifecycleState,
+			"owner":           a.Owner,
+			"reviewer":        a.Reviewer,
+		})
+	}); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// SoftDeleteActionAsset soft-deletes an action asset under parentID. Cross-parent
+// / missing aid → ErrNotFound (404). Emits asset_lifecycle_changed (mirroring
+// Delete) since there is no asset_deleted event type. CYB-3268.
+func (u *Usecase) SoftDeleteActionAsset(ctx context.Context, parentID, aid string) error {
+	a, err := u.getActionForParent(ctx, parentID, aid)
+	if err != nil {
+		return err
+	}
+	prevStatus := string(a.Status)
+	prevLifecycle := a.LifecycleState
+	return u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if derr := u.repo.SoftDelete(txCtx, aid); derr != nil {
+			return derr
+		}
+		return u.appendAssetEvent(txCtx, "asset_lifecycle_changed", a, map[string]any{
+			"prev_status":          prevStatus,
+			"new_status":           string(models.AssetStatusArchived),
+			"prev_lifecycle_state": prevLifecycle,
+			"new_lifecycle_state":  "archived",
+		})
+	})
 }

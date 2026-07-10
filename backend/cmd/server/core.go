@@ -69,7 +69,8 @@ func setupCore(inf *infra) *coreHandlers {
 		deliveryrules.NewAssetRepoParentGetter(assetRepo),
 		assetTypeSchemas,
 	))
-	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
+	assetUsecase.SetUsageStatsRepo(usageStatsRepo)          // CYB-1095/1096: usage stats
+	assetUsecase.SetActionLabelRegistry(inf.actionLabelReg) // CYB-3268: action label vocabulary
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)

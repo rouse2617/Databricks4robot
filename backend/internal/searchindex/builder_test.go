@@ -119,6 +119,45 @@ func TestBuild_LifecycleStateIsPrimary(t *testing.T) {
 	}
 }
 
+// CYB-3268: action assets are first-class but never traverse the lifecycle, so
+// the ES doc must omit lifecycle_state (no meaningless facet bucket) and must not
+// carry a nested actions[] array (actions are top-level docs now).
+func TestBuild_ActionAssetOmitsLifecycleState(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "act00001",
+			McapFileID:     "m-1",
+			AssetType:      "action",
+			LifecycleState: "ready",
+			ParentAssetID:  "seg00001",
+			Metadata:       map[string]interface{}{"primary_label": "pickup"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+
+	doc, ok, err := b.Build(context.Background(), "act00001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if _, present := doc["lifecycle_state"]; present {
+		t.Errorf("action doc must omit lifecycle_state, got %v", doc["lifecycle_state"])
+	}
+	if _, present := doc["actions"]; present {
+		t.Errorf("action doc must not carry nested actions[], got %v", doc["actions"])
+	}
+	// asset_type must still be present so actions remain facetable.
+	if doc["asset_type"] != "action" {
+		t.Errorf("asset_type = %v, want action", doc["asset_type"])
+	}
+}
+
 func TestBuild_LifecycleStateFallsBackToStatus(t *testing.T) {
 	now := time.Now().UTC()
 	b := &Builder{

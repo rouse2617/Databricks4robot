@@ -797,6 +797,104 @@ func (h *Handler) CreateFrame(c *gin.Context) { h.createChildAsset(c, "frame") }
 // POST /api/v1/assets/:id/tasks
 func (h *Handler) CreateTask(c *gin.Context) { h.createChildAsset(c, "task") }
 
+// requirePathActionAssetID reads and validates the :action_id path param, which
+// for the first-class actions API (CYB-3268) is an 8-char asset_id.
+func requirePathActionAssetID(c *gin.Context) (string, bool) {
+	raw := strings.TrimSpace(c.Param("action_id"))
+	if raw == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "action_id is required", nil)
+		return "", false
+	}
+	if !id.ValidateAssetID(raw) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid action_id: must be a valid asset id", nil)
+		return "", false
+	}
+	return raw, true
+}
+
+// ListActions handles GET /assets/:id/actions — first-class action assets under
+// the given parent (asset_type='action', reads the assets table, not the legacy
+// actions table; CYB-3268). Pagination: limit (default 50, max 1000) + offset.
+// Response envelope matches the legacy endpoint: {items, asset_id, total}.
+func (h *Handler) ListActions(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseBoundedInt(c.Query("limit"), 50, 1, 1000)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid limit", map[string]any{"error": err.Error()})
+		return
+	}
+	offset, err := parseBoundedInt(c.Query("offset"), 0, 0, 1_000_000)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid offset", map[string]any{"error": err.Error()})
+		return
+	}
+	items, total, err := h.uc.ListActionsByParent(c.Request.Context(), parentID, limit, offset)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	if items == nil {
+		items = []*models.Asset{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "asset_id": parentID, "total": total})
+}
+
+// UpdateAction handles PATCH /assets/:id/actions/:action_id — merges metadata
+// into a first-class action asset (CYB-3268). Cross-parent or missing
+// action_id → 404; unregistered label → 422 INVALID_ACTION.
+func (h *Handler) UpdateAction(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	aid, ok := requirePathActionAssetID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	a, err := h.uc.UpdateActionAsset(c.Request.Context(), parentID, aid, assetUC.UpdateActionInput{
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(http.StatusOK, a)
+}
+
+// DeleteAction handles DELETE /assets/:id/actions/:action_id — soft-deletes a
+// first-class action asset (CYB-3268). Cross-parent or missing action_id → 404.
+func (h *Handler) DeleteAction(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	aid, ok := requirePathActionAssetID(c)
+	if !ok {
+		return
+	}
+	if err := h.uc.SoftDeleteActionAsset(c.Request.Context(), parentID, aid); err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // PATCH /api/v1/assets/:id
 func (h *Handler) Update(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
