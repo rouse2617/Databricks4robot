@@ -1239,6 +1239,7 @@ components:
         end_timestamp_ns: { type: integer, format: int64 }
         channel_count: { type: integer }
         chunk_count: { type: integer }
+        segment_count: { type: integer, description: "Derived (CYB-3285): number of non-deleted asset_type='segment' assets with this mcap_file_id." }
         vendor_id: { type: string }
         collector_id: { type: string }
         task_id: { type: string }

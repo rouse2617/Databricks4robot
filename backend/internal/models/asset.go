@@ -190,6 +190,10 @@ type McapFile struct {
 	EndTimestampNs   int64 `json:"end_timestamp_ns,omitempty"`
 	ChannelCount     int   `json:"channel_count,omitempty"`
 	ChunkCount       int   `json:"chunk_count,omitempty"`
+	// SegmentCount is derived (not a stored column): the number of non-deleted
+	// asset_type='segment' assets with this mcap_file_id (CYB-3285). No omitempty
+	// so a mcap with zero segments still reports 0.
+	SegmentCount int64 `json:"segment_count"`
 
 	// Provenance
 	VendorID         string `json:"vendor_id,omitempty"`

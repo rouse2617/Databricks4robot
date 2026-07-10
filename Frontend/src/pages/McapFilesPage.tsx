@@ -190,18 +190,12 @@ export default function McapFilesPage() {
 			),
 		},
 		{
-			title: COLUMN_LABELS.channels,
-			dataIndex: "channel_count",
-			width: 90,
-			responsive: ["lg"],
-			render: (v: number) => v || "—",
-		},
-		{
-			title: COLUMN_LABELS.chunks,
-			dataIndex: "chunk_count",
-			width: 80,
-			responsive: ["lg"],
-			render: (v: number) => v || "—",
+			// CYB-3285: child-segment count replaces the (always-empty for grace)
+			// channel/chunk columns.
+			title: "子 segment 数",
+			dataIndex: "segment_count",
+			width: 110,
+			render: (v: number | undefined) => v ?? 0,
 		},
 		{
 			title: COLUMN_LABELS.owner,
