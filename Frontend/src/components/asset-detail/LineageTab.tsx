@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
 import type { PipelineLineage } from "../../api/types";
 
-const { Text } = Typography;
+const { Text, Link } = Typography;
 
 interface LineageData {
 	asset_id: string;
@@ -54,9 +54,14 @@ const algoStatusColor: Record<string, string> = {
 
 export interface LineageTabProps {
 	assetId: string;
+	/** CYB-3279: immediate parent asset (e.g. segment) for child assets like action. */
+	parentAssetId?: string;
 }
 
-export default function LineageTab({ assetId }: LineageTabProps) {
+export default function LineageTab({
+	assetId,
+	parentAssetId,
+}: LineageTabProps) {
 	const navigate = useNavigate();
 	const [data, setData] = useState<LineageData | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -212,6 +217,16 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 				}
 				style={{ marginBottom: 16 }}
 			>
+				{/* CYB-3279: child assets (action/clip/frame/task) show the immediate parent asset above the raw MCAP; hidden for segments whose parent_asset_id equals the mcap shown below. */}
+				{parentAssetId && parentAssetId !== data.upstream.mcap_file_id && (
+					<Descriptions column={1} size="small" style={{ marginBottom: 8 }}>
+						<Descriptions.Item label="父资产">
+							<Link onClick={() => navigate(`/assets/${parentAssetId}`)}>
+								<Text code>{parentAssetId}</Text>
+							</Link>
+						</Descriptions.Item>
+					</Descriptions>
+				)}
 				{data.upstream.mcap_file_id ? (
 					<Descriptions column={1} size="small">
 						<Descriptions.Item label="MCAP File ID">
