@@ -88,8 +88,18 @@ SELECT
     'lineage_direction', lineage_direction
   )
 FROM event_rows`
+	// CYB-3291: the SQL has 5 placeholders ($5 = metadata jsonb); metadata MUST be
+	// passed or pgx errors "mismatched param and argument count" (500). nil → {}.
+	metaJSON := []byte("{}")
+	if metadata != nil {
+		b, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("marshal relation metadata: %w", err)
+		}
+		metaJSON = b
+	}
 	db := dbFromCtx(ctx, r.c.db)
-	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID)
+	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID, metaJSON)
 }
 
 // InsertRevisionOf records new revision -> prior revision (parent=new, child=prior per PRD).
