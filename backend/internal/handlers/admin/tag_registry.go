@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,52 +56,38 @@ func entryToTagDef(e *models.TagRegistryEntry) config.TagDef {
 // in-memory validation map (CYB-3246 Phase 2). Idempotent: existing keys are
 // skipped. Called once at server startup. On any error the caller should keep
 // the YAML-loaded in-memory registry (already populated) as a safe fallback.
-func SeedAndLoadTagRegistry(ctx context.Context, repo repository.TagRegistryRepository, reg *config.TagRegistry) error {
-	n, err := repo.Count(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		for k, def := range reg.GetAllTags() {
-			if def.Type == "" {
-				continue // skip malformed YAML entries the DB CHECK would reject
-			}
-			if _, err := repo.Create(ctx, &models.TagRegistryEntry{
-				Key:         k,
-				Description: def.Description,
-				Type:        def.Type,
-				Values:      def.Values,
-				MaxLength:   def.MaxLength,
-				Propagation: def.Propagation,
-				CreatedBy:   "yaml-seed",
-			}); err != nil && !errors.Is(err, repository.ErrDuplicateTagKey) {
-				return err
-			}
-		}
-	}
-	entries, err := repo.List(ctx)
-	if err != nil {
-		return err
-	}
+func entriesToDefMap(entries []*models.TagRegistryEntry) map[string]config.TagDef {
 	m := make(map[string]config.TagDef, len(entries))
 	for _, e := range entries {
 		m[e.Key] = entryToTagDef(e)
 	}
-	reg.ReplaceTags(m)
+	return m
+}
+
+// LoadManagedTags loads DB-backed tag definitions into the in-memory managed
+// overlay (CYB-3246 Phase 2). The YAML baseline is left intact — if the table
+// is empty or unavailable (e.g. a migration has not applied yet), baseline
+// validation keeps working and this simply installs an empty overlay. Called
+// once at server startup. There is intentionally NO seeding: the DB holds only
+// admin-managed definitions layered on top of the YAML baseline, so startup
+// never races the migration job and admin writes can never erase the baseline.
+func LoadManagedTags(ctx context.Context, repo repository.TagRegistryRepository, reg *config.TagRegistry) error {
+	entries, err := repo.List(ctx)
+	if err != nil {
+		return err
+	}
+	reg.SetManagedTags(entriesToDefMap(entries))
 	return nil
 }
 
-// refreshRegistry reloads all definitions from the DB into the in-memory map.
+// refreshRegistry reloads DB definitions into the managed overlay (leaving the
+// YAML baseline intact) so admin writes take effect without a restart.
 func (h *TagRegistryHandler) refreshRegistry(ctx context.Context) error {
 	entries, err := h.repo.List(ctx)
 	if err != nil {
 		return err
 	}
-	m := make(map[string]config.TagDef, len(entries))
-	for _, e := range entries {
-		m[e.Key] = entryToTagDef(e)
-	}
-	h.reg.ReplaceTags(m)
+	h.reg.SetManagedTags(entriesToDefMap(entries))
 	return nil
 }
 
@@ -133,17 +120,47 @@ func normalizeAndValidate(req *tagDefRequest) string {
 	return ""
 }
 
-// List returns all managed tag definitions. GET /admin/tag-registry
+// List returns the effective tag definitions: DB-managed entries (editable)
+// plus YAML-baseline entries not overridden in the DB (read-only), each marked
+// with `managed`. GET /admin/tag-registry
 func (h *TagRegistryHandler) List(c *gin.Context) {
-	entries, err := h.repo.List(c.Request.Context())
+	dbEntries, err := h.repo.List(c.Request.Context())
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	if entries == nil {
-		entries = []*models.TagRegistryEntry{}
+	out := make([]*models.TagRegistryEntry, 0, len(dbEntries))
+	seen := make(map[string]struct{}, len(dbEntries))
+	for _, e := range dbEntries {
+		e.Managed = true
+		if e.Values == nil {
+			e.Values = []string{}
+		}
+		seen[e.Key] = struct{}{}
+		out = append(out, e)
 	}
-	c.JSON(http.StatusOK, gin.H{"items": entries})
+	// Include YAML-baseline keys not overridden in the DB, as read-only rows.
+	for k, def := range h.reg.GetBaseTags() {
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		values := def.Values
+		if values == nil {
+			values = []string{}
+		}
+		out = append(out, &models.TagRegistryEntry{
+			Key:         k,
+			Description: def.Description,
+			Type:        def.Type,
+			Values:      values,
+			MaxLength:   def.MaxLength,
+			Propagation: def.Propagation,
+			CreatedBy:   "yaml",
+			Managed:     false,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
 // Create registers a new managed tag definition. POST /admin/tag-registry

@@ -1,5 +1,16 @@
 # Decisions — CYB-3246
 
+## 2026-07-10 — Phase 2 修正：合并语义（修复校验被冲掉的 bug）
+- **Context**: Phase 2 合并部署到 dev 后验证发现严重 bug —— admin 的 create/delete 循环触发 `refreshRegistry`，它用 `ReplaceTags(DB内容)` 整体替换内存 map；而 GHA migrate job 与后端启动 seed 有时序竞争导致 DB 未被 YAML 播种，结果内存里的 YAML enum 标签（如 priority）被清空，`priority=urgent` 从 422 退化为 200。
+- **Decision**: 改为**合并语义**：`tags`（YAML 基线，永不清空）+ `managed`（DB 覆盖层），有效定义 = 基线被覆盖层叠加。取消 seed（DB 只存 admin 受管标签）；`SetManagedTags` 只换覆盖层。启动/刷新只加载覆盖层，DB 空或未迁移也不影响基线校验，彻底消除竞争与清空。admin LIST 返回基线(只读)+受管(可编辑)合并视图，带 `managed` 标记。
+- **Alternatives**: (a) 幂等 re-seed 基线到 DB —— 仍受启动时序影响、且与用户删除语义冲突；(b) 保持整体替换但保证 seed —— 脆弱。
+- **Rationale**: 基线永不进 DB、永不被覆盖层清空，是唯一对时序与空表都安全的模型。回滚：`SetManagedTags` 换回 `ReplaceTags` 语义即可，无数据影响。
+
+## 2026-07-10 — 标签管理 UI 迁移到注册中心
+- **Context**: 用户「都迁移到注册中心吧」。注册中心（RegistryCenterPage）已有只读 Tag 字典表。
+- **Decision**: 将 `TagRegistryManager` 移入注册中心「平台字典」Tab 的 Tags 卡片（替换原只读表），并从 Settings 移除该卡片。组件增强：非管理员 401 时回退公共只读端点仍可查看（隐藏增改删），`managed=false` 的基线标签标「内置（只读）」。
+- **Rationale**: 注册中心是各类注册表的统一入口，标签治理归口于此更合理；Settings 聚焦会话/搜索索引运维。
+
 ## 2026-07-10 — OpenSpec 获批，开始 Phase 1
 - **Context**: OpenSpec（proposal/design/spec delta/tasks）写完并过质量自检，用户在 checkpoint 回复「ok」确认。
 - **Decision**: 进入 Phase 1 实现（后端开放词汇校验 + 前端标签展示优化）。Phase 2（`tag_registry` 表 + admin CRUD + Settings UI）作为独立 PR，动 off-limits `backend/migrations/` 前再单独取得批准。

@@ -41,14 +41,16 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		apiKeyHandler = apikeyH.New(akr) // pragma: allowlist secret
 	}
 
-	// CYB-3246 Phase 2: managed tag registry (DB-backed). Seed from YAML on an
-	// empty table, then load definitions into the in-memory validation map so
-	// the hot path stays DB-free. On error, keep the YAML-loaded registry.
+	// CYB-3246 Phase 2: managed tag registry (DB-backed overlay). Load DB
+	// definitions into the in-memory managed overlay on top of the YAML
+	// baseline; the validation hot path stays DB-free. On error (e.g. table not
+	// yet migrated) the YAML baseline still validates — no seeding, so startup
+	// never races the migration job and admin writes never erase the baseline.
 	var tagRegistryHandler *adminH.TagRegistryHandler
 	if inf.pg != nil {
 		tagRegistryRepo := postgres.NewTagRegistryRepo(inf.pg)
-		if err := adminH.SeedAndLoadTagRegistry(context.Background(), tagRegistryRepo, inf.tagRegistry); err != nil {
-			slog.Error("tag registry seed/load failed; falling back to YAML in-memory registry", "err", err)
+		if err := adminH.LoadManagedTags(context.Background(), tagRegistryRepo, inf.tagRegistry); err != nil {
+			slog.Error("tag registry load failed; using YAML baseline only", "err", err)
 		}
 		tagRegistryHandler = adminH.NewTagRegistryHandler(tagRegistryRepo, inf.tagRegistry)
 	}

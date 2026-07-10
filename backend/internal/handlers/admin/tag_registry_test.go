@@ -98,6 +98,21 @@ func newEmptyRegistry(t *testing.T) *config.TagRegistry {
 	return reg
 }
 
+func newRegistryWithBase(t *testing.T) *config.TagRegistry {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tag_registry.yaml")
+	yaml := "tags:\n  priority:\n    type: enum\n    values: [critical, high, medium, low]\n"
+	if err := os.WriteFile(p, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := config.LoadTagRegistry(p)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	return reg
+}
+
 func setupTagRegistryRouter(h *TagRegistryHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -106,6 +121,60 @@ func setupTagRegistryRouter(h *TagRegistryHandler) *gin.Engine {
 	r.PATCH("/tag-registry/:key", h.Update)
 	r.DELETE("/tag-registry/:key", h.Delete)
 	return r
+}
+
+// Regression for the merge-semantics fix: admin create/delete of a managed tag
+// must NOT wipe the YAML baseline from validation (the bug that made
+// priority=urgent accepted on dev after a smoke create/delete cycle).
+func TestBaselineSurvivesManagedCreateDelete(t *testing.T) {
+	repo := newInMemoryTagRegistryRepo()
+	reg := newRegistryWithBase(t) // YAML baseline: priority enum
+	r := setupTagRegistryRouter(NewTagRegistryHandler(repo, reg))
+
+	// Baseline enum enforced before any managed writes.
+	if err := reg.Validate("priority", "urgent"); err == nil {
+		t.Fatal("precondition: priority=urgent should be rejected")
+	}
+
+	// Create then delete an unrelated managed tag (triggers overlay refresh twice).
+	if w := postJSON(r, "/tag-registry", `{"key":"severity","type":"enum","values":["high"]}`); w.Code != http.StatusCreated {
+		t.Fatalf("create severity: expected 201, got %d", w.Code)
+	}
+	dw := httptest.NewRecorder()
+	r.ServeHTTP(dw, httptest.NewRequest(http.MethodDelete, "/tag-registry/severity", nil))
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delete severity: expected 200, got %d", dw.Code)
+	}
+
+	// Baseline enum MUST still be enforced (the bug: it was wiped).
+	if err := reg.Validate("priority", "urgent"); err == nil {
+		t.Fatal("regression: priority=urgent accepted after managed create/delete — baseline was wiped")
+	}
+	if err := reg.Validate("priority", "high"); err != nil {
+		t.Fatalf("priority=high should stay valid: %v", err)
+	}
+
+	// List must include the read-only baseline row (managed=false).
+	lw := httptest.NewRecorder()
+	r.ServeHTTP(lw, httptest.NewRequest(http.MethodGet, "/tag-registry", nil))
+	var resp struct {
+		Items []*models.TagRegistryEntry `json:"items"`
+	}
+	if err := json.Unmarshal(lw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	var priority *models.TagRegistryEntry
+	for _, it := range resp.Items {
+		if it.Key == "priority" {
+			priority = it
+		}
+	}
+	if priority == nil {
+		t.Fatal("list should include baseline priority")
+	}
+	if priority.Managed {
+		t.Fatal("baseline priority should be marked managed=false (read-only)")
+	}
 }
 
 func postJSON(r *gin.Engine, path, body string) *httptest.ResponseRecorder {
