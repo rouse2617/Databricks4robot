@@ -87,6 +87,7 @@ const AGG_KEY_MAP: Record<string, string> = {
 	scene_agg: "mcap.scene_id",
 	priority_agg: "tags_flat.priority",
 	quality_agg: "tags_flat.quality",
+	env_agg: "env",
 };
 
 export interface AssetsFacetSidebarProps {
@@ -259,9 +260,7 @@ function CheckableTagFacet({
 								alignItems: "center",
 								fontSize: 12,
 								lineHeight: "28px",
-								border: isChecked
-									? "1px solid #1890ff"
-									: "1px solid #d9d9d9",
+								border: isChecked ? "1px solid #1890ff" : "1px solid #d9d9d9",
 								background: isChecked ? "#e6f7ff" : "#fff",
 								color: isChecked ? "#1890ff" : "rgba(0,0,0,0.65)",
 							}}
@@ -649,7 +648,12 @@ export default function AssetsFacetSidebar({
 							compact={compact}
 							label="环境"
 							field="env"
-							options={ENV_OPTIONS}
+							// CYB-3297 Phase B: env is free-form data — list the real
+							// values from the aggregation (most frequent first) instead
+							// of a hardcoded set, so users can discover what exists.
+							options={Object.keys(fieldCounts.env).sort(
+								(a, b) => (fieldCounts.env[b] ?? 0) - (fieldCounts.env[a] ?? 0),
+							)}
 							activeFilters={activeFilters}
 							onToggleFacet={onToggleFacet}
 							counts={fieldCounts.env}
@@ -804,12 +808,18 @@ export default function AssetsFacetSidebar({
 
 	if (layout === "horizontal") {
 		const expandedGroupCount = horizontalItems.filter(
-			(item) => item.isExpanded && !QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
+			(item) =>
+				item.isExpanded &&
+				!QUICK_FILTER_GROUPS.includes(item.key) &&
+				item.key !== "frequent",
 		).length;
 		const quickGroup = horizontalItems.find((item) => item.key === "quick");
-		const frequentGroup = horizontalItems.find((item) => item.key === "frequent");
+		const frequentGroup = horizontalItems.find(
+			(item) => item.key === "frequent",
+		);
 		const otherGroups = horizontalItems.filter(
-			(item) => !QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
+			(item) =>
+				!QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
 		);
 
 		return (
@@ -824,8 +834,7 @@ export default function AssetsFacetSidebar({
 					<div
 						style={{
 							display: "grid",
-							gridTemplateColumns:
-								"repeat(auto-fit, minmax(200px, 280px))",
+							gridTemplateColumns: "repeat(auto-fit, minmax(200px, 280px))",
 							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
@@ -844,8 +853,7 @@ export default function AssetsFacetSidebar({
 					<div
 						style={{
 							display: "grid",
-							gridTemplateColumns:
-								"repeat(auto-fit, minmax(200px, 280px))",
+							gridTemplateColumns: "repeat(auto-fit, minmax(200px, 280px))",
 							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
@@ -899,8 +907,7 @@ export default function AssetsFacetSidebar({
 					<div
 						style={{
 							display: "grid",
-							gridTemplateColumns:
-								"repeat(auto-fit, minmax(240px, 280px))",
+							gridTemplateColumns: "repeat(auto-fit, minmax(240px, 280px))",
 							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",

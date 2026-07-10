@@ -86,6 +86,9 @@ const ASSET_DISCOVERY_FACETS: NonNullable<QueryRequest["facets"]> = [
 	{ field: "mcap.scene_id", size: 20 },
 	{ field: "tag.priority", size: 20 },
 	{ field: "tag.quality", size: 20 },
+	// CYB-3297 Phase B: env is free-form data (metadata.env); request it as a
+	// facet so the sidebar can list the real values instead of a hardcoded set.
+	{ field: "env", size: 50 },
 ];
 
 function buildStructuredQueryWhereExpr(
@@ -206,6 +209,8 @@ function mapFacetFieldToAggregationKey(field: string): string {
 			return "priority_agg";
 		case "tag.quality":
 			return "quality_agg";
+		case "env":
+			return "env_agg";
 		default:
 			return field;
 	}
