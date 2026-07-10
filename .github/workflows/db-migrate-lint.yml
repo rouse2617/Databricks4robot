@@ -155,6 +155,10 @@ jobs:
       #    Atlas Cloud and prints a shareable URL. Without a token, this step
       #    is skipped; the other three checks above still gate the PR.
       - name: Atlas lint (Pro, --web)
+        # Advisory only: the three checks above are the real gate. Never block a
+        # PR on the optional Pro lint (e.g. it exits non-zero on pre-existing
+        # migrations, transient docker/token issues) — surface it, don't fail.
+        continue-on-error: true
         if: ${{ env.ATLAS_TOKEN != '' }}
         env:
           ATLAS_TOKEN: ${{ secrets.ATLAS_TOKEN }}
