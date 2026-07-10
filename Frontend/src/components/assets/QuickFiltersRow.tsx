@@ -36,7 +36,7 @@ const QUICK_FILTERS: QuickFilterDef[] = [
 		color: "#ef4444",
 	},
 	{
-		field: "tags_flat.priority",
+		field: "tag.priority",
 		op: "eq",
 		value: "high",
 		label: "高优先级",

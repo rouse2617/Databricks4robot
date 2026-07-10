@@ -85,8 +85,8 @@ const AGG_KEY_MAP: Record<string, string> = {
 	owner_agg: "owner",
 	vendor_agg: "mcap.vendor_id",
 	scene_agg: "mcap.scene_id",
-	priority_agg: "tags_flat.priority",
-	quality_agg: "tags_flat.quality",
+	priority_agg: "tag.priority",
+	quality_agg: "tag.quality",
 	env_agg: "env",
 };
 
@@ -541,7 +541,7 @@ const GROUP_FIELDS: Record<string, string[]> = {
 	],
 	algorithm: ["algo_status"],
 	delivery: ["has:delivery", "delivery_count"],
-	tags: ["tags_flat.priority", "tags_flat.quality", "tags_flat.scene"],
+	tags: ["tag.priority", "tag.quality", "tags.scene"],
 };
 
 // Quick filter groups that should always be visible in horizontal layout
@@ -768,6 +768,7 @@ export default function AssetsFacetSidebar({
 						options={PRIORITY_OPTIONS}
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
+						counts={fieldCounts["tag.priority"]}
 					/>
 					<CheckboxFacet
 						compact={compact}
@@ -776,6 +777,7 @@ export default function AssetsFacetSidebar({
 						options={QUALITY_OPTIONS}
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
+						counts={fieldCounts["tag.quality"]}
 					/>
 					<InputFacet
 						compact={compact}

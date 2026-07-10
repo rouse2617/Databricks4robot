@@ -65,13 +65,13 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 		values: ["ok", "failed", "running", "pending", "blocked"],
 	},
 	{
-		key: "tags_flat.priority",
+		key: "tag.priority",
 		label: "优先级",
 		type: "enum",
 		values: ["critical", "high", "medium", "low"],
 	},
 	{
-		key: "tags_flat.quality",
+		key: "tag.quality",
 		label: "质量",
 		type: "enum",
 		values: ["excellent", "good", "acceptable", "poor", "unusable"],
@@ -127,7 +127,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 const QUICK_FIELDS = [
 	"lifecycle_state",
 	"duration_ms",
-	"tags_flat.priority",
+	"tag.priority",
 	"tags_flat.source_type",
 	"mcap.vendor_id",
 	"mcap.scene_id",
