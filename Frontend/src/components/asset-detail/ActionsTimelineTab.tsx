@@ -126,11 +126,17 @@ export default function ActionsTimelineTab({
 				source_type: values.source_type ?? "human",
 				source_name: values.source_name || undefined,
 			};
-			await actionsApi.create(assetId, payload);
+			const created = await actionsApi.create(assetId, payload);
 			msg.success("Action 创建成功");
 			setCreateOpen(false);
 			form.resetFields();
-			load(filterLabel || undefined);
+			// CYB-3292: show the new action immediately from the create response.
+			// A plain re-list here races read-after-write and can drop it until a
+			// manual refresh; the create response is authoritative for the new row.
+			setItems((prev) => [
+				created,
+				...prev.filter((a) => a.action_id !== created.action_id),
+			]);
 		} catch (err) {
 			// Form validation throws don't have a response body; surface API errors.
 			if (err && typeof err === "object" && "response" in err) {
