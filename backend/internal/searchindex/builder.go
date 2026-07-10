@@ -189,6 +189,38 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			if mf.GCSPath != "" {
 				mcapObj["mcap_uri"] = mf.GCSPath
 			}
+			// CYB-3297 (Phase C): denormalize the mcap capture fields so the
+			// "采集" filters/facets (vendor/device/scene/...) that the mapping,
+			// registry and UI already advertise actually resolve. These columns
+			// exist on mcap_files and are scanned by McapFileRepo.Get; only the
+			// builder was omitting them. Additive: unset fields stay absent.
+			if mf.VendorID != "" {
+				mcapObj["vendor_id"] = mf.VendorID
+			}
+			if mf.DeviceID != "" {
+				mcapObj["device_id"] = mf.DeviceID
+			}
+			if mf.CameraModel != "" {
+				mcapObj["camera_model"] = mf.CameraModel
+			}
+			if mf.DataSource != "" {
+				mcapObj["data_source"] = mf.DataSource
+			}
+			if mf.LocationID != "" {
+				mcapObj["location_id"] = mf.LocationID
+			}
+			if mf.SceneID != "" {
+				mcapObj["scene_id"] = mf.SceneID
+			}
+			if mf.EnvironmentID != "" {
+				mcapObj["environment_id"] = mf.EnvironmentID
+			}
+			if mf.TaskID != "" {
+				mcapObj["task_id"] = mf.TaskID
+			}
+			if mf.FileDurationMs > 0 {
+				mcapObj["file_duration_ms"] = mf.FileDurationMs
+			}
 			doc["mcap"] = mcapObj
 		}
 	}
