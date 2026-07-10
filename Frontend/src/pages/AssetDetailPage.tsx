@@ -17,7 +17,12 @@ import {
 	Typography,
 } from "antd";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+	useLocation,
+	useNavigate,
+	useParams,
+	useSearchParams,
+} from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
 	type AssetMetricItem,
@@ -67,6 +72,19 @@ import {
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
+// CYB-3294: valid tab keys for ?tab= URL sync (must match tabItems keys below).
+const ASSET_DETAIL_TAB_KEYS = new Set([
+	"overview",
+	"algo",
+	"events",
+	"eval-metrics",
+	"actions",
+	"tags",
+	"deliveries",
+	"lineage",
+	"files",
+]);
+
 /** Parse algo_results map into structured algo info list. */
 function parseAlgoResults(algoResults: Record<string, string> | undefined) {
 	if (!algoResults) return [];
@@ -105,6 +123,24 @@ export default function AssetDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
 	const location = useLocation();
+	// CYB-3294: keep the active tab in the URL (?tab=) so refresh/share preserves it.
+	const [searchParams, setSearchParams] = useSearchParams();
+	const tabParam = searchParams.get("tab");
+	const activeTab =
+		tabParam && ASSET_DETAIL_TAB_KEYS.has(tabParam) ? tabParam : "overview";
+	const setTab = useCallback(
+		(key: string) => {
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set("tab", key);
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
 	const returnTo = (location.state as AssetDetailLocationState | null)
 		?.assetsReturnTo;
 	const [asset, setAsset] = useState<Asset | null>(null);
@@ -499,11 +535,16 @@ export default function AssetDetailPage() {
 			</div>
 
 			{/* Preview Hero */}
-			<AssetPreviewHero asset={asset} previewManifest={previewManifest} />
+			<AssetPreviewHero
+				asset={asset}
+				previewManifest={previewManifest}
+				onJumpToAlgo={() => setTab("algo")}
+			/>
 
 			{/* Tabs */}
 			<Tabs
-				defaultActiveKey="overview"
+				activeKey={activeTab}
+				onChange={setTab}
 				items={tabItems}
 				size="small"
 				style={{ marginTop: -8 }}
