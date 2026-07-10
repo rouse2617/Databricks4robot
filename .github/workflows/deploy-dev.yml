@@ -125,11 +125,15 @@ jobs:
             --progress=auto \
             --platform=linux/amd64 \
             \$CACHE_ARGS \
+            --no-cache-filter=builder \
+            --build-arg VERSION=dev \
+            --build-arg COMMIT=$COMMIT_SHA \
+            --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -f ${{ env.REPO_DIR }}/backend/Dockerfile \
             -t ${{ env.IMAGE }} \
             --push \
             ${{ env.REPO_DIR }}/backend
-          echo "    pushed: ${{ env.IMAGE }}"
+          echo "    pushed: ${{ env.IMAGE }} (commit $COMMIT_SHA)"
           ENDSSH
 
       - name: Deploy to Cloud Run dev
