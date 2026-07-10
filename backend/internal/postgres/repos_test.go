@@ -541,6 +541,7 @@ func TestMcapRepo(t *testing.T) {
 		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
 		[]byte(`{}`), []byte(`{"p":"done"}`), // metadata, process_state
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
+		int64(0), // segment_count (CYB-3285, derived)
 	}}
 	got, err := repo.Get(ctx, "m1")
 	if err != nil || got == nil || got.McapFileID != "m1" {
@@ -1893,6 +1894,7 @@ func buildMcapRow(
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
+		int64(0), // segment_count (CYB-3285, derived correlated subquery)
 	}
 }
 

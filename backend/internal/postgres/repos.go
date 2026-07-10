@@ -835,7 +835,8 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
-  created_at, updated_at, version
+  created_at, updated_at, version,
+  (SELECT COUNT(*) FROM assets a WHERE a.mcap_file_id = mcap_files.mcap_file_id AND a.asset_type = 'segment' AND a.is_deleted = FALSE)
 FROM mcap_files
 WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	var (
@@ -870,6 +871,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		&retentionTier, &expireAt, &tenantID, &projectID,
 		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
+		&f.SegmentCount,
 	)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
@@ -1073,7 +1075,8 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
-  created_at, updated_at, version
+  created_at, updated_at, version,
+  (SELECT COUNT(*) FROM assets a WHERE a.mcap_file_id = mcap_files.mcap_file_id AND a.asset_type = 'segment' AND a.is_deleted = FALSE)
 FROM mcap_files
 WHERE %s
 ORDER BY updated_at DESC
@@ -1110,6 +1113,7 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 			&retentionTier, &expireAt, &tenantID, &projectID,
 			&metadataBytes, &processStateBytes,
 			&f.CreatedAt, &f.UpdatedAt, &f.Version,
+			&f.SegmentCount,
 		); err != nil {
 			return nil, 0, fmt.Errorf("postgres McapFileRepo.List scan: %w", err)
 		}

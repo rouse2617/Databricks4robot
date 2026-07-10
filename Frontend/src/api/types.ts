@@ -96,6 +96,8 @@ export interface McapFile {
 	end_timestamp_ns?: number;
 	channel_count?: number;
 	chunk_count?: number;
+	/** CYB-3285: # of asset_type='segment' with this mcap_file_id (derived, backend). */
+	segment_count?: number;
 	owner: string;
 	process_state?: Record<string, string>;
 	created_at: string;

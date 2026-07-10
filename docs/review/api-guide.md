@@ -1693,6 +1693,7 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
       "ingest_state": "summarized",
       "channel_count": 12,
       "chunk_count": 5,
+      "segment_count": 37,
       "owner": "team-a",
       "created_at": "2025-01-15T10:00:00Z",
       "updated_at": "2025-01-15T10:05:00Z",
@@ -1704,6 +1705,8 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
   "page_size": 20
 }
 ```
+
+> `segment_count`（CYB-3285）：该 MCAP 的**子 segment 数** —— `asset_type='segment'` 且同 `mcap_file_id` 的非删资产数（派生字段，非存储列，`List` 与 `Get` 均返回）。前端 MCAP 文件列表以此列取代旧的「通道数 / 分块数」两列。
 
 ### 5.3 获取单个 MCAP 文件
 
