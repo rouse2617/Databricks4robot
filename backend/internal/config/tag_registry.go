@@ -95,6 +95,16 @@ func (r *TagRegistry) Reload() error {
 // (bytes) to stay consistent with the registered `string` validation below.
 const DefaultUnregisteredTagMaxLength = 500
 
+// ReplaceTags atomically swaps the in-memory tag definitions (CYB-3246 Phase 2).
+// Sources are left untouched. Used to load definitions from the DB at startup
+// and to refresh the validation hot-path map after an admin CRUD write, so
+// managed-tag changes take effect without a service restart.
+func (r *TagRegistry) ReplaceTags(tags map[string]TagDef) {
+	r.mu.Lock()
+	r.tags = tags
+	r.mu.Unlock()
+}
+
 // Validate checks a tag write. A registered key is validated strictly against
 // its definition (enum membership or string length). An unregistered key is
 // accepted as a free-form string tag bounded by DefaultUnregisteredTagMaxLength

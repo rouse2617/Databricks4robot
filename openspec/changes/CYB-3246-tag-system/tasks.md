@@ -43,40 +43,45 @@
 ## Phase 2 — 注册表 DB 化 + admin CRUD + Settings 管理界面（独立 PR）
 
 ### 前置门禁
-- [ ] **off-limits 批准**：`backend/migrations/` 新建 `tag_registry` 表需用户明确批准 + 二审，记入 `decisions.md`
+- [x] **off-limits 批准**：用户「合并吧，并且做 Phase 2」批准新建 `tag_registry` 表（见 decisions.md 2026-07-10）；PR 需二审。
 
 ### 后端：迁移 + repository（对齐 Scenario「新注册的 enum 标签即时生效」）
-- [ ] [backend] `backend/migrations/<ts>_tag_registry.sql` 手写建表（含 CHECK: type∈{enum,string}）
-- [ ] [backend] `make db-migrate-hash` 重算 `atlas.sum`
-- [ ] [backend] `atlas migrate validate --env migrate`（fresh PG17 replay）通过
-- [ ] [backend] `TagRegistryRepo`（list/get/create/update/delete）+ Go struct
-- [ ] [backend] 启动 seed：表空则从 `tag_registry.yaml` 灌入；`TagRegistry` 从 DB 加载进内存 map
-- [ ] [backend] admin 写入后 `Reload()`（从 DB 刷新内存 map），热路径仍只读 map
+- [x] [backend] `migrations/20260710120219_add_tag_registry.sql` plain CREATE（CHECK: type∈{enum,string}, propagation∈{none,descendants}）
+- [x] [backend] `make db-migrate-hash` 重算 `atlas.sum`（含新迁移哈希）
+- [x] [backend] `atlas migrate validate --env migrate`（fresh PG17 docker replay）EXIT=0
+- [x] [backend] `postgres.TagRegistryRepo`（Count/List/Get/Create/Update/Delete）+ `models.TagRegistryEntry` + `repository.TagRegistryRepository` 接口 + `ErrDuplicateTagKey`
+- [x] [backend] 启动 seed+load：`adminH.SeedAndLoadTagRegistry`（表空从 YAML 灌入 → 从 DB 加载进内存 map），wired in `cmd/server/server.go`
+- [x] [backend] `config.TagRegistry.ReplaceTags` 原子换 map；admin 写入后 `refreshRegistry` 从 DB 刷新，热路径仍只读 map
 
 ### 后端：admin CRUD handler + 路由（对齐 Scenario「非管理员无权」/「重复 key 被拒绝」）
-- [ ] [backend] `handlers/admin/tag_registry.go`：List/Create/Update/Delete，重复 key 返回冲突，删除记 `audit.Log`
-- [ ] [backend] `routes.go`：4 端点挂 `AdminTokenOrAdminRole`
-- [ ] [backend] handler 单测：非 admin 拒绝、重复 key 冲突、create→list 可见
+- [x] [backend] `handlers/admin/tag_registry.go`：List/Create/Update/Delete，重复 key→409，缺失→404，校验→422，写入记 `audit.Log`
+- [x] [backend] `routes.go`：4 端点挂 `AdminTokenOrAdminRole`（guard `tagRegistryHandler != nil`）
+- [x] [backend] handler 单测：create→refresh→list、重复 409、校验 422、update 404、delete 后回到开放词汇（全绿）+ 修 `routes_test.go` 9 处 RegisterAll 调用
 
 ### Phase 2 API contract sync（新端点，必做 rows 1/2/5/7；SDK 见 decisions）
-- [ ] [docs] `api/openapi.yaml`：4 端点 paths + schema + 错误信封
-- [ ] [docs] `docs/review/api-guide.md`：4 端点 curl（含 `X-Databrew-Token`/admin 会话，happy + ≥1 error）
-- [ ] [test] `scripts/smoke-tag-registry-dev.sh`：create→list→update→delete + 非 admin 401
-- [ ] [spec] 本 change spec delta 已含注册管理 Requirement（对齐）
+- [x] [docs] `api/openapi.yaml`：4 端点 paths + `TagRegistryEntry`/`TagDefRequest` schema + 401/409/422/404 错误信封（YAML 校验通过）
+- [x] [docs] `docs/review/api-guide.md`：§2.4.1 受管标签注册表 CRUD（curl happy + 错误路径表）
+- [x] [test] `scripts/smoke-tag-registry-dev.sh`：create 201→list→update 200→dup 409→bogus 401→delete 200
+- [x] [spec] 本 change spec delta 已含注册管理 Requirement（对齐）
 
 ### 前端：Settings 标签管理界面
-- [ ] [Frontend] `src/api/tagRegistry.ts`：类型化 client（与 OpenAPI 对齐）
-- [ ] [Frontend] `SettingsPage.tsx` 新增「标签管理」Tab：列表 + 新增/编辑/删除表单
-- [ ] [Frontend] enum 值编辑器；删除确认；错误提示（重复 key/权限）
+- [x] [Frontend] `src/api/tagRegistry.ts`：`tagRegistryAdminApi`（list/create/update/remove，`skipAuthRedirect`）+ 类型
+- [x] [Frontend] `SettingsPage.tsx` 新增「标签管理」Card → `TagRegistryManager` 组件（Table + 新增/编辑/删除 Modal 表单）
+- [x] [Frontend] enum 值 tags 编辑器；删除 Popconfirm；重复 key/权限错误提示；非 admin(401) 显示「需要管理员权限」而非登出
 
 ### Phase 2 验证 + 部署
-- [ ] [backend] Tier L：`go test ./...`
-- [ ] [Frontend] Tier L：`npm run lint && npm run build`
-- [ ] [backend] `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/<ts>_tag_registry.sql"` **先于** 后端部署
-- [ ] deploy dev（migrate → backend → frontend）
-- [ ] **Chrome DevTools MCP**：Settings 注册 `severity` → 回资产页用 `severity=high` 成功、`fatal` 被拒
-- [ ] 针对性 deploy 验证：admin `curl` create/list/delete；非 admin 401
-- [ ] PR → merge → deploy-verify
+- [x] [backend] Tier L：`go build ./...` + `go vet ./...` + `go test ./internal/handlers/admin/... ./internal/config/... ./routes/...` 通过
+- [x] [Frontend] Tier L：Biome check clean + `tsc` 新文件无错 + `npm run build` 通过
+- [ ] [backend] migrate 由 GHA `deploy-dev.yml` 的 Atlas migrate Job 应用（push-to-dev 触发；本仓库无本地 apply 脚本）
+- [ ] deploy dev（GHA：migrate → backend → frontend，merge 触发）
+- [ ] **Chrome DevTools MCP**（post-merge）：Settings 注册 `severity` → 资产页 `severity=high` 成功、`fatal` 被拒
+- [ ] 针对性 deploy 验证（post-merge）：`bash scripts/smoke-tag-registry-dev.sh`
+- [ ] PR → 二审 → merge → deploy-verify
+
+### Phase 1 部署验证（已完成，2026-07-10）
+- [x] deploy dev（GHA deploy-dev exit 0；frontend `dev#87af5621`）
+- [x] **Chrome DevTools MCP**：资产 XlPAwMz0 → AutoComplete 加自定义 key `ui_custom_tag` 成功（handleAdd 崩溃已修）、来源 Badge、删除确认、控制台无新错误
+- [x] 针对性 deploy 验证：`smoke-tag-openvocab-dev.sh` 全绿（未注册 200 / enum 非法 422 / enum 合法 200）
 
 ---
 

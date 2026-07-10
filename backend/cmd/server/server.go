@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
@@ -36,8 +37,20 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 	var apiKeyHandler *apikeyH.Handler
 	if inf.pg != nil {
 		akr := postgres.NewAPIKeyRepo(inf.pg)
-		apiKeyRepo = akr // pragma: allowlist secret
+		apiKeyRepo = akr                 // pragma: allowlist secret
 		apiKeyHandler = apikeyH.New(akr) // pragma: allowlist secret
+	}
+
+	// CYB-3246 Phase 2: managed tag registry (DB-backed). Seed from YAML on an
+	// empty table, then load definitions into the in-memory validation map so
+	// the hot path stays DB-free. On error, keep the YAML-loaded registry.
+	var tagRegistryHandler *adminH.TagRegistryHandler
+	if inf.pg != nil {
+		tagRegistryRepo := postgres.NewTagRegistryRepo(inf.pg)
+		if err := adminH.SeedAndLoadTagRegistry(context.Background(), tagRegistryRepo, inf.tagRegistry); err != nil {
+			slog.Error("tag registry seed/load failed; falling back to YAML in-memory registry", "err", err)
+		}
+		tagRegistryHandler = adminH.NewTagRegistryHandler(tagRegistryRepo, inf.tagRegistry)
 	}
 
 	routes.RegisterAll(
@@ -69,6 +82,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.storage,
 		apiKeyRepo,
 		apiKeyHandler,
+		tagRegistryHandler,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

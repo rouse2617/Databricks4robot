@@ -75,6 +75,7 @@ func RegisterAll(
 	storageHandler *storageH.Handler,
 	apiKeyRepo repository.APIKeyRepository,
 	apiKeyHandler *apikeyH.Handler,
+	tagRegistryHandler *adminH.TagRegistryHandler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -351,6 +352,16 @@ func RegisterAll(
 			adminRO.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
 			adminRO.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
 			adminRO.GET("/search/audit", adminHandler.SearchAudit)
+
+			// CYB-3246 Phase 2: managed tag-registry CRUD. Reachable by static
+			// admin token OR an admin-role web session (ADMIN_EMAILS) so the
+			// Settings UI can manage tags without a restart.
+			if tagRegistryHandler != nil {
+				adminRO.GET("/tag-registry", tagRegistryHandler.List)
+				adminRO.POST("/tag-registry", tagRegistryHandler.Create)
+				adminRO.PATCH("/tag-registry/:key", tagRegistryHandler.Update)
+				adminRO.DELETE("/tag-registry/:key", tagRegistryHandler.Delete)
+			}
 		}
 
 		// Internal admin (hard delete). Requires ADMIN_TOKEN in production.
