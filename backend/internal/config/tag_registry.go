@@ -87,14 +87,28 @@ func (r *TagRegistry) Reload() error {
 	return nil
 }
 
-// Validate checks that the given key is registered and the value is valid
-// according to the tag definition (enum membership or string length).
+// DefaultUnregisteredTagMaxLength bounds the value length of open-vocabulary
+// tags (CYB-3246). Keys not present in the registry are accepted as free-form
+// string tags rather than rejected, but their values are still capped to avoid
+// unbounded writes. Chosen to match the registered `notes` tag's max_length so
+// ad-hoc notes and custom keys share a single ceiling; measured with len()
+// (bytes) to stay consistent with the registered `string` validation below.
+const DefaultUnregisteredTagMaxLength = 500
+
+// Validate checks a tag write. A registered key is validated strictly against
+// its definition (enum membership or string length). An unregistered key is
+// accepted as a free-form string tag bounded by DefaultUnregisteredTagMaxLength
+// (open vocabulary, CYB-3246) — this lets users tag assets with arbitrary
+// semantic keys without editing tag_registry.yaml or restarting the service.
 func (r *TagRegistry) Validate(key, value string) error {
 	r.mu.RLock()
 	def, ok := r.tags[key]
 	r.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("tag_registry: key %q not registered", key)
+		if len(value) > DefaultUnregisteredTagMaxLength {
+			return fmt.Errorf("tag_registry: value for unregistered key %q exceeds max length %d (got %d)", key, DefaultUnregisteredTagMaxLength, len(value))
+		}
+		return nil
 	}
 
 	switch def.Type {

@@ -520,10 +520,18 @@ components:
         updated_at: { type: string, format: date-time }
     TagUpsertRequest:
       type: object
+      required: [key, value]
       properties:
-        tag_key: { type: string }
-        tag_value: { type: string }
-        source_type: { type: string }
+        key:
+          type: string
+          description: >-
+            Tag key. Open vocabulary (CYB-3246): a key not present in the tag
+            registry is accepted as a free-form string tag (value length capped
+            at 500). A registered key is validated strictly against its
+            definition (enum membership or string max_length).
+          example: description
+        value: { type: string, example: "高清城市街道场景" }
+        source_type: { type: string, description: "human/algo_sdk/rule_engine/system/compliance; identity fields required per tag_sources contract" }
         source_name: { type: string }
         source_version: { type: string }
         run_id: { type: string }
@@ -3932,6 +3940,12 @@ paths:
     post:
       tags: [AssetTags]
       summary: Upsert a tag on an asset
+      description: >-
+        Upsert a tag. Open vocabulary (CYB-3246): unregistered keys are accepted
+        as free-form string tags; registered keys are validated against their
+        definition. Returns 422 when a registered enum value is not allowed, a
+        value exceeds its max length (registered) or 500 chars (unregistered),
+        or the source contract (source_name/source_version) is violated.
       parameters:
         - in: path
           name: id
@@ -3948,6 +3962,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AssetTag' }
+        '422':
+          description: Tag validation failed (invalid enum value, over-length value, or source contract violation)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
   /api/v1/assets/{id}/tags/{key}:
     delete:
       tags: [AssetTags]

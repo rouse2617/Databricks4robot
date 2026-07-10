@@ -3,6 +3,7 @@ version: "1.0"
 
 modules:
   - asset-management
+  - asset-tagging
   - delivery
   - lakehouse
   - search
