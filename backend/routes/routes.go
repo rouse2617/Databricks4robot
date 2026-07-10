@@ -388,10 +388,14 @@ func RegisterAll(
 		// constructed for a future backfill issue but no longer routes here; the
 		// guard stays so routing tracks the action feature being wired.
 		if actionHandler != nil {
-			assets.POST("/:id/actions", assetHandler.CreateAction)
+			// CYB-3296: these mutate child (action) assets and MUST require the
+			// same assets:write scope as their siblings (Create/Update/Delete
+			// above) — otherwise a read-only API key can create/patch/delete
+			// action assets (confirmed exploitable on dev).
+			assets.POST("/:id/actions", middleware.RequireScope("assets:write"), assetHandler.CreateAction)
 			assets.GET("/:id/actions", assetHandler.ListActions)
-			assets.PATCH("/:id/actions/:action_id", assetHandler.UpdateAction)
-			assets.DELETE("/:id/actions/:action_id", assetHandler.DeleteAction)
+			assets.PATCH("/:id/actions/:action_id", middleware.RequireScope("assets:write"), assetHandler.UpdateAction)
+			assets.DELETE("/:id/actions/:action_id", middleware.RequireScope("assets:write"), assetHandler.DeleteAction)
 		}
 
 		// Algo-runs (CYB-1018)
@@ -407,7 +411,8 @@ func RegisterAll(
 
 		// Eval / Metrics (Phase 1.5)
 		if evalHandler != nil {
-			assets.POST("/:id/eval-results", evalHandler.ReportEvalResult)
+			// CYB-3296: writing eval results mutates asset data — require assets:write.
+			assets.POST("/:id/eval-results", middleware.RequireScope("assets:write"), evalHandler.ReportEvalResult)
 			assets.GET("/:id/eval-results", evalHandler.ListEvalResults)
 			assets.GET("/:id/metrics", evalHandler.ListMetrics)
 			api.GET("/metrics/registry", evalHandler.GetRegistry)
