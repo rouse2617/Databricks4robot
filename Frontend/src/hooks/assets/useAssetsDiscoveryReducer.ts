@@ -331,8 +331,6 @@ export function useAssetsDiscoveryReducer(): [
 		listKeyRef.current = currentListKey;
 
 		let cancelled = false;
-		const facetsKeyAtStart = facetsRequestKey;
-		const shouldRefreshFacets = facetsLoadedKeyRef.current !== facetsKeyAtStart;
 
 		const fetchResults = async () => {
 			dispatch({ type: "RESULTS_LOADING" });
@@ -352,7 +350,7 @@ export function useAssetsDiscoveryReducer(): [
 				// the current filters, and always floor by the rows on this page so
 				// the UI never shows `total < rows`.
 				const cachedAuthoritativeTotal =
-					facetsLoadedKeyRef.current === facetsKeyAtStart
+					facetsLoadedKeyRef.current === facetsRequestKey
 						? facetsTotalRef.current
 						: null;
 				const total: number = Math.max(
@@ -387,48 +385,6 @@ export function useAssetsDiscoveryReducer(): [
 					dispatch({ type: "PREVIEW_CLEAR" });
 				}
 				inFlightRef.current = false;
-
-				if (!shouldRefreshFacets || cancelled) {
-					return;
-				}
-
-				try {
-					const facetData = await queryApi.run(facetsQueryRequest);
-					if (
-						cancelled ||
-						listKeyRef.current !== currentListKey ||
-						facetsKeyAtStart !== facetsRequestKeyRef.current
-					) {
-						return;
-					}
-					if (facetsLoadedKeyRef.current === facetsKeyAtStart) {
-						return;
-					}
-					// The count/facets query returns the authoritative total
-					// (postgres count fallback when ES is down). Apply it even when
-					// no aggregation buckets come back (facets === null).
-					const authoritativeTotal =
-						typeof facetData.total === "number" ? facetData.total : null;
-					const aggregations = mapFacetsToAggregations(facetData.facets);
-					if (authoritativeTotal == null && !aggregations) {
-						return;
-					}
-					if (authoritativeTotal != null) {
-						facetsTotalRef.current = authoritativeTotal;
-					}
-					facetsLoadedKeyRef.current = facetsKeyAtStart;
-					dispatch({
-						type: "FACETS_SUCCESS",
-						payload: {
-							...(aggregations ? { aggregations } : {}),
-							...(authoritativeTotal != null
-								? { total: authoritativeTotal }
-								: {}),
-						},
-					});
-				} catch {
-					// Facet sidebar can keep previous counts; list is already shown.
-				}
 				return;
 			} catch (err) {
 				if (cancelled || listKeyRef.current !== currentListKey) {
@@ -454,7 +410,6 @@ export function useAssetsDiscoveryReducer(): [
 	}, [
 		activePreviewAssetID,
 		currentListKey,
-		facetsQueryRequest,
 		facetsRequestKey,
 		isResultsStale,
 		isURLHydrated,
@@ -462,6 +417,58 @@ export function useAssetsDiscoveryReducer(): [
 		activeAlgoStatusFilters,
 		listQueryRequest,
 	]);
+
+	// ── Facets fetch effect ──
+	// Decoupled from the list fetch on purpose (CYB-3301). Previously the facets
+	// request was chained after the list request in the effect above; the list's
+	// RESULTS_SUCCESS flips isStale true→false, which re-runs that effect and
+	// fires its cleanup (cancelled=true) — cancelling the still-in-flight facets
+	// fetch before it could dispatch FACETS_SUCCESS. Net effect: the facets
+	// request was sent and answered, but its aggregations were discarded, so no
+	// facet ever showed counts. Keying this effect on the filter key only (not
+	// isStale) avoids that race.
+	useEffect(() => {
+		if (!isURLHydrated) return;
+		if (facetsLoadedKeyRef.current === facetsRequestKey) return;
+
+		let cancelled = false;
+		(async () => {
+			try {
+				const facetData = await queryApi.run(facetsQueryRequest);
+				if (cancelled || facetsRequestKeyRef.current !== facetsRequestKey) {
+					return;
+				}
+				// The count/facets query returns the authoritative total (postgres
+				// count fallback when ES is down). Apply it even when no aggregation
+				// buckets come back (facets === null).
+				const authoritativeTotal =
+					typeof facetData.total === "number" ? facetData.total : null;
+				const aggregations = mapFacetsToAggregations(facetData.facets);
+				if (authoritativeTotal == null && !aggregations) {
+					return;
+				}
+				if (authoritativeTotal != null) {
+					facetsTotalRef.current = authoritativeTotal;
+				}
+				facetsLoadedKeyRef.current = facetsRequestKey;
+				dispatch({
+					type: "FACETS_SUCCESS",
+					payload: {
+						...(aggregations ? { aggregations } : {}),
+						...(authoritativeTotal != null
+							? { total: authoritativeTotal }
+							: {}),
+					},
+				});
+			} catch {
+				// Facet sidebar keeps previous counts; the list is unaffected.
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isURLHydrated, facetsRequestKey, facetsQueryRequest]);
 
 	// ── Preview fetch effect ──
 	// Fires when active preview asset or retry nonce changes.
