@@ -2,18 +2,18 @@
 // Renders one full-width card per asset with thumbnail, all tags, lineage, storage.
 // Validates: Requirements R1
 
+import { CopyOutlined } from "@ant-design/icons";
 import {
+	message,
 	Pagination,
 	Select,
 	Skeleton,
+	Space,
 	Spin,
 	Tag,
 	Tooltip,
 	Typography,
-	message,
-	Space,
 } from "antd";
-import { CopyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { useEffect, useRef, useState } from "react";
 import type { Asset } from "../../api/types";

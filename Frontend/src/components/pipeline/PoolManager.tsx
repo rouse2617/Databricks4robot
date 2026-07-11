@@ -331,7 +331,11 @@ export default function PoolManager() {
 				<div style={{ marginTop: 12, color: "var(--gray-400)", fontSize: 12 }}>
 					<Typography.Text type="secondary">
 						资源池对应 K8s 命名空间，部署流水线时选择资源池即提交 Workflow
-						到对应命名空间，受 ResourceQuota 约束。
+						到对应命名空间
+						{Object.keys(quotas).length > 0
+							? "，受 ResourceQuota 约束"
+							: "；当前命名空间未配置 ResourceQuota"}
+						。
 					</Typography.Text>
 				</div>
 			</Card>

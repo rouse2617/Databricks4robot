@@ -432,6 +432,13 @@ export default function AssetsResultsPane({
 					共 {total}
 					{totalApprox ? "+" : ""} 条
 				</Text>
+				<Text
+					type="secondary"
+					style={{ fontSize: 12 }}
+					title="来自 PostgreSQL 实时读库；概览页 KPI 来自湖仓 Iceberg，按日聚合，可能滞后。"
+				>
+					· 数据源:PostgreSQL 实时
+				</Text>
 				<Text type="secondary" style={{ fontSize: 12 }}>
 					当前排序：{describeSort(sort)}
 				</Text>

@@ -6,6 +6,7 @@ import { Button, Input, Popover, Select, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { createFilterChip } from "../../lib/assets/assetsDiscoveryActions";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+import { ASSET_TYPE_OPTIONS } from "../../lib/assets/assetTypes";
 
 // ─── Field Metadata ───
 
@@ -38,7 +39,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 		key: "asset_type",
 		label: "资产类型",
 		type: "enum",
-		values: ["segment", "clip", "frame_set", "derived_asset"],
+		values: ASSET_TYPE_OPTIONS,
 	},
 	{
 		key: "retention_tier",

@@ -418,6 +418,7 @@ export default function AssetDetailPage() {
 					<TagsTab
 						assetId={asset.asset_id}
 						tags={asset.tags ?? {}}
+						tagsDetailed={asset.tags_detailed}
 						onUpdate={refreshAfterTagUpdate}
 					/>
 				</Suspense>

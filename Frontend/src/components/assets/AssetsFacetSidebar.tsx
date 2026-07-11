@@ -16,6 +16,14 @@ import {
 } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+import {
+	ASSET_TYPE_OPTIONS,
+	mergeAssetTypeOptions,
+} from "../../lib/assets/assetTypes";
+
+// Re-export so downstream code (e.g. AddFilterPopover, tests) can keep the
+// existing import path if they want; the canonical source lives in lib/assets.
+export { ASSET_TYPE_OPTIONS };
 
 const { Text } = Typography;
 
@@ -36,12 +44,8 @@ export const LIFECYCLE_OPTIONS = [
 	"archived",
 	"superseded",
 ];
-export const ASSET_TYPE_OPTIONS = [
-	"segment",
-	"clip",
-	"frame_set",
-	"derived_asset",
-];
+// ASSET_TYPE_OPTIONS is re-exported near the top of this file from
+// ../../lib/assets/assetTypes; do not redeclare it here.
 export const RETENTION_TIER_OPTIONS = ["standard", "archive", "cold"];
 export const ENV_OPTIONS = [
 	"kitchen",
@@ -588,7 +592,7 @@ export default function AssetsFacetSidebar({
 					compact={compact}
 					label="资产类型"
 					field="asset_type"
-					options={ASSET_TYPE_OPTIONS}
+					options={mergeAssetTypeOptions(fieldCounts.asset_type)}
 					activeFilters={activeFilters}
 					onToggleFacet={onToggleFacet}
 					counts={fieldCounts.asset_type}

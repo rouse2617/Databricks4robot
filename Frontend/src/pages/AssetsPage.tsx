@@ -244,8 +244,14 @@ export default function AssetsPage() {
 					onAddFilter={(chip) => {
 						dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } });
 						// Auto-expand algorithm tab when algo_status is clicked
-						if (chip.field === "algo_status" && !state.facetUiState.expandedGroups.includes("algorithm")) {
-							dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group: "algorithm" } });
+						if (
+							chip.field === "algo_status" &&
+							!state.facetUiState.expandedGroups.includes("algorithm")
+						) {
+							dispatch({
+								type: "FACET_GROUP_TOGGLE",
+								payload: { group: "algorithm" },
+							});
 						}
 					}}
 					onRemoveFilter={(id) =>
@@ -478,7 +484,10 @@ export default function AssetsPage() {
 							// full filtered set — not just the rows checked by hand.
 							try {
 								const data = await queryApi.run(
-									buildSelectAllIdsQueryRequest(state.queryState, SELECT_ALL_MAX),
+									buildSelectAllIdsQueryRequest(
+										state.queryState,
+										SELECT_ALL_MAX,
+									),
 								);
 								const ids = (data.items ?? [])
 									.map((a) => a.asset_id)
@@ -641,7 +650,9 @@ export default function AssetsPage() {
 							asset={previewAsset}
 							previewManifest={previewManifest}
 							collapsed={isUltraWide ? false : state.previewState.collapsed}
-							onCollapse={() => !isUltraWide && dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })}
+							onCollapse={() =>
+								!isUltraWide && dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })
+							}
 							onOpenDetail={(assetId) => {
 								const sp = serializeQueryStateToUrl(
 									state.queryState,

@@ -73,6 +73,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/workflows")) return "/pipeline";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
+	if (pathname.startsWith("/api-keys")) return "/api-keys";
 	return "/assets";
 }
 
