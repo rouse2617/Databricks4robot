@@ -232,23 +232,6 @@ function mapFacetsToAggregations(
 	return out;
 }
 
-function assetMatchesAlgoStatusFilter(
-	asset: Asset,
-	statuses: string[],
-): boolean {
-	if (statuses.length === 0) return true;
-	const algoResults = asset.algo_results ?? {};
-	const seenStatuses = new Set<string>();
-	for (const [key, value] of Object.entries(algoResults)) {
-		if (!key.endsWith(":status")) continue;
-		seenStatuses.add(String(value));
-	}
-	if (seenStatuses.size === 0) {
-		seenStatuses.add("pending");
-	}
-	return statuses.some((status) => seenStatuses.has(status));
-}
-
 // ─── Hook ───
 
 export function useAssetsDiscoveryReducer(): [
@@ -309,13 +292,6 @@ export function useAssetsDiscoveryReducer(): [
 	const isURLHydrated = state.routerState.urlHydrated;
 	const activePreviewAssetID = state.previewState.activeAssetId;
 	const pageSize = state.queryState.pageSize;
-	const activeAlgoStatusFilters = useMemo(
-		() =>
-			state.queryState.activeFilters
-				.filter((chip) => chip.field === "algo_status" && chip.op === "eq")
-				.map((chip) => String(chip.value)),
-		[state.queryState.activeFilters],
-	);
 
 	// ── Results fetch effect ──
 	// Fires when resultsState.isStale becomes true OR when the derived query key
@@ -337,13 +313,7 @@ export function useAssetsDiscoveryReducer(): [
 
 			try {
 				const data = await queryApi.run(listQueryRequest);
-				const fetchedItems: Asset[] = data.items ?? [];
-				const hasAlgoStatusFallback = activeAlgoStatusFilters.length > 0;
-				const items = hasAlgoStatusFallback
-					? fetchedItems.filter((asset) =>
-							assetMatchesAlgoStatusFilter(asset, activeAlgoStatusFilters),
-						)
-					: fetchedItems;
+				const items: Asset[] = data.items ?? [];
 				// The list query's `total` is unreliable when ES is unavailable
 				// (it can be smaller than the rows actually returned). Prefer the
 				// authoritative count from the facets query when it has loaded for
@@ -362,11 +332,6 @@ export function useAssetsDiscoveryReducer(): [
 					return;
 				}
 				const warnings = [...(data.warnings ?? [])];
-				if (hasAlgoStatusFallback) {
-					warnings.push(
-						"⚠️ algo_status 筛选仅在当前页生效：列表已过滤，但总数和分页仍为全量数据。如需精确结果请在算法页复核，或清除 algo_status 筛选。",
-					);
-				}
 				dispatch({
 					type: "RESULTS_SUCCESS",
 					payload: {
@@ -414,7 +379,6 @@ export function useAssetsDiscoveryReducer(): [
 		isResultsStale,
 		isURLHydrated,
 		pageSize,
-		activeAlgoStatusFilters,
 		listQueryRequest,
 	]);
 

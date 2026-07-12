@@ -146,9 +146,6 @@ export default function AssetsPage() {
 	const hasSearchFallbackWarning = resultWarnings.some((w) =>
 		w.toLowerCase().includes("elasticsearch unavailable"),
 	);
-	const hasAlgoStatusWarning = resultWarnings.some((w) =>
-		w.includes("algo_status"),
-	);
 	const selectedAssetIds = Array.from(state.selectionState.selectedIds);
 	const canRunPipelineForSelection =
 		state.selectionState.mode === "explicit_rows" &&
@@ -372,9 +369,7 @@ export default function AssetsPage() {
 					message={
 						hasSearchFallbackWarning
 							? "搜索已降级为数据库查询"
-							: hasAlgoStatusWarning
-								? "⚠️ algo_status 筛选仅在当前页生效"
-								: "部分筛选可能未完全生效"
+							: "部分筛选可能未完全生效"
 					}
 					description={visibleResultWarnings.join("；")}
 				/>
