@@ -178,8 +178,14 @@ function CheckboxFacet({
 	const checked = getCheckedValues(activeFilters, field);
 	const optionsWithLabels = options.map((opt) => {
 		const count = counts?.[opt];
+		// CYB-3310: empty/blank bucket values (e.g. env "-") read as "（未标注）";
+		// the filter value sent to the backend keeps the original `opt`.
+		const display = opt === "" || opt === "-" ? "（未标注）" : opt;
 		return {
-			label: count !== undefined ? `${opt} (${count.toLocaleString()})` : opt,
+			label:
+				count !== undefined
+					? `${display} (${count.toLocaleString()})`
+					: display,
 			value: opt,
 		};
 	});
@@ -788,7 +794,7 @@ export default function AssetsFacetSidebar({
 						span="half"
 						label="场景标签"
 						field="tags.scene"
-						placeholder="eq 操作在关键词模式下走 nested"
+						placeholder="按场景标签精确匹配（如 城市街道）"
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
 					/>
@@ -907,6 +913,20 @@ export default function AssetsFacetSidebar({
 							</Button>
 						</Badge>
 					))}
+					{expandedGroupCount > 0 && (
+						<Button
+							size="small"
+							type="link"
+							onClick={() => {
+								for (const it of otherGroups) {
+									if (it.isExpanded) onToggleGroup(it.groupKey);
+								}
+							}}
+							style={{ height: 28, paddingInline: 8, fontSize: 12 }}
+						>
+							全部收起
+						</Button>
+					)}
 				</div>
 
 				{expandedGroupCount > 0 && (
@@ -917,8 +937,8 @@ export default function AssetsFacetSidebar({
 							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
-							maxHeight: compact ? 320 : undefined,
-							overflowY: compact ? "auto" : undefined,
+							maxHeight: compact ? 320 : "min(60vh, 560px)",
+							overflowY: "auto",
 							paddingRight: compact ? 4 : 0,
 						}}
 					>
@@ -963,6 +983,8 @@ export default function AssetsFacetSidebar({
 												"repeat(auto-fit, minmax(min(280px, 100%), 1fr))",
 											gap: compact ? 8 : 12,
 											alignItems: "start",
+											maxHeight: 260,
+											overflowY: "auto",
 										}}
 									>
 										{item.children}
