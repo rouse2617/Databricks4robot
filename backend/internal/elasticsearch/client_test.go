@@ -311,3 +311,71 @@ func TestDeleteAllDocuments_IndexNotFoundReturnsZero(t *testing.T) {
 		t.Fatalf("expected deleted=0 for missing index, got %d", deleted)
 	}
 }
+
+func TestNormalizeScalarField_TagSingularMapsToTagsFlat(t *testing.T) {
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{"tag.priority", "tags_flat.priority"},
+		{"tag.quality", "tags_flat.quality"},
+		{"tag.custom_key", "tags_flat.custom_key"},
+		{"env", "metadata.env"},
+		{"task", "metadata.task"},
+		{"type", "asset_type"},
+		{"tags_flat.priority", "tags_flat.priority"},
+		{"unknown_field", "unknown_field"},
+	}
+	for _, tt := range tests {
+		got := normalizeScalarField(tt.field)
+		if got != tt.want {
+			t.Errorf("normalizeScalarField(%q) = %q, want %q", tt.field, got, tt.want)
+		}
+	}
+}
+
+func TestBuildFilterClause_TagSingularFieldUsesTagsFlat(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		op      string
+		value   string
+		wantKey string
+	}{
+		{
+			name:    "tag.priority scalar filter",
+			field:   "tag.priority",
+			op:      "eq",
+			value:   "high",
+			wantKey: "tags_flat.priority",
+		},
+		{
+			name:    "tag.quality scalar filter",
+			field:   "tag.quality",
+			op:      "eq",
+			value:   "verified",
+			wantKey: "tags_flat.quality",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := FilterOp{Field: tt.field, Op: tt.op, Value: tt.value}
+			positive, negative := buildFilterClause(f)
+			if tt.op == "ne" && negative == nil {
+				t.Fatalf("ne operator should produce negative clause")
+			}
+			if tt.op != "ne" && positive == nil {
+				t.Fatalf("non-ne operator should produce positive clause")
+			}
+			clause := positive
+			if tt.op == "ne" {
+				clause = negative
+			}
+			raw, _ := json.Marshal(clause)
+			s := string(raw)
+			if !strings.Contains(s, tt.wantKey) {
+				t.Errorf("expected %q in clause, got: %s", tt.wantKey, s)
+			}
+		})
+	}
+}

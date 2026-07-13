@@ -209,21 +209,25 @@ func canSkipPGCount(plan *queryplan.Plan, compiled *queryir.CompiledQuery) bool 
 	return true
 }
 
-func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) {
+// applyESRecall runs ES recall in place on compiled and reports recallErrored:
+// true when ES was supposed to run but Compile/Execute failed, so the caller
+// must fall through to the PG fallback rather than trust MatchTotal==0. Returns
+// false when ES is disabled or ran successfully (including a real 0-hit result).
+func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) bool {
 	if !plan.UseESRecall || h.esExecutor == nil {
-		return
+		return false
 	}
 	body, err := h.esExecutor.Compile(plan, false)
 	if err != nil {
 		compiled.Warnings = append(compiled.Warnings, "elasticsearch compile unsupported; fell back to postgres-only execution")
-		return
+		return true
 	}
 	esRecallStarted := time.Now()
 	esCompiled, err := h.esExecutor.Execute(ctx, body, true)
 	if err != nil {
 		metrics.QueryRunPhaseDurationSeconds.WithLabelValues("es_recall", "error").Observe(time.Since(esRecallStarted).Seconds())
 		compiled.Warnings = append(compiled.Warnings, "elasticsearch unavailable; fell back to postgres-only execution")
-		return
+		return true
 	}
 	metrics.QueryRunPhaseDurationSeconds.WithLabelValues("es_recall", "ok").Observe(time.Since(esRecallStarted).Seconds())
 	if len(esCompiled.Warnings) > 0 {
@@ -242,6 +246,7 @@ func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compi
 		compiled.ESResults = normalized
 	}
 	compiled.MatchTotal = esCompiled.MatchTotal
+	return false
 }
 
 func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan, trackTotalHits bool) (*queryir.CompiledQuery, error) {
@@ -270,13 +275,15 @@ func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan
 }
 
 func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) (any, int64, error) {
-	h.applyESRecall(ctx, plan, compiled)
+	recallErrored := h.applyESRecall(ctx, plan, compiled)
 	if len(compiled.ESResults) > 0 {
 		return compiled.ESResults, compiled.MatchTotal, nil
 	}
 	// ES recall returned 0 results — short circuit, no PG fallback needed.
 	// ES is the authoritative search oracle for fulltext; if it says 0, trust it.
-	if plan.UseESRecall && compiled.MatchTotal == 0 {
+	// Only when ES actually ran, though: on Compile/Execute error (recallErrored)
+	// fall through to the PG _fulltext fallback instead of reporting a fake empty.
+	if plan.UseESRecall && !recallErrored && compiled.MatchTotal == 0 {
 		return []*models.Asset{}, 0, nil
 	}
 
