@@ -238,7 +238,7 @@ curl -X POST "$BASE/api/v1/mcap-files" \
   }"
 ```
 
-> ⚠️ `raw_hash_md5` 有唯一约束（`uq_mcap_files_hash_md5`）。同一环境重复运行时需使用不同的值，或省略该字段（后端允许 NULL）。
+> ⚠️ `raw_hash_md5` 有唯一约束（`uq_mcap_files_hash_md5`）。重复的 `raw_hash_md5` 返回 `409 DUPLICATE_HASH`（不区分显式 / 自动 `mcap_file_id`，也不会重试）；调用方可据此做幂等。省略该字段则不参与去重（后端允许 NULL）。
 
 再创建资产：
 
@@ -2291,6 +2291,8 @@ curl -X POST "$BASE/api/v1/metrics:search" \
 | 404 | `MCAP_FILE_NOT_FOUND` | MCAP 文件不存在（如 mcap-locator 找不到底层文件） |
 | 409 | `ASSET_NOT_PREVIEWABLE` | 资产 lifecycle_state 不支持预览（如 `created` / `failed`） |
 | 409 | `DUPLICATE_ASSET_ID` | `POST /assets` 指定了已存在的 `asset_id` |
+| 409 | `DUPLICATE_MCAP_FILE_ID` | `POST /mcap-files` 显式指定了已存在的 `mcap_file_id` |
+| 409 | `DUPLICATE_HASH` | `POST /mcap-files` 的 `raw_hash_md5` 已存在（幂等去重信号；不区分显式 / 自动 `mcap_file_id`） |
 | 409 | `ALGO_ALREADY_RUNNING` | 算法已在运行 |
 | 409 | `CONCURRENT_CONFLICT` | 乐观锁冲突 — 算法路径重试 3 次后仍失败，或 PATCH /assets/:id 期间资产被并发修改 |
 | 414 | `URI_TOO_LONG` | URL 超过 2048 字符 |

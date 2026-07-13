@@ -4748,6 +4748,15 @@ paths:
     post:
       tags: [MCAPFiles]
       summary: Create MCAP file metadata entry
+      description: |
+        Idempotency is enforced by `raw_hash_md5` (partial UNIQUE index
+        `uq_mcap_files_hash_md5`). A duplicate hash returns
+        `409 DUPLICATE_HASH` — regardless of whether the caller supplies
+        `mcap_file_id` explicitly or lets the server auto-generate it.
+
+        Explicitly-supplied `mcap_file_id` collisions return
+        `409 DUPLICATE_MCAP_FILE_ID`. When the ID is auto-generated the
+        server retries up to 16 times on ID collisions before giving up.
       requestBody:
         required: true
         content:
@@ -4759,6 +4768,18 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/McapFile' }
+        '400':
+          description: Invalid request body or `mcap_file_id` format
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: |
+            Duplicate — either `raw_hash_md5` (`DUPLICATE_HASH`) or
+            caller-supplied `mcap_file_id` (`DUPLICATE_MCAP_FILE_ID`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [MCAPFiles]
       summary: List MCAP files

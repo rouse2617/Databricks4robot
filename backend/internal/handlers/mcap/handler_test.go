@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -184,6 +186,118 @@ func TestCreateFile(t *testing.T) {
 	if got == nil || got.GCSPath != "gs://bucket/a.mcap" || got.Owner != "team-a" || got.IngestState != models.IngestStateSummarized {
 		t.Fatalf("unexpected mcap file passed to repo: %+v", got)
 	}
+}
+
+func TestCreateFile_UniqueViolations(t *testing.T) {
+	// Regression: auto-gen mcap_file_id must NOT retry on raw_hash_md5
+	// UNIQUE violations (uq_mcap_files_hash_md5) — those can never be
+	// resolved by picking a new ID. Pre-fix behavior was to burn all 16
+	// retries and return 500.
+	pgHash := &pgconn.PgError{Code: "23505", ConstraintName: "uq_mcap_files_hash_md5"}
+	pgID := &pgconn.PgError{Code: "23505", ConstraintName: "mcap_files_pkey"}
+
+	decode := func(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		return body
+	}
+
+	t.Run("auto-gen + hash conflict returns 409 DUPLICATE_HASH", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		calls := 0
+		repo.setFn = func(context.Context, *models.McapFile) error {
+			calls++
+			return fmt.Errorf("mcap repo set: %w", pgHash)
+		}
+		h := New(repo)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"raw_hash_md5": "deadbeefdeadbeefdeadbeefdeadbeef",
+			"gcs_path":     "gs://bucket/a.mcap",
+		})
+		if w.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d body=%s", w.Code, w.Body.String())
+		}
+		body := decode(t, w)
+		if got, _ := body["code"].(string); got != "DUPLICATE_HASH" {
+			t.Fatalf("expected code=DUPLICATE_HASH, got %v", body["code"])
+		}
+		if calls != 1 {
+			t.Fatalf("expected 1 attempt (no retry on hash conflict), got %d", calls)
+		}
+	})
+
+	t.Run("auto-gen + id collision retries then succeeds", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		calls := 0
+		repo.setFn = func(context.Context, *models.McapFile) error {
+			calls++
+			if calls < 3 {
+				return fmt.Errorf("mcap repo set: %w", pgID)
+			}
+			return nil
+		}
+		h := New(repo)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"raw_hash_md5": "cafef00d00000000000000000000ffff",
+			"gcs_path":     "gs://bucket/b.mcap",
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
+		}
+		if calls != 3 {
+			t.Fatalf("expected 3 attempts (2 retries), got %d", calls)
+		}
+	})
+
+	t.Run("explicit id + hash conflict returns 409 DUPLICATE_HASH", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		repo.setFn = func(context.Context, *models.McapFile) error {
+			return fmt.Errorf("mcap repo set: %w", pgHash)
+		}
+		h := New(repo)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"mcap_file_id": "abcd1234",
+			"raw_hash_md5": "deadbeefdeadbeefdeadbeefdeadbeef",
+			"gcs_path":     "gs://bucket/c.mcap",
+		})
+		if w.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d body=%s", w.Code, w.Body.String())
+		}
+		body := decode(t, w)
+		if got, _ := body["code"].(string); got != "DUPLICATE_HASH" {
+			t.Fatalf("expected code=DUPLICATE_HASH, got %v", body["code"])
+		}
+	})
+
+	t.Run("explicit id + pkey collision returns 409 DUPLICATE_MCAP_FILE_ID", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		repo.setFn = func(context.Context, *models.McapFile) error {
+			return fmt.Errorf("mcap repo set: %w", pgID)
+		}
+		h := New(repo)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"mcap_file_id": "abcd1234",
+			"gcs_path":     "gs://bucket/d.mcap",
+		})
+		if w.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d body=%s", w.Code, w.Body.String())
+		}
+		body := decode(t, w)
+		if got, _ := body["code"].(string); got != "DUPLICATE_MCAP_FILE_ID" {
+			t.Fatalf("expected code=DUPLICATE_MCAP_FILE_ID, got %v", body["code"])
+		}
+	})
 }
 
 func TestGetFileAndStaticEndpoints(t *testing.T) {

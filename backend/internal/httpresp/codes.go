@@ -14,6 +14,8 @@ const (
 	CodeAssetNotPreviewable    = "ASSET_NOT_PREVIEWABLE"
 	CodeMcapFileNotFound       = "MCAP_FILE_NOT_FOUND"
 	CodeDuplicateAssetID       = "DUPLICATE_ASSET_ID"
+	CodeDuplicateMcapFileID    = "DUPLICATE_MCAP_FILE_ID"
+	CodeDuplicateHash          = "DUPLICATE_HASH"
 	CodeAlgoRunNotFound        = "ALGO_RUN_NOT_FOUND"
 	CodeInvalidAlgoKey         = "INVALID_ALGO_KEY"
 	CodeAlgoAlreadyRunning     = "ALGO_ALREADY_RUNNING"

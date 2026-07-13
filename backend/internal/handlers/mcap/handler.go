@@ -153,6 +153,26 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 // auto-generated mcap_file_id before giving up.
 const maxMcapFileIDRetries = 16
 
+// uniqueViolationKind classifies a Postgres unique_violation (23505) raised by
+// createFileTx into either "hash" (raw_hash_md5 collision — unresolvable by
+// picking a new mcap_file_id) or "id" (mcap_file_id / asset_id collision —
+// resolvable by retrying with a new auto-generated ID). Returns the empty
+// string when err is not a 23505 or the constraint is unrecognized (caller
+// should treat as an unclassified server error).
+func uniqueViolationKind(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	switch pgErr.ConstraintName {
+	case "uq_mcap_files_hash_md5":
+		return "hash"
+	case "mcap_files_pkey", "assets_pkey":
+		return "id"
+	}
+	return "other"
+}
+
 // POST /api/v1/mcap-files
 func (h *Handler) CreateFile(c *gin.Context) {
 	var req struct {
@@ -237,9 +257,12 @@ func (h *Handler) CreateFile(c *gin.Context) {
 	if !autoID {
 		err := h.createFileTx(c.Request.Context(), f, c.GetHeader("X-Request-ID"))
 		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				httpresp.Conflict(c, "DUPLICATE_MCAP_FILE_ID", "mcap_file_id already exists", nil)
+			switch uniqueViolationKind(err) {
+			case "hash":
+				httpresp.Conflict(c, httpresp.CodeDuplicateHash, "raw_hash_md5 already exists", nil)
+				return
+			case "id":
+				httpresp.Conflict(c, httpresp.CodeDuplicateMcapFileID, "mcap_file_id already exists", nil)
 				return
 			}
 			httpresp.Internal(c, err.Error())
@@ -261,8 +284,11 @@ func (h *Handler) CreateFile(c *gin.Context) {
 			c.JSON(http.StatusCreated, f)
 			return
 		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		switch uniqueViolationKind(err) {
+		case "hash":
+			httpresp.Conflict(c, httpresp.CodeDuplicateHash, "raw_hash_md5 already exists", nil)
+			return
+		case "id":
 			continue
 		}
 		httpresp.Internal(c, err.Error())
