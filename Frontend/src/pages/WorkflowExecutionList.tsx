@@ -60,6 +60,7 @@ import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
 import {
 	STATUS_ACCENT_COLORS,
 	STATUS_COLORS,
+	WORKFLOW_PHASE_LABELS,
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -1693,8 +1694,13 @@ export function WorkflowExecutionList({
 					style={{ minWidth: 130, flex: "0 0 130px" }}
 					value={draftStatusFilter}
 					onChange={(val) => setDraftStatusFilter(val)}
+					// CYB-3391: use the localized zh-CN label from
+					// WORKFLOW_PHASE_LABELS so the dropdown matches the table
+					// status chips (previously label=status showed the raw English
+					// enum while cells rendered "运行中/成功/失败/…", forcing users
+					// to translate mentally when filtering).
 					options={WORKFLOW_PHASES.map((status) => ({
-						label: status,
+						label: WORKFLOW_PHASE_LABELS[status],
 						value: status,
 					}))}
 				/>

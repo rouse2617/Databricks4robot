@@ -723,6 +723,10 @@ describe("DeployPanel", () => {
 		expect(screen.getByText("高级全局配置（可选）")).toBeTruthy();
 		expect(mockListPipelineConfigs).not.toHaveBeenCalled();
 
+		// CYB-3391: advanced config block now sits inside a collapsed
+		// <Collapse>. Expand it before interacting with the inner controls.
+		fireEvent.click(screen.getByText("高级全局配置（可选）"));
+
 		fireEvent.click(screen.getByText("启用全局配置"));
 		expect(screen.getByText("选择已保存配置")).toBeTruthy();
 
@@ -744,6 +748,8 @@ describe("DeployPanel", () => {
 
 		fireEvent.click(await screen.findByText("运行"));
 		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		// CYB-3391: advanced config sits inside collapsed Collapse.
+		fireEvent.click(screen.getByText("高级全局配置（可选）"));
 		fireEvent.click(screen.getByText("启用全局配置"));
 		fireEvent.click(screen.getByText("上传本地文件"));
 
@@ -766,6 +772,8 @@ describe("DeployPanel", () => {
 
 		fireEvent.click(await screen.findByText("运行"));
 		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		// CYB-3391: advanced config sits inside collapsed Collapse.
+		fireEvent.click(screen.getByText("高级全局配置（可选）"));
 		fireEvent.click(screen.getByText("启用全局配置"));
 		fireEvent.click(screen.getByText("在线编辑"));
 
