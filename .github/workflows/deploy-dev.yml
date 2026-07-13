@@ -33,7 +33,15 @@ jobs:
       mcap: ${{ steps.filter.outputs.mcap }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
+      # fetch-depth: 2 lets dorny/paths-filter compute a real
+      # `git diff <before>...<after>` for push events. The default
+      # fetch-depth=1 has no `before` commit available locally, so
+      # paths-filter falls back to "treat every filter as changed",
+      # which fired deploy-backend / deploy-mcap / deploy-migrate on
+      # every push even for pure Frontend-only changes. See CYB-3380.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: dorny/paths-filter@v3
         id: filter
         with:
