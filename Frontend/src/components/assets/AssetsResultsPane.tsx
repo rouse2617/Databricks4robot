@@ -17,7 +17,7 @@ import type {
 	FetchStatus,
 	ViewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
-import { formatDateTime, formatShortDateTime } from "../../lib/dateTime";
+import { formatDateTime } from "../../lib/dateTime";
 import { COLUMN_LABELS } from "../../lib/productVocabulary";
 import { withSelectAllColumn } from "../../lib/tableSelection";
 import AlgoSummaryCell from "./AlgoSummaryCell";
@@ -97,68 +97,42 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	asset_id: (onRowClick) => ({
 		title: COLUMN_LABELS.assetId,
 		dataIndex: "asset_id",
-		width: 200,
+		width: 120,
 		fixed: "left" as const,
-		// CYB-3382 #4: asset_id 主体保留(可复制、URL 友好),
-		// 下方加一行副标题 `owner · asset_type · created_at`,
-		// 便于用户识别行内容,不必只依赖 8 位哈希。
-		render: (id: string, record: Asset) => {
-			const subline = [
-				record.owner,
-				record.asset_type,
-				formatShortDateTime(record.created_at),
-			]
-				.filter((s) => s && s !== "—")
-				.join(" · ");
-			return (
-				<div>
-					<Space size={4}>
-						<Tooltip title="点击打开预览">
-							<button
-								type="button"
-								className="font-mono text-xs cursor-pointer link-like-button"
-								aria-label={`Asset ${id}`}
-								data-testid={`asset-id-link-${id}`}
-								onClick={(e) => {
-									e.stopPropagation();
-									onRowClick(id);
-								}}
-							>
-								{formatShortId(id)}
-							</button>
-						</Tooltip>
-						<Tooltip title="复制 Asset ID">
-							<button
-								type="button"
-								className="link-like-button row-hover-action"
-								aria-label={`复制 Asset ${id}`}
-								onClick={(e) => {
-									e.stopPropagation();
-									void copyToClipboard(id, " Asset ID");
-								}}
-							>
-								<CopyOutlined style={{ fontSize: 12 }} />
-							</button>
-						</Tooltip>
-					</Space>
-					{subline && (
-						<div
-							style={{
-								fontSize: 11,
-								color: "#64748B",
-								marginTop: 2,
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-								whiteSpace: "nowrap",
-							}}
-							title={subline}
-						>
-							{subline}
-						</div>
-					)}
-				</div>
-			);
-		},
+		// CYB-3383: 表格视图不加 owner/asset_type/date 副标题 ——
+		// 这些字段已有独立列(所属方 / 资产类型 / 更新时间),塞副标题
+		// 就是同屏重复。CardView 保留副标题(卡片视图无独立列)。
+		render: (id: string) => (
+			<Space size={4}>
+				<Tooltip title="点击打开预览">
+					<button
+						type="button"
+						className="font-mono text-xs cursor-pointer link-like-button"
+						aria-label={`Asset ${id}`}
+						data-testid={`asset-id-link-${id}`}
+						onClick={(e) => {
+							e.stopPropagation();
+							onRowClick(id);
+						}}
+					>
+						{formatShortId(id)}
+					</button>
+				</Tooltip>
+				<Tooltip title="复制 Asset ID">
+					<button
+						type="button"
+						className="link-like-button row-hover-action"
+						aria-label={`复制 Asset ${id}`}
+						onClick={(e) => {
+							e.stopPropagation();
+							void copyToClipboard(id, " Asset ID");
+						}}
+					>
+						<CopyOutlined style={{ fontSize: 12 }} />
+					</button>
+				</Tooltip>
+			</Space>
+		),
 	}),
 	mcap_file_id: (_onRowClick, onMcapClick) => ({
 		title: COLUMN_LABELS.mcapShort,
