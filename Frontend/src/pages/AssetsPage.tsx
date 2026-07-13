@@ -24,7 +24,6 @@ import ActiveFilterChipsRow from "../components/assets/ActiveFilterChipsRow";
 import AddFilterPopover from "../components/assets/AddFilterPopover";
 import AssetQuickPreviewPane from "../components/assets/AssetQuickPreviewPane";
 import AssetsFacetSidebar from "../components/assets/AssetsFacetSidebar";
-import AssetsKpiRow from "../components/assets/AssetsKpiRow";
 import AssetsResultsPane from "../components/assets/AssetsResultsPane";
 import AssetsSearchBar from "../components/assets/AssetsSearchBar";
 import BatchDeleteTagModal from "../components/assets/BatchDeleteTagModal";
@@ -186,12 +185,6 @@ export default function AssetsPage() {
 			<Title level={4} style={{ margin: "0 0 12px 0" }}>
 				资产管理
 			</Title>
-
-			<AssetsKpiRow
-				total={state.resultsState.total}
-				aggregations={state.resultsState.aggregations}
-				loading={state.resultsState.fetchStatus === "loading"}
-			/>
 
 			<div
 				style={{
