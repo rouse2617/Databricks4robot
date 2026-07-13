@@ -67,3 +67,16 @@ repos:
         language: system
         entry: ./scripts/check_no_manual_schema_change.sh
         pass_filenames: false
+
+  # 6. Conventional commit message validation (commitlint).
+  # Surfaces violations at `git commit` time, before the message is stored,
+  # instead of only at the CI push step. Config is read from the existing
+  # .commitlintrc.json (commitlint's config walk-up picks it up).
+  # Uses the community pre-commit wrapper because upstream commitlint
+  # doesn't publish a .pre-commit-hooks.yaml manifest.
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.26.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ['@commitlint/config-conventional']
