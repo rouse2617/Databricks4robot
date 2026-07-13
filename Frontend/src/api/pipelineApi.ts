@@ -194,15 +194,38 @@ export interface PipelineRunCostSummary {
 	generatedAt: string;
 }
 
+export interface TargetToleration {
+	key: string;
+	operator: "Equal" | "Exists";
+	value?: string;
+	effect: "NoSchedule" | "NoExecute" | "PreferNoSchedule";
+}
+
+export interface TargetResourceDefaults {
+	computeTier?: string;
+	templateTolerations?: TargetToleration[];
+	templateNodeSelector?: Record<string, string>;
+	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
+	[key: string]: unknown;
+}
+
 export interface ExecutionTarget {
 	id: string;
 	name: string;
 	cluster: string;
 	namespace: string;
+	serviceAccount?: string;
 	argoServerConfigured: boolean;
+	argoInsecureSkipTls?: boolean;
 	status: "available" | "unavailable";
+	enabled?: boolean;
 	isDefault: boolean;
 	description?: string;
+	resourceDefaults?: TargetResourceDefaults;
+	quotaPolicy?: Record<string, unknown>;
+	labels?: Record<string, string>;
+	createdAt?: string;
+	updatedAt?: string;
 }
 
 export interface RuntimeSecretMountResource {
@@ -549,6 +572,30 @@ export function listExecutionTargets(): Promise<ExecutionTarget[]> {
 		"GET",
 		"/execution-targets",
 	).then((r) => r.items);
+}
+
+export function createExecutionTarget(
+	body: Partial<ExecutionTarget>,
+): Promise<ExecutionTarget> {
+	return request<ExecutionTarget>("POST", "/execution-targets", body);
+}
+
+export function updateExecutionTarget(
+	id: string,
+	body: Partial<ExecutionTarget>,
+): Promise<ExecutionTarget> {
+	return request<ExecutionTarget>(
+		"PUT",
+		`/execution-targets/${encodeURIComponent(id)}`,
+		body,
+	);
+}
+
+export function deleteExecutionTarget(id: string): Promise<void> {
+	return request<void>(
+		"DELETE",
+		`/execution-targets/${encodeURIComponent(id)}`,
+	);
 }
 
 export function deleteDeployment(id: string): Promise<void> {
