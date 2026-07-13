@@ -108,6 +108,9 @@ type ExecutionRecord = WorkflowSummary & {
 	owner?: string;
 	argoNamespace?: string;
 	videoDurationSec?: number;
+	// CYB-3392: propagate the parent batch id so the row can render a
+	// clickable "批次" badge that jumps to BatchJobList detail.
+	batchJobId?: string;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -447,6 +450,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
 				: undefined,
+		batchJobId: run.batchJobId,
 	};
 };
 
@@ -1192,6 +1196,26 @@ export function WorkflowExecutionList({
 								) : scope ? (
 									<Tag color="blue" style={{ fontSize: 11 }}>
 										Dev 草稿
+									</Tag>
+								) : null}
+								{/* CYB-3392: 批次徽标 — 单次执行属于批次时显示可跳转 tag,
+								    与 BatchJobList 形成双向导航;仅在非-batch scope 下显示,
+								    因为 batch scope 页面本身就在批次上下文里. */}
+								{!isBatchScope && record.batchJobId ? (
+									<Tag
+										color="purple"
+										style={{ fontSize: 11, cursor: "pointer" }}
+										title={`所属批次 ${record.batchJobId} — 点击查看批次详情`}
+										onClick={(e) => {
+											e.stopPropagation();
+											if (record.batchJobId) {
+												navigate(
+													`/pipeline/batch/${encodeURIComponent(record.batchJobId)}`,
+												);
+											}
+										}}
+									>
+										批次 {record.batchJobId.slice(0, 8)}
 									</Tag>
 								) : null}
 							</div>
