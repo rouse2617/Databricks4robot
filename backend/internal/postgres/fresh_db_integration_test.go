@@ -28,18 +28,15 @@ func TestFreshDB_AssetCRUD(t *testing.T) {
 	}
 	t.Cleanup(client.Close)
 
-	var hasStatus bool
-	err = client.db.QueryRow(ctx, `
-SELECT EXISTS (
-  SELECT 1 FROM information_schema.columns
-  WHERE table_schema = 'public' AND table_name = 'assets' AND column_name = 'status'
-)`).Scan(&hasStatus)
-	if err != nil {
-		t.Fatalf("check assets.status column: %v", err)
-	}
-	if hasStatus {
-		t.Fatal("assets.status column still exists; migration 025 must run before this test")
-	}
+	// Note: this test previously gated on `assets.status` being dropped by
+	// pre-baseline migration 025. The 2026-07-08 Atlas baseline reset
+	// (backend/migrations/20260708104125_baseline_from_dev.sql) snapshotted
+	// the live dev schema, which still had the column, so the gate could
+	// never pass again. models.Asset.Status is already derived from
+	// lifecycle_state (see asset.go: "API-only; derived from lifecycle_state
+	// (not stored in PostgreSQL)"), so the DB column's presence is
+	// irrelevant to correctness — the CRUD + derived-status assertions
+	// below still cover the meaningful behavior. (CYB-3381)
 
 	assetID, err := id.GenerateAssetID()
 	if err != nil {
