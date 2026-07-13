@@ -524,6 +524,7 @@ export function DeployPanel({
 		query: templateQuery,
 		scope: templateScope,
 		sort: templateSort,
+		hideAutoDrafts,
 	});
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
@@ -667,6 +668,7 @@ export function DeployPanel({
 					q: templateQuery || undefined,
 					scope: templateScope,
 					sort: templateSort,
+					excludeAutoDrafts: hideAutoDrafts,
 				});
 				setTemplateTotal(resp.total);
 				setTemplatePage(resp.page);
@@ -692,6 +694,7 @@ export function DeployPanel({
 			templateQuery,
 			templateScope,
 			templateSort,
+			hideAutoDrafts,
 		],
 	);
 
@@ -706,6 +709,7 @@ export function DeployPanel({
 				q: templateQuery || undefined,
 				scope: templateScope,
 				sort: templateSort,
+				excludeAutoDrafts: hideAutoDrafts,
 			});
 			setTemplates(resp.items);
 			setTemplateTotal(resp.total);
@@ -731,6 +735,7 @@ export function DeployPanel({
 		templateQuery,
 		templateScope,
 		templateSort,
+		hideAutoDrafts,
 	]);
 
 	const refreshAll = useCallback(async () => {
@@ -750,6 +755,7 @@ export function DeployPanel({
 						q: query || undefined,
 						scope,
 						sort,
+						excludeAutoDrafts: hideAutoDrafts,
 					}),
 					listExecutionTargets(),
 				]);
@@ -790,7 +796,7 @@ export function DeployPanel({
 			setLoading(false);
 			refreshInFlightRef.current = false;
 		}
-	}, [applyTemplateFiltersFromTemplates, resolvedVariant]);
+	}, [applyTemplateFiltersFromTemplates, resolvedVariant, hideAutoDrafts]);
 
 	useEffect(() => {
 		void refreshAll();
@@ -801,15 +807,23 @@ export function DeployPanel({
 		const filtersChanged =
 			prev.query !== templateQuery ||
 			prev.scope !== templateScope ||
-			prev.sort !== templateSort;
+			prev.sort !== templateSort ||
+			prev.hideAutoDrafts !== hideAutoDrafts;
 		prevTemplateFiltersRef.current = {
 			query: templateQuery,
 			scope: templateScope,
 			sort: templateSort,
+			hideAutoDrafts,
 		};
 		if (!filtersChanged) return;
 		void refreshTemplates();
-	}, [templateQuery, templateScope, templateSort, refreshTemplates]);
+	}, [
+		templateQuery,
+		templateScope,
+		templateSort,
+		hideAutoDrafts,
+		refreshTemplates,
+	]);
 
 	const loadMoreTemplates = useCallback(async () => {
 		try {
@@ -1344,10 +1358,16 @@ export function DeployPanel({
 		);
 	}
 
-	const autoDraftCount = displayTemplates.filter(isAutoNamedDraft).length;
-	const visibleTemplates = hideAutoDrafts
-		? displayTemplates.filter((template) => !isAutoNamedDraft(template))
-		: displayTemplates;
+	// CYB-3390: filter is applied server-side via ?exclude_auto_drafts=true
+	// so displayTemplates is already post-filter. autoDraftCount is only used
+	// for the checkbox badge, showing the count seen in the current fetched
+	// page when the filter is OFF — it collapses to 0 once the user checks
+	// the box, which is the intended semantics ("no more auto drafts to
+	// hide").
+	const autoDraftCount = hideAutoDrafts
+		? 0
+		: displayTemplates.filter(isAutoNamedDraft).length;
+	const visibleTemplates = displayTemplates;
 	const deletableVisibleTemplates = visibleTemplates.filter(
 		(template) => template.scope !== "prod",
 	);

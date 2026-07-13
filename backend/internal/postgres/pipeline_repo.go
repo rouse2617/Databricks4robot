@@ -197,6 +197,18 @@ WHERE rn = 1`
 		args = append(args, scope)
 		argPos++
 	}
+	if filter.ExcludeAutoDrafts {
+		// CYB-3390: hide "pipeline-<timestamp>" auto-named single-step drafts.
+		// The client shows this as a checkbox; matches the regex used
+		// client-side in DeployPanel.isAutoNamedDraft. Only applies within
+		// dev scope — prod pipelines are always curated names.
+		autoRe := "^pipeline-[0-9]{10,}$"
+		autoCond := fmt.Sprintf(" AND NOT (scope = 'dev' AND name ~ $%d)", argPos)
+		baseCTE += autoCond
+		countCTE += autoCond
+		args = append(args, autoRe)
+		argPos++
+	}
 	baseCTE += " ORDER BY " + orderBy
 	baseCTE += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
 	listArgs := append(append([]any{}, args...), pageSize, offset)

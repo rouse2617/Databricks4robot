@@ -121,12 +121,17 @@ func (h *Handler) Promote(c *gin.Context) {
 // ListTemplates handles GET /api/v1/pipelines.
 func (h *Handler) ListTemplates(c *gin.Context) {
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
+	// CYB-3390: exclude_auto_drafts=true pushes the "hide auto-named drafts"
+	// filter to the DB so pagination reflects the curated set rather than
+	// requiring the client to page through auto-draft noise.
+	excludeAuto := strings.EqualFold(strings.TrimSpace(c.Query("exclude_auto_drafts")), "true")
 	filter := models.PipelineTemplateListFilter{
-		Query:    strings.TrimSpace(c.Query("q")),
-		Scope:    strings.TrimSpace(c.Query("scope")),
-		Sort:     strings.TrimSpace(c.DefaultQuery("sort", "updated_at_desc")),
-		Page:     page,
-		PageSize: pageSize,
+		Query:             strings.TrimSpace(c.Query("q")),
+		Scope:             strings.TrimSpace(c.Query("scope")),
+		Sort:              strings.TrimSpace(c.DefaultQuery("sort", "updated_at_desc")),
+		Page:              page,
+		PageSize:          pageSize,
+		ExcludeAutoDrafts: excludeAuto,
 	}
 	items, total, err := h.uc.ListTemplatesPaged(c.Request.Context(), filter)
 	if err != nil {

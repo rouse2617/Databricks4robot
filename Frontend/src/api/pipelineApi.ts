@@ -315,6 +315,7 @@ export function listPipelines(
 	if (params.q) qs.set("q", params.q);
 	if (params.scope) qs.set("scope", params.scope);
 	if (params.sort) qs.set("sort", params.sort);
+	if (params.excludeAutoDrafts) qs.set("exclude_auto_drafts", "true");
 	const query = qs.toString();
 	return request<
 		Partial<ListPipelinesResponse> & {
@@ -346,6 +347,10 @@ export interface ListPipelinesParams {
 	q?: string;
 	scope?: string;
 	sort?: "updated_at_desc" | "name_asc" | "name_desc" | "created_at_desc";
+	// CYB-3390: drop auto-named single-step drafts (pipeline-<10+ digits>)
+	// at the DB layer so pagination reflects the curated set rather than
+	// asking the client to skip past pages of throwaway drafts.
+	excludeAutoDrafts?: boolean;
 }
 
 export interface ListPipelinesResponse {

@@ -26,6 +26,11 @@ type PipelineTemplateListFilter struct {
 	Sort     string
 	Page     int
 	PageSize int
+	// CYB-3390: ExcludeAutoDrafts drops throwaway single-step drafts whose
+	// name matches `pipeline-<10+ digits>` (the client's default when the
+	// user hits "run" without naming). Pushed to the DB so the pagination
+	// total reflects the real curated set rather than the raw pile.
+	ExcludeAutoDrafts bool
 }
 
 // PipelineDeployment represents a single deployment of a pipeline template
