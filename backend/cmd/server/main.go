@@ -28,6 +28,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
@@ -97,6 +98,9 @@ type coreHandlers struct {
 	backfill          *backfillH.Handler
 		storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
+	// CYB-3384: assetRepo is retained so setupOptional can hand a facet
+	// source to the query handler after the sync-health cache is ready.
+	assetRepo *postgres.AssetRepo
 }
 
 // optional holds components that are not required for the core API to function.
@@ -108,6 +112,12 @@ type optional struct {
 	searchProgressFn func(context.Context) (searchH.SyncProgress, error)
 	configWatcher    *config.ConfigWatcher
 
+	// CYB-3384: syncHealth is the PG↔ES gap cache the query planner reads to
+	// decide whether to route facet aggregations to PG (drift-safe) or ES
+	// (fast). Nil when neither pg nor es are wired.
+	syncHealth       *queryplan.SyncHealthCache
+	syncHealthCancel context.CancelFunc
+
 	outboxRelayStarted        bool
 	outboxESSubscriberStarted bool
 }
@@ -115,6 +125,9 @@ type optional struct {
 func (o *optional) close() {
 	if o.outboxCancel != nil {
 		o.outboxCancel()
+	}
+	if o.syncHealthCancel != nil {
+		o.syncHealthCancel()
 	}
 	if o.configWatcher != nil {
 		o.configWatcher.Stop()

@@ -245,5 +245,6 @@ func setupCore(inf *infra) *coreHandlers {
 		workflow:          workflowHandler,
 		storage:           storageHandler,
 		assetUC:           assetUsecase,
+		assetRepo:         assetRepo,
 	}
 }

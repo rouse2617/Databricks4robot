@@ -128,6 +128,12 @@ type Config struct {
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
 
+	// FacetEngine (CYB-3384): "auto" (default) lets the planner pick between
+	// ES (fast, prod) and PG (strong-consistent, drift fallback) based on the
+	// live pg_es_gap. "es" forces the legacy ES aggregation path. "pg" forces
+	// the PostgreSQL GROUP BY path — useful when ES is misindexed or offline.
+	FacetEngine string
+
 	// OpenLineage emitter
 	OpenLineageEmitterEnabled string
 	OpenLineageEndpoint       string
@@ -263,6 +269,7 @@ func Load() *Config {
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
 		AdminToken:                getenv("ADMIN_TOKEN", ""),
+		FacetEngine:               getenv("DBK_FACET_ENGINE", "auto"),
 		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", ""),
 		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
 		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),

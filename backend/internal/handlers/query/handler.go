@@ -30,7 +30,12 @@ type Handler struct {
 	planner       *queryplan.PGBridgePlanner
 	pgExecutor    *pgexec.Executor
 	esExecutor    *esexec.Executor
-	savedQueries  *postgres.SavedQueryRepo
+	// CYB-3384: pgFacetExec is engaged when the planner routes the facet
+	// aggregation phase to Postgres (either forced via DBK_FACET_ENGINE=pg or
+	// auto-triggered by a non-zero PG↔ES gap). nil when facet fallback is not
+	// wired — the ES path stays the only option.
+	pgFacetExec  *pgexec.FacetExecutor
+	savedQueries *postgres.SavedQueryRepo
 }
 
 func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry, esClient *corees.Client, savedQueries *postgres.SavedQueryRepo) *Handler {
@@ -42,6 +47,20 @@ func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry
 		esExecutor:    esexec.New(esClient),
 		savedQueries:  savedQueries,
 	}
+}
+
+// WithFacetFallback wires the CYB-3384 facet fallback path so the handler can
+// route facet aggregations to Postgres when the planner decides ES would
+// return drifted counts. source is typically *postgres.AssetRepo, gap is the
+// SyncHealthCache, and engine mirrors the DBK_FACET_ENGINE override. Any of
+// the three may be nil — a nil source disables the fallback while leaving the
+// planner override honored (useful in tests). Returns h for chaining.
+func (h *Handler) WithFacetFallback(source pgexec.FacetSource, gap queryplan.GapProvider, engine queryplan.FacetEngine) *Handler {
+	h.pgFacetExec = pgexec.NewFacetExecutor(source)
+	if h.planner != nil {
+		h.planner = h.planner.WithGapProvider(gap).WithFacetEngine(engine)
+	}
+	return h
 }
 
 func applyIncludeHistoryQueryParam(c *gin.Context, req *queryir.QueryRequest) {
@@ -364,6 +383,32 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
+		}
+	}
+
+	// CYB-3384: PG facet fallback. When the planner routed facets to Postgres
+	// (auto — pg_es_gap>0, or forced via DBK_FACET_ENGINE=pg), run one
+	// COUNT(*) GROUP BY per supported field using the same WHERE clause the
+	// list phase used. Dropped-fields from planner surface as a warning so the
+	// UI can flag partial coverage. Errors on facets are non-fatal — list
+	// response has already been prepared and the sidebar can gracefully hide.
+	if plan.UsePGFacets && h.pgFacetExec != nil {
+		pgFacetStarted := time.Now()
+		facets, facetWarnings, err := h.pgFacetExec.Execute(reqCtx, compiled)
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+			compiled.Warnings = append(compiled.Warnings, "pg facet fallback failed: "+err.Error())
+		}
+		metrics.QueryRunPhaseDurationSeconds.WithLabelValues("pg_facet", outcome).Observe(time.Since(pgFacetStarted).Seconds())
+		if len(facets) > 0 {
+			compiled.Facets = facets
+		}
+		if len(facetWarnings) > 0 {
+			compiled.Warnings = append(compiled.Warnings, facetWarnings...)
+		}
+		for _, dropped := range plan.PGFacetDroppedFields {
+			compiled.Warnings = append(compiled.Warnings, "facet field not supported by pg fallback: "+dropped)
 		}
 	}
 
