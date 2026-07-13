@@ -28,8 +28,9 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { Asset } from "../../api/types";
+import { useRecentViewedAssets } from "../../hooks/assets/useRecentViewedAssets";
 import {
 	formatDurationSeconds,
 	getAssetStateColor,
@@ -209,22 +210,72 @@ function FilesBlock({ files }: { files: Record<string, string> }) {
 }
 
 // ─── Empty State ───
+// CYB-3382 #5: 未选中资产时,面板不再是纯空白提示 —— 顶部保留"点击行查看预览"
+// 提示,下方渲染「最近查看」列表(localStorage LRU,最多 5 项),让用户不需要
+// 重新在列表里搜索就能快速回访之前看过的资产。
 
-function EmptyState() {
+function EmptyState({
+	recent,
+	onSelectRecent,
+}: {
+	recent: string[];
+	onSelectRecent: (id: string) => void;
+}) {
 	return (
 		<div
 			style={{
 				display: "flex",
 				flexDirection: "column",
-				alignItems: "center",
-				justifyContent: "center",
 				height: "100%",
 				minHeight: 300,
 				color: "#bfbfbf",
+				padding: 12,
 			}}
 		>
-			<InboxOutlined style={{ fontSize: 48, marginBottom: 12 }} />
-			<Text type="secondary">点击行查看预览</Text>
+			<div
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					alignItems: "center",
+					justifyContent: "center",
+					padding: "24px 0",
+				}}
+			>
+				<InboxOutlined style={{ fontSize: 48, marginBottom: 12 }} />
+				<Text type="secondary">点击行查看预览</Text>
+			</div>
+			{recent.length > 0 && (
+				<>
+					<Divider style={{ margin: "12px 0" }} plain>
+						<Text type="secondary" style={{ fontSize: 12 }}>
+							最近查看
+						</Text>
+					</Divider>
+					<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+						{recent.map((id) => (
+							<button
+								type="button"
+								key={id}
+								className="link-like-button"
+								onClick={() => onSelectRecent(id)}
+								style={{
+									display: "flex",
+									alignItems: "center",
+									padding: "6px 8px",
+									borderRadius: 4,
+									cursor: "pointer",
+									fontFamily: "var(--font-mono)",
+									fontSize: 12,
+									color: "#374151",
+									textAlign: "left",
+								}}
+							>
+								{id}
+							</button>
+						))}
+					</div>
+				</>
+			)}
 		</div>
 	);
 }
@@ -530,6 +581,18 @@ export default function AssetQuickPreviewPane({
 		() => activeAssetId && previewManifest?.mode === "mcap",
 		[activeAssetId, previewManifest?.mode],
 	);
+
+	// CYB-3382 #5: track recently-viewed assets (LRU, max 5) so that the
+	// preview pane's empty state can offer quick jump-back links.
+	// Push happens whenever a valid asset is loaded (activeAssetId set + fetch
+	// succeeded); we key off asset.asset_id rather than activeAssetId to avoid
+	// recording ids the server rejected.
+	const { recent, pushRecent } = useRecentViewedAssets();
+	useEffect(() => {
+		if (asset?.asset_id) {
+			pushRecent(asset.asset_id);
+		}
+	}, [asset?.asset_id, pushRecent]);
 	// Collapsed state: thin vertical bar with expand button
 	if (collapsed) {
 		return !activeAssetId ? null : (
@@ -559,7 +622,7 @@ export default function AssetQuickPreviewPane({
 	// Determine content
 	let content: React.ReactNode;
 	if (!activeAssetId) {
-		content = <EmptyState />;
+		content = <EmptyState recent={recent} onSelectRecent={onOpenDetail} />;
 	} else if (fetchStatus === "loading" && !asset) {
 		content = <Skeleton active paragraph={{ rows: 4 }} />;
 	} else if (fetchStatus === "error") {
@@ -577,7 +640,7 @@ export default function AssetQuickPreviewPane({
 			</Spin>
 		);
 	} else {
-		content = <EmptyState />;
+		content = <EmptyState recent={recent} onSelectRecent={onOpenDetail} />;
 	}
 
 	return (

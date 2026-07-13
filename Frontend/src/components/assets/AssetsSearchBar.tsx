@@ -26,6 +26,23 @@ interface SearchFieldSpec {
 
 export const SEARCH_FIELD_SPECS: SearchFieldSpec[] = [
 	{ key: "asset_id", label: "Asset ID", type: "string" },
+	{
+		key: "asset_type",
+		label: "资产类型",
+		type: "enum",
+		values: [
+			"segment",
+			"raw_mcap",
+			"frame",
+			"action",
+			"dataset",
+			"annotation_result",
+			"ml_model",
+			"evaluation_report",
+			"grace_video",
+			"derived_asset",
+		],
+	},
 	{ key: "mcap_file_id", label: "MCAP ID", type: "string" },
 	{ key: "owner", label: "Owner", type: "string" },
 	{ key: "reviewer", label: "Reviewer", type: "string" },
@@ -517,8 +534,8 @@ export default function AssetsSearchBar({
 							<code>field!=value</code> — 不等于
 						</div>
 						<div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-							可用字段: env, lifecycle_state, owner, algo_status, duration_ms,
-							tag.priority, tag.quality 等
+							可用字段: asset_type, env, lifecycle_state, owner, algo_status,
+							duration_ms, tag.priority, tag.quality 等
 						</div>
 					</div>
 				}

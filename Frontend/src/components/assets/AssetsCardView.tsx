@@ -484,8 +484,15 @@ export default function AssetsCardView({
 											}}
 										>
 											<Text style={{ fontSize: 11, color: "#374151" }}>
-												{asset.owner}
+												{asset.owner || "—"}
 											</Text>
+											{/* CYB-3382 #4: asset_type 完整值(旁边 :160 只显示 3-char 缩写),
+											    让人一眼识别行内容,不再只靠 8 位 asset_id 哈希。 */}
+											{asset.asset_type && (
+												<Text style={{ fontSize: 11, color: "#6b7280" }}>
+													· {asset.asset_type}
+												</Text>
+											)}
 											<Text style={{ fontSize: 10, color: "#9ca3af" }}>
 												{asset.updated_at
 													? dayjs(asset.updated_at).format("MM-DD HH:mm")
