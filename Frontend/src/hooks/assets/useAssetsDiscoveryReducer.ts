@@ -49,23 +49,42 @@ function stableStringify(value: unknown): string {
 	return JSON.stringify(walk(value));
 }
 
-function buildStructuredQueryWhere(
+// CYB-3385: multi-value facet semantics — same (field, op) group is OR
+// (inter-value), different groups are AND (inter-field). Fixes the bug where
+// selecting two asset_type values (segment + action) produced
+// `type=segment AND type=action` → 0 hits. Keeps single-chip queries as a
+// plain {pred:...} to avoid a needless {or:[single]} wrapper on the wire.
+// Exported so pure tests can exercise the grouping without spinning up the
+// full hook + queryApi mock stack.
+export function buildStructuredQueryWhere(
 	queryState: AssetsDiscoveryState["queryState"],
 ): QueryExpr | undefined {
-	const predicates: QueryExpr[] = queryState.activeFilters.map((chip) => ({
-		pred: {
-			field: chip.field,
-			op: chip.op,
-			value: chip.value,
-		},
-	}));
-	if (predicates.length === 0) {
+	if (queryState.activeFilters.length === 0) {
 		return undefined;
 	}
-	if (predicates.length === 1) {
-		return predicates[0];
+	const grouped = new Map<string, QueryExpr[]>();
+	const order: string[] = [];
+	for (const chip of queryState.activeFilters) {
+		const key = `${chip.field}\x00${chip.op}`;
+		const pred: QueryExpr = {
+			pred: { field: chip.field, op: chip.op, value: chip.value },
+		};
+		const bucket = grouped.get(key);
+		if (bucket) {
+			bucket.push(pred);
+		} else {
+			grouped.set(key, [pred]);
+			order.push(key);
+		}
 	}
-	return { and: predicates };
+	const groupExprs = order.map((key) => {
+		const preds = grouped.get(key) ?? [];
+		return preds.length === 1 ? preds[0] : { or: preds };
+	});
+	if (groupExprs.length === 1) {
+		return groupExprs[0];
+	}
+	return { and: groupExprs };
 }
 
 function buildStructuredQuerySort(sort: string): QuerySort[] {
