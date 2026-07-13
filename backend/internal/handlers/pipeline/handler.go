@@ -424,6 +424,10 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	summaryView := strings.EqualFold(c.Query("view"), "summary")
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
+	// CYB-3392b: excludeBatchParents=true keeps batch children (so the ui
+	// can show a "跳批次" badge on child rows) but hides the aggregate
+	// batch parent row from the mixed "单次执行" tab.
+	excludeBatchParents := strings.EqualFold(c.Query("excludeBatchParents"), "true") || c.Query("excludeBatchParents") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	query := strings.TrimSpace(c.Query("q"))
 	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
@@ -448,15 +452,16 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		err   error
 	)
 	filter := models.PipelineRunListFilter{
-		BatchJobID:     batchJobID,
-		ExcludeBatch:   excludeBatch,
-		Status:         statusFilter,
-		Query:          query,
-		PipelineNodeID: pipelineNodeID,
-		NodeStatus:     nodeStatus,
-		Page:           page,
-		PageSize:       pageSize,
-		RefreshActive:  refreshActive,
+		BatchJobID:          batchJobID,
+		ExcludeBatch:        excludeBatch,
+		ExcludeBatchParents: excludeBatchParents,
+		Status:              statusFilter,
+		Query:               query,
+		PipelineNodeID:      pipelineNodeID,
+		NodeStatus:          nodeStatus,
+		Page:                page,
+		PageSize:            pageSize,
+		RefreshActive:       refreshActive,
 		SummaryOnly:    summaryView,
 	}
 	if batchJobID != "" && refreshActive && h.batchRuns != nil {

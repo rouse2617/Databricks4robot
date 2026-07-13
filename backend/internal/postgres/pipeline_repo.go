@@ -999,6 +999,12 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 	if filter.ExcludeBatch {
 		conds = append(conds, "pr.batch_job_id IS NULL")
 	}
+	// CYB-3392b: keep batch children but drop batch parents. The parent row's
+	// id equals its batch_job_id by convention (see usecase.MaterializeBatch),
+	// so a simple `id != batch_job_id` filter is enough.
+	if filter.ExcludeBatchParents {
+		conds = append(conds, "(pr.batch_job_id IS NULL OR pr.id != pr.batch_job_id)")
+	}
 	if filter.Status != "" {
 		statusExpr := "pr.status"
 		if filter.BatchJobID != "" {

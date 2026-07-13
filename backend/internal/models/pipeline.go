@@ -439,15 +439,20 @@ type LedgerHealth struct {
 
 // PipelineRunListFilter scopes summary list queries for batch-aware UIs.
 type PipelineRunListFilter struct {
-	BatchJobID     string
-	ExcludeBatch   bool
-	Status         string
-	Query          string
-	PipelineNodeID string
-	NodeStatus     string
-	Page           int
-	PageSize       int
-	RefreshActive  bool
+	BatchJobID   string
+	ExcludeBatch bool
+	// CYB-3392b: hide the batch parent row (id == batch_job_id) but keep
+	// the child rows so the "单次执行" tab can show them with a clickable
+	// batch badge. ExcludeBatch stays as-is for callers that want a purely
+	// standalone-runs view.
+	ExcludeBatchParents bool
+	Status              string
+	Query               string
+	PipelineNodeID      string
+	NodeStatus          string
+	Page                int
+	PageSize            int
+	RefreshActive       bool
 	// SummaryOnly drops per-run nodes (and other heavy fields) for lightweight
 	// list views. When false the default list keeps nodes so callers can show
 	// per-run estimated cost.

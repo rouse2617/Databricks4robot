@@ -856,7 +856,13 @@ export function WorkflowExecutionList({
 			};
 			const pipelineRunResponse = await listRuns({
 				view: "summary",
-				excludeBatch: true,
+				// CYB-3392b: was excludeBatch:true which dropped ALL runs
+				// tied to a batch (parent + children), so the CYB-3392 batch
+				// badge never had a row to render on. Switch to
+				// excludeBatchParents: only the aggregate parent row hides;
+				// children stay visible with a clickable badge that jumps
+				// to the batch detail page.
+				excludeBatchParents: true,
 				status: statusFilter,
 				q: nameSearch.trim() || undefined,
 				page,
