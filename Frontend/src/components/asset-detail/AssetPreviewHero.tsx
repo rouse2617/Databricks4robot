@@ -182,7 +182,7 @@ function PreviewMediaPanel({
 						status={badge.status}
 						text={
 							<Text type="secondary" style={{ fontSize: 12 }}>
-								视频预览
+								已就绪
 							</Text>
 						}
 					/>

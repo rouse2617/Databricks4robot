@@ -71,7 +71,9 @@ describe("AssetPreviewHero", () => {
 		const video = container.querySelector("video");
 		expect(video).not.toBeNull();
 		expect(video?.getAttribute("src")).toContain("segment.mp4");
-		expect(screen.getByText("视频预览")).toBeTruthy();
+		// CYB-3388: label 「视频预览」→「已就绪」to clarify Badge is a state
+		// indicator, not a switchable tab.
+		expect(screen.getByText("已就绪")).toBeTruthy();
 	});
 
 	it("falls back to placeholder when no preview video exists", () => {

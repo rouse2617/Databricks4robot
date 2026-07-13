@@ -448,6 +448,7 @@ export default function AssetDetailPage() {
 				<Suspense fallback={TAB_FALLBACK}>
 					<LineageTab
 						assetId={asset.asset_id}
+						assetType={asset.asset_type}
 						parentAssetId={asset.parent_asset_id}
 					/>
 				</Suspense>
