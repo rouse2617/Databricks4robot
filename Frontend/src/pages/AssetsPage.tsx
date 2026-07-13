@@ -307,7 +307,7 @@ export default function AssetsPage() {
 									marginRight: 24,
 								}}
 							>
-								重置
+								清除全部
 							</button>
 						)}
 					</div>
@@ -475,7 +475,7 @@ export default function AssetsPage() {
 										cursor: "pointer",
 									}}
 								>
-									重置
+									清除全部
 								</button>
 							)}
 							<button
