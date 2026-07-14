@@ -632,19 +632,19 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 // @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
-		AssetID             string                 `json:"asset_id" label:"资产ID"`
-		LogicalAssetID      string                 `json:"logical_asset_id" label:"逻辑资产ID"`
-		McapFileID          string                 `json:"mcap_file_id" label:"MCAP文件ID"`
-		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
-		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
-		Reviewer            string                 `json:"reviewer" binding:"required" label:"审核人"`
-		Owner               string                 `json:"owner" label:"所有者"`
-		SegType             string                 `json:"type" label:"片段类型"`
-		AssetType           string                 `json:"asset_type" label:"资产类型"`
-		Status              string                 `json:"status" label:"旧生命周期状态"`
-		LifecycleState      string                 `json:"lifecycle_state" label:"新生命周期状态"`
-		Env                 string                 `json:"env" label:"环境"`
-		Task                string                 `json:"task" label:"任务"`
+		AssetID             string                 `json:"asset_id"`
+		LogicalAssetID      string                 `json:"logical_asset_id"`
+		McapFileID          string                 `json:"mcap_file_id"`
+		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0"`
+		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0"`
+		Reviewer            string                 `json:"reviewer" binding:"required"`
+		Owner               string                 `json:"owner"`
+		SegType             string                 `json:"type"`
+		AssetType           string                 `json:"asset_type"`
+		Status              string                 `json:"status"`
+		LifecycleState      string                 `json:"lifecycle_state"`
+		Env                 string                 `json:"env"`
+		Task                string                 `json:"task"`
 		Tags                map[string]string      `json:"tags"`
 		Files               map[string]string      `json:"files"`
 		Metadata            map[string]interface{} `json:"metadata"`

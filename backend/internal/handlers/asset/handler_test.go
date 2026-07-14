@@ -412,6 +412,21 @@ func TestCreate(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for missing mcap_file FK violation, got %d", w.Code)
 	}
+
+	// Validation-error body must surface English json tag names, not the
+	// Chinese `label:"..."` tags that historically lived on the Create
+	// request struct — they leaked into external integrator error bodies.
+	// Send an empty body → missing required fields → 400 with a binding
+	// error referencing the field names.
+	w = doReq(t, r, http.MethodPost, "/assets", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing required fields, got %d body=%s", w.Code, w.Body.String())
+	}
+	for _, chinese := range []string{"起始时间戳", "结束时间戳", "审核人"} {
+		if bytes.Contains(w.Body.Bytes(), []byte(chinese)) {
+			t.Fatalf("validation error must not leak Chinese label %q: %s", chinese, w.Body.String())
+		}
+	}
 }
 
 func TestGetAssetTypeSchema(t *testing.T) {

@@ -257,6 +257,14 @@ func (h *Handler) CreateFile(c *gin.Context) {
 	if !autoID {
 		err := h.createFileTx(c.Request.Context(), f, c.GetHeader("X-Request-ID"))
 		if err != nil {
+			// AssetRepo.InsertNew wraps assets_pkey unique_violation into the
+			// ErrDuplicateAssetID sentinel, so the assets_pkey case inside
+			// uniqueViolationKind is unreachable from the auto-derived raw_mcap
+			// asset path. Catch the sentinel explicitly.
+			if errors.Is(err, repository.ErrDuplicateAssetID) {
+				httpresp.Conflict(c, httpresp.CodeDuplicateMcapFileID, "mcap_file_id already exists", nil)
+				return
+			}
 			switch uniqueViolationKind(err) {
 			case "hash":
 				httpresp.Conflict(c, httpresp.CodeDuplicateHash, "raw_hash_md5 already exists", nil)
@@ -283,6 +291,12 @@ func (h *Handler) CreateFile(c *gin.Context) {
 		if err == nil {
 			c.JSON(http.StatusCreated, f)
 			return
+		}
+		// Sentinel from AssetRepo means the auto-picked mcap_file_id already
+		// has a raw_mcap asset with the same id — retry with a fresh id, same
+		// as the pgconn "id" case below.
+		if errors.Is(err, repository.ErrDuplicateAssetID) {
+			continue
 		}
 		switch uniqueViolationKind(err) {
 		case "hash":

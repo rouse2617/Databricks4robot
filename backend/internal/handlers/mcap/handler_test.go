@@ -93,6 +93,23 @@ func (m *mcapEventRepo) PublishStateCounts(context.Context) (map[string]int64, e
 	return map[string]int64{}, nil
 }
 
+// stubAssetRepo satisfies repository.AssetRepository just enough for
+// mcap CreateFile tests: only InsertNew is exercised by the code under
+// test, so the other methods embed a nil interface and will panic if
+// invoked — making accidental couplings noisy in a test rather than
+// silently green.
+type stubAssetRepo struct {
+	repository.AssetRepository
+	insertNewFn func(context.Context, *models.Asset) error
+}
+
+func (s *stubAssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
+	if s.insertNewFn != nil {
+		return s.insertNewFn(ctx, a)
+	}
+	return nil
+}
+
 func setupMcapRouter(route, path string, fn gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -296,6 +313,64 @@ func TestCreateFile_UniqueViolations(t *testing.T) {
 		body := decode(t, w)
 		if got, _ := body["code"].(string); got != "DUPLICATE_MCAP_FILE_ID" {
 			t.Fatalf("expected code=DUPLICATE_MCAP_FILE_ID, got %v", body["code"])
+		}
+	})
+
+	// AssetRepo.InsertNew wraps assets_pkey unique_violation into the
+	// ErrDuplicateAssetID sentinel, so uniqueViolationKind's assets_pkey case
+	// is unreachable via the auto-derived raw_mcap asset path. The handler
+	// must catch the sentinel explicitly; previously this leaked as HTTP 500
+	// "duplicate asset id".
+	t.Run("explicit id + asset sentinel returns 409 DUPLICATE_MCAP_FILE_ID", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		asset := &stubAssetRepo{
+			insertNewFn: func(context.Context, *models.Asset) error {
+				return repository.ErrDuplicateAssetID
+			},
+		}
+		h := New(repo)
+		h.SetAssetRepo(asset)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"mcap_file_id": "abcd1234",
+			"raw_hash_md5": "deadbeefcafebabe1234deadbeefcafe", // pragma: allowlist secret
+			"gcs_path":     "gs://bucket/e.mcap",
+		})
+		if w.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d body=%s", w.Code, w.Body.String())
+		}
+		body := decode(t, w)
+		if got, _ := body["code"].(string); got != "DUPLICATE_MCAP_FILE_ID" {
+			t.Fatalf("expected code=DUPLICATE_MCAP_FILE_ID, got %v", body["code"])
+		}
+	})
+
+	t.Run("auto-gen + asset sentinel retries then succeeds", func(t *testing.T) {
+		repo := &mockMcapRepo{}
+		calls := 0
+		asset := &stubAssetRepo{
+			insertNewFn: func(context.Context, *models.Asset) error {
+				calls++
+				if calls < 3 {
+					return repository.ErrDuplicateAssetID
+				}
+				return nil
+			},
+		}
+		h := New(repo)
+		h.SetAssetRepo(asset)
+		r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+		w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+			"raw_hash_md5": "aa11bb22cc33dd44ee55ff66aa11bb22", // pragma: allowlist secret
+			"gcs_path":     "gs://bucket/f.mcap",
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
+		}
+		if calls != 3 {
+			t.Fatalf("expected 3 InsertNew attempts (2 retries), got %d", calls)
 		}
 	})
 }
