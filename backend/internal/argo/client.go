@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"fmt"
 	"io"
 	"net/http"
@@ -281,7 +280,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return nil, err
 	}
-		slog.Info("argo_client_request", "method", method, "endpoint", endpoint, "serverURL", c.serverURL)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create argo request: %w", err)

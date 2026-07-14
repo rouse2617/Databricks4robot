@@ -2566,11 +2566,9 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
-		slog.Warn("refreshRunStatus GetWorkflow failed",
-			"runID", run.ID,
-			"err", err,
-			"isNotFound", errors.Is(err, argo.ErrNotFound),
-		)
+		// Argo TTL-cleans finished workflows, so refresh sees plain 404 on
+		// most runs after a while. That's normal — mark run as done or wait,
+		// but don't spam Warn on it. Only surface the truly unexpected paths.
 		if errors.Is(err, argo.ErrUnexpectedNotFound) {
 			slog.Warn("refreshRunStatus: unexpected 404 (config error) -- skip markRunWorkflowNotFound",
 				"runID", run.ID, "workflowName", run.WorkflowName)
@@ -2585,18 +2583,17 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 				return
 			}
 			uc.markRunWorkflowNotFound(ctx, run)
+			return
 		}
+		slog.Warn("refreshRunStatus GetWorkflow failed",
+			"runID", run.ID,
+			"err", err,
+		)
 		return
 	}
 	if wf == nil {
 		return
 	}
-	slog.Info("refreshRunStatus GetWorkflow succeeded",
-		"runID", run.ID,
-		"workflowName", run.WorkflowName,
-		"wfPhase", wf.Status.Phase,
-		"wfMessage", wf.Status.Message,
-	)
 	uc.applyWorkflowToRun(ctx, run, wf)
 	uc.maybeMarkStaleRun(ctx, run, wf)
 }
