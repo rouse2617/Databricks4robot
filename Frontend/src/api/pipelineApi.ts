@@ -603,6 +603,25 @@ export function deleteExecutionTarget(id: string): Promise<void> {
 	);
 }
 
+// ElasticQuota is a read-only view of a Koordinator elastic-quota pool
+// (scheduling.sigs.k8s.io/v1alpha1). It shows live min / max / used and
+// utilisation across the cluster; the backend returns an empty list when
+// Koordinator is not installed.
+export interface ElasticQuota {
+	name: string;
+	namespace: string;
+	min: { cpu: string; memory: string };
+	max: { cpu: string; memory: string };
+	used: { cpu: string; memory: string };
+	utilizationPercent: { cpu: number; memory: number };
+}
+
+export function listElasticQuotas(): Promise<ElasticQuota[]> {
+	return request<{ items: ElasticQuota[] }>("GET", "/elastic-quotas").then(
+		(r) => r.items ?? [],
+	);
+}
+
 export function deleteDeployment(id: string): Promise<void> {
 	return request<void>("DELETE", `/deployments/${id}`);
 }

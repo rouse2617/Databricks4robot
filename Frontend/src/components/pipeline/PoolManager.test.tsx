@@ -17,13 +17,14 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { ExecutionTarget } from "../../api/pipelineApi";
+import type { ElasticQuota, ExecutionTarget } from "../../api/pipelineApi";
 import PoolManager from "./PoolManager";
 
 const mockListExecutionTargets = vi.hoisted(() => vi.fn());
 const mockCreateExecutionTarget = vi.hoisted(() => vi.fn());
 const mockUpdateExecutionTarget = vi.hoisted(() => vi.fn());
 const mockDeleteExecutionTarget = vi.hoisted(() => vi.fn());
+const mockListElasticQuotas = vi.hoisted(() => vi.fn());
 
 vi.mock("../../api/pipelineApi", () => ({
 	listExecutionTargets: (...args: unknown[]) =>
@@ -34,6 +35,7 @@ vi.mock("../../api/pipelineApi", () => ({
 		mockUpdateExecutionTarget(...args),
 	deleteExecutionTarget: (...args: unknown[]) =>
 		mockDeleteExecutionTarget(...args),
+	listElasticQuotas: (...args: unknown[]) => mockListElasticQuotas(...args),
 }));
 
 const mockMessage = vi.hoisted(() => ({
@@ -118,6 +120,7 @@ beforeEach(() => {
 	mockCreateExecutionTarget.mockReset();
 	mockUpdateExecutionTarget.mockReset();
 	mockDeleteExecutionTarget.mockReset();
+	mockListElasticQuotas.mockReset();
 	mockMessage.success.mockClear();
 	mockMessage.error.mockClear();
 
@@ -125,6 +128,7 @@ beforeEach(() => {
 	mockCreateExecutionTarget.mockResolvedValue(nonDefaultTarget);
 	mockUpdateExecutionTarget.mockResolvedValue(nonDefaultTarget);
 	mockDeleteExecutionTarget.mockResolvedValue(undefined);
+	mockListElasticQuotas.mockResolvedValue([] as ElasticQuota[]);
 
 	// Mock the resource-quotas fetch (component calls fetch directly for it)
 	global.fetch = vi.fn().mockResolvedValue({
@@ -259,6 +263,67 @@ describe("PoolManager — delete", () => {
 		expect(mockDeleteExecutionTarget).toHaveBeenCalledWith(
 			"a03ad932-397f-4a3b-a3d8-1cfb13a6dd54",
 		);
+	});
+});
+
+describe("PoolManager — ElasticQuota panel", () => {
+	const quotas: ElasticQuota[] = [
+		{
+			name: "cyberorigin-delivery-high",
+			namespace: "cyber-databrew-dev",
+			min: { cpu: "4", memory: "8Gi" },
+			max: { cpu: "24", memory: "48Gi" },
+			used: { cpu: "6", memory: "12Gi" },
+			utilizationPercent: { cpu: 25, memory: 25 },
+		},
+		{
+			name: "cyberorigin-delivery-mid",
+			namespace: "cyber-databrew-dev",
+			min: { cpu: "2", memory: "4Gi" },
+			max: { cpu: "14", memory: "28Gi" },
+			used: { cpu: "0", memory: "0" },
+			utilizationPercent: { cpu: 0, memory: 0 },
+		},
+		{
+			name: "cyberorigin-delivery-low",
+			namespace: "cyber-databrew-dev",
+			min: { cpu: "1", memory: "2Gi" },
+			max: { cpu: "10", memory: "20Gi" },
+			used: { cpu: "0", memory: "0" },
+			utilizationPercent: { cpu: 0, memory: 0 },
+		},
+	];
+
+	it("renders quota rows when ElasticQuotas exist", async () => {
+		mockListElasticQuotas.mockResolvedValue(quotas);
+		renderPoolManager();
+		await waitFor(() => expect(mockListElasticQuotas).toHaveBeenCalled());
+		expect(
+			await screen.findByText("Koordinator 弹性配额池 (ElasticQuota)"),
+		).toBeDefined();
+		expect(screen.getByText("cyberorigin-delivery-high")).toBeDefined();
+		expect(screen.getByText("cyberorigin-delivery-mid")).toBeDefined();
+		expect(screen.getByText("cyberorigin-delivery-low")).toBeDefined();
+		// usage triples "used / min / max" render
+		expect(screen.getByText("6 / 4 / 24")).toBeDefined();
+	});
+
+	it("hides the section entirely when no ElasticQuotas exist", async () => {
+		mockListElasticQuotas.mockResolvedValue([]);
+		renderPoolManager();
+		await waitFor(() => expect(mockListElasticQuotas).toHaveBeenCalled());
+		expect(
+			screen.queryByText("Koordinator 弹性配额池 (ElasticQuota)"),
+		).toBeNull();
+	});
+
+	it("hides the section when the API call rejects (未装 Koordinator)", async () => {
+		mockListElasticQuotas.mockRejectedValue(new Error("crd missing"));
+		renderPoolManager();
+		await waitFor(() => expect(mockListElasticQuotas).toHaveBeenCalled());
+		expect(
+			screen.queryByText("Koordinator 弹性配额池 (ElasticQuota)"),
+		).toBeNull();
 	});
 });
 

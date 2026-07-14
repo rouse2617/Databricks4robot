@@ -444,6 +444,7 @@ func RegisterAll(
 		api.PUT("/execution-targets/:id", pipelineHandler.UpdateExecutionTarget)
 		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)
 		api.GET("/resource-quotas", workflowHandler.ListResourceQuotas)
+		api.GET("/elastic-quotas", workflowHandler.ListElasticQuotas)
 		api.GET("/pipeline/runtime-mounts", pipelineHandler.ListRuntimeMounts)
 		api.POST("/runs", pipelineHandler.CreateRun)
 		api.POST("/runs/template/:id", pipelineHandler.CreateRunByTemplate)

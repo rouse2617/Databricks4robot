@@ -24,7 +24,9 @@ import { useCallback, useEffect, useState } from "react";
 import {
 	createExecutionTarget,
 	deleteExecutionTarget,
+	type ElasticQuota,
 	type ExecutionTarget,
+	listElasticQuotas,
 	listExecutionTargets,
 	type TargetToleration,
 	updateExecutionTarget,
@@ -81,6 +83,7 @@ function nodeSelectorEntriesToMap(
 export default function PoolManager() {
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [quotas, setQuotas] = useState<Record<string, QuotaInfo>>({});
+	const [elasticQuotas, setElasticQuotas] = useState<ElasticQuota[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [modalOpen, setModalOpen] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -90,12 +93,14 @@ export default function PoolManager() {
 	const fetchData = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [t, q] = await Promise.all([
+			const [t, q, eq] = await Promise.all([
 				listExecutionTargets(),
 				fetch("/api/v1/resource-quotas").then((r) => r.json()),
+				listElasticQuotas().catch(() => [] as ElasticQuota[]),
 			]);
 			setTargets(t);
 			setQuotas(q.items || {});
+			setElasticQuotas(eq);
 		} catch {
 			/* ignore */
 		}
@@ -104,6 +109,11 @@ export default function PoolManager() {
 
 	useEffect(() => {
 		fetchData();
+		// Refresh ElasticQuota usage every 15s so the panel matches the
+		// koord-scheduler status loop (60s upstream, but a shorter poll keeps
+		// the UI visibly live for on-demand debugging).
+		const timer = setInterval(fetchData, 15000);
+		return () => clearInterval(timer);
 	}, [fetchData]);
 
 	const openCreate = () => {
@@ -452,6 +462,10 @@ export default function PoolManager() {
 				</div>
 			</Card>
 
+			{elasticQuotas.length > 0 ? (
+				<ElasticQuotaPanel quotas={elasticQuotas} loading={loading} />
+			) : null}
+
 			<Modal
 				title={editTarget ? "编辑资源池" : "新建资源池"}
 				open={modalOpen}
@@ -641,3 +655,130 @@ type TargetResourceDefaultsPatch = Record<string, unknown> & {
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: Record<string, string>;
 };
+
+interface ElasticQuotaPanelProps {
+	quotas: ElasticQuota[];
+	loading: boolean;
+}
+
+// ElasticQuotaPanel renders a read-only view of Koordinator ElasticQuota pools.
+// It appears only when at least one ElasticQuota exists in the cluster (see
+// PoolManager: `elasticQuotas.length > 0` guard) so clusters without
+// Koordinator installed simply don't render this section.
+function ElasticQuotaPanel({ quotas, loading }: ElasticQuotaPanelProps) {
+	const columns = [
+		{
+			title: "名称",
+			dataIndex: "name",
+			key: "name",
+			render: (name: string) => <Text strong>{name}</Text>,
+		},
+		{
+			title: "命名空间",
+			dataIndex: "namespace",
+			key: "namespace",
+			width: 200,
+			render: (ns: string) => (
+				<Text style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+					{ns}
+				</Text>
+			),
+		},
+		{
+			title: "CPU (used / min / max)",
+			key: "cpu",
+			width: 260,
+			render: (_: unknown, r: ElasticQuota) => (
+				<QuotaBar
+					used={r.used.cpu}
+					min={r.min.cpu}
+					max={r.max.cpu}
+					percent={r.utilizationPercent.cpu}
+				/>
+			),
+		},
+		{
+			title: "Memory (used / min / max)",
+			key: "memory",
+			width: 260,
+			render: (_: unknown, r: ElasticQuota) => (
+				<QuotaBar
+					used={r.used.memory}
+					min={r.min.memory}
+					max={r.max.memory}
+					percent={r.utilizationPercent.memory}
+				/>
+			),
+		},
+	];
+
+	return (
+		<Card
+			size="small"
+			style={{ marginTop: 12 }}
+			title="Koordinator 弹性配额池 (ElasticQuota)"
+		>
+			<Table
+				size="small"
+				rowKey={(r) => `${r.namespace}/${r.name}`}
+				dataSource={quotas}
+				columns={columns}
+				loading={loading}
+				pagination={false}
+			/>
+			<div style={{ marginTop: 12, color: "var(--gray-400)", fontSize: 12 }}>
+				<Typography.Text type="secondary">
+					资源池由 Koordinator 提供集群级弹性配额:空闲时可跨池借用,max
+					为硬上限。 面板每 15 秒自动刷新; 配额本身由 kubectl / GitOps
+					管理,不在此处编辑。
+				</Typography.Text>
+			</div>
+		</Card>
+	);
+}
+
+interface QuotaBarProps {
+	used: string;
+	min: string;
+	max: string;
+	percent: number;
+}
+
+function QuotaBar({ used, min, max, percent }: QuotaBarProps) {
+	const pct = Math.max(0, Math.min(100, percent));
+	const color = pct > 80 ? "#ef4444" : pct > 60 ? "#f59e0b" : "#22c55e";
+	return (
+		<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+			<div
+				style={{
+					flex: 1,
+					height: 8,
+					background: "#e5e7eb",
+					borderRadius: 4,
+					overflow: "hidden",
+				}}
+			>
+				<div
+					style={{
+						width: `${pct}%`,
+						height: "100%",
+						background: color,
+						borderRadius: 4,
+						transition: "width 0.3s",
+					}}
+				/>
+			</div>
+			<Text
+				style={{
+					fontSize: 11,
+					fontFamily: "var(--font-mono)",
+					color,
+					minWidth: 110,
+					textAlign: "right",
+				}}
+			>
+				{used} / {min} / {max}
+			</Text>
+		</div>
+	);
+}
