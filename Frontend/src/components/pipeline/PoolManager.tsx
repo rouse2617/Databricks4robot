@@ -109,11 +109,36 @@ export default function PoolManager() {
 
 	useEffect(() => {
 		fetchData();
-		// Refresh ElasticQuota usage every 15s so the panel matches the
-		// koord-scheduler status loop (60s upstream, but a shorter poll keeps
-		// the UI visibly live for on-demand debugging).
-		const timer = setInterval(fetchData, 15000);
-		return () => clearInterval(timer);
+		// Poll every 60s (koord-scheduler status loop is 60s upstream; a matching
+		// cadence is enough — 15s just spammed backend access logs). Pause the
+		// timer when the tab is hidden so an abandoned tab doesn't keep polling
+		// forever, and refetch on re-focus so the panel isn't stale.
+		let timer: ReturnType<typeof setInterval> | null = null;
+		const start = () => {
+			timer ??= setInterval(fetchData, 60000);
+		};
+		const stop = () => {
+			if (timer) {
+				clearInterval(timer);
+				timer = null;
+			}
+		};
+		const onVisibilityChange = () => {
+			if (document.hidden) {
+				stop();
+			} else {
+				fetchData();
+				start();
+			}
+		};
+		if (!document.hidden) {
+			start();
+		}
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		return () => {
+			stop();
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+		};
 	}, [fetchData]);
 
 	const openCreate = () => {
@@ -729,8 +754,8 @@ function ElasticQuotaPanel({ quotas, loading }: ElasticQuotaPanelProps) {
 			<div style={{ marginTop: 12, color: "var(--gray-400)", fontSize: 12 }}>
 				<Typography.Text type="secondary">
 					资源池由 Koordinator 提供集群级弹性配额:空闲时可跨池借用,max
-					为硬上限。 面板每 15 秒自动刷新; 配额本身由 kubectl / GitOps
-					管理,不在此处编辑。
+					为硬上限。 面板每 60 秒自动刷新(切走后暂停); 配额本身由 kubectl /
+					GitOps 管理,不在此处编辑。
 				</Typography.Text>
 			</div>
 		</Card>
