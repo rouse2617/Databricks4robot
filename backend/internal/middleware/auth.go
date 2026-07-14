@@ -20,6 +20,24 @@ const (
 
 // StaticTokenAuth is a Phase 0 placeholder.
 
+// tokenEquals compares two shared-secret tokens in constant time to prevent
+// timing side channels leaking the configured secret one byte at a time. An
+// optional "Bearer " prefix on `got` is stripped for RFC 6750 clients. Empty
+// `want` (misconfiguration) always fails closed — an unconfigured token must
+// never authenticate anyone. Length is checked first because
+// subtle.ConstantTimeCompare requires equal-length inputs and returns 0
+// (rather than constant-time false) for length mismatch.
+func tokenEquals(got, want string) bool {
+	if want == "" {
+		return false
+	}
+	got = strings.TrimPrefix(got, "Bearer ")
+	if len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 // GetUserEmail extracts the authenticated user's email from the Gin context.
 // Returns "legacy" when no email is set (backward compat for token auth).
 func GetUserEmail(c *gin.Context) string {
@@ -61,7 +79,7 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 				got = cookie
 			}
 		}
-		if got != token && got != "Bearer "+token {
+		if !tokenEquals(got, token) {
 			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
 			c.Abort()
 			return
@@ -82,7 +100,7 @@ func JWTAuth(staticToken, jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Legacy static token via header → SDK backward compat.
 		if header := c.GetHeader("X-Databrew-Token"); header != "" {
-			if header != staticToken && header != "Bearer "+staticToken {
+			if !tokenEquals(header, staticToken) {
 				httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
 				c.Abort()
 				return
@@ -117,7 +135,7 @@ func JWTAuth(staticToken, jwtSecret string) gin.HandlerFunc {
 		}
 
 		// Not a valid JWT — fall back to legacy static token.
-		if tokenStr != staticToken {
+		if !tokenEquals(tokenStr, staticToken) {
 			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, fmt.Sprintf("invalid token: %v", jwtErr))
 			c.Abort()
 			return
@@ -146,7 +164,7 @@ func AdminTokenAuth(adminToken, databrewToken, env string) gin.HandlerFunc {
 		if got == "" {
 			got = c.GetHeader("Authorization")
 		}
-		if got != adminToken && got != "Bearer "+adminToken {
+		if !tokenEquals(got, adminToken) {
 			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
 			c.Abort()
 			return

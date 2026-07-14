@@ -139,6 +139,13 @@ func RegisterAll(
 				return
 			}
 
+			// SECURITY note: email-login has no proof of email ownership. An
+			// admin JWT obtained this way is treated as a *time-limited*
+			// operator session (24h TTL); it must NOT be usable to mint
+			// long-lived credentials that outlive the session. See the
+			// api_keys handler for the scope-issuance restriction that
+			// enforces this (privileged scopes require the static admin
+			// token, not a JWT).
 			role := "user"
 			if cfg.IsAdminEmail(email) {
 				role = "admin"

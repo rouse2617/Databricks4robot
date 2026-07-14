@@ -1,6 +1,7 @@
 package apikey
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -12,6 +13,16 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
+
+// PrivilegedScopes are scopes that MUST NOT be granted through a short-lived
+// JWT session (e.g. admin JWT obtained via email-login has no proof of email
+// ownership and lasts 24h). Requests asking for these scopes are only allowed
+// when the caller authenticated with a static admin token, which requires
+// proof-of-possession of the shared secret.
+var PrivilegedScopes = map[string]struct{}{
+	"*":              {}, // wildcard = every scope, indefinitely
+	"apikeys:manage": {}, // can self-perpetuate: mint further keys with any scope
+}
 
 // Handler manages API keys (create / list / revoke). Mounted under admin auth.
 type Handler struct {
@@ -32,6 +43,25 @@ func (h *Handler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "name/owner optional, scopes required (min 1)", map[string]any{"error": err.Error()})
 		return
+	}
+	// SECURITY: reject privileged scopes unless the caller used the static
+	// admin token. A JWT-authenticated admin (email-login) is only a
+	// time-limited operator session and must not be able to mint a
+	// long-lived key that outlives its own 24h TTL. Without this check any
+	// email-login admin JWT could mint a wildcard-scope key that survives
+	// JWT expiration.
+	principal, _ := middleware.GetPrincipal(c)
+	for _, s := range req.Scopes {
+		if s = strings.TrimSpace(s); s == "" {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "scope entries must be non-empty", nil)
+			return
+		}
+		if _, priv := PrivilegedScopes[s]; priv && principal.AuthMethod != middleware.AuthMethodStaticToken {
+			httpresp.Error(c, http.StatusForbidden, "FORBIDDEN",
+				"issuing scope "+s+" requires the static admin token; a JWT session cannot mint long-lived privileged keys",
+				nil)
+			return
+		}
 	}
 	full, prefix, secretHash, err := auth.GenerateAPIKey()
 	if err != nil {
