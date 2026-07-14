@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -86,6 +87,62 @@ func TestListElasticQuotas_ReturnsQuotas(t *testing.T) {
 	}
 	if mid.Used.CPU != "0" || mid.Used.Memory != "0" {
 		t.Errorf("mid used should be '0', got cpu=%q mem=%q", mid.Used.CPU, mid.Used.Memory)
+	}
+}
+
+func TestListElasticQuotas_FiltersKoordinatorSystemQuotas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	restore := stubElasticQuotaLister(func(context.Context) (*unstructured.UnstructuredList, error) {
+		return &unstructured.UnstructuredList{
+			Items: []unstructured.Unstructured{
+				makeQuota("cyberorigin-delivery-high", "cyber-databrew-dev",
+					map[string]string{"cpu": "4"}, map[string]string{"cpu": "24"}, map[string]string{"cpu": "0"}),
+				makeQuota("koordinator-default-quota", "koordinator-system",
+					map[string]string{"cpu": "0"},
+					// int64 max — sentinel Koordinator uses for "unlimited"
+					map[string]string{"cpu": "1844674407370955161"},
+					map[string]string{"cpu": "26845m"}),
+				makeQuota("koordinator-root-quota", "koordinator-system",
+					map[string]string{"cpu": "0"}, map[string]string{"cpu": "0"}, map[string]string{"cpu": "0"}),
+			},
+		}, nil
+	})
+	defer restore()
+
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/elastic-quotas", nil)
+
+	h.ListElasticQuotas(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []ElasticQuotaEntry `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("want 1 item (system quotas filtered), got %d", len(resp.Items))
+	}
+	if resp.Items[0].Namespace == "koordinator-system" {
+		t.Errorf("koordinator-system quota should have been filtered")
+	}
+}
+
+func TestUtilization_HandlesOverflowingMax(t *testing.T) {
+	// Koordinator's "unlimited" sentinel is int64 max as a plain integer, so
+	// MilliValue() overflows to a negative number. Utilization must not
+	// return a negative or NaN percent.
+	used, _ := resource.ParseQuantity("26845m")
+	huge, _ := resource.ParseQuantity("1844674407370955161")
+	pct := utilization(used, huge, func(q resource.Quantity) int64 { return q.MilliValue() })
+	if pct < 0 || pct > 100 {
+		t.Errorf("expected 0..100, got %v", pct)
 	}
 }
 

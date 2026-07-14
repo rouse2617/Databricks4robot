@@ -71,9 +71,21 @@ func (h *Handler) ListElasticQuotas(c *gin.Context) {
 
 	items := make([]ElasticQuotaEntry, 0, len(list.Items))
 	for i := range list.Items {
-		items = append(items, buildElasticQuotaEntry(&list.Items[i]))
+		u := &list.Items[i]
+		if isKoordinatorSystemQuota(u.GetNamespace()) {
+			continue
+		}
+		items = append(items, buildElasticQuotaEntry(u))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// isKoordinatorSystemQuota filters out the internal ElasticQuotas Koordinator
+// itself creates in its control-plane namespace (root / default / system
+// quotas with int64-max sentinel caps). Users only care about their own
+// pools, and the sentinel caps otherwise blow up utilizationPercent math.
+func isKoordinatorSystemQuota(namespace string) bool {
+	return namespace == "koordinator-system"
 }
 
 // buildElasticQuotaEntry extracts a JSON-friendly entry from a single
@@ -122,16 +134,22 @@ func quantityString(q resource.Quantity) string {
 
 // utilization computes 100 * used / max, rounded to 1 decimal. Extractor picks
 // the unit (MilliValue for CPU, Value for memory bytes) so both dimensions can
-// share the same math without loss of precision on sub-core CPU usage.
+// share the same math without loss of precision on sub-core CPU usage. A
+// non-positive extractor result (zero, or a sentinel that overflowed int64 —
+// Koordinator uses 1844674407370955161 for "unlimited") short-circuits to 0
+// so we never render a negative or NaN percentage.
 func utilization(used, max resource.Quantity, extractor func(resource.Quantity) int64) float64 {
 	m := extractor(max)
-	if m == 0 {
+	if m <= 0 {
 		return 0
 	}
-	pct := 100.0 * float64(extractor(used)) / float64(m)
+	u := extractor(used)
+	if u < 0 {
+		return 0
+	}
+	pct := 100.0 * float64(u) / float64(m)
 	if math.IsNaN(pct) || math.IsInf(pct, 0) {
 		return 0
 	}
 	return math.Round(pct*10) / 10
 }
-
