@@ -1014,7 +1014,7 @@ func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int,
 		FROM backfill_jobs bj
 		WHERE bi.job_id = bj.id
 		  AND bi.status = 'running'
-		  AND bi.started_at < NOW() - ($1 || ' seconds')::interval
+		  AND bi.started_at < NOW() - ($1::bigint * interval '1 second')
 		  AND bj.status = 'running'
 		RETURNING bi.id
 	)
