@@ -203,6 +203,9 @@ func setupCore(inf *infra) *coreHandlers {
 		int(inf.cfg.BackfillReconcileScanLimit),
 	)
 	backfillUC.ResumeIncompleteBatches(context.Background())
+	// CYB-3489 P0 — periodic resume so dispatch hangs after a redeploy recover
+	// without manual intervention. Removed in CYB-3489 P2.
+	backfillUC.StartPoolRecovery()
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

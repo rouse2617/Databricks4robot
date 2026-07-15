@@ -79,6 +79,12 @@ type Usecase struct {
 	reconcileStop chan struct{}
 	reconcileWg   sync.WaitGroup
 
+	// CYB-3489 P0 pool-recovery: spawn a watcher that periodically re-runs
+	// ResumeIncompleteBatches so a worker pool that died after ClaimNextItem
+	// returned nil (usecase.go:543-546) gets a fresh spawn. Deletes in P2.
+	poolStop chan struct{}
+	poolWg   sync.WaitGroup
+
 	// Batch job completion Feishu notification (CYB-3071). notifier nil
 	// disables the feature entirely (no claim, no send).
 	notifier        Notifier
@@ -189,6 +195,43 @@ func (uc *Usecase) StopJobReconciler() {
 		close(uc.reconcileStop)
 	}
 	uc.reconcileWg.Wait()
+}
+
+// CYB-3489 P0 pool recovery — periodically re-runs ResumeIncompleteBatches so a
+// runItems goroutine that died after ClaimNextItem returned nil (the bug
+// behind dev dispatch hangs after every deploy) gets a fresh spawn. Idempotent:
+// if the pool is alive, ClaimNextItem still picks up the next pending item;
+// if dead, this spawn replaces it. DELETE in CYB-3489 P2 (which removes the
+// whole worker pool model).
+const poolRecoveryInterval = 60 * time.Second
+
+func (uc *Usecase) StartPoolRecovery() {
+	if uc.poolStop != nil {
+		return
+	}
+	uc.poolStop = make(chan struct{})
+	uc.poolWg.Add(1)
+	go func() {
+		defer uc.poolWg.Done()
+		t := time.NewTicker(poolRecoveryInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-uc.poolStop:
+				return
+			case <-t.C:
+				uc.ResumeIncompleteBatches(context.Background())
+			}
+		}
+	}()
+}
+
+func (uc *Usecase) StopPoolRecovery() {
+	if uc.poolStop != nil {
+		close(uc.poolStop)
+		uc.poolStop = nil
+		uc.poolWg.Wait()
+	}
 }
 
 // reconcileActiveJobs force-syncs every non-terminal batch job once. Best-effort:
