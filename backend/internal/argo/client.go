@@ -200,7 +200,11 @@ func (c *Client) GetWorkflowLogStream(
 	workflowName, podName, namespace string,
 	opts WorkflowLogOptions,
 ) (io.ReadCloser, error) {
-	opts.Follow = true
+	// Follow is decided by the caller (StreamWorkflowLogs only follows nodes that
+	// are still running). Forcing it true here made log requests for finished
+	// nodes hang until the Cloud Run request timeout (Argo's follow never EOFs a
+	// completed workflow), returning 504 and starving the browser connection pool
+	// via client auto-reconnect. (CYB-3483)
 	query := workflowLogQuery(podName, opts)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)

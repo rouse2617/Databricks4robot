@@ -304,6 +304,16 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
+	// Only live-tail (follow) a node that is still running. Following a finished
+	// node never receives new lines and never EOFs through Argo's follow API, so
+	// the SSE request would hang until the Cloud Run request timeout (~60s) → 504,
+	// and the client auto-reconnects, starving the browser's per-host connection
+	// pool. For a fulfilled node, fetch once (Follow=false): Argo returns the
+	// existing logs then EOF, and the stream emits its "end" event and closes in
+	// ~1-2s. (CYB-3483)
+	node, hasNode := workflow.Status.Nodes[nodeID]
+	opts.Follow = hasNode && !node.Fulfilled()
+
 	stream, err := h.wfClient.GetWorkflowLogStream(
 		c.Request.Context(),
 		name,

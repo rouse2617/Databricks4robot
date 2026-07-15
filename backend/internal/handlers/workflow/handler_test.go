@@ -1149,6 +1149,47 @@ func TestStreamWorkflowLogs_StructuredEvents(t *testing.T) {
 	if client.lastStreamOpts.TailLines == nil || *client.lastStreamOpts.TailLines != defaultWorkflowLogTailLines {
 		t.Fatalf("expected default stream tailLines, got %#v", client.lastStreamOpts.TailLines)
 	}
+	// Running node → live-tail (CYB-3483).
+	if !client.lastStreamOpts.Follow {
+		t.Fatalf("running node must be followed for live tail")
+	}
+}
+
+// A finished node must NOT be followed: following a completed pod never EOFs
+// through Argo's follow API, hanging the SSE until the Cloud Run timeout → 504
+// and triggering client reconnect storms. (CYB-3483)
+func TestStreamWorkflowLogs_DoesNotFollowFinishedNode(t *testing.T) {
+	wf := makeWorkflow("test-wf-done", "Succeeded", 1)
+	wf.Status.Nodes["a"] = wfv1.NodeStatus{
+		ID:           "a",
+		Name:         "step-a",
+		DisplayName:  "step-a",
+		Type:         wfv1.NodeTypePod,
+		TemplateName: "template-a",
+		Phase:        wfv1.NodeSucceeded,
+	}
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) { return wf, nil },
+		streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(`{"result":{"podName":"a","content":"done\n"}}` + "\n")), nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/test-wf-done/logs/stream?nodeId=a")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+	if client.lastStreamOpts.Follow {
+		t.Fatalf("finished node must NOT be followed (Follow=true hangs until request timeout)")
+	}
 }
 
 func TestWorkflowOperations(t *testing.T) {
