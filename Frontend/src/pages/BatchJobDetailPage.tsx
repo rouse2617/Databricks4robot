@@ -703,7 +703,10 @@ export default function BatchJobDetailPage() {
 		}
 	};
 
-	const applySubtaskNodeFilter = (
+	// CYB-3491: 拆成两个 helper — 抽屉打开时想同时联动下方列表,但不能
+	// 让 applySubtaskNodeFilter 关闭抽屉;抽屉的 "在子任务列表筛选" 按钮
+	// 则希望关闭抽屉。将 "应用筛选" 与 "关闭抽屉" 解耦。
+	const setSubtaskNodeFilterForNode = (
 		node: BatchNodeSummaryNode,
 		filter: NodeDrawerFilter,
 	) => {
@@ -712,6 +715,13 @@ export default function BatchJobDetailPage() {
 			nodeStatus: nodeStatusForDrawerFilter(filter),
 			label: subtaskNodeFilterLabel(node, filter),
 		});
+	};
+
+	const applySubtaskNodeFilter = (
+		node: BatchNodeSummaryNode,
+		filter: NodeDrawerFilter,
+	) => {
+		setSubtaskNodeFilterForNode(node, filter);
 		setDrawerNode(null);
 	};
 
@@ -818,6 +828,11 @@ export default function BatchJobDetailPage() {
 		setDrawerNode(node);
 		setDrawerFilter(filter);
 		void loadNodeFailures(node, filter);
+		// CYB-3491: 同步应用到下方 "子任务执行记录" 列表,让点击 "3 失败"
+		// 不再是死链 —— 一次操作(点数字)得到两处联动:抽屉里的失败原因
+		// 摘要 + 下方任务列表按该节点+状态过滤。抽屉 "在子任务列表筛选"
+		// 按钮保留以便切换 filter 后重新应用(且会关闭抽屉)。
+		setSubtaskNodeFilterForNode(node, filter);
 	};
 
 	const selectedAssetIds = selectedRuns
@@ -1140,12 +1155,19 @@ export default function BatchJobDetailPage() {
 						<Space direction="vertical" size={12} style={{ width: "100%" }}>
 							<Space wrap>
 								{runTree.total > runTree.items.length ? (
-									<>
-										<Tag color="blue">预览</Tag>
-										<Text type="secondary">
-											已加载 {runTree.items.length} / {runTree.total}
-										</Text>
-									</>
+									// CYB-3491: 分页局部预览时不显示 aggregate summary
+									// (那只反映当前页,会给出 "84/121 对不上 total" 的
+									// 假象)。tag 明写 "分页预览" + tooltip 说明,避免
+									// 被误读为 "已完成 84 / 共 121"。
+									<Tooltip title="子运行接口按页返回；此时仅拿到前几页,不足以做全批次汇总。全批次的 完成/失败/总数 请看页面顶部 job 头部字段。">
+										<Space size={6} wrap>
+											<Tag color="blue">分页预览</Tag>
+											<Text type="secondary">
+												已抓取 {runTree.items.length} / 共 {runTree.total}{" "}
+												条子运行
+											</Text>
+										</Space>
+									</Tooltip>
 								) : (
 									<>
 										<Tag
@@ -1269,7 +1291,11 @@ export default function BatchJobDetailPage() {
 								},
 							},
 							{
-								title: "运行中",
+								// CYB-3491: 口径是 "节点(step) phase",不是 "batch item"。
+								// 一个 item 的 run 处于 Running 时,当前 step 可能仍是 Pending
+								// (workflow 已接纳、pod 尚未启动)。所以本列的数字与顶部
+								// "运行中" (item 计数) 不必然相等 — 前缀 "节点" 消除歧义。
+								title: "节点运行中",
 								render: (_, record) => {
 									const running = record.counts.Running ?? 0;
 									return running > 0 ? (
@@ -1286,7 +1312,9 @@ export default function BatchJobDetailPage() {
 								},
 							},
 							{
-								title: "未开始",
+								// CYB-3491: 这里的 Pending 是 step phase (节点未启动),
+								// 不是 item 的 "未提交"。见上一列的说明。
+								title: "节点排队",
 								render: (_, record) => {
 									const pending = record.counts.Pending ?? 0;
 									return pending > 0 ? (

@@ -9,6 +9,9 @@ export interface WorkflowSummary {
 	blockingMessage?: string;
 	nodeCount: number;
 	createdAt: string;
+	// CYB-3491: freshness signal for the stall hint (see isStaleRunningWorkflow).
+	// Optional because legacy /api/v1/workflows still projects deployments.
+	updatedAt?: string;
 	startedAt?: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;

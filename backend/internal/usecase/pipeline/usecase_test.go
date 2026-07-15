@@ -4025,7 +4025,12 @@ func TestRefreshRunForList_PersistsWorkflowStartedAt(t *testing.T) {
 	}
 }
 
-func TestRefreshRunStatus_MarksStaleRunWithPersistedMessage(t *testing.T) {
+// CYB-3491(原则):任务可以等——只有任务自己报错才是失败。48h 无更新的
+// active run 不再被硬翻成 Failed(以前这里会,而底下的 Argo workflow 从
+// 未被停过、也没 GC)。停滞是"读侧的展示提示",不是"写侧的状态判决":
+// 通过 runstate.AnnotateRunDiagnostics 标注 BlockingReason,而 status 保
+// 持 Argo 真值,若 webhook/poll 后来交回更新自然回归正常。
+func TestRefreshRunStatus_StaleActiveRunKeepsStatusNoZombieMark(t *testing.T) {
 	ctx := context.Background()
 	createdAt := time.Now().UTC().Add(-staleActiveRunMaxAge - 2*time.Hour)
 	runRepo := &mockRunRepo{
@@ -4054,15 +4059,15 @@ func TestRefreshRunStatus_MarksStaleRunWithPersistedMessage(t *testing.T) {
 
 	run := runRepo.byID["run-1"]
 	uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
-	if run.Status != string(wfv1.WorkflowFailed) {
-		t.Fatalf("expected stale run marked Failed, got %q", run.Status)
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("stale-but-still-active run must keep Argo truth (Running), got %q", run.Status)
 	}
-	if !strings.Contains(run.Message, "stale run:") {
-		t.Fatalf("expected stale message on run, got %q", run.Message)
+	if strings.Contains(run.Message, "stale run:") {
+		t.Fatalf("stale zombie message must NOT be written to the ledger, got %q", run.Message)
 	}
 	saved := runRepo.byID["run-1"]
-	if !strings.Contains(saved.Message, "stale run:") {
-		t.Fatalf("expected stale message persisted, got %q", saved.Message)
+	if saved.FinishedAt != nil {
+		t.Fatalf("stale-but-active run must not carry finished_at, got %v", saved.FinishedAt)
 	}
 }
 

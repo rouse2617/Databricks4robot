@@ -1373,6 +1373,12 @@ INSERT INTO pipeline_run_nodes (
 )`
 	return r.c.WithTx(ctx, func(txCtx context.Context) error {
 		db := dbFromCtx(txCtx, r.c.db)
+		// CYB-3491: serialize concurrent replaces for the same run to avoid
+		// duplicate-key on the unique index when two writers interleave
+		// DELETE-then-INSERT. pg_advisory_xact_lock releases on commit/rollback.
+		if err := db.Exec(txCtx, `SELECT pg_advisory_xact_lock(hashtext('pipeline_run_nodes'), hashtext($1))`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID lock: %w", err)
+		}
 		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_nodes WHERE run_id = $1`, runID); err != nil {
 			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID delete: %w", err)
 		}
@@ -1913,6 +1919,11 @@ INSERT INTO pipeline_run_asset_nodes (
 )`
 	return r.c.WithTx(ctx, func(txCtx context.Context) error {
 		db := dbFromCtx(txCtx, r.c.db)
+		// CYB-3491: serialize concurrent replaces for the same run — see note
+		// on PipelineRunNodeRepo.ReplaceByRunID.
+		if err := db.Exec(txCtx, `SELECT pg_advisory_xact_lock(hashtext('pipeline_run_asset_nodes'), hashtext($1))`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID lock: %w", err)
+		}
 		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_asset_nodes WHERE run_id = $1`, runID); err != nil {
 			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID delete: %w", err)
 		}

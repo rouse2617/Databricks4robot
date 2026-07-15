@@ -2667,30 +2667,8 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		return
 	}
 	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
-	uc.maybeMarkStaleRun(ctx, run, wf)
 }
 
-func (uc *Usecase) maybeMarkStaleRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
-	if uc.runRepo == nil || run == nil || wf == nil || !isActiveDeploymentStatus(run.Status) {
-		return
-	}
-	ref := run.CreatedAt
-	if run.StartedAt != nil && !run.StartedAt.IsZero() {
-		ref = *run.StartedAt
-	}
-	if ref.IsZero() || time.Since(ref) < staleActiveRunMaxAge {
-		return
-	}
-	phase := wf.Status.Phase
-	if phase != wfv1.WorkflowRunning && phase != wfv1.WorkflowPending && phase != wfv1.WorkflowPhase("Suspended") {
-		return
-	}
-	now := time.Now().UTC()
-	run.Status = string(wfv1.WorkflowFailed)
-	run.FinishedAt = &now
-	run.Message = fmt.Sprintf("stale run: exceeded maximum active duration (%s)", staleActiveRunMaxAge.Truncate(time.Hour))
-	uc.persistRunObservation(ctx, run)
-}
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.runRepo == nil {
@@ -5472,9 +5450,22 @@ const (
 	messageWorkflowUnavailable     = "Argo workflow 在集群中不可访问（可能已 TTL 清理）"
 )
 
-// staleActiveRunMaxAge is the maximum duration a run may stay in an active
-// Argo phase before the watcher marks it failed as a zombie run.
+// staleActiveRunMaxAge caps how long a legitimate active run can be — beyond
+// this, staleness is a display-side blocking hint (runstate.AnnotateRunDiagnostics
+// stamps BlockingReason=stale_running), NOT a status flip.
+//
+// CYB-3491 rationale (from #417): tasks may wait. The old writer path used
+// this threshold to hard-fail runs whose Argo workflow was still queued —
+// violating the "waiting is not failure" invariant. The workflow is untouched
+// in Argo; if a webhook or poll later brings an update, the diagnostic hint
+// naturally clears.
 const staleActiveRunMaxAge = 48 * time.Hour
+
+// stalledObservationThreshold is the read-side threshold for surfacing a
+// stall hint: an active run that has not been updated in this long shows a
+// "stalled" blocking reason in the UI. Distinct from staleActiveRunMaxAge
+// (age since creation): this one measures freshness (since UpdatedAt).
+const stalledObservationThreshold = 30 * time.Minute
 
 // workflowCreateVisibilityGracePeriod avoids marking brand-new runs as expired
 // while Argo is still creating the workflow CR.

@@ -171,9 +171,12 @@ func (r *BackfillRepo) FindJobByID(ctx context.Context, id string) (*models.Back
 // UpdateJobStatus sets the status for a backfill job.
 // finished_at is stamped when the status is a terminal state (completed/failed).
 func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) error {
+	// CYB-3491(状态机):非终态时清空 finished_at。此前 ELSE finished_at 会保留
+	// 从 completed/failed 回到 running 时的旧终点时间,导致 UI 显示 "运行中 +
+	// 完成时间" 的矛盾;下游读到脏数据会展示错误的完成时间。
 	const q = `UPDATE backfill_jobs
 	  SET status = $2, updated_at = NOW(),
-	      finished_at = CASE WHEN $2 IN ('completed','failed') THEN NOW() ELSE finished_at END
+	      finished_at = CASE WHEN $2 IN ('completed','failed') THEN NOW() ELSE NULL END
 	  WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status); err != nil {
@@ -183,8 +186,9 @@ func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) e
 }
 
 func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error {
+	// CYB-3491(状态机):非终态时清空 finished_at(同 UpdateJobStatus)。
 	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW(),
-	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE NULL END
 	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status, pilotPhase); err != nil {
@@ -555,10 +559,19 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 
 // UpdateJobProgress updates aggregate counters and job status.
 func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
+	// CYB-3491(数据新鲜度):
+	//   1. no-op guard: 只在 completed_count / failed_count / status 真变化时
+	//      UPDATE。此前每个 sync 轮次(30s)都刷 updated_at,UI "更新时间" 永远
+	//      在跳,给出批次还活着的假象——但底下的 44 个 running item 心跳已
+	//      冻结 10+ 分钟。
+	//   2. 状态机:非终态清 finished_at(同 UpdateJobStatus)。
 	const q = `UPDATE backfill_jobs SET
 	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW(),
-	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
-	WHERE id = $1`
+	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE NULL END
+	WHERE id = $1
+	  AND (completed_count IS DISTINCT FROM $2
+	    OR failed_count IS DISTINCT FROM $3
+	    OR status IS DISTINCT FROM $4)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, completed, failed, status); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobProgress: %w", err)

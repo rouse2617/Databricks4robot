@@ -2,9 +2,59 @@ package state
 
 import (
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
+
+// CYB-3491 (stall hint, read-side): a long-quiet active run gets
+// BlockingReason=stalled + a Chinese-language message, but its status is not
+// touched (principle: waiting is not failure). Once an update arrives
+// (webhook/poll), the next annotation clears the hint.
+func TestAnnotateRunDiagnostics_StalledHintOnLongQuietActiveRun(t *testing.T) {
+	now := time.Date(2026, 7, 15, 18, 0, 0, 0, time.UTC)
+	prev := nowUTC
+	nowUTC = func() time.Time { return now }
+	t.Cleanup(func() { nowUTC = prev })
+
+	// 40 min quiet + Running -> stalled hint, status unchanged.
+	stale := &models.PipelineRun{
+		ID:        "r1",
+		Status:    "Running",
+		UpdatedAt: now.Add(-40 * time.Minute),
+	}
+	AnnotateRunDiagnostics(stale)
+	if stale.Status != "Running" {
+		t.Fatalf("status must remain Running, got %q", stale.Status)
+	}
+	if stale.BlockingReason != "stalled" {
+		t.Fatalf("expected BlockingReason=stalled, got %q", stale.BlockingReason)
+	}
+	if stale.BlockingMessage == "" {
+		t.Fatal("expected a stall message for the UI")
+	}
+
+	// 10 min quiet -> fresh, no hint.
+	fresh := &models.PipelineRun{ID: "r2", Status: "Running", UpdatedAt: now.Add(-10 * time.Minute)}
+	AnnotateRunDiagnostics(fresh)
+	if fresh.BlockingReason != "" {
+		t.Fatalf("fresh active run must not carry a stall hint, got %q", fresh.BlockingReason)
+	}
+
+	// Terminal run + quiet -> no stall hint (irrelevant to terminals).
+	term := &models.PipelineRun{ID: "r3", Status: "Succeeded", UpdatedAt: now.Add(-2 * time.Hour)}
+	AnnotateRunDiagnostics(term)
+	if term.BlockingReason != "" {
+		t.Fatalf("terminal run must not carry a stall hint, got %q", term.BlockingReason)
+	}
+
+	// Long-quiet with a more specific blocking reason: must not overwrite.
+	spec := &models.PipelineRun{ID: "r4", Status: "Pending", UpdatedAt: now.Add(-2 * time.Hour)}
+	AnnotateRunDiagnostics(spec)
+	if spec.BlockingReason == "stalled" {
+		t.Fatal("more-specific blocking reason must win over generic stalled")
+	}
+}
 
 func TestNormalizeRunStatus(t *testing.T) {
 	t.Parallel()
