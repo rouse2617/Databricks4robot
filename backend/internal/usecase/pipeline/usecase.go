@@ -66,6 +66,11 @@ type Usecase struct {
 	pipelineConfigRepo      repository.PipelineConfigRepository
 	runtimeConfigStore      RuntimeConfigStore
 	wfClient                argo.WorkflowClient
+	// CYB-3486 PR 4c: per-cluster Argo client factory. When set, Deploy
+	// resolves argo client via argoFactory.ForTarget(target) instead of the
+	// wfClient singleton so multi-cluster submit routing works. Nil is
+	// tolerated — falls through to the existing adapter/singleton path.
+	argoFactory             argo.ClientFactory
 	runtimeAdapter          runtimeadapter.RuntimeAdapter
 	namespace               string
 	pricing                 *PricingConfig
@@ -185,6 +190,13 @@ func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
 // workflow-client operations remain available for compatibility and tests.
 func (uc *Usecase) SetRuntimeAdapter(adapter runtimeadapter.RuntimeAdapter) {
 	uc.runtimeAdapter = adapter
+}
+
+// SetArgoFactory wires the per-cluster Argo client factory (CYB-3486 PR 4c).
+// When set, submit paths route by ExecutionTarget.ClusterID via
+// factory.ForTarget instead of the wfClient singleton.
+func (uc *Usecase) SetArgoFactory(f argo.ClientFactory) {
+	uc.argoFactory = f
 }
 
 // SetRunRepositories wires first-class pipeline run persistence. The legacy
@@ -3441,7 +3453,7 @@ func (uc *Usecase) Deploy(
 		return nil, fmt.Errorf("%w: runtime config owner lookup requires workflow client", ErrWorkflowUnavailable)
 	}
 	status := "Pending"
-	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, depID, pipeName, wf, targetNamespace)
+	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, target, depID, pipeName, wf, targetNamespace)
 	if err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {
 			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
@@ -3552,7 +3564,32 @@ func (uc *Usecase) runtimeSubmitConfigured() bool {
 	return uc.runtimeAdapter != nil || uc.wfClient != nil
 }
 
-func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName string, wf *wfv1.Workflow, namespace string) (*runtimeadapter.RuntimeJob, error) {
+func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, target *models.ExecutionTarget, runID, runName string, wf *wfv1.Workflow, namespace string) (*runtimeadapter.RuntimeJob, error) {
+	// CYB-3486 PR 4c: when the per-cluster factory is wired, resolve the argo
+	// client for the target's cluster and submit through it. Bypasses the
+	// runtime adapter (which is a thin shape-translation shim, not a
+	// per-cluster router) so submission actually lands on the right cluster.
+	// Empty target.ClusterID falls through to `cluster-default` inside the
+	// factory, which is env-derived — byte-identical to the pre-3486 singleton.
+	if uc.argoFactory != nil {
+		client, err := uc.argoFactory.ForTarget(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve argo client for cluster %q: %v",
+				ErrWorkflowUnavailable, targetClusterID(target), err)
+		}
+		if err := client.CreateWorkflow(ctx, wf, namespace); err != nil {
+			return nil, err
+		}
+		return &runtimeadapter.RuntimeJob{
+			Ref: runtimeadapter.RuntimeRef{
+				RuntimeType: "argo",
+				Name:        strings.TrimSpace(wf.Name),
+				Namespace:   firstNonEmpty(namespace, wf.Namespace),
+				UID:         string(wf.UID),
+			},
+			Raw: wf,
+		}, nil
+	}
 	if uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Submit(ctx,
 			runtimeadapter.RunRef{ID: runID, Name: runName},
@@ -3578,6 +3615,15 @@ func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName str
 		},
 		Raw: wf,
 	}, nil
+}
+
+// targetClusterID returns a short label of the target's cluster for logging.
+// Empty target or empty ClusterID → "cluster-default".
+func targetClusterID(t *models.ExecutionTarget) string {
+	if t == nil || strings.TrimSpace(t.ClusterID) == "" {
+		return "cluster-default"
+	}
+	return t.ClusterID
 }
 
 func workflowFromRuntimeJob(job *runtimeadapter.RuntimeJob) *wfv1.Workflow {

@@ -119,6 +119,9 @@ func setupCore(inf *infra) *coreHandlers {
 	if inf.workflowClient != nil {
 		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
 	}
+	// CYB-3486 PR 4c: wire per-cluster argo factory so pipeline submits route
+	// by target.cluster_id. Nil-safe (no PG → nil factory → legacy adapter path).
+	puc.SetArgoFactory(inf.argoFactory)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	puc.SetArgoRunWebhook(
 		inf.cfg.ArgoRunWebhookURL,
