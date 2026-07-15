@@ -18,6 +18,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/validate"
 )
 
@@ -166,6 +167,18 @@ func setupInfra() *infra {
 		}
 	}
 
+	// CYB-3486: shared cluster repo + per-cluster factories. Built here so
+	// setupCore, setupOptional, and runServer can all consume them without
+	// re-reading the clusters table. Nil when there's no PG (test infra).
+	var clusterRepo repository.ClusterRepository
+	var k8sFactory k8s.ClientFactory
+	var argoFactoryImpl argo.ClientFactory
+	if pgClient != nil {
+		clusterRepo = postgres.NewClusterRepo(pgClient)
+		k8sFactory = k8s.NewClientFactory(clusterRepo)
+		argoFactoryImpl = argo.NewClientFactory(clusterRepo, argo.WithEnvFallback(argoCfg))
+	}
+
 	return &infra{
 		cfg:             cfg,
 		pg:              pgClient,
@@ -181,5 +194,8 @@ func setupInfra() *infra {
 		workflowClient:  workflowClient,
 		podClient:       podClient,
 		execClient:      execClient,
+		clusterRepo:     clusterRepo,
+		k8sFactory:      k8sFactory,
+		argoFactory:     argoFactoryImpl,
 	}
 }

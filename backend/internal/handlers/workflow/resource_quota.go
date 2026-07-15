@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,8 +28,10 @@ type ResourceMetric struct {
 
 // ListResourceQuotas handles GET /api/v1/resource-quotas.
 // Returns live ResourceQuota data for all namespaces.
+// Accepts `?clusterId=` (default `cluster-default`) — CYB-3486 PR 4b.
 func (h *Handler) ListResourceQuotas(c *gin.Context) {
-	client, err := newK8sClientset()
+	clusterID := c.Query("clusterId")
+	client, err := newK8sClientset(c.Request.Context(), h.k8sFactory, clusterID)
 	if err != nil {
 		httpresp.Internal(c, "k8s client: "+err.Error())
 		return
@@ -79,6 +82,14 @@ func formatQuantity(q resource.Quantity) string {
 	return q.String()
 }
 
-func newK8sClientset() (kubernetes.Interface, error) {
-	return k8s.NewClientset("")
+// newK8sClientset picks the clientset for the target cluster: the factory
+// path when configured, otherwise the env-based singleton (pre-3486 compat).
+func newK8sClientset(ctx context.Context, factory k8s.ClientFactory, clusterID string) (kubernetes.Interface, error) {
+	if factory == nil {
+		return k8s.NewClientset("")
+	}
+	if clusterID == "" {
+		clusterID = "cluster-default"
+	}
+	return factory.ForCluster(ctx, clusterID)
 }

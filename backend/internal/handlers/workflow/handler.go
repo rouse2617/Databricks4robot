@@ -37,6 +37,11 @@ type Handler struct {
 	wfClient        argo.WorkflowClient
 	podClient       k8s.PodClient
 	execClient      k8s.ExecClient
+	// CYB-3486 PR 4b: per-cluster K8s client factory. When set, elastic_quota
+	// / resource_quota handlers route by ?clusterId=. Nil falls back to the
+	// pre-3486 env-based singleton (k8s.NewClientset/NewDynamicClient) — same
+	// behavior as before this PR.
+	k8sFactory      k8s.ClientFactory
 	namespace       string
 	runRepo         repository.PipelineRunRepository
 	runEventRepo    repository.PipelineRunEventRepository
@@ -92,6 +97,12 @@ func (h *Handler) SetExecClient(execClient k8s.ExecClient) {
 
 func (h *Handler) SetArchiveStore(store ArchiveLogStore) {
 	h.archiveStore = store
+}
+
+// SetK8sFactory wires the per-cluster K8s client factory (CYB-3486). Nil is
+// tolerated — consumers fall back to the env-based singleton client.
+func (h *Handler) SetK8sFactory(f k8s.ClientFactory) {
+	h.k8sFactory = f
 }
 
 func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository, runNodeRepo repository.PipelineRunNodeRepository) {

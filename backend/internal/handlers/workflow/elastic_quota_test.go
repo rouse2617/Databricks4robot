@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 func TestListElasticQuotas_ReturnsQuotas(t *testing.T) {
@@ -198,11 +200,43 @@ func TestListElasticQuotas_UpstreamError(t *testing.T) {
 	}
 }
 
+// TestListElasticQuotas_ClusterIDParam ensures the ?clusterId= query is passed
+// through to the underlying lister so multi-cluster routing works
+// (CYB-3486 PR 4b).
+func TestListElasticQuotas_ClusterIDParam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var seen string
+	prev := listElasticQuotas
+	listElasticQuotas = func(_ context.Context, _ k8s.ClientFactory, clusterID string) (*unstructured.UnstructuredList, error) {
+		seen = clusterID
+		return &unstructured.UnstructuredList{Items: nil}, nil
+	}
+	defer func() { listElasticQuotas = prev }()
+
+	h := &Handler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/elastic-quotas?clusterId=cluster-delivery", nil)
+	h.ListElasticQuotas(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if seen != "cluster-delivery" {
+		t.Errorf("clusterId not forwarded: got %q, want cluster-delivery", seen)
+	}
+}
+
 // stubElasticQuotaLister replaces the package-level listElasticQuotas closure
-// for a test and returns a restore func for defer.
+// for a test and returns a restore func for defer. The stub receives the same
+// (ctx, factory, clusterID) arguments the production closure would; tests that
+// don't care about routing simply ignore them.
 func stubElasticQuotaLister(fn func(context.Context) (*unstructured.UnstructuredList, error)) func() {
 	prev := listElasticQuotas
-	listElasticQuotas = fn
+	listElasticQuotas = func(ctx context.Context, _ k8s.ClientFactory, _ string) (*unstructured.UnstructuredList, error) {
+		return fn(ctx)
+	}
 	return func() { listElasticQuotas = prev }
 }
 

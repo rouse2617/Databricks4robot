@@ -220,6 +220,10 @@ func setupCore(inf *infra) *coreHandlers {
 	workflowHandler.SetPodClient(inf.podClient)
 	workflowHandler.SetExecClient(inf.execClient)
 	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo, pipelineRunNodeRepo)
+	// CYB-3486 PR 4b: elastic_quota / resource_quota now route by cluster_id
+	// through the factory. Nil-safe: if inf.k8sFactory is nil (no PG), the
+	// handlers fall back to the pre-3486 env singleton.
+	workflowHandler.SetK8sFactory(inf.k8sFactory)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler
