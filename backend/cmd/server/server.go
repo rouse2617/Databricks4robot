@@ -8,12 +8,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/routes"
@@ -57,10 +59,18 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 
 	// CYB-3425 Phase B PR 1: cluster registry. Reads exposed to any authed
 	// user so the frontend can render cluster names; writes gated by admin.
+	//
+	// CYB-3486 PR 4a: also construct the per-cluster runtime factories and
+	// hand them to the ClusterHandler as ClusterCacheInvalidator implementations
+	// so admin CRUD drops cached clients immediately. The factories are held
+	// only by the handler in this PR — no runtime consumer reads from them yet,
+	// so this landing is a no-op behaviorally. PRs 4b/4c/4d flip consumers over.
 	var clusterHandler *adminH.ClusterHandler
 	if inf.pg != nil {
 		clusterRepo := postgres.NewClusterRepo(inf.pg)
-		clusterHandler = adminH.NewClusterHandler(clusterRepo)
+		k8sFactory := k8s.NewClientFactory(clusterRepo)
+		argoFactory := argo.NewClientFactory(clusterRepo, argo.WithEnvFallback(argo.ConfigFromEnv()))
+		clusterHandler = adminH.NewClusterHandler(clusterRepo, k8sFactory, argoFactory)
 	}
 
 	routes.RegisterAll(

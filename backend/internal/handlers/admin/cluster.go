@@ -13,16 +13,32 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
+// ClusterCacheInvalidator is the seam CYB-3486 uses to tell per-cluster caches
+// (k8s.ClientFactory, argo.ClientFactory) that a row changed. The interface
+// lives here so the admin package doesn't need to import the runtime
+// factory packages — avoids an import cycle and keeps 4a purely additive.
+type ClusterCacheInvalidator interface {
+	Invalidate(clusterID string)
+}
+
 // ClusterHandler serves admin CRUD for K8s clusters (CYB-3425). Reads are
 // exposed to any authenticated user (targets need to render the cluster name)
 // but writes are gated by adminAuth in routes.go.
 type ClusterHandler struct {
-	repo repository.ClusterRepository
+	repo         repository.ClusterRepository
+	invalidators []ClusterCacheInvalidator
 }
 
-// NewClusterHandler wires the cluster repo.
-func NewClusterHandler(repo repository.ClusterRepository) *ClusterHandler {
-	return &ClusterHandler{repo: repo}
+// NewClusterHandler wires the cluster repo plus zero or more caches that want
+// to be told when a cluster row is created / updated / soft-deleted.
+func NewClusterHandler(repo repository.ClusterRepository, invalidators ...ClusterCacheInvalidator) *ClusterHandler {
+	return &ClusterHandler{repo: repo, invalidators: invalidators}
+}
+
+func (h *ClusterHandler) invalidate(id string) {
+	for _, inv := range h.invalidators {
+		inv.Invalidate(id)
+	}
 }
 
 type clusterRequest struct {
@@ -124,6 +140,7 @@ func (h *ClusterHandler) Create(c *gin.Context) {
 		return
 	}
 	audit.Log(c.Request.Context(), "cluster.create", "clusters", []string{created.ID}, map[string]any{"name": created.Name})
+	h.invalidate(created.ID)
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -167,6 +184,7 @@ func (h *ClusterHandler) Update(c *gin.Context) {
 		return
 	}
 	audit.Log(c.Request.Context(), "cluster.update", "clusters", []string{id}, map[string]any{"name": updated.Name})
+	h.invalidate(id)
 	c.JSON(http.StatusOK, updated)
 }
 
@@ -186,5 +204,6 @@ func (h *ClusterHandler) Delete(c *gin.Context) {
 		return
 	}
 	audit.Log(c.Request.Context(), "cluster.delete", "clusters", []string{id}, nil)
+	h.invalidate(id)
 	c.Status(http.StatusNoContent)
 }
