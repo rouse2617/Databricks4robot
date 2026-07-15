@@ -29,8 +29,13 @@ func TestUpsertBatchSubtaskRunForceNewAttemptAddsUniqueWorkflowSuffix(t *testing
 	if err != nil {
 		t.Fatalf("UpsertBatchSubtaskRun() error = %v", err)
 	}
-	if !strings.HasPrefix(workflowName, "tpl-batch-asset-1-") {
-		t.Fatalf("workflowName %q does not include attempt suffix", workflowName)
+	// CYB-3491: names are job-scoped ({pipeline}-batch-{job8}-{asset}) and a
+	// forced new attempt appends the new run id — a fresh name per attempt.
+	if !strings.HasPrefix(workflowName, "tpl-batch-job-1-asset-1-") {
+		t.Fatalf("workflowName %q missing job scope / attempt suffix", workflowName)
+	}
+	if workflowName == "tpl-batch-job-1-asset-1" {
+		t.Fatalf("workflowName %q missing unique attempt suffix", workflowName)
 	}
 	if saved := runRepo.byID[runID]; saved == nil || saved.WorkflowName != workflowName {
 		t.Fatalf("saved run workflowName mismatch: %+v", saved)

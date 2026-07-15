@@ -17,6 +17,13 @@ import (
 // ErrNotFound indicates the requested Argo resource does not exist.
 var ErrNotFound = errors.New("argo resource not found")
 
+// ErrAlreadyExists indicates the workflow already exists in Argo (HTTP 409 /
+// gRPC code 6 AlreadyExists). CYB-3491: the submitter uses deterministic
+// workflow names, so hitting this on a re-submission means "our own prior
+// submission survived a crash" — callers treat it as success and backfill the
+// UID instead of recording a failure.
+var ErrAlreadyExists = errors.New("argo workflow already exists")
+
 // ErrUnexpectedNotFound indicates a 404 response that did NOT come from the
 // Argo API server — likely a misconfigured base URL pointing to a non-Argo
 // service (e.g. the DataBrew backend or pipeline UI). Callers MUST NOT treat
@@ -319,6 +326,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 				return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
 			}
 			return nil, fmt.Errorf("%w: body=%q", ErrUnexpectedNotFound, message)
+		}
+		if resp.StatusCode == http.StatusConflict || strings.Contains(message, "already exists") {
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, message)
 		}
 		return nil, fmt.Errorf("argo API %s %s failed: %s", method, path, message)
 	}

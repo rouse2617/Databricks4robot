@@ -195,17 +195,19 @@ func setupCore(inf *infra) *coreHandlers {
 		feishu.NewClient(feishu.Config{WebhookURL: inf.cfg.BackfillNotifyFeishuWebhookURL}),
 		inf.cfg.FrontendBaseURL,
 	)
-	backfillUC.StartReaper()
+	// CYB-3491 (P2): the submitter replaced the claim/reaper/worker-pool
+	// execution queue. It is periodic AND kicked by materialize/resume/rerun,
+	// so dispatch survives redeploys by construction — the reaper, the
+	// boot-time ResumeIncompleteBatches, and the P0 pool-recovery stopgap are
+	// all gone. Argo owns queueing/parallelism/execution from here.
+	backfillUC.SetSubmitQueue(backfillRepo)
+	backfillUC.StartSubmitter()
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
 	backfillUC.StartJobReconciler(
 		time.Duration(inf.cfg.BackfillReconcileIntervalSec)*time.Second,
 		int(inf.cfg.BackfillReconcileScanLimit),
 	)
-	backfillUC.ResumeIncompleteBatches(context.Background())
-	// CYB-3489 P0 — periodic resume so dispatch hangs after a redeploy recover
-	// without manual intervention. Removed in CYB-3489 P2.
-	backfillUC.StartPoolRecovery()
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

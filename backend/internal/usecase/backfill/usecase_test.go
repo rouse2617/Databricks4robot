@@ -848,8 +848,6 @@ func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
 	}
 }
 
-// CYB-3489 P0 — StartPoolRecovery / StopPoolRecovery are smoke-tested on
-// dev (PR #409 merged, 20-asset backfill ran end-to-end, runStartedAt
-// fired 1s after submit, status=Succeeded). The 60s ticker in production
-// is too slow to unit-test reliably; the lifecycle is small enough that
-// the dev smoke is the source of truth. No unit test here.
+// CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery
+// stopgap) is deleted; dispatch is owned by the submitter (see submitter.go
+// and submitter_test.go).

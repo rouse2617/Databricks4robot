@@ -45,17 +45,6 @@ var ErrNotFound = errors.New("backfill job not found")
 var ErrInvalidRerunScope = errors.New("invalid backfill rerun scope")
 
 // Usecase orchestrates backfill job operations.
-// reaperInterval controls how often the stale reaper scans for stuck items.
-const reaperInterval = 90 * time.Second
-
-// maxItemAttempts caps how many times a batch item can be reclaimed before
-// it is marked as failed permanently.
-const maxItemAttempts = 3
-
-// leaseTimeout is how long a worker has to complete a claimed item before
-// the stale reaper can reclaim it.
-const leaseTimeout = 120 * time.Second
-
 // maxFailedReconcilePerSync bounds how many already-failed items a single
 // syncJobProgress pass re-reconciles against runtime truth. Failed items are
 // otherwise never re-examined (the reconcile working set is running/pending
@@ -73,17 +62,19 @@ type Usecase struct {
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
-	reaperStop chan struct{}
-	reaperWg   sync.WaitGroup
-
 	reconcileStop chan struct{}
 	reconcileWg   sync.WaitGroup
 
-	// CYB-3489 P0 pool-recovery: spawn a watcher that periodically re-runs
-	// ResumeIncompleteBatches so a worker pool that died after ClaimNextItem
-	// returned nil (usecase.go:543-546) gets a fresh spawn. Deletes in P2.
-	poolStop chan struct{}
-	poolWg   sync.WaitGroup
+	// CYB-3491 submitter: the periodic, idempotent, resumable dispatch loop
+	// that replaced the claim/reaper/worker-pool execution queue. submitQueue
+	// is the persistence surface (nil disables the submitter, e.g. in tests
+	// that don't exercise dispatch); submitKick lets materialize/resume/rerun
+	// trigger an immediate cycle instead of waiting for the ticker.
+	submitQueue repository.SubmitQueue
+	deployer    subtaskDeployer
+	submitStop  chan struct{}
+	submitWg    sync.WaitGroup
+	submitKick  chan struct{}
 
 	// Batch job completion Feishu notification (CYB-3071). notifier nil
 	// disables the feature entirely (no claim, no send).
@@ -110,47 +101,18 @@ func (uc *Usecase) SetNotifier(sender Notifier, frontendBaseURL string) {
 
 // New creates a Usecase without transaction support.
 func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Usecase {
-	return &Usecase{repo: repo, pipelineUC: pipelineUC}
+	uc := &Usecase{repo: repo, pipelineUC: pipelineUC}
+	if pipelineUC != nil {
+		uc.deployer = pipelineUC
+	}
+	return uc
 }
 
 // NewWithPostgres creates a Usecase with transaction support via the postgres client.
 func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, pgClient any) *Usecase {
-	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient}
-}
-
-// StartReaper launches the stale reaper goroutine that reclaims items stuck
-// in running status beyond the lease timeout. It runs until StopReaper is called.
-func (uc *Usecase) StartReaper() {
-	uc.reaperStop = make(chan struct{})
-	uc.reaperWg.Add(1)
-	go func() {
-		defer uc.reaperWg.Done()
-		ticker := time.NewTicker(reaperInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-uc.reaperStop:
-				return
-			case <-ticker.C:
-				count, err := uc.repo.ResetStaleItems(context.Background(), int(leaseTimeout.Seconds()), maxItemAttempts)
-				if err != nil {
-					slog.Warn("stale reaper: reset stale items failed", "err", err)
-					continue
-				}
-				if count > 0 {
-					slog.Info("stale reaper: reclaimed stale items", "count", count)
-				}
-			}
-		}
-	}()
-}
-
-// StopReaper signals the stale reaper goroutine to stop and waits for it.
-func (uc *Usecase) StopReaper() {
-	if uc.reaperStop != nil {
-		close(uc.reaperStop)
-	}
-	uc.reaperWg.Wait()
+	uc := New(repo, pipelineUC)
+	uc.pgClient = pgClient
+	return uc
 }
 
 // SyncJob force-syncs a batch job's progress from its child runs, flipping it to
@@ -197,43 +159,6 @@ func (uc *Usecase) StopJobReconciler() {
 	uc.reconcileWg.Wait()
 }
 
-// CYB-3489 P0 pool recovery — periodically re-runs ResumeIncompleteBatches so a
-// runItems goroutine that died after ClaimNextItem returned nil (the bug
-// behind dev dispatch hangs after every deploy) gets a fresh spawn. Idempotent:
-// if the pool is alive, ClaimNextItem still picks up the next pending item;
-// if dead, this spawn replaces it. DELETE in CYB-3489 P2 (which removes the
-// whole worker pool model).
-const poolRecoveryInterval = 60 * time.Second
-
-func (uc *Usecase) StartPoolRecovery() {
-	if uc.poolStop != nil {
-		return
-	}
-	uc.poolStop = make(chan struct{})
-	uc.poolWg.Add(1)
-	go func() {
-		defer uc.poolWg.Done()
-		t := time.NewTicker(poolRecoveryInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-uc.poolStop:
-				return
-			case <-t.C:
-				uc.ResumeIncompleteBatches(context.Background())
-			}
-		}
-	}()
-}
-
-func (uc *Usecase) StopPoolRecovery() {
-	if uc.poolStop != nil {
-		close(uc.poolStop)
-		uc.poolStop = nil
-		uc.poolWg.Wait()
-	}
-}
-
 // reconcileActiveJobs force-syncs every non-terminal batch job once. Best-effort:
 // a per-job failure is logged and does not stop the sweep.
 //
@@ -253,25 +178,6 @@ func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
 		if err := uc.syncJobProgressForce(ctx, job.ID); err != nil {
 			slog.Warn("job reconciler: sync failed", "jobID", job.ID, "err", err)
 		}
-	}
-}
-
-// ResumeIncompleteBatches scans for running batch jobs with pending items
-// and starts worker pools for them. Call after constructing the Usecase to
-// recover from prior service interruptions.
-func (uc *Usecase) ResumeIncompleteBatches(ctx context.Context) {
-	jobs, err := uc.repo.FindIncompleteJobs(ctx)
-	if err != nil {
-		slog.Warn("resume incomplete batches: find jobs failed", "err", err)
-		return
-	}
-	for _, job := range jobs {
-		templateVersion := job.TemplateVersion
-		if templateVersion <= 0 {
-			templateVersion = uc.resolveTemplateVersion(ctx, job.TemplateID)
-		}
-		slog.Info("resume incomplete batch", "jobID", job.ID, "templateID", job.TemplateID, "pendingItems", job.TotalCount-job.CompletedCount-job.FailedCount)
-		go uc.runItems(context.Background(), job.ID, job.TemplateID, templateVersion, nil)
 	}
 }
 
@@ -564,189 +470,18 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 		return errCh
 	}
 	uc.ensureBatchParentRunByID(ctx, jobID)
-	if uc.pipelineUC != nil && len(itemsToRun) > 0 {
-		go func() {
-			slog.Info("materializeAndRunBatch: starting runItems", "jobID", jobID, "templateID", templateID)
-			uc.runItems(context.Background(), jobID, templateID, templateVersion, itemsToRun, "pending")
-		}()
-	}
+	// CYB-3491: dispatch is owned by the periodic submitter — kick it for an
+	// immediate cycle instead of spawning a per-job worker pool. Pilot gating
+	// (itemsToRun) is enforced by the submitter's per-job quota.
+	_ = itemsToRun
+	uc.KickSubmitter()
 	close(errCh)
 	return errCh
-}
-
-func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, templateVersion int, items []models.BackfillItem, allowed ...string) {
-	var wg sync.WaitGroup
-	for range maxConcurrentBatchItems {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				if uc.isJobPaused(ctx, jobID) {
-					return
-				}
-				item, err := uc.repo.ClaimNextItem(ctx, jobID)
-				if err != nil {
-					slog.Warn("runItems: claim next item failed", "jobID", jobID, "err", err)
-					time.Sleep(time.Second)
-					continue
-				}
-				if item == nil {
-					// No more pending items — exit this worker.
-					return
-				}
-				itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
-				err = uc.executeItem(itemCtx, *item, templateID, templateVersion, jobID)
-				itemCancel()
-				if err != nil {
-					if errors.Is(err, context.DeadlineExceeded) {
-						slog.Warn("runItems: item deploy timeout, recording failure",
-							"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID)
-						_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", "deploy timeout after 60s")
-						_ = uc.syncJobProgress(ctx, jobID)
-					} else {
-						slog.Warn("runItems: executeItem failed",
-							"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID, "err", err)
-					}
-				}
-			}
-		}()
-	}
-	wg.Wait()
-	_ = uc.syncJobProgress(ctx, jobID)
 }
 
 func (uc *Usecase) isJobPaused(ctx context.Context, jobID string) bool {
 	job, err := uc.repo.FindJobByID(ctx, jobID)
 	return err != nil || job == nil || job.Status == "paused"
-}
-
-// executeItem deploys the pipeline for a single backfill item and tracks status.
-func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID string, templateVersion int, jobID string) error {
-	job, err := uc.repo.FindJobByID(ctx, item.JobID)
-	if err != nil || job == nil || job.Status == "paused" {
-		return nil
-	}
-
-	if fresh, err := uc.repo.FindItemByID(ctx, item.ID); err == nil && fresh != nil {
-		item = *fresh
-	}
-
-	runID := ""
-	if item.PipelineRunID != nil {
-		runID = strings.TrimSpace(*item.PipelineRunID)
-	}
-	workflowName := ""
-	if item.WorkflowName != nil {
-		workflowName = strings.TrimSpace(*item.WorkflowName)
-	}
-	targetID := targetIDFromBackfillJob(job)
-
-	// Dedup guard: if this item was claimed while it ALREADY had a live workflow
-	// submitted to Argo, do not deploy a second one. ClaimNextItem always sets the
-	// item status to "running", so item.Status cannot tell a fresh claim from a
-	// re-claim — inspect the run itself. A run that was actually submitted to Argo
-	// has an ArgoWorkflowUID (assigned by Argo on creation, so even a queued/Pending
-	// workflow has one) or a StartedAt (set by CommitBatchSubtaskDeploy). An
-	// unsubmitted placeholder created by UpsertBatchSubtaskRun has neither, so
-	// genuine first-time deploys still proceed. Re-deploying an already-queued
-	// (Argo Pending) run is what orphaned tens of thousands of workflows.
-	if runID != "" && uc.pipelineUC != nil {
-		if existing, getErr := uc.pipelineUC.GetRun(ctx, runID); getErr == nil && runAlreadySubmitted(existing) {
-			wf := strings.TrimSpace(existing.WorkflowName)
-			if wf == "" {
-				wf = workflowName
-			}
-			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "running")
-			slog.Info("executeItem: skip duplicate deploy, run already live",
-				"jobID", jobID, "assetID", item.AssetID, "runID", runID, "runStatus", existing.Status)
-			return nil
-		}
-	}
-
-	if runID == "" && uc.pipelineUC != nil {
-		var initErr error
-		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-			TemplateID:      templateID,
-			TemplateVersion: templateVersion,
-			TargetID:        targetID,
-			BatchJobID:      jobID,
-			AssetID:         item.AssetID,
-			Status:          "Pending",
-		})
-		if initErr == nil {
-			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "pending")
-		}
-	}
-
-	deployOpts := pipelineUC.DeployOptions{
-		BatchJobID:         jobID,
-		TemplateVersion:    templateVersion,
-		TargetID:           targetID,
-		AllowUnknownAssets: true,
-		PreallocatedRunID:  runID,
-		Owner:              job.CreatedBy,
-	}
-	if job != nil && job.FilterJSON != nil {
-		deployOpts.TargetID = stringFromBackfillFilter(job.FilterJSON, "targetId", "target_id", "executionTargetId", "execution_target_id")
-		if configRaw, ok := job.FilterJSON["configSelection"]; ok {
-			if selection := decodeRuntimeConfigSelection(configRaw); selection != nil {
-				deployOpts.ConfigSelection = selection
-			}
-		}
-	}
-	dep, err := uc.pipelineUC.DeployByTemplateID(
-		ctx,
-		templateID,
-		"",
-		[]string{item.AssetID},
-		deployOpts,
-	)
-	if err != nil {
-		if uc.pipelineUC != nil {
-			errMsg := err.Error()
-			if runID == "" {
-				runID, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:      templateID,
-					TemplateVersion: templateVersion,
-					TargetID:        targetID,
-					BatchJobID:      jobID,
-					AssetID:         item.AssetID,
-					Status:          "Failed",
-					Message:         errMsg,
-					WorkflowName:    workflowName,
-				})
-			} else {
-				_, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:      templateID,
-					TemplateVersion: templateVersion,
-					TargetID:        targetID,
-					BatchJobID:      jobID,
-					AssetID:         item.AssetID,
-					RunID:           runID,
-					Status:          "Failed",
-					Message:         errMsg,
-					WorkflowName:    workflowName,
-				})
-			}
-			if runID != "" {
-				_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "failed")
-			} else {
-				_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", workflowName, errMsg)
-			}
-		} else {
-			_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", err.Error())
-		}
-		_ = uc.syncJobProgress(ctx, jobID)
-		return err
-	}
-
-	_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, dep.ID, dep.WorkflowName, "running")
-	if bindErr := uc.pipelineUC.CommitBatchSubtaskDeploy(ctx, runID, dep); bindErr != nil {
-		slog.Warn("executeItem: commit batch subtask deploy failed",
-			"jobID", jobID, "assetID", item.AssetID, "runID", runID, "err", bindErr)
-	}
-	_ = uc.syncJobProgress(ctx, jobID)
-	return nil
 }
 
 func stringFromBackfillFilter(values map[string]interface{}, keys ...string) string {
@@ -984,16 +719,9 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 		return err
 	}
 	uc.ensureBatchParentRunByID(ctx, id)
-	items, err := uc.repo.FindItemsByJobID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if uc.pipelineUC != nil {
-		go func() {
-			slog.Info("ResumeJob: starting runItems", "jobID", id)
-			uc.runItems(context.Background(), id, job.TemplateID, job.TemplateVersion, items, "pending")
-		}()
-	}
+	// CYB-3491: the periodic submitter owns dispatch; kick it so resume takes
+	// effect immediately.
+	uc.KickSubmitter()
 	return nil
 }
 
@@ -1092,12 +820,8 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 			return nil, err
 		}
 		uc.ensureBatchParentRunByID(ctx, jobID)
-		if uc.pipelineUC != nil {
-			go func() {
-				slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
-				uc.runItems(context.Background(), jobID, templateID, templateVersion, scheduled, "pending")
-			}()
-		}
+		// CYB-3491: rerun resets items to pending; the submitter dispatches.
+		uc.KickSubmitter()
 	}
 	result.RetriedCount = retriedCount
 	switch {
@@ -1448,16 +1172,10 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 		return err
 	}
 	uc.ensureBatchParentRunByID(ctx, jobID)
-	items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"pending"})
-	if err != nil {
-		return err
-	}
-	if uc.pipelineUC != nil {
-		go func() {
-			slog.Info("ContinueFull: starting runItems", "jobID", jobID)
-			uc.runItems(context.Background(), jobID, job.TemplateID, job.TemplateVersion, items, "pending")
-		}()
-	}
+	// CYB-3491: pilot released to full — remaining pending items are picked
+	// up by the submitter (its pilot quota gate no longer applies once the
+	// job status is back to running).
+	uc.KickSubmitter()
 	return nil
 }
 
@@ -1523,11 +1241,11 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 				if !ok || run == nil {
 					continue
 				}
-				mapped := mapRunStatusToItem(run.Status)
+				mapped := mapRunStatusToItem(run.Status, run.ArgoWorkflowUID)
 				if mapped == "completed" {
 					mapped = uc.resolveCompletionStatus(ctx, job, item)
 				}
-				if mapped != item.Status {
+				if mapped != "" && mapped != item.Status {
 					wf := run.WorkflowName
 					errMsg := ""
 					if mapped == "failed" {
@@ -1567,7 +1285,7 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 			if err != nil || run == nil {
 				continue
 			}
-			mapped := mapRunStatusToItem(run.Status)
+			mapped := mapRunStatusToItem(run.Status, run.ArgoWorkflowUID)
 			if mapped == "completed" {
 				mapped = uc.resolveCompletionStatus(ctx, job, item)
 			}
@@ -1767,25 +1485,23 @@ func deriveJobStatus(summary repository.BackfillItemStatusSummary, totalCount in
 	}
 }
 
-func mapRunStatusToItem(runStatus string) string {
+// mapRunStatusToItem projects a run's status onto its backfill item.
+// CYB-3491 semantics: terminal maps to terminal; anything in-flight maps to
+// "submitted" — but ONLY when the run has a persisted Argo UID. A uid-less
+// run is an unsubmitted placeholder (invariant ②): the item must stay
+// "pending" so the submitter re-submits it, and it must NEVER be surfaced as
+// failed. The empty return means "no transition".
+func mapRunStatusToItem(runStatus, argoWorkflowUID string) string {
 	switch strings.ToLower(runStatus) {
 	case "succeeded", "success":
 		return "completed"
 	case "failed", "error":
 		return "failed"
-	case "pending":
-		// Argo "Pending" means the workflow HAS been submitted and is queued
-		// (e.g. waiting for a concurrency/parallelism slot) — a healthy in-flight
-		// state. It is NOT the same as the backfill item's own "pending", which
-		// means "never submitted, free to be re-claimed". Mapping Argo-Pending to
-		// item-pending made ClaimNextItem re-select an already-queued asset and
-		// executeItem submit a duplicate workflow, orphaning the original. Treat a
-		// queued workflow as "running" so it is not re-claimed.
-		return "running"
-	case "running":
-		return "running"
 	default:
-		return "running"
+		if strings.TrimSpace(argoWorkflowUID) == "" {
+			return ""
+		}
+		return "submitted"
 	}
 }
 

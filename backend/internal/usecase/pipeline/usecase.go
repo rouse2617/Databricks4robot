@@ -2270,6 +2270,13 @@ func (uc *Usecase) syncBackfillItemStatusFromRun(ctx context.Context, run *model
 		return
 	}
 	nextStatus := mapRunStatusToBackfillItem(run.Status)
+	// CYB-3491: an in-flight projection is only legitimate when the run has a
+	// persisted Argo UID. A uid-less run is an unsubmitted placeholder — the
+	// item must stay "pending" for the submitter (invariant ②: unsubmitted is
+	// never failed, never in-flight).
+	if nextStatus == "submitted" && strings.TrimSpace(run.ArgoWorkflowUID) == "" {
+		return
+	}
 	if nextStatus == "" || strings.EqualFold(strings.TrimSpace(item.Status), nextStatus) {
 		return
 	}
@@ -2281,16 +2288,17 @@ func (uc *Usecase) syncBackfillItemStatusFromRun(ctx context.Context, run *model
 		uc.backfillRepo.UpdateItemStatus(ctx, item.ID, nextStatus, run.WorkflowName, errMsg))
 }
 
+// mapRunStatusToBackfillItem projects a run status onto its backfill item.
+// CYB-3491: in-flight (queued or executing) maps to "submitted" — the item
+// state machine is pending → submitted → completed|failed, forward-only.
 func mapRunStatusToBackfillItem(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "succeeded", "success":
 		return "completed"
 	case "failed", "error", "expired":
 		return "failed"
-	case "pending":
-		return "pending"
-	case "running", "unknown":
-		return "running"
+	case "pending", "running", "unknown":
+		return "submitted"
 	default:
 		return ""
 	}

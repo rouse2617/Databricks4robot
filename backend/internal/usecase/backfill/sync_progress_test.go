@@ -145,8 +145,14 @@ func (r *pausedSyncRepo) UpdateJobProgress(_ context.Context, id string, complet
 	}
 	return nil
 }
-func (r *pausedSyncRepo) CountItemsByStatus(context.Context, string, string) (int, error) {
-	return 0, nil
+func (r *pausedSyncRepo) CountItemsByStatus(_ context.Context, jobID, status string) (int, error) {
+	n := 0
+	for i := range r.items {
+		if r.items[i].JobID == jobID && r.items[i].Status == status {
+			n++
+		}
+	}
+	return n, nil
 }
 func (r *pausedSyncRepo) SummarizeItemStatuses(_ context.Context, jobID string) (repository.BackfillItemStatusSummary, error) {
 	var summary repository.BackfillItemStatusSummary
@@ -292,14 +298,24 @@ func (syncTestWorkflowClient) SuspendWorkflow(context.Context, string, string) e
 func (syncTestWorkflowClient) ResumeWorkflow(context.Context, string, string) error    { return nil }
 func (syncTestWorkflowClient) TerminateWorkflow(context.Context, string, string) error { return nil }
 
-func TestMapRunStatusToItem_QueuedMapsToRunning(t *testing.T) {
-	// Argo "Pending" means the workflow is submitted and queued (in-flight), which
-	// must map to the backfill item's "running" — NOT "pending", which means
-	// "unsubmitted / free to be re-claimed". Mapping a queued workflow to "pending"
-	// let ClaimNextItem re-select it and executeItem submit a duplicate workflow,
-	// orphaning the original (the tens-of-thousands-of-stuck-workflows bug).
-	if got := mapRunStatusToItem("Pending"); got != "running" {
-		t.Fatalf("Pending mapped to %q, want running", got)
+func TestMapRunStatusToItem_SubmittedSemantics(t *testing.T) {
+	// CYB-3491: any in-flight run WITH a persisted Argo UID projects the item
+	// to "submitted"; a uid-less run is an unsubmitted placeholder and yields
+	// NO transition (empty) — never "failed", never in-flight (invariant ②).
+	if got := mapRunStatusToItem("Pending", "uid-1"); got != "submitted" {
+		t.Fatalf("Pending+uid mapped to %q, want submitted", got)
+	}
+	if got := mapRunStatusToItem("Running", "uid-1"); got != "submitted" {
+		t.Fatalf("Running+uid mapped to %q, want submitted", got)
+	}
+	if got := mapRunStatusToItem("Pending", ""); got != "" {
+		t.Fatalf("placeholder Pending mapped to %q, want no transition", got)
+	}
+	if got := mapRunStatusToItem("Succeeded", ""); got != "completed" {
+		t.Fatalf("Succeeded mapped to %q, want completed (uid irrelevant at terminal)", got)
+	}
+	if got := mapRunStatusToItem("Failed", "uid-1"); got != "failed" {
+		t.Fatalf("Failed mapped to %q, want failed", got)
 	}
 }
 
