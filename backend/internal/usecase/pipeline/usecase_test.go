@@ -4774,7 +4774,11 @@ func TestRefreshRunForList_KeepsShortUnschedulablePendingActive(t *testing.T) {
 	}
 }
 
-func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
+// CYB-3491(语义): scheduling starvation is WAITING, not failure. An
+// over-threshold unschedulable run keeps its Argo-truth active phase — pods
+// that cannot schedule today schedule when capacity frees. Only the
+// workload's own errors are terminal.
+func TestRefreshRunForList_UnschedulableStaysWaiting(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
 	startedAt := now.Add(-20 * time.Minute)
@@ -4790,9 +4794,6 @@ func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
 	}
 	wfClient := &mockWorkflowClient{}
 	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
-		if name != "wf-1" {
-			t.Fatalf("unexpected workflow name %q", name)
-		}
 		return &wfv1.Workflow{
 			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1", CreationTimestamp: metav1.Time{Time: startedAt}},
 			Status: wfv1.WorkflowStatus{
@@ -4800,14 +4801,10 @@ func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
 				StartedAt: metav1.Time{Time: startedAt},
 				Nodes: map[string]wfv1.NodeStatus{
 					"node-1": {
-						ID:           "node-1",
-						Name:         "wf-1-step",
-						DisplayName:  "step",
-						Type:         wfv1.NodeTypePod,
-						Phase:        wfv1.NodePending,
-						Message:      "0/11 nodes are available: 1 Insufficient cpu, 2 Insufficient memory.",
-						StartedAt:    metav1.Time{Time: startedAt},
-						TemplateName: "step",
+						ID: "node-1", Name: "wf-1-step", DisplayName: "step",
+						Type: wfv1.NodeTypePod, Phase: wfv1.NodePending,
+						Message:   "0/11 nodes are available: 1 Insufficient cpu, 2 Insufficient memory.",
+						StartedAt: metav1.Time{Time: startedAt}, TemplateName: "step",
 					},
 				},
 			},
@@ -4822,24 +4819,62 @@ func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
 
 	run := runRepo.byID["run-1"]
 	uc.RefreshRunForList(ctx, run)
-	if run.Status != string(wfv1.WorkflowError) {
-		t.Fatalf("expected Error for over-threshold unschedulable run, got %q", run.Status)
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("unschedulable run must stay active (waiting), got %q", run.Status)
 	}
-	if !strings.Contains(run.Message, "Insufficient cpu") || !strings.Contains(run.Message, "Pending 20m0s") {
-		t.Fatalf("expected scheduler diagnostics in message, got %q", run.Message)
+	if run.FinishedAt != nil {
+		t.Fatalf("waiting run must not carry finished_at, got %v", run.FinishedAt)
 	}
-	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
-		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
-	}
-	foundEvent := false
 	for _, event := range eventRepo.events {
 		if event.EventType == runEventFailed && event.Reason == "unschedulable" {
-			foundEvent = true
-			break
+			t.Fatalf("waiting run must not emit an unschedulable run_failed event")
 		}
 	}
-	if !foundEvent {
-		t.Fatalf("expected unschedulable run_failed event, got %#v", eventRepo.events)
+}
+
+// Legacy verdicts minted by the removed guard ("Kubernetes 调度失败:…") are
+// NOT definitive — the workflow was never stopped in Argo. The misclassified
+// reconciler restores them to their true active phase.
+func TestReconcileMisclassified_RevivesLegacyUnschedulableVerdict(t *testing.T) {
+	ctx := context.Background()
+	finished := time.Date(2026, 7, 15, 14, 34, 0, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-1",
+				ArgoWorkflowUID: "uid-1",
+				Status:          "Error",
+				Message:         "Kubernetes 调度失败：节点 \"step-x\" 已 Pending 2h，Unschedulable: 0/239 nodes are available",
+				FinishedAt:      &finished,
+				CreatedAt:       finished.Add(-3 * time.Hour),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectTerminalArchive)
+	got := runRepo.byID["run-1"]
+	if got.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("legacy unschedulable verdict must revive to Argo truth, got %q", got.Status)
+	}
+
+	// A genuine failure verdict stays definitive and is NOT revived.
+	if isUnschedulableGuardVerdict("component exited with code 1") {
+		t.Fatal("real failure message must not match the guard-verdict matcher")
+	}
+	if !isUnschedulableGuardVerdict("Kubernetes 调度失败：节点 \"x\" 已 Pending 1h") {
+		t.Fatal("guard verdict matcher must match the legacy prefix")
 	}
 }
 

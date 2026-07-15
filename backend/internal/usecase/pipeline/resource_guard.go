@@ -232,57 +232,6 @@ func nodeDisplayName(node transpiler.Node) string {
 	return "unknown"
 }
 
-func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
-	run *models.PipelineRun,
-	wf *wfv1.Workflow,
-) (string, string, *time.Time, bool) {
-	cfg := uc.resourceGuardConfig()
-	if cfg.UnschedulablePendingThreshold <= 0 {
-		return "", "", nil, false
-	}
-	if wf == nil || !isActiveDeploymentStatus(string(wf.Status.Phase)) {
-		return "", "", nil, false
-	}
-	now := uc.nowUTC()
-	var selectedName string
-	var selectedMessage string
-	var selectedSince time.Time
-	for _, node := range wf.Status.Nodes {
-		if node.Phase != wfv1.NodePending {
-			continue
-		}
-		message := strings.TrimSpace(node.Message)
-		if message == "" {
-			message = strings.TrimSpace(wf.Status.Message)
-		}
-		if !isUnschedulableSchedulerMessage(message) {
-			continue
-		}
-		pendingSince := pendingReferenceTime(run, wf, node)
-		if pendingSince.IsZero() || now.Sub(pendingSince) < cfg.UnschedulablePendingThreshold {
-			continue
-		}
-		if selectedSince.IsZero() || pendingSince.Before(selectedSince) {
-			selectedSince = pendingSince
-			selectedName = workflowNodeDisplayName(node)
-			selectedMessage = message
-		}
-	}
-	if selectedMessage == "" && isUnschedulableSchedulerMessage(wf.Status.Message) {
-		pendingSince := workflowPendingReferenceTime(run, wf)
-		if !pendingSince.IsZero() && now.Sub(pendingSince) >= cfg.UnschedulablePendingThreshold {
-			selectedSince = pendingSince
-			selectedName = strings.TrimSpace(wf.Name)
-			selectedMessage = strings.TrimSpace(wf.Status.Message)
-		}
-	}
-	if selectedMessage == "" {
-		return "", "", nil, false
-	}
-	finishedAt := now
-	return string(wfv1.WorkflowError), formatUnschedulableRunMessage(selectedName, now.Sub(selectedSince), selectedMessage), &finishedAt, true
-}
-
 // imageStartupThreshold derives a shorter threshold for image startup failures
 // that might be transient (network blip). Terminal failures (e.g. ImagePullBackOff)
 // are detected immediately without waiting.
@@ -480,20 +429,6 @@ func workflowNodeDisplayName(node wfv1.NodeStatus) string {
 	return "unknown"
 }
 
-func formatUnschedulableRunMessage(nodeName string, pendingFor time.Duration, schedulerMessage string) string {
-	nodeName = strings.TrimSpace(nodeName)
-	if nodeName == "" {
-		nodeName = "unknown"
-	}
-	if pendingFor < 0 {
-		pendingFor = 0
-	}
-	return fmt.Sprintf("Kubernetes 调度失败：节点 %q 已 Pending %s，%s",
-		nodeName,
-		pendingFor.Round(time.Second),
-		strings.TrimSpace(schedulerMessage),
-	)
-}
 
 func formatImageStartupRunMessage(nodeName string, pendingFor time.Duration, imageMessage string) string {
 	nodeName = strings.TrimSpace(nodeName)

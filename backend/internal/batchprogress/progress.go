@@ -49,9 +49,15 @@ func DeriveWithMessage(rows []models.PipelineRunAssetNode, overallStatus, overal
 	}
 
 	if isTerminalFailureStatus(overallStatus) {
+		// The run is terminally failed: the node snapshot can NEVER present it
+		// as in-progress. Blame the first in-flight node (Running, or Pending —
+		// e.g. an unschedulable pod that never started), and if every node row
+		// is already terminal (DAG-level failure), surface a generic failure
+		// with the run message. Falling through to the 进行中 default here is
+		// exactly the 失败×进行中 contradiction users saw (CYB-3491).
 		for _, row := range sorted {
 			status := strings.TrimSpace(row.Status)
-			if status != "Running" {
+			if status != "Running" && status != "Pending" && status != "" {
 				continue
 			}
 			name := strings.TrimSpace(row.DisplayName)
@@ -68,6 +74,11 @@ func DeriveWithMessage(rows []models.PipelineRunAssetNode, overallStatus, overal
 				FocusStatus:   "Error",
 				Message:       message,
 			}
+		}
+		return &models.PipelineRunNodeProgress{
+			FocusStatus: "Error",
+			Label:       "异常",
+			Message:     strings.TrimSpace(overallMessage),
 		}
 	}
 

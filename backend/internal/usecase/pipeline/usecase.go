@@ -2003,12 +2003,13 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		message = derivedMessage
 		finishedAt = derivedFinishedAt
 		derivedFailureReason = "image_startup"
-	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveUnschedulableRunFromWorkflow(run, wf); ok {
-		status = derivedStatus
-		message = derivedMessage
-		finishedAt = derivedFinishedAt
-		derivedFailureReason = "unschedulable"
 	} else if derivedStatus, ok := deriveActiveRunFromWorkflowNodes(wf); ok {
+		// CYB-3491(语义): scheduling starvation is WAITING, not failure. A pod
+		// that cannot schedule today can schedule when capacity frees — the
+		// run stays in its Argo-truth active phase, and the read side
+		// classifies the scheduler message as BlockingReason "unschedulable"
+		// (runtimeos state machine). Only the workload's own errors (or
+		// deterministic config errors like a bad image) are terminal.
 		status = derivedStatus
 		message = ""
 		finishedAt = nil
@@ -5525,7 +5526,24 @@ func isDefinitiveTerminalFailure(run *models.PipelineRun) bool {
 		return false
 	}
 	msg := strings.TrimSpace(run.Message)
-	return msg != "" && !isStaleWorkflowUnavailableMessage(msg)
+	if msg == "" || isStaleWorkflowUnavailableMessage(msg) {
+		return false
+	}
+	// Legacy verdicts from the (removed) unschedulable guard are NOT
+	// definitive: the workflow was never stopped in Argo — it kept queueing.
+	// Leaving these revivable lets the misclassified-reconcile path restore
+	// them to their true active phase (CYB-3491: waiting is not failure).
+	if isUnschedulableGuardVerdict(msg) {
+		return false
+	}
+	return true
+}
+
+// isUnschedulableGuardVerdict matches the message minted by the pre-CYB-3491
+// unschedulable guard ("Kubernetes 调度失败:…"), which mass-failed runs whose
+// pods were merely waiting for capacity.
+func isUnschedulableGuardVerdict(message string) bool {
+	return strings.HasPrefix(strings.TrimSpace(message), "Kubernetes 调度失败")
 }
 
 func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {
