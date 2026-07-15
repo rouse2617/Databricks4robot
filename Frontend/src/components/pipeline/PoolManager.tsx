@@ -526,8 +526,12 @@ export default function PoolManager() {
 				</div>
 			</Card>
 
-			{elasticQuotas.length > 0 ? (
-				<ElasticQuotaPanel quotas={elasticQuotas} loading={loading} />
+			{elasticQuotas.length > 0 || clusters.length > 1 ? (
+				<ElasticQuotaPanel
+					initialQuotas={elasticQuotas}
+					clusters={clusters}
+					loading={loading}
+				/>
 			) : null}
 
 			<Modal
@@ -746,15 +750,48 @@ type TargetResourceDefaultsPatch = Record<string, unknown> & {
 };
 
 interface ElasticQuotaPanelProps {
-	quotas: ElasticQuota[];
+	// initialQuotas is the panel's first render (whatever PoolManager pre-fetched
+	// on the default cluster). When the user switches cluster via the picker
+	// below, the panel takes over and refetches with the chosen clusterId.
+	initialQuotas: ElasticQuota[];
+	clusters: Cluster[];
 	loading: boolean;
 }
 
 // ElasticQuotaPanel renders a read-only view of Koordinator ElasticQuota pools.
-// It appears only when at least one ElasticQuota exists in the cluster (see
-// PoolManager: `elasticQuotas.length > 0` guard) so clusters without
-// Koordinator installed simply don't render this section.
-function ElasticQuotaPanel({ quotas, loading }: ElasticQuotaPanelProps) {
+// Shows a cluster picker when there is more than one cluster (CYB-3486) so
+// operators can inspect quotas on any registered cluster — the underlying API
+// routes by ?clusterId= (PR 4b).
+function ElasticQuotaPanel({
+	initialQuotas,
+	clusters,
+	loading,
+}: ElasticQuotaPanelProps) {
+	const defaultClusterId = "cluster-default";
+	const [selectedClusterId, setSelectedClusterId] = useState(defaultClusterId);
+	const [quotas, setQuotas] = useState<ElasticQuota[]>(initialQuotas);
+	const [refetchLoading, setRefetchLoading] = useState(false);
+
+	// Keep quotas in sync with the parent's pre-fetched value when the user has
+	// not yet switched cluster (initialQuotas can arrive slightly after mount).
+	useEffect(() => {
+		if (selectedClusterId === defaultClusterId) {
+			setQuotas(initialQuotas);
+		}
+	}, [initialQuotas, selectedClusterId]);
+
+	const handleClusterChange = useCallback(async (clusterId: string) => {
+		setSelectedClusterId(clusterId);
+		setRefetchLoading(true);
+		try {
+			const list = await listElasticQuotas(clusterId);
+			setQuotas(list);
+		} catch {
+			setQuotas([]);
+		}
+		setRefetchLoading(false);
+	}, []);
+
 	const columns = [
 		{
 			title: "名称",
@@ -801,19 +838,43 @@ function ElasticQuotaPanel({ quotas, loading }: ElasticQuotaPanelProps) {
 		},
 	];
 
+	const showPicker = clusters.length > 1;
+
 	return (
 		<Card
 			size="small"
 			style={{ marginTop: 12 }}
-			title="Koordinator 弹性配额池 (ElasticQuota)"
+			title={
+				<Space size="middle" wrap>
+					<span>Koordinator 弹性配额池 (ElasticQuota)</span>
+					{showPicker ? (
+						<Select
+							size="small"
+							value={selectedClusterId}
+							onChange={handleClusterChange}
+							loading={refetchLoading}
+							style={{ minWidth: 220 }}
+							options={clusters.map((c) => ({
+								value: c.id,
+								label: c.displayName || c.name,
+							}))}
+						/>
+					) : null}
+				</Space>
+			}
 		>
 			<Table
 				size="small"
 				rowKey={(r) => `${r.namespace}/${r.name}`}
 				dataSource={quotas}
 				columns={columns}
-				loading={loading}
+				loading={loading || refetchLoading}
 				pagination={false}
+				locale={{
+					emptyText: refetchLoading
+						? "加载中…"
+						: "该集群未配置 ElasticQuota(或 Koordinator 未安装)",
+				}}
 			/>
 			<div style={{ marginTop: 12, color: "var(--gray-400)", fontSize: 12 }}>
 				<Typography.Text type="secondary">
