@@ -3445,6 +3445,40 @@ func TestProjectRunNodes_TerminalArchiveOncePolicy(t *testing.T) {
 	}
 }
 
+// CYB-3490 regression: persistRunObservation copies observed fields onto the
+// stored row — Progress must survive that copy. The watcher observes COPIES
+// (FindAllSummaries), so this test must not alias the stored pointer, or the
+// copy bug is invisible (dev incident: progress never persisted).
+func TestPersistRunObservation_CarriesProgressOntoStoredRow(t *testing.T) {
+	ctx := context.Background()
+	stored := &models.PipelineRun{ID: "run-1", WorkflowName: "wf-1", Status: "Running"}
+	runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{"run-1": stored}}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	observed := *stored // watcher-style detached copy
+	wf := &wfv1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+		Status: wfv1.WorkflowStatus{
+			Phase:    wfv1.WorkflowRunning,
+			Progress: wfv1.Progress("42/100"),
+		},
+	}
+	uc.applyWorkflowToRun(ctx, &observed, wf, nodeProjectTerminalArchive)
+	got := runRepo.byID["run-1"]
+	if got == nil || got.Progress != "42/100" {
+		t.Fatalf("expected stored row to carry progress 42/100, got %+v", got)
+	}
+	// An observation with empty progress must not wipe the stored value.
+	observed2 := *got
+	wf.Status.Progress = ""
+	uc.applyWorkflowToRun(ctx, &observed2, wf, nodeProjectTerminalArchive)
+	if runRepo.byID["run-1"].Progress != "42/100" {
+		t.Fatalf("empty observation wiped progress: %q", runRepo.byID["run-1"].Progress)
+	}
+}
+
 // CYB-3490 P1b: batch lists surface near-realtime progress from the
 // workflow-level column when no node rows exist for a running item.
 func TestAttachBatchNodeProgress_FallsBackToWorkflowProgress(t *testing.T) {

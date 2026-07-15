@@ -2232,6 +2232,12 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		}
 	}
 	existing.Message = run.Message
+	// CYB-3490: carry the workflow-level progress onto the persisted row —
+	// only when the observation actually saw one, so a poll that raced an
+	// empty status.progress does not wipe a previously stored value.
+	if p := strings.TrimSpace(run.Progress); p != "" {
+		existing.Progress = p
+	}
 	if uid := strings.TrimSpace(run.ArgoWorkflowUID); uid != "" {
 		existing.ArgoWorkflowUID = uid
 	}
