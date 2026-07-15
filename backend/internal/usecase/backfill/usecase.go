@@ -56,6 +56,13 @@ const maxItemAttempts = 3
 // the stale reaper can reclaim it.
 const leaseTimeout = 120 * time.Second
 
+// maxFailedReconcilePerSync bounds how many already-failed items a single
+// syncJobProgress pass re-reconciles against runtime truth. Failed items are
+// otherwise never re-examined (the reconcile working set is running/pending
+// only), so a transient/misclassified failure stays stuck forever. Bounded so
+// large batches converge over successive syncs without flooding the Argo API.
+const maxFailedReconcilePerSync = 50
+
 type Usecase struct {
 	repo       repository.BackfillRepository
 	resultRepo repository.BackfillResultRepository
@@ -1512,6 +1519,49 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 					_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, errMsg)
 				}
 			}
+		}
+	}
+
+	// Re-reconcile already-failed items against runtime truth. They are not in
+	// the running/pending working set above, so a transient/misclassified
+	// 'failed' — e.g. a run momentarily reconciled to Failed during a scheduling
+	// backlog while its Argo workflow was actually queued and later Succeeded —
+	// would otherwise stay stuck forever, inflating failedCount and blocking the
+	// job from settling to 'completed'. GetRun runs the existing
+	// reconcileMisclassifiedRunFromArgo path, whose guards preserve genuine
+	// pre-submission failures (isDefinitiveTerminalFailure). Bounded per sync.
+	if uc.pipelineUC != nil {
+		failedItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"failed"})
+		if err != nil {
+			return err
+		}
+		reconciled := 0
+		for _, item := range failedItems {
+			if reconciled >= maxFailedReconcilePerSync {
+				slog.Info("syncJobProgress: failed-item reconcile capped, deferring remainder to next sync",
+					"jobID", jobID, "processed", reconciled, "deferred", len(failedItems)-reconciled)
+				break
+			}
+			if item.PipelineRunID == nil || strings.TrimSpace(*item.PipelineRunID) == "" {
+				continue
+			}
+			reconciled++
+			run, err := uc.pipelineUC.GetRun(ctx, *item.PipelineRunID)
+			if err != nil || run == nil {
+				continue
+			}
+			mapped := mapRunStatusToItem(run.Status)
+			if mapped == "completed" {
+				mapped = uc.resolveCompletionStatus(ctx, job, item)
+			}
+			if mapped == "" || mapped == item.Status {
+				continue
+			}
+			errMsg := ""
+			if mapped == "failed" {
+				errMsg = strings.TrimSpace(run.Message)
+			}
+			_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, run.WorkflowName, errMsg)
 		}
 	}
 
