@@ -974,15 +974,38 @@ FROM (
 
 // ClaimNextItem atomically claims one pending item using FOR UPDATE SKIP LOCKED.
 func (r *BackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	// Besides 'pending' items, also reclaim "half-committed orphans": items stuck
+	// 'running' whose pipeline run was never submitted to Argo (no argo_workflow_uid,
+	// still a `<pipeline>-batch-<suffix>` placeholder name) and was created long
+	// enough ago that it cannot be a normal in-flight deploy. These arise when the
+	// materialize worker pool exits before claiming items written late in the loop;
+	// they otherwise oscillate running<->pending (reaper clears -> syncJobProgress
+	// maps Argo-Pending back to running) and never get re-claimed. We key the
+	// staleness on pipeline_runs.created_at (stable) rather than backfill_items.
+	// started_at (which the oscillation keeps refreshing). FOR UPDATE SKIP LOCKED
+	// still guarantees a single claimer, and once deployed the run gains a UID and
+	// no longer matches, so there is no duplicate submission.
 	const q = `
 	UPDATE backfill_items
 	SET status = 'running',
 	    started_at = NOW(),
 	    attempts = attempts + 1
 	WHERE id = (
-		SELECT id FROM backfill_items
-		WHERE job_id = $1 AND status = 'pending'
-		ORDER BY created_at ASC
+		SELECT bi.id FROM backfill_items bi
+		WHERE bi.job_id = $1 AND (
+			bi.status = 'pending'
+			OR (
+				bi.status = 'running'
+				AND EXISTS (
+					SELECT 1 FROM pipeline_runs pr
+					WHERE pr.id = bi.pipeline_run_id
+					  AND pr.argo_workflow_uid = ''
+					  AND pr.workflow_name LIKE '%-batch-%'
+					  AND pr.created_at < NOW() - INTERVAL '5 minutes'
+				)
+			)
+		)
+		ORDER BY (bi.status = 'pending') DESC, bi.created_at ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED
 	)
@@ -1029,6 +1052,9 @@ func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int,
 
 // FindIncompleteJobs returns running backfill jobs with at least one pending item.
 func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	// Also treat a job as incomplete when it has half-committed orphans (items
+	// stuck 'running' on an unsubmitted placeholder run — see ClaimNextItem), so
+	// startup recovery re-spawns a worker pool that ClaimNextItem can drain.
 	const q = `
 	SELECT DISTINCT bj.id, bj.template_id, bj.name, bj.status,
 	  bj.completed_count, bj.failed_count, bj.total_count,
@@ -1037,7 +1063,19 @@ func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backfil
 	FROM backfill_jobs bj
 	JOIN backfill_items bi ON bi.job_id = bj.id
 	WHERE bj.status = 'running'
-	  AND bi.status = 'pending'
+	  AND (
+	    bi.status = 'pending'
+	    OR (
+	      bi.status = 'running'
+	      AND EXISTS (
+	        SELECT 1 FROM pipeline_runs pr
+	        WHERE pr.id = bi.pipeline_run_id
+	          AND pr.argo_workflow_uid = ''
+	          AND pr.workflow_name LIKE '%-batch-%'
+	          AND pr.created_at < NOW() - INTERVAL '5 minutes'
+	      )
+	    )
+	  )
 	ORDER BY bj.created_at ASC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
