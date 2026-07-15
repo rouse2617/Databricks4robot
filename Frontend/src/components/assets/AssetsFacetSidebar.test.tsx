@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+import { mergeAssetTypeOptions } from "../../lib/assets/assetTypes";
 import AssetsFacetSidebar, {
 	ALGO_STATUS_OPTIONS,
 	ASSET_TYPE_OPTIONS,
@@ -122,12 +123,15 @@ describe("facet option constants", () => {
 		expect(LIFECYCLE_OPTIONS).toContain("created");
 	});
 
-	it("exports asset type options", () => {
+	it("exports asset type options (CYB-3305: incl. raw_mcap/action/frame)", () => {
 		expect(ASSET_TYPE_OPTIONS).toEqual([
 			"segment",
 			"clip",
 			"frame_set",
 			"derived_asset",
+			"raw_mcap",
+			"action",
+			"frame",
 		]);
 	});
 
@@ -165,14 +169,49 @@ describe("facet option constants", () => {
 		]);
 	});
 
-	it("exports 5 group keys", () => {
+	it("exports 7 group keys (incl. quick + frequent)", () => {
 		expect(GROUP_KEYS).toEqual([
+			"quick",
+			"frequent",
 			"basic",
 			"capture",
 			"algorithm",
 			"delivery",
 			"tags",
 		]);
+	});
+});
+
+// ─── mergeAssetTypeOptions (CYB-3305) ───
+
+describe("mergeAssetTypeOptions", () => {
+	it("returns the built-in options when no counts are provided", () => {
+		expect(mergeAssetTypeOptions()).toEqual(ASSET_TYPE_OPTIONS);
+	});
+
+	it("preserves built-in ordering when counts only include known keys", () => {
+		expect(
+			mergeAssetTypeOptions({ segment: 100, raw_mcap: 5, action: 2 }),
+		).toEqual(ASSET_TYPE_OPTIONS);
+	});
+
+	it("appends unknown asset_types surfaced by backend counts", () => {
+		const merged = mergeAssetTypeOptions({
+			segment: 10,
+			custom_type: 3,
+			another_new_type: 1,
+		});
+		expect(merged.slice(0, ASSET_TYPE_OPTIONS.length)).toEqual(
+			ASSET_TYPE_OPTIONS,
+		);
+		expect(merged).toContain("custom_type");
+		expect(merged).toContain("another_new_type");
+	});
+
+	it("does not duplicate keys already in the built-in list", () => {
+		const merged = mergeAssetTypeOptions({ segment: 1, action: 1 });
+		const occurrences = merged.filter((k) => k === "segment").length;
+		expect(occurrences).toBe(1);
 	});
 });
 

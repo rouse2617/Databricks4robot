@@ -1,6 +1,10 @@
 package pipeline
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+)
 
 func TestResourcesDurationToCostUsesMemoryWhenCPUIsZero(t *testing.T) {
 	pricing := &PricingConfig{
@@ -51,5 +55,24 @@ func TestResourcesDurationToCostUsesExplicitInstanceMetadata(t *testing.T) {
 	want := 10.0 * 0.09 / 3600.0
 	if diff := *got - want; diff < -0.0000001 || diff > 0.0000001 {
 		t.Fatalf("cost = %v, want %v", *got, want)
+	}
+}
+
+func TestComputeRunCostSumsLeafPodsOnly(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	run := &models.PipelineRun{Nodes: []models.PipelineRunNode{
+		{Type: "DAG", EstimatedCostUSD: f(0.16)},               // aggregate rollup — must be skipped
+		{Type: "Pod", EstimatedCostUSD: f(0.10)},               // leaf
+		{Type: "Pod", EstimatedCostUSD: f(0.13)},               // leaf
+		{Type: "Steps", EstimatedCostUSD: f(0.05)},             // aggregate — skipped
+		{Type: "", PodName: "wf.x", EstimatedCostUSD: f(0.02)}, // blank-typed pod — counted
+	}}
+	got := ComputeRunCost(run, &PricingConfig{})
+	if got == nil {
+		t.Fatal("expected a cost")
+	}
+	want := 0.25 // 0.10 + 0.13 + 0.02, DAG/Steps excluded
+	if *got < want-1e-9 || *got > want+1e-9 {
+		t.Fatalf("ComputeRunCost = %v, want %v (leaf pods only)", *got, want)
 	}
 }

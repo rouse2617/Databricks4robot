@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -195,6 +194,18 @@ WHERE rn = 1`
 		baseCTE += fmt.Sprintf(" AND scope = $%d", argPos)
 		countCTE += fmt.Sprintf(" AND scope = $%d", argPos)
 		args = append(args, scope)
+		argPos++
+	}
+	if filter.ExcludeAutoDrafts {
+		// CYB-3390: hide "pipeline-<timestamp>" auto-named single-step drafts.
+		// The client shows this as a checkbox; matches the regex used
+		// client-side in DeployPanel.isAutoNamedDraft. Only applies within
+		// dev scope — prod pipelines are always curated names.
+		autoRe := "^pipeline-[0-9]{10,}$"
+		autoCond := fmt.Sprintf(" AND NOT (scope = 'dev' AND name ~ $%d)", argPos)
+		baseCTE += autoCond
+		countCTE += autoCond
+		args = append(args, autoRe)
 		argPos++
 	}
 	baseCTE += " ORDER BY " + orderBy
@@ -519,7 +530,7 @@ func (r *ExecutionTargetRepo) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-const executionTargetSelectCols = `id, name, description, cluster, namespace, service_account,
+const executionTargetSelectCols = `id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
   enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at`
 
@@ -556,7 +567,7 @@ func scanExecutionTarget(rs rowScanner) (*models.ExecutionTarget, error) {
 		labels           []byte
 	)
 	if err := rs.Scan(
-		&t.ID, &t.Name, &t.Description, &t.Cluster, &t.Namespace, &t.ServiceAccount,
+		&t.ID, &t.Name, &t.Description, &t.Cluster, &t.ClusterID, &t.Namespace, &t.ServiceAccount,
 		&t.ArgoServerURL, &t.ArgoAuthSecretRef, &t.ArgoInsecureSkipTLS, &t.ArgoCACertRef,
 		&t.Enabled, &t.Status, &t.IsDefault, &resourceDefaults, &quotaPolicy, &labels,
 		&t.CreatedAt, &t.UpdatedAt,
@@ -596,20 +607,30 @@ func (r *ExecutionTargetRepo) Save(ctx context.Context, t *models.ExecutionTarge
 		return fmt.Errorf("postgres ExecutionTargetRepo.Save: marshal labels: %w", err)
 	}
 
+	// CYB-3425: default new-row cluster_id to the singleton "cluster-default"
+	// row when the caller hasn't set one (yet). This keeps API callers that
+	// don't know about clusters (SDK / legacy scripts) from tripping the
+	// cluster_id NOT NULL constraint added by 20260715070000.
+	clusterID := t.ClusterID
+	if clusterID == "" {
+		clusterID = "cluster-default"
+	}
+
 	const q = `
 INSERT INTO execution_targets (
-  id, name, description, cluster, namespace, service_account,
+  id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
   enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10,
-  $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17, $18
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11,
+  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19
 )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,
   cluster = EXCLUDED.cluster,
+  cluster_id = EXCLUDED.cluster_id,
   namespace = EXCLUDED.namespace,
   service_account = EXCLUDED.service_account,
   argo_server_url = EXCLUDED.argo_server_url,
@@ -626,7 +647,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		t.ID, t.Name, t.Description, t.Cluster, t.Namespace, t.ServiceAccount,
+		t.ID, t.Name, t.Description, t.Cluster, clusterID, t.Namespace, t.ServiceAccount,
 		t.ArgoServerURL, t.ArgoAuthSecretRef, t.ArgoInsecureSkipTLS, t.ArgoCACertRef,
 		t.Enabled, t.Status, t.IsDefault, resourceDefaults, quotaPolicy, labels,
 		t.CreatedAt, t.UpdatedAt,
@@ -741,6 +762,9 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
     SELECT SUM(n.estimated_cost_usd)
     FROM pipeline_run_nodes n
     WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+      -- CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+      -- rollup resourcesDuration and would double-count the total.
+      AND (n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))
   ) AS total_estimated_cost`
 	}
 	return `COALESCE(pr.id, bi.id) AS id,
@@ -769,6 +793,9 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
     SELECT SUM(n.estimated_cost_usd)
     FROM pipeline_run_nodes n
     WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+      -- CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+      -- rollup resourcesDuration and would double-count the total.
+      AND (n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))
   ) AS total_estimated_cost`
 }
 
@@ -838,14 +865,6 @@ const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_ve
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
 	if run == nil {
 		return errors.New("postgres PipelineRunRepo.Save: nil run")
-	}
-	// DEBUG: track who writes Error status
-	if run.Status == "Error" {
-		slog.Warn("PipelineRunRepo.Save writing Error status",
-			"runID", run.ID,
-			"workflowName", run.WorkflowName,
-			"message", run.Message,
-		)
 	}
 	now := time.Now().UTC()
 	if run.ID == "" {
@@ -980,6 +999,12 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 	}
 	if filter.ExcludeBatch {
 		conds = append(conds, "pr.batch_job_id IS NULL")
+	}
+	// CYB-3392b: keep batch children but drop batch parents. The parent row's
+	// id equals its batch_job_id by convention (see usecase.MaterializeBatch),
+	// so a simple `id != batch_job_id` filter is enough.
+	if filter.ExcludeBatchParents {
+		conds = append(conds, "(pr.batch_job_id IS NULL OR pr.id != pr.batch_job_id)")
 	}
 	if filter.Status != "" {
 		statusExpr := "pr.status"

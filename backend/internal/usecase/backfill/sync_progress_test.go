@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,12 @@ type pausedSyncRepo struct {
 	job             *models.BackfillJob
 	items           []models.BackfillItem
 	findJobByIDHook func()
+
+	// notifyMu/notified give ClaimJobNotification real exactly-once claim
+	// semantics (unlike the other stub mocks in this package, which always
+	// return false) so tests can exercise the CYB-3071 notification path.
+	notifyMu sync.Mutex
+	notified bool
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
@@ -41,6 +48,15 @@ func (r *pausedSyncRepo) UpdateJobStatus(_ context.Context, id, status string) e
 		r.job.Status = status
 	}
 	return nil
+}
+func (r *pausedSyncRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {
+	r.notifyMu.Lock()
+	defer r.notifyMu.Unlock()
+	if r.notified {
+		return false, nil
+	}
+	r.notified = true
+	return true, nil
 }
 func (r *pausedSyncRepo) UpdateJobPilotPhase(_ context.Context, id, status, pilotPhase string) error {
 	if r.job != nil && r.job.ID == id {
@@ -83,6 +99,13 @@ func (r *pausedSyncRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec in
 }
 
 func (r *pausedSyncRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
+func (r *pausedSyncRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
+	if r.job != nil && r.job.Status != "completed" && r.job.Status != "failed" && r.job.Status != "paused" {
+		return []models.BackfillJob{*r.job}, nil
+	}
 	return nil, nil
 }
 
@@ -269,9 +292,35 @@ func (syncTestWorkflowClient) SuspendWorkflow(context.Context, string, string) e
 func (syncTestWorkflowClient) ResumeWorkflow(context.Context, string, string) error    { return nil }
 func (syncTestWorkflowClient) TerminateWorkflow(context.Context, string, string) error { return nil }
 
-func TestMapRunStatusToItem_PreservesPending(t *testing.T) {
-	if got := mapRunStatusToItem("Pending"); got != "pending" {
-		t.Fatalf("Pending mapped to %q, want pending", got)
+func TestMapRunStatusToItem_QueuedMapsToRunning(t *testing.T) {
+	// Argo "Pending" means the workflow is submitted and queued (in-flight), which
+	// must map to the backfill item's "running" — NOT "pending", which means
+	// "unsubmitted / free to be re-claimed". Mapping a queued workflow to "pending"
+	// let ClaimNextItem re-select it and executeItem submit a duplicate workflow,
+	// orphaning the original (the tens-of-thousands-of-stuck-workflows bug).
+	if got := mapRunStatusToItem("Pending"); got != "running" {
+		t.Fatalf("Pending mapped to %q, want running", got)
+	}
+}
+
+func TestRunAlreadySubmitted(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name string
+		run  *models.PipelineRun
+		want bool
+	}{
+		{"nil run → deploy", nil, false},
+		{"placeholder pending (no uid, no startedAt) → deploy", &models.PipelineRun{Status: "Pending"}, false},
+		{"submitted queued (argo uid, still Pending) → skip", &models.PipelineRun{Status: "Pending", ArgoWorkflowUID: "uid-1"}, true},
+		{"submitted running (startedAt set) → skip", &models.PipelineRun{Status: "Running", StartedAt: &now}, true},
+		{"terminal succeeded → deploy (retry allowed)", &models.PipelineRun{Status: "Succeeded", ArgoWorkflowUID: "uid-1"}, false},
+		{"terminal failed → deploy (retry allowed)", &models.PipelineRun{Status: "Failed", StartedAt: &now}, false},
+	}
+	for _, tc := range cases {
+		if got := runAlreadySubmitted(tc.run); got != tc.want {
+			t.Errorf("%s: runAlreadySubmitted = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

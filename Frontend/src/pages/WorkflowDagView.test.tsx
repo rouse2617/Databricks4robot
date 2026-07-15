@@ -72,4 +72,39 @@ describe("buildDagElements", () => {
 			]),
 		).toBe(0);
 	});
+
+	it("excludes the CYB-3058 onExit notify hook node by template name (CYB-3095)", () => {
+		const withHook: WorkflowNodeStatus[] = [
+			...nodes,
+			{
+				id: "exit-hook",
+				name: "wf.onExit",
+				displayName: "wf.onExit",
+				type: "Pod",
+				templateName: "databrew-exit-notify",
+				phase: "Succeeded",
+			},
+		];
+		// The DAG count and rendered nodes must ignore the infra hook so they
+		// match the 节点明细 table (which the backend already filters).
+		expect(countDisplayableWorkflowNodes(withHook)).toBe(2);
+		const result = buildDagElements(withHook, undefined, null, "");
+		expect(result.nodes.map((node) => node.id)).not.toContain("exit-hook");
+		expect(result.nodes).toHaveLength(2);
+	});
+
+	it("excludes the onExit hook by .onExit name suffix when template name differs (CYB-3095)", () => {
+		const withHook: WorkflowNodeStatus[] = [
+			...nodes,
+			{
+				id: "exit-hook",
+				name: "wf.onExit",
+				displayName: "wf.onExit",
+				type: "Pod",
+				templateName: "some-other-template",
+				phase: "Succeeded",
+			},
+		];
+		expect(countDisplayableWorkflowNodes(withHook)).toBe(2);
+	});
 });

@@ -1,5 +1,6 @@
 import { PlusOutlined } from "@ant-design/icons";
 import {
+	AutoComplete,
 	Button,
 	Card,
 	Empty,
@@ -11,6 +12,7 @@ import {
 	Space,
 	Tag,
 	Tooltip,
+	Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { assetsApi } from "../../api/assets";
@@ -50,6 +52,41 @@ const REQUIRES_SOURCE_NAME = new Set([
 	"compliance",
 ]);
 const REQUIRES_SOURCE_VERSION = new Set(["algo_sdk", "rule_engine"]);
+
+// Values longer than this are truncated in the chip; the full text stays
+// available via a click-to-expand popover (CYB-3246 Task A).
+const VALUE_TRUNCATE_LEN = 40;
+
+// TagValueText renders a tag value, truncating long strings with an affordance
+// to view the full content in a popover. Short values render inline unchanged.
+function TagValueText({ value }: { value: string }) {
+	const isLong = value.length > VALUE_TRUNCATE_LEN;
+	if (!isLong) {
+		return <span>{value}</span>;
+	}
+	const preview = `${value.slice(0, VALUE_TRUNCATE_LEN)}…`;
+	return (
+		<Popover
+			trigger="click"
+			title="标签完整内容"
+			content={
+				<Typography.Paragraph
+					style={{ maxWidth: 360, marginBottom: 0, whiteSpace: "pre-wrap" }}
+					copyable
+				>
+					{value}
+				</Typography.Paragraph>
+			}
+		>
+			<span
+				style={{ cursor: "pointer", textDecoration: "underline dotted" }}
+				title="点击查看完整内容"
+			>
+				{preview}
+			</span>
+		</Popover>
+	);
+}
 
 export default function TagsTab({
 	assetId,
@@ -154,17 +191,26 @@ export default function TagsTab({
 			return;
 		}
 		setSaving(true);
-		// Optimistic local insert so the new tag shows up immediately,
-		// matching the UX of handleDeleteSource.
-		const optimisticTag: LocalTag = {
-			key: newKey,
-			value: newValue,
-			source: newSource,
-			sourceName: newSourceName || undefined,
-			sourceVersion: newSourceVersion || undefined,
+		// Optimistic local insert so the new tag shows up immediately, matching
+		// the UX of handleDeleteSource. localTags is a Record<string,string> and
+		// localDetailed is an array — update each in its own shape and snapshot
+		// the previous state so we can roll back precisely on failure.
+		const prevTags = localTags;
+		const prevDetailed = localDetailed;
+		const optimisticRow: AssetTagDetail = {
+			tag_key: newKey,
+			tag_value: newValue,
+			source_type: newSource,
+			source_name: newSourceName || undefined,
+			source_version: newSourceVersion || undefined,
 		};
-		setLocalTags((prev) => [...prev, optimisticTag]);
-		setLocalDetailed((prev) => [...prev, optimisticTag]);
+		setLocalTags((prev) => ({ ...prev, [newKey]: newValue }));
+		setLocalDetailed((prev) => [
+			...prev.filter(
+				(r) => !(r.tag_key === newKey && r.source_type === newSource),
+			),
+			optimisticRow,
+		]);
 		try {
 			await assetsApi.upsertTag(assetId, {
 				key: newKey,
@@ -181,9 +227,9 @@ export default function TagsTab({
 			setAddOpen(false);
 			onUpdate();
 		} catch (err) {
-			// Roll back optimistic insert on failure
-			setLocalTags((prev) => prev.filter((t) => t !== optimisticTag));
-			setLocalDetailed((prev) => prev.filter((t) => t !== optimisticTag));
+			// Roll back optimistic insert on failure.
+			setLocalTags(prevTags);
+			setLocalDetailed(prevDetailed);
 			message.error(err instanceof Error ? err.message : "添加标签失败");
 		} finally {
 			setSaving(false);
@@ -192,31 +238,43 @@ export default function TagsTab({
 
 	const groupedEntries = Object.entries(grouped);
 
-	const availableKeys = registry.map((r) => r.key);
+	// Registered keys are offered as suggestions, but the key field accepts any
+	// free-form key (open vocabulary, CYB-3246) — the backend stores unknown
+	// keys as string tags.
+	const keyOptions = registry.map((r) => ({
+		value: r.key,
+		label: r.description ? `${r.key} — ${r.description}` : r.key,
+	}));
 	const regItem = registry.find((r) => r.key === newKey);
+	const isEnumKey = regItem?.type === "enum" && !!regItem.values?.length;
 
 	const addContent = (
 		<div style={{ width: 280 }}>
 			<div className="mb-2">
-				<Select
-					placeholder="选择标签 Key"
-					value={newKey || undefined}
-					onChange={setNewKey}
+				<AutoComplete
+					placeholder="标签 Key（可输入自定义）"
+					value={newKey}
+					onChange={(v) => setNewKey(v)}
 					style={{ width: "100%" }}
 					size="small"
-					options={availableKeys.map((k) => ({ label: k, value: k }))}
-					showSearch
+					options={keyOptions}
+					filterOption={(input, option) =>
+						String(option?.value ?? "")
+							.toLowerCase()
+							.includes(input.toLowerCase())
+					}
+					allowClear
 				/>
 			</div>
 			<div className="mb-2">
-				{regItem?.type === "enum" && regItem.values?.length ? (
+				{isEnumKey ? (
 					<Select
 						placeholder="选择值"
 						value={newValue || undefined}
 						onChange={setNewValue}
 						style={{ width: "100%" }}
 						size="small"
-						options={regItem.values.map((v) => ({ label: v, value: v }))}
+						options={regItem?.values?.map((v) => ({ label: v, value: v }))}
 					/>
 				) : (
 					<Input
@@ -272,13 +330,24 @@ export default function TagsTab({
 	return (
 		<Card size="small">
 			{groupedEntries.length > 0 ? (
-				<Space direction="vertical" style={{ width: "100%" }} size={6}>
+				<Space direction="vertical" style={{ width: "100%" }} size={10}>
 					{groupedEntries.map(([k, rows]) => (
-						<div key={k}>
-							<Tag closable={false} style={{ marginRight: 8 }}>
-								<strong>{k}</strong>
+						<div
+							key={k}
+							style={{
+								display: "flex",
+								alignItems: "flex-start",
+								gap: 8,
+								flexWrap: "wrap",
+								padding: "6px 8px",
+								borderRadius: 6,
+								border: "1px solid var(--color-border-secondary, #f0f0f0)",
+							}}
+						>
+							<Tag closable={false} style={{ marginRight: 0, fontWeight: 600 }}>
+								{k}
 							</Tag>
-							<Space wrap size={[6, 4]}>
+							<Space wrap size={[6, 6]} style={{ flex: 1 }}>
 								{rows.map((row) => (
 									<Tooltip
 										key={`${k}|${row.source_type}|${row.source_version || ""}|${row.source_name || ""}`}
@@ -290,34 +359,52 @@ export default function TagsTab({
 											.filter(Boolean)
 											.join("  ·  ")}
 									>
-										<Tag
-											color={SOURCE_COLORS[row.source_type] ?? "default"}
-											closable={false}
+										<span
+											style={{
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 6,
+												maxWidth: "100%",
+												padding: "2px 6px",
+												borderRadius: 6,
+												background: "var(--color-fill-quaternary, #fafafa)",
+												border:
+													"1px solid var(--color-border-secondary, #f0f0f0)",
+											}}
 										>
-											<span>{row.tag_value}</span>
-											<span style={{ marginLeft: 6, opacity: 0.7 }}>
-												[{row.source_type}
-												{row.source_version ? `@${row.source_version}` : ""}]
-											</span>
+											<TagValueText value={row.tag_value} />
+											<Tag
+												color={SOURCE_COLORS[row.source_type] ?? "default"}
+												style={{ margin: 0, fontSize: 11, lineHeight: "16px" }}
+											>
+												{row.source_type}
+												{row.source_version ? `@${row.source_version}` : ""}
+											</Tag>
 											<Popconfirm
 												title={`删除 ${row.source_type} 的 ${k}？`}
+												okText="删除"
+												cancelText="取消"
+												okButtonProps={{ danger: true }}
 												onConfirm={() => handleDeleteSource(k, row.source_type)}
 											>
 												<Button
 													type="text"
 													size="small"
 													danger
-													style={{ marginLeft: 4, padding: "0 2px" }}
+													style={{ padding: "0 2px", height: 18 }}
 												>
 													×
 												</Button>
 											</Popconfirm>
-										</Tag>
+										</span>
 									</Tooltip>
 								))}
 								{rows.length > 1 ? (
 									<Popconfirm
 										title={`删除 ${k} 的全部来源？`}
+										okText="清空"
+										cancelText="取消"
+										okButtonProps={{ danger: true }}
 										onConfirm={() => handleDeleteSource(k, undefined)}
 									>
 										<Button size="small" type="text" danger>
@@ -330,7 +417,10 @@ export default function TagsTab({
 					))}
 				</Space>
 			) : (
-				<Empty description="暂无标签" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+				<Empty
+					description="暂无标签。可手动添加，或等待上游算法打标完成。"
+					image={Empty.PRESENTED_IMAGE_SIMPLE}
+				/>
 			)}
 
 			<div style={{ marginTop: 12 }}>

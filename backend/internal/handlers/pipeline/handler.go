@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,10 +16,10 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
-	"github.com/google/uuid"
 	runKernel "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/run"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
+	"github.com/google/uuid"
 )
 
 // BatchSubtaskReconciler materializes batch subtasks as pipeline runs for list views.
@@ -26,6 +27,10 @@ type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
 	SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error
+	// SyncJob force-syncs a batch job's progress (terminal detection + once-only
+	// completion notification). Used to cascade a child run's terminal status
+	// push up to its parent batch (CYB-3078).
+	SyncJob(ctx context.Context, jobID string) error
 }
 
 // Handler bundles the pipeline endpoints.
@@ -116,12 +121,17 @@ func (h *Handler) Promote(c *gin.Context) {
 // ListTemplates handles GET /api/v1/pipelines.
 func (h *Handler) ListTemplates(c *gin.Context) {
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
+	// CYB-3390: exclude_auto_drafts=true pushes the "hide auto-named drafts"
+	// filter to the DB so pagination reflects the curated set rather than
+	// requiring the client to page through auto-draft noise.
+	excludeAuto := strings.EqualFold(strings.TrimSpace(c.Query("exclude_auto_drafts")), "true")
 	filter := models.PipelineTemplateListFilter{
-		Query:    strings.TrimSpace(c.Query("q")),
-		Scope:    strings.TrimSpace(c.Query("scope")),
-		Sort:     strings.TrimSpace(c.DefaultQuery("sort", "updated_at_desc")),
-		Page:     page,
-		PageSize: pageSize,
+		Query:             strings.TrimSpace(c.Query("q")),
+		Scope:             strings.TrimSpace(c.Query("scope")),
+		Sort:              strings.TrimSpace(c.DefaultQuery("sort", "updated_at_desc")),
+		Page:              page,
+		PageSize:          pageSize,
+		ExcludeAutoDrafts: excludeAuto,
 	}
 	items, total, err := h.uc.ListTemplatesPaged(c.Request.Context(), filter)
 	if err != nil {
@@ -414,6 +424,10 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	summaryView := strings.EqualFold(c.Query("view"), "summary")
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
+	// CYB-3392b: excludeBatchParents=true keeps batch children (so the ui
+	// can show a "跳批次" badge on child rows) but hides the aggregate
+	// batch parent row from the mixed "单次执行" tab.
+	excludeBatchParents := strings.EqualFold(c.Query("excludeBatchParents"), "true") || c.Query("excludeBatchParents") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	query := strings.TrimSpace(c.Query("q"))
 	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
@@ -438,15 +452,16 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		err   error
 	)
 	filter := models.PipelineRunListFilter{
-		BatchJobID:     batchJobID,
-		ExcludeBatch:   excludeBatch,
-		Status:         statusFilter,
-		Query:          query,
-		PipelineNodeID: pipelineNodeID,
-		NodeStatus:     nodeStatus,
-		Page:           page,
-		PageSize:       pageSize,
-		RefreshActive:  refreshActive,
+		BatchJobID:          batchJobID,
+		ExcludeBatch:        excludeBatch,
+		ExcludeBatchParents: excludeBatchParents,
+		Status:              statusFilter,
+		Query:               query,
+		PipelineNodeID:      pipelineNodeID,
+		NodeStatus:          nodeStatus,
+		Page:                page,
+		PageSize:            pageSize,
+		RefreshActive:       refreshActive,
 		SummaryOnly:    summaryView,
 	}
 	if batchJobID != "" && refreshActive && h.batchRuns != nil {
@@ -793,6 +808,61 @@ func (h *Handler) RetryRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, run)
+}
+
+// runWebhookRequest is the poke payload sent by the Argo workflow exit hook
+// (CYB-3058). The phase is a hint only; DataBrew re-reads the workflow for the
+// authoritative state, so a forged/replayed call cannot inject false status.
+type runWebhookRequest struct {
+	WorkflowName string `json:"workflowName"`
+	Namespace    string `json:"namespace"`
+	UID          string `json:"uid"`
+	Phase        string `json:"phase"`
+}
+
+// HandleRunWebhook handles POST /api/v1/pipeline-runs/webhook. It receives an
+// Argo workflow exit-hook poke and refreshes the corresponding run from Argo.
+// Idempotent: repeated deliveries converge on the authoritative state.
+func (h *Handler) HandleRunWebhook(c *gin.Context) {
+	var req runWebhookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid webhook payload", nil)
+		return
+	}
+	if strings.TrimSpace(req.WorkflowName) == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflowName is required", nil)
+		return
+	}
+	run, err := h.uc.RefreshRunFromWorkflowByName(c.Request.Context(), req.WorkflowName, req.UID)
+	if err != nil {
+		httpresp.Internal(c, "failed to refresh run from workflow")
+		return
+	}
+	if run == nil {
+		httpresp.NotFound(c, "RUN_NOT_FOUND", "no run found for workflow")
+		return
+	}
+	// Cascade a terminal batch-child run up to its parent batch so the batch
+	// finalizes + notifies immediately on the last child's exit hook, without
+	// waiting for the reconcile backstop or a page open (CYB-3078, fast path).
+	if h.batchRuns != nil && run.BatchJobID != nil && isTerminalRunStatus(run.Status) {
+		if jobID := strings.TrimSpace(*run.BatchJobID); jobID != "" {
+			if err := h.batchRuns.SyncJob(c.Request.Context(), jobID); err != nil {
+				slog.Warn("run webhook: batch sync cascade failed", "jobID", jobID, "runID", run.ID, "err", err)
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"runId": run.ID, "status": run.Status})
+}
+
+// isTerminalRunStatus reports whether an Argo run phase is terminal.
+func isTerminalRunStatus(status string) bool {
+	switch status {
+	case "Succeeded", "Failed", "Error":
+		return true
+	default:
+		return false
+	}
 }
 
 // RetryRunRuntime handles POST /api/v1/runs/:id/retry.

@@ -167,7 +167,7 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-gpu-step" {
+		if tmpl.Name != "step-gpu" {
 			continue
 		}
 		if tmpl.Container == nil {
@@ -190,7 +190,7 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("step-gpu-step template not found")
+	t.Fatal("step-gpu template not found")
 }
 
 func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
@@ -230,7 +230,7 @@ func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-a" {
+		if tmpl.Name != "step-worker" {
 			continue
 		}
 		if got := tmpl.NodeSelector["workload"]; got != "databrew" {
@@ -239,7 +239,7 @@ func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
 		assertTemplateToleration(t, tmpl, "environment", "dev")
 		return
 	}
-	t.Fatal("step-a template not found")
+	t.Fatal("step-worker template not found")
 }
 
 func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
@@ -285,7 +285,7 @@ func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
 	}
 	var mounted bool
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-secret-step" || tmpl.Container == nil {
+		if tmpl.Name != "step-secret" || tmpl.Container == nil {
 			continue
 		}
 		for _, mount := range tmpl.Container.VolumeMounts {
@@ -359,7 +359,7 @@ func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name != "step-script-step" || tmpl.Script == nil {
+		if tmpl.Name != "step-script" || tmpl.Script == nil {
 			continue
 		}
 		for _, mount := range tmpl.Script.VolumeMounts {
@@ -369,7 +369,7 @@ func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
 		}
 		t.Fatalf("expected script volume mount, got %#v", tmpl.Script.VolumeMounts)
 	}
-	t.Fatal("step-script-step script template not found")
+	t.Fatal("step-script script template not found")
 }
 
 func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
@@ -432,7 +432,7 @@ func TestTranspileNormalizesDuplicatedShellArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if got := tmpl.Container.Args; len(got) != 1 || got[0] != "echo ok" {
 				t.Fatalf("args = %#v, want single script body", got)
 			}
@@ -462,7 +462,7 @@ func TestTranspileSkipsUnconsumedOutputFileContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if len(tmpl.Outputs.Parameters) != 0 {
 				t.Fatalf("outputs = %+v, want none for unconsumed output port", tmpl.Outputs.Parameters)
 			}
@@ -495,7 +495,7 @@ func TestTranspileDeclaresOutputWhenCommandWritesOutputFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if len(tmpl.Outputs.Parameters) != 1 || tmpl.Outputs.Parameters[0].Name != "output" {
 				t.Fatalf("outputs = %+v, want output parameter", tmpl.Outputs.Parameters)
 			}
@@ -547,7 +547,7 @@ func TestTranspileRetryStrategy(t *testing.T) {
 
 	// Find the node template (not the DAG template)
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.RetryStrategy == nil {
 				t.Fatal("expected retry strategy")
 			}
@@ -578,7 +578,7 @@ func TestTranspileActiveDeadlineSeconds(t *testing.T) {
 	}
 
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.ActiveDeadlineSeconds == nil {
 				t.Fatal("expected activeDeadlineSeconds")
 			}
@@ -610,7 +610,7 @@ func TestTranspileRetryAndTimeout(t *testing.T) {
 	}
 
 	for _, tmpl := range wf.Spec.Templates {
-		if tmpl.Name == "step-n1" {
+		if tmpl.Name == "step-n" {
 			if tmpl.RetryStrategy == nil || tmpl.RetryStrategy.Limit.IntValue() != 2 {
 				t.Fatal("expected retry limit 2")
 			}
@@ -703,10 +703,116 @@ func TestTranspileUsesCanonicalStepTemplateName(t *testing.T) {
 	if dag == nil || dag.DAG == nil || len(dag.DAG.Tasks) != 1 {
 		t.Fatalf("expected one DAG task, got %#v", dag)
 	}
-	if dag.DAG.Tasks[0].Name != "step-1" {
-		t.Fatalf("task name = %q, want step-1", dag.DAG.Tasks[0].Name)
+	if dag.DAG.Tasks[0].Name != "step-sleep" {
+		t.Fatalf("task name = %q, want step-sleep", dag.DAG.Tasks[0].Name)
 	}
-	if dag.DAG.Tasks[0].Template != "step-1" {
-		t.Fatalf("task template = %q, want step-1", dag.DAG.Tasks[0].Template)
+	if dag.DAG.Tasks[0].Template != "step-sleep" {
+		t.Fatalf("task template = %q, want step-sleep", dag.DAG.Tasks[0].Template)
+	}
+}
+
+// helper: a minimal single-node pipeline for hook tests.
+func singleNodePipeline() *Pipeline {
+	return &Pipeline{
+		Name: "hooktest",
+		Nodes: []Node{{
+			ID: "a",
+			Component: Component{
+				Name:    "a",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo hi"}},
+			},
+		}},
+	}
+}
+
+func findTemplate(wf *wfv1.Workflow, name string) *wfv1.Template {
+	for i := range wf.Spec.Templates {
+		if wf.Spec.Templates[i].Name == name {
+			return &wf.Spec.Templates[i]
+		}
+	}
+	return nil
+}
+
+func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:                    "wf-hook",
+		Namespace:               "cyber-databrew-dev",
+		ExitHookURL:             "https://backend.example/api/v1/pipeline-runs/webhook",
+		ExitHookTokenSecretName: "databrew-run-webhook-token",
+		ExitHookTokenSecretKey:  "token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, ok := wf.Spec.Hooks[wfv1.ExitLifecycleEvent]
+	if !ok {
+		t.Fatalf("expected exit lifecycle hook to be set")
+	}
+	if hook.Template != ExitNotifyTemplateName {
+		t.Fatalf("hook template = %q, want %q", hook.Template, ExitNotifyTemplateName)
+	}
+	// The exit handler must be a plain container (NOT an Argo http template,
+	// whose agent pod cannot start on this cluster), running curl.
+	tmpl := findTemplate(wf, ExitNotifyTemplateName)
+	if tmpl == nil || tmpl.Container == nil {
+		t.Fatalf("expected container notify template %q", ExitNotifyTemplateName)
+	}
+	if tmpl.HTTP != nil {
+		t.Fatalf("notify template must not use the http template (agent pod unavailable)")
+	}
+	if tmpl.Container.Image == "" {
+		t.Fatalf("notify container must set an image")
+	}
+	// Minimal, explicit resource footprint (curl once-off).
+	if tmpl.Container.Resources.Requests.Cpu().IsZero() || tmpl.Container.Resources.Requests.Memory().IsZero() {
+		t.Fatalf("notify container must set minimal cpu/memory requests, got %+v", tmpl.Container.Resources)
+	}
+	if tmpl.Container.Resources.Limits.Cpu().IsZero() || tmpl.Container.Resources.Limits.Memory().IsZero() {
+		t.Fatalf("notify container must set cpu/memory limits, got %+v", tmpl.Container.Resources)
+	}
+	joined := strings.Join(tmpl.Container.Args, " ")
+	if !strings.Contains(joined, "curl") || !strings.Contains(joined, "$DATABREW_WEBHOOK_URL") {
+		t.Fatalf("notify container must curl the webhook url: %q", joined)
+	}
+	// URL as env value; token as env valueFrom.secretKeyRef (never literal).
+	var urlEnv, tokEnv *corev1.EnvVar
+	for i := range tmpl.Container.Env {
+		switch tmpl.Container.Env[i].Name {
+		case "DATABREW_WEBHOOK_URL":
+			urlEnv = &tmpl.Container.Env[i]
+		case "DATABREW_WEBHOOK_TOKEN":
+			tokEnv = &tmpl.Container.Env[i]
+		}
+	}
+	if urlEnv == nil || urlEnv.Value != "https://backend.example/api/v1/pipeline-runs/webhook" {
+		t.Fatalf("unexpected webhook url env: %+v", urlEnv)
+	}
+	if tokEnv == nil {
+		t.Fatalf("expected DATABREW_WEBHOOK_TOKEN env")
+	}
+	if tokEnv.Value != "" {
+		t.Fatalf("token env must not carry a literal value")
+	}
+	if tokEnv.ValueFrom == nil || tokEnv.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("token env must use valueFrom.secretKeyRef")
+	}
+	if tokEnv.ValueFrom.SecretKeyRef.Name != "databrew-run-webhook-token" || tokEnv.ValueFrom.SecretKeyRef.Key != "token" { // pragma: allowlist secret
+		t.Fatalf("unexpected secretKeyRef: %+v", tokEnv.ValueFrom.SecretKeyRef)
+	}
+}
+
+func TestTranspileNoExitHookWhenURLEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nohook", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wf.Spec.Hooks) != 0 {
+		t.Fatalf("expected no hooks, got %v", wf.Spec.Hooks)
+	}
+	if findTemplate(wf, ExitNotifyTemplateName) != nil {
+		t.Fatalf("notify template must not be present when hook disabled")
 	}
 }

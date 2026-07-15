@@ -30,11 +30,32 @@ type TagSourceDef struct {
 }
 
 // TagRegistry manages all registered tag definitions and source contracts.
+//
+// Tag definitions come from two layers (CYB-3246 Phase 2):
+//   - tags:    the YAML baseline loaded from disk (always present, never wiped).
+//   - managed: an overlay of DB-backed definitions set via SetManagedTags.
+//
+// The effective definition for a key is the managed overlay if present, else
+// the YAML baseline. This means an empty or unavailable DB never erases the
+// baseline validation, and admin CRUD (which refreshes only the overlay) can
+// add/override definitions without a restart. Keys in neither layer are
+// open-vocabulary free-form string tags (Phase 1).
 type TagRegistry struct {
 	mu      sync.RWMutex
 	tags    map[string]TagDef
+	managed map[string]TagDef
 	sources map[string]TagSourceDef
 	path    string
+}
+
+// effectiveLocked returns the definition for key from the managed overlay, then
+// the YAML baseline. Caller must hold at least the read lock.
+func (r *TagRegistry) effectiveLocked(key string) (TagDef, bool) {
+	if def, ok := r.managed[key]; ok {
+		return def, true
+	}
+	def, ok := r.tags[key]
+	return def, ok
 }
 
 // tagRegistryFile is the top-level YAML structure.
@@ -87,14 +108,40 @@ func (r *TagRegistry) Reload() error {
 	return nil
 }
 
-// Validate checks that the given key is registered and the value is valid
-// according to the tag definition (enum membership or string length).
+// DefaultUnregisteredTagMaxLength bounds the value length of open-vocabulary
+// tags (CYB-3246). Keys not present in the registry are accepted as free-form
+// string tags rather than rejected, but their values are still capped to avoid
+// unbounded writes. Chosen to match the registered `notes` tag's max_length so
+// ad-hoc notes and custom keys share a single ceiling; measured with len()
+// (bytes) to stay consistent with the registered `string` validation below.
+const DefaultUnregisteredTagMaxLength = 500
+
+// SetManagedTags replaces the managed (DB) overlay atomically (CYB-3246 Phase 2).
+// The YAML baseline is untouched, so a nil/empty overlay simply reverts to the
+// baseline — an unavailable or empty DB never erases baseline validation. Used
+// to load definitions from the DB at startup and to refresh the validation
+// hot-path after an admin CRUD write, so managed-tag changes take effect
+// without a service restart.
+func (r *TagRegistry) SetManagedTags(managed map[string]TagDef) {
+	r.mu.Lock()
+	r.managed = managed
+	r.mu.Unlock()
+}
+
+// Validate checks a tag write. A registered key is validated strictly against
+// its definition (enum membership or string length). An unregistered key is
+// accepted as a free-form string tag bounded by DefaultUnregisteredTagMaxLength
+// (open vocabulary, CYB-3246) — this lets users tag assets with arbitrary
+// semantic keys without editing tag_registry.yaml or restarting the service.
 func (r *TagRegistry) Validate(key, value string) error {
 	r.mu.RLock()
-	def, ok := r.tags[key]
+	def, ok := r.effectiveLocked(key)
 	r.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("tag_registry: key %q not registered", key)
+		if len(value) > DefaultUnregisteredTagMaxLength {
+			return fmt.Errorf("tag_registry: value for unregistered key %q exceeds max length %d (got %d)", key, DefaultUnregisteredTagMaxLength, len(value))
+		}
+		return nil
 	}
 
 	switch def.Type {
@@ -115,8 +162,24 @@ func (r *TagRegistry) Validate(key, value string) error {
 	}
 }
 
-// GetAllTags returns a copy of all registered tag definitions.
+// GetAllTags returns the effective definitions: the YAML baseline overlaid by
+// the managed (DB) definitions.
 func (r *TagRegistry) GetAllTags() map[string]TagDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	cp := make(map[string]TagDef, len(r.tags)+len(r.managed))
+	for k, v := range r.tags {
+		cp[k] = v
+	}
+	for k, v := range r.managed {
+		cp[k] = v
+	}
+	return cp
+}
+
+// GetBaseTags returns a copy of only the YAML-baseline definitions (excluding
+// the managed overlay). Used to distinguish built-in vs admin-managed tags.
+func (r *TagRegistry) GetBaseTags() map[string]TagDef {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	cp := make(map[string]TagDef, len(r.tags))
@@ -187,6 +250,6 @@ func (r *TagRegistry) SourceDef(sourceType string) (TagSourceDef, bool) {
 func (r *TagRegistry) ShouldPropagate(key string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	def, ok := r.tags[key]
+	def, ok := r.effectiveLocked(key)
 	return ok && def.Propagation == "descendants"
 }

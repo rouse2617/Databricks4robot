@@ -32,7 +32,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
-	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // Sentinel errors.
@@ -73,6 +73,20 @@ type Usecase struct {
 	runtimeMountCatalog     RuntimeMountCatalog
 	now                     func() time.Time
 	workflowTTLSecondsAfter int32
+
+	// Argo run status push webhook (CYB-3058). When argoRunWebhookURL is empty,
+	// no exit hook is injected into transpiled workflows (poll-only fallback).
+	argoRunWebhookURL             string
+	argoRunWebhookTokenSecretName string
+	argoRunWebhookTokenSecretKey  string
+	argoRunWebhookImage           string
+
+	// videoDurations looks up source-video durations by asset_id (CYB-3059).
+	videoDurations videoDurationLookup
+
+	// nodeResolver resolves a node's real machine type for accurate per-pod cost
+	// pricing (CYB-3073); nil falls back to the default GPU-pool rate.
+	nodeResolver nodeInstanceResolver
 
 	// batchCancels holds cancel funcs for in-flight batch submission
 	// goroutines so StopBatchRuns can halt further run creation.
@@ -231,6 +245,109 @@ func (uc *Usecase) argoWorkflowTTLSecondsAfter() int32 {
 		return uc.workflowTTLSecondsAfter
 	}
 	return transpiler.DefaultTTLSecondsAfterCompletion
+}
+
+// SetArgoRunWebhook configures the exit-hook that pushes run status to DataBrew.
+// url empty disables hook injection (poll-only). secretName/secretKey reference
+// the K8s Secret (in the workflow namespace) holding the webhook auth token.
+func (uc *Usecase) SetArgoRunWebhook(url, secretName, secretKey, image string) {
+	uc.argoRunWebhookURL = strings.TrimSpace(url)
+	uc.argoRunWebhookTokenSecretName = strings.TrimSpace(secretName)
+	uc.argoRunWebhookTokenSecretKey = strings.TrimSpace(secretKey)
+	uc.argoRunWebhookImage = strings.TrimSpace(image)
+}
+
+// videoDurationLookup returns source-video durations (seconds) by video_id.
+type videoDurationLookup interface {
+	GetByVideoIDs(ctx context.Context, videoIDs []string) (map[string]float64, error)
+}
+
+// SetVideoDurationRepo wires the video_durations lookup used to enrich the
+// batch subtask runs list with the source video's duration (CYB-3059).
+func (uc *Usecase) SetVideoDurationRepo(r videoDurationLookup) {
+	uc.videoDurations = r
+}
+
+// nodeInstanceResolver resolves a node name to its machine type / accelerator /
+// provisioning for cost pricing (CYB-3073).
+type nodeInstanceResolver interface {
+	ResolveNodeInstance(ctx context.Context, nodeName string) (instanceType, accelerator, provisioning string)
+}
+
+// SetNodeInstanceResolver wires per-node instance-type resolution so pipeline
+// step costs are priced by the node's real machine type instead of the default
+// GPU-pool rate. Nil keeps the previous default behavior.
+func (uc *Usecase) SetNodeInstanceResolver(r nodeInstanceResolver) {
+	uc.nodeResolver = r
+}
+
+// enrichResourcesDurationWithNode annotates a node's resourcesDuration with the
+// real instance_type / gpu_type / provisioning (looked up by host node) so
+// resourcesDurationToCost prices it correctly. Best-effort: an unresolved node
+// is left unchanged and keeps the default pricing.
+func (uc *Usecase) enrichResourcesDurationWithNode(ctx context.Context, node *models.PipelineRunNode) {
+	if uc.nodeResolver == nil || node == nil || strings.TrimSpace(node.HostNodeName) == "" {
+		return
+	}
+	it, acc, prov := uc.nodeResolver.ResolveNodeInstance(ctx, node.HostNodeName)
+	if it == "" {
+		return
+	}
+	rd := node.ResourcesDuration
+	if rd == nil {
+		rd = map[string]interface{}{}
+	}
+	rd["instance_type"] = it
+	if acc != "" {
+		rd["gpu_type"] = acc
+	} else {
+		rd["gpu_type"] = "none"
+	}
+	if prov != "" {
+		rd["provisioning"] = prov
+	}
+	node.ResourcesDuration = rd
+}
+
+// attachVideoDurations enriches each run with its source video's duration,
+// looked up by asset_id. Best-effort: on error or missing rows the field stays
+// nil (some videos simply have no recorded duration).
+func (uc *Usecase) attachVideoDurations(ctx context.Context, items []models.PipelineRun) {
+	if uc.videoDurations == nil || len(items) == 0 {
+		return
+	}
+	seen := make(map[string]struct{})
+	for i := range items {
+		for _, a := range items[i].AssetIDs {
+			if a != "" {
+				seen[a] = struct{}{}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	durs, err := uc.videoDurations.GetByVideoIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("attachVideoDurations failed", "err", err)
+		return
+	}
+	if len(durs) == 0 {
+		return
+	}
+	for i := range items {
+		for _, a := range items[i].AssetIDs {
+			if d, ok := durs[a]; ok {
+				dd := d
+				items[i].VideoDurationSec = &dd
+				break
+			}
+		}
+	}
 }
 
 func defaultExecutionTargetServiceAccount() string {
@@ -1539,6 +1656,12 @@ func (uc *Usecase) appendWorkflowEvents(ctx context.Context, run *models.Pipelin
 
 func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun, nodes map[string]wfv1.NodeStatus) {
 	for id, node := range nodes {
+		// Skip the DataBrew exit-notify hook node (CYB-3058): it is infrastructure,
+		// not a business step, and must not surface as an extra node/pod in the run
+		// timeline or pods view (it is already excluded from runNodesFromWorkflow).
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
 		displayName := node.DisplayName
 		if displayName == "" {
 			displayName = node.Name
@@ -1605,6 +1728,12 @@ func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun
 func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.NodeStatus) []models.PipelineRunNode {
 	out := make([]models.PipelineRunNode, 0, len(nodes))
 	for id, node := range nodes {
+		// Exclude the DataBrew exit-notify hook node (CYB-3058): it is
+		// infrastructure, not a business step, and must not appear in the step
+		// list or influence run status derivation.
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
 		now := time.Now().UTC()
 		podName := ""
 		if node.Type == wfv1.NodeTypePod {
@@ -1780,6 +1909,7 @@ func (uc *Usecase) replaceRunNodesFromWorkflow(ctx context.Context, run *models.
 	}
 	for i := range nodes {
 		if uc.pricing != nil {
+			uc.enrichResourcesDurationWithNode(ctx, &nodes[i])
 			nodes[i].EstimatedCostUSD = resourcesDurationToCost(nodes[i].ResourcesDuration, uc.pricing)
 		}
 	}
@@ -1960,6 +2090,41 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		return
 	}
 	existingWasActive := isActiveDeploymentStatus(existing.Status)
+	// Monotonicity guard (CYB-3058): a run that has already succeeded must not be
+	// regressed to an active phase by a late or out-of-order observation (e.g. a
+	// delayed poll snapshot landing after a push-triggered terminal apply). Only
+	// success is guarded here — Argo never un-succeeds a workflow. Error/Failed
+	// remain revivable ONLY as misclassification recovery (TTL-cleanup false
+	// positives, which carry a stale-unavailable message); a definitive failure
+	// is guarded separately below.
+	if isSucceededRunStatus(existing.Status) && isActiveDeploymentStatus(run.Status) {
+		slog.Warn("persistRunObservation: ignoring active-status regression on succeeded run",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"succeededStatus", existing.Status,
+			"incomingStatus", run.Status,
+		)
+		*run = *existing
+		return
+	}
+	// Monotonicity guard (CYB-3080): a run rejected before submission (e.g. by the
+	// resource guard) is Failed/Error with a real, non-transient message and will
+	// never have an Argo workflow. The "waiting for workflow creation" heuristic
+	// (isPendingBatchWorkflowCreation matches any placeholder batch name) would
+	// otherwise revive it to Pending with the message wiped, leaving it to poll a
+	// workflow that cannot exist. Unlike a misclassification (stale-unavailable
+	// message), a definitive failure is final and must not be regressed to active.
+	if isDefinitiveTerminalFailure(existing) && isActiveDeploymentStatus(run.Status) {
+		slog.Warn("persistRunObservation: ignoring active-status regression on definitively-failed run",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"failedStatus", existing.Status,
+			"failedMessage", existing.Message,
+			"incomingStatus", run.Status,
+		)
+		*run = *existing
+		return
+	}
 	if existing.Status != run.Status || existing.Message != run.Message {
 		slog.Info("persistRunObservation status change",
 			"runID", run.ID,
@@ -2401,11 +2566,9 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
-		slog.Warn("refreshRunStatus GetWorkflow failed",
-			"runID", run.ID,
-			"err", err,
-			"isNotFound", errors.Is(err, argo.ErrNotFound),
-		)
+		// Argo TTL-cleans finished workflows, so refresh sees plain 404 on
+		// most runs after a while. That's normal — mark run as done or wait,
+		// but don't spam Warn on it. Only surface the truly unexpected paths.
 		if errors.Is(err, argo.ErrUnexpectedNotFound) {
 			slog.Warn("refreshRunStatus: unexpected 404 (config error) -- skip markRunWorkflowNotFound",
 				"runID", run.ID, "workflowName", run.WorkflowName)
@@ -2420,18 +2583,17 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 				return
 			}
 			uc.markRunWorkflowNotFound(ctx, run)
+			return
 		}
+		slog.Warn("refreshRunStatus GetWorkflow failed",
+			"runID", run.ID,
+			"err", err,
+		)
 		return
 	}
 	if wf == nil {
 		return
 	}
-	slog.Info("refreshRunStatus GetWorkflow succeeded",
-		"runID", run.ID,
-		"workflowName", run.WorkflowName,
-		"wfPhase", wf.Status.Phase,
-		"wfMessage", wf.Status.Message,
-	)
 	uc.applyWorkflowToRun(ctx, run, wf)
 	uc.maybeMarkStaleRun(ctx, run, wf)
 }
@@ -2498,6 +2660,58 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 	run.LedgerState = "has_ledger"
 	logPipelineSideEffect("update pipeline run ledger state + backfill completed",
 		uc.runRepo.UpdateLedgerState(ctx, run.ID, "has_ledger"))
+}
+
+// RefreshRunFromWorkflowByName is the entry point for the run status push
+// webhook (CYB-3058). The webhook payload is a trigger ("poke") only: DataBrew
+// resolves the run by workflow name, cross-checks the workflow UID, fetches the
+// authoritative workflow state from Argo, and applies it (status + events +
+// nodes) via applyWorkflowToRun. The payload phase is never trusted, so a
+// forged/replayed call cannot inject false status. Returns (nil, nil) when no
+// run matches the workflow name (handler maps to 404).
+func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowName, workflowUID string) (*models.PipelineRun, error) {
+	if uc.runRepo == nil || uc.wfClient == nil {
+		return nil, nil
+	}
+	workflowName = strings.TrimSpace(workflowName)
+	if workflowName == "" {
+		return nil, nil
+	}
+	run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, nil
+	}
+	// Guard against workflow-name reuse across generations: if we know the UID
+	// and the payload carries a different one, skip (idempotent no-op).
+	if uid := strings.TrimSpace(workflowUID); uid != "" {
+		if known := strings.TrimSpace(run.ArgoWorkflowUID); known != "" && known != uid {
+			slog.Warn("RefreshRunFromWorkflowByName: workflow UID mismatch, ignoring poke",
+				"runID", run.ID, "workflowName", workflowName,
+				"knownUID", known, "payloadUID", uid)
+			return run, nil
+		}
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) || errors.Is(err, argo.ErrUnexpectedNotFound) {
+			slog.Warn("RefreshRunFromWorkflowByName: GetWorkflow not found, skipping",
+				"runID", run.ID, "workflowName", workflowName, "err", err)
+			return run, nil
+		}
+		return run, err
+	}
+	if wf == nil {
+		return run, nil
+	}
+	uc.applyWorkflowToRun(ctx, run, wf)
+	return run, nil
 }
 
 // SyncActiveRunEvents refreshes active runs from Argo and records durable
@@ -2934,6 +3148,58 @@ func applyCyberpipeNodeCompatibilityAliases(pipe *transpiler.Pipeline) {
 	walk(pipe.Nodes)
 }
 
+// costTrackingLabelPrefix namespaces cost-attribution labels so they read
+// clearly in GKE Cost Allocation / BigQuery billing export alongside Argo's
+// and GKE's own labels (workflows.argoproj.io/*, topology.kubernetes.io/*).
+const costTrackingLabelPrefix = "cyber-databrew/"
+
+// buildCostTrackingLabels returns the pod labels used for GKE Cost Allocation
+// attribution, skipping any identifier that is unknown (empty) rather than
+// emitting an empty-valued label.
+func buildCostTrackingLabels(owner, runID, assetID string) map[string]string {
+	labels := map[string]string{}
+	if v := sanitizeLabelValue(owner); v != "" {
+		labels[costTrackingLabelPrefix+"owner"] = v
+	}
+	// run-id attributes real GCP cost (BigQuery billing export) to a single run;
+	// asset-id to the one video it processed, joinable to video_durations by
+	// asset_id (CYB-3118). Both are omitted when unknown/ambiguous.
+	if v := sanitizeLabelValue(runID); v != "" {
+		labels[costTrackingLabelPrefix+"run-id"] = v
+	}
+	if v := sanitizeLabelValue(assetID); v != "" {
+		labels[costTrackingLabelPrefix+"asset-id"] = v
+	}
+	return labels
+}
+
+// sanitizeLabelValue coerces raw into a valid Kubernetes label value:
+// [a-zA-Z0-9] at each end, only [-_.a-zA-Z0-9] in between, max 63 chars.
+// Owner identifiers are emails, so "@" is escaped rather than dropped to
+// keep the value legible (e.g. "a@b.com" -> "a-at-b.com").
+func sanitizeLabelValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == '@':
+			b.WriteString("-at-")
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := b.String()
+	if len(out) > 63 {
+		out = out[:63]
+	}
+	return strings.Trim(out, "-_.")
+}
+
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
 // assetIDs are passed as workflow-level parameters (F4.1).
@@ -2973,19 +3239,25 @@ func (uc *Usecase) Deploy(
 		pipeName = name
 	}
 
-	wfName := pipeName + "-" + uuid.New().String()[:8]
 	depID := uuid.New().String()
 	templateID := ""
 	templateVersion := 0
 	dryRun := false
+	costOwner := ""
 	if len(opts) > 0 {
 		templateID = opts[0].TemplateID
 		templateVersion = opts[0].TemplateVersion
 		dryRun = opts[0].DryRun
+		costOwner = opts[0].Owner
 		if strings.TrimSpace(opts[0].PreallocatedRunID) != "" {
 			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
 		}
 	}
+	// Workflow name = run id (depID). The Argo pod name is <wfName>-<step>-<hash>,
+	// so leading with the run id lets any pod map straight to /runs/<id>
+	// (CYB-3076). depID is a UUID → a valid RFC1123 name. pipeName is retained
+	// for the run's display name only.
+	wfName := depID
 	resolveTargetID := ""
 	if len(opts) > 0 {
 		resolveTargetID = opts[0].TargetID
@@ -3088,6 +3360,14 @@ func (uc *Usecase) Deploy(
 		return nil, err
 	}
 
+	// A run around exactly one asset is one video; label its cost with that
+	// asset id (CYB-3118). Ambiguous (multi-asset) / no-asset runs are left
+	// unlabelled so per-video billing stays unambiguous.
+	costAssetID := ""
+	if len(assetIDs) == 1 && assetIDs[0] != "no-asset" {
+		costAssetID = assetIDs[0]
+	}
+
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
 		Name:                 wfName,
@@ -3099,13 +3379,26 @@ func (uc *Usecase) Deploy(
 		WorkflowParams:       wfParams,
 		GlobalEnv:            globalEnv,
 		ExtraVolumes:         extraVolumes,
+
+		ExitHookURL:             uc.argoRunWebhookURL,
+		ExitHookTokenSecretName: uc.argoRunWebhookTokenSecretName,
+		ExitHookTokenSecretKey:  uc.argoRunWebhookTokenSecretKey,
+		ExitHookImage:           uc.argoRunWebhookImage,
+
+		PodLabels: buildCostTrackingLabels(costOwner, depID, costAssetID),
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
 
-	manifestBytes, err := yaml.Marshal(wf)
+	// sigsyaml (sigs.k8s.io/yaml) round-trips through encoding/json first, so it
+	// correctly calls resource.Quantity's MarshalJSON (producing e.g. "500m")
+	// instead of yaml.v3's default reflection, which only sees Quantity's
+	// exported Format field and silently drops the actual numeric value — see
+	// CYB-3065. Must stay paired with the sigsyaml.Unmarshal callers
+	// (reconstruct_from_db.go, resource_usage.go) for round-trip fidelity.
+	manifestBytes, err := sigsyaml.Marshal(wf)
 	if err != nil {
 		return nil, fmt.Errorf("marshal manifest: %w", err)
 	}
@@ -3552,6 +3845,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		normalizeActiveRunRuntimeFields(items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
+			uc.attachVideoDurations(ctx, items)
 		}
 		annotateRunDiagnostics(items)
 		// The default list view keeps per-run nodes so callers can render the
@@ -3572,6 +3866,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 	uc.refreshRunSummariesForList(ctx, items)
 	normalizeActiveRunRuntimeFields(items)
 	annotateRunDiagnostics(items)
+	uc.attachVideoDurations(ctx, items)
 	return items, len(items), nil
 }
 
@@ -5071,6 +5366,46 @@ func isActiveDeploymentStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// IsActiveDeploymentStatus is the exported form of isActiveDeploymentStatus,
+// for callers outside this package (e.g. the legacy workflow handler) that
+// need to apply the exact same active-vs-terminal check as the Run Kernel path.
+func IsActiveDeploymentStatus(status string) bool {
+	return isActiveDeploymentStatus(status)
+}
+
+// isSucceededRunStatus reports whether the run status is a successful terminal
+// state. Success is final in Argo (a workflow never un-succeeds), so it is the
+// only status protected by the monotonicity guard in persistRunObservation.
+func isSucceededRunStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(wfv1.WorkflowSucceeded), "completed", "success":
+		return true
+	default:
+		return false
+	}
+}
+
+// isDefinitiveTerminalFailure reports whether a run represents a permanent
+// pre-submission or terminal failure that must never be revived to an active
+// status — as opposed to a transient/misclassified terminal state that may
+// legitimately be recovered. The distinguishing signal is the message: a real
+// failure (e.g. the resource guard rejecting an over-spec node before the
+// workflow is ever created) carries a substantive error message, while a
+// misclassification (TTL-cleanup false positive, awaiting-deploy placeholder)
+// carries one of the known stale/transient "workflow unavailable" messages.
+func isDefinitiveTerminalFailure(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(run.Status)) {
+	case "failed", "error":
+	default:
+		return false
+	}
+	msg := strings.TrimSpace(run.Message)
+	return msg != "" && !isStaleWorkflowUnavailableMessage(msg)
 }
 
 func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {

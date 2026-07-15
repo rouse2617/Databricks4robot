@@ -52,7 +52,23 @@ function getProgressPercent(progress: string | undefined): number | null {
 	return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
 }
 
+// CYB-3058 attaches a workflow-level onExit hook (`databrew-exit-notify`, which
+// runs as a pod named `<workflowName>.onExit`). It is infrastructure, not a
+// business step. The backend already excludes it from the node/step list
+// (runNodesFromWorkflow), but the DAG view builds from the raw Argo node status,
+// so exclude it here too (CYB-3095) — keeping the DAG, the "N 个步骤" count, the
+// top-level node count, and the timeline consistent with the 节点明细 table.
+const EXIT_NOTIFY_TEMPLATE_NAME = "databrew-exit-notify";
+
+function isExitNotifyHookNode(node: WorkflowNodeStatus): boolean {
+	return (
+		node.templateName === EXIT_NOTIFY_TEMPLATE_NAME ||
+		node.name.endsWith(".onExit")
+	);
+}
+
 function isDisplayableNode(node: WorkflowNodeStatus): boolean {
+	if (isExitNotifyHookNode(node)) return false;
 	const type = (node.type ?? "").toLowerCase();
 	const phase = node.phase;
 	const parentPath = node.id.split(".").slice(0, -1).join(".");
@@ -150,7 +166,7 @@ export function buildDagElements(
 			style: {
 				stroke: "#94a3b8",
 				strokeWidth: 1.5,
-				strokeDasharray: "6,4"
+				strokeDasharray: "6,4",
 			},
 			markerEnd: {
 				type: MarkerType.ArrowClosed,

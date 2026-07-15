@@ -2,10 +2,13 @@
 // Renders one full-width card per asset with thumbnail, all tags, lineage, storage.
 // Validates: Requirements R1
 
+import { CopyOutlined } from "@ant-design/icons";
 import {
+	message,
 	Pagination,
 	Select,
 	Skeleton,
+	Space,
 	Spin,
 	Tag,
 	Tooltip,
@@ -19,6 +22,19 @@ import type { FetchStatus } from "../../lib/assets/assetsDiscoveryTypes";
 import ResultsEmptyState from "./ResultsEmptyState";
 
 const { Text } = Typography;
+
+async function copyToClipboard(value: string, label: string) {
+	try {
+		await navigator.clipboard.writeText(value);
+		message.success(`已复制${label}`);
+	} catch {
+		message.error("复制失败");
+	}
+}
+
+function formatShortId(value: string, keep = 8): string {
+	return value.length > keep ? `${value.slice(0, keep)}…` : value;
+}
 
 // ─── State colors & gradients ───
 
@@ -378,19 +394,34 @@ export default function AssetsCardView({
 										<div
 											style={{ display: "flex", alignItems: "center", gap: 8 }}
 										>
-											<Tooltip title="点击打开详情">
-												<Text
-													code
-													style={{
-														fontSize: 13,
-														fontWeight: 700,
-														color: "#111827",
-														cursor: "pointer",
-													}}
-												>
-													{asset.asset_id}
-												</Text>
-											</Tooltip>
+											<Space size={4}>
+												<Tooltip title="点击打开详情">
+													<Text
+														code
+														style={{
+															fontSize: 13,
+															fontWeight: 700,
+															color: "#111827",
+															cursor: "pointer",
+														}}
+													>
+														{formatShortId(asset.asset_id)}
+													</Text>
+												</Tooltip>
+												<Tooltip title="复制 Asset ID">
+													<button
+														type="button"
+														className="link-like-button row-hover-action"
+														aria-label={`复制 Asset ${asset.asset_id}`}
+														onClick={(e) => {
+															e.stopPropagation();
+															void copyToClipboard(asset.asset_id, " Asset ID");
+														}}
+													>
+														<CopyOutlined style={{ fontSize: 12 }} />
+													</button>
+												</Tooltip>
+											</Space>
 											<span
 												style={{
 													width: 7,
@@ -453,8 +484,15 @@ export default function AssetsCardView({
 											}}
 										>
 											<Text style={{ fontSize: 11, color: "#374151" }}>
-												{asset.owner}
+												{asset.owner || "—"}
 											</Text>
+											{/* CYB-3382 #4: asset_type 完整值(旁边 :160 只显示 3-char 缩写),
+											    让人一眼识别行内容,不再只靠 8 位 asset_id 哈希。 */}
+											{asset.asset_type && (
+												<Text style={{ fontSize: 11, color: "#6b7280" }}>
+													· {asset.asset_type}
+												</Text>
+											)}
 											<Text style={{ fontSize: 10, color: "#9ca3af" }}>
 												{asset.updated_at
 													? dayjs(asset.updated_at).format("MM-DD HH:mm")

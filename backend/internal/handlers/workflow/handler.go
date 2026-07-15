@@ -19,6 +19,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
 const (
@@ -38,6 +40,7 @@ type Handler struct {
 	namespace       string
 	runRepo         repository.PipelineRunRepository
 	runEventRepo    repository.PipelineRunEventRepository
+	runNodeRepo     repository.PipelineRunNodeRepository
 	terminalStore   *terminalSessionStore
 	terminalNowFunc func() time.Time
 	sseRingBuffers  *ringBufferStore
@@ -91,9 +94,10 @@ func (h *Handler) SetArchiveStore(store ArchiveLogStore) {
 	h.archiveStore = store
 }
 
-func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository) {
+func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository, runNodeRepo repository.PipelineRunNodeRepository) {
 	h.runRepo = runRepo
 	h.runEventRepo = eventRepo
+	h.runNodeRepo = runNodeRepo
 }
 
 // ListWorkflows handles GET /api/v1/workflows
@@ -203,8 +207,23 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	ctx := c.Request.Context()
+
+	// CYB-3063: for a run that has already reached a terminal state, avoid
+	// querying the live Argo API — reconstruct an equivalent response from
+	// already-persisted data instead. Active runs, runs with no matching
+	// record, and reconstruction failures all fall through to the original
+	// direct-Argo path unchanged.
+	run, _ := h.findPipelineRunByWorkflow(ctx, name)
+	if run != nil && !pipelineUC.IsActiveDeploymentStatus(run.Status) {
+		if wf, runNodes, ok := h.reconstructWorkflowFromDB(ctx, run); ok {
+			h.respondWorkflowDetail(c, run, wf, runNodes)
+			return
+		}
+	}
+
+	namespace := h.namespaceForWorkflow(ctx, c, name)
+	wf, err := h.wfClient.GetWorkflow(ctx, name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -213,8 +232,21 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	run, _ := h.findPipelineRunByWorkflow(c.Request.Context(), wf.Name)
+	if run == nil {
+		run, _ = h.findPipelineRunByWorkflow(ctx, wf.Name)
+	}
+	h.respondWorkflowDetail(c, run, wf, nil)
+}
+
+// respondWorkflowDetail renders the GetWorkflow response from a *wfv1.Workflow,
+// whether it came from a live Argo query or reconstructWorkflowFromDB.
+// runNodesForBackfill, when non-nil, supplies Inputs/Outputs/ResourcesDuration
+// for the DB-reconstructed path (see backfillNodeItemDataFields).
+func (h *Handler) respondWorkflowDetail(c *gin.Context, run *models.PipelineRun, wf *wfv1.Workflow, runNodesForBackfill []models.PipelineRunNode) {
 	nodes := buildWorkflowDetailNodes(h, run, wf)
+	if runNodesForBackfill != nil {
+		nodes = backfillNodeItemDataFields(nodes, runNodesForBackfill)
+	}
 	created := workflowTimeString(wf.CreationTimestamp.Time)
 	resp := gin.H{
 		"name":              wf.Name,
@@ -347,18 +379,17 @@ func lookupWorkflowNodeRuntimeInfo(run *models.PipelineRun, templateName string)
 	if run == nil || len(run.PipelineJSON) == 0 {
 		return nil
 	}
-	nodeID := strings.TrimSpace(templateName)
-	nodeID = strings.TrimPrefix(nodeID, "step-")
-	if nodeID == "" {
+	tmpl := strings.TrimSpace(templateName)
+	if tmpl == "" {
 		return nil
 	}
-	if info, ok := findWorkflowNodeRuntimeInfo(run.PipelineJSON["nodes"], nodeID); ok {
+	if info, ok := findWorkflowNodeRuntimeInfo(run.PipelineJSON["nodes"], tmpl); ok {
 		return &info
 	}
 	return nil
 }
 
-func findWorkflowNodeRuntimeInfo(rawNodes any, targetID string) (workflowNodeRuntimeMetadata, bool) {
+func findWorkflowNodeRuntimeInfo(rawNodes any, templateName string) (workflowNodeRuntimeMetadata, bool) {
 	nodes, ok := interfaceSlice(rawNodes)
 	if !ok {
 		return workflowNodeRuntimeMetadata{}, false
@@ -368,19 +399,35 @@ func findWorkflowNodeRuntimeInfo(rawNodes any, targetID string) (workflowNodeRun
 		if !ok {
 			continue
 		}
-		nodeID, _ := node["id"].(string)
-		if strings.TrimSpace(nodeID) == targetID {
+		if workflowNodeMatchesTemplate(node, templateName) {
 			return workflowNodeRuntimeMetadata{
 				VersionLabel: firstWorkflowNodeString(node, "componentVersionLabel", "versionLabel", "releaseLabel", "tag"),
 				SourceCommit: firstWorkflowNodeString(node, "sourceCommit", "commit"),
 				Image:        firstWorkflowNodeString(node, "image"),
 			}, true
 		}
-		if info, ok := findWorkflowNodeRuntimeInfo(node["sub_nodes"], targetID); ok {
+		if info, ok := findWorkflowNodeRuntimeInfo(node["sub_nodes"], templateName); ok {
 			return info, true
 		}
 	}
 	return workflowNodeRuntimeMetadata{}, false
+}
+
+// workflowNodeMatchesTemplate reports whether a stored Argo template name maps
+// to this definition node, accepting both the readable step-<component>[-<uuid8>]
+// names and the legacy step-<nodeID> form (CYB-3076, dual-format, no migration).
+func workflowNodeMatchesTemplate(node map[string]any, templateName string) bool {
+	nodeID, _ := node["id"].(string)
+	componentName := ""
+	if component, ok := node["component"].(map[string]any); ok {
+		componentName, _ = component["name"].(string)
+	}
+	for _, cand := range transpiler.StepCandidateKeys(componentName, nodeID) {
+		if cand == templateName {
+			return true
+		}
+	}
+	return false
 }
 
 func firstWorkflowNodeString(node map[string]any, keys ...string) string {

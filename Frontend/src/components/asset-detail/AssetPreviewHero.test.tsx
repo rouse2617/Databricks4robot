@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Asset } from "../../api/types";
 import type { PreviewManifest } from "../../lib/assets/assetsDiscoveryTypes";
@@ -63,12 +64,16 @@ describe("AssetPreviewHero", () => {
 			dsParams: { url: "https://example.com/a.mcap", asset_id: "asset-001" },
 		};
 		const { container } = render(
-			<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />,
+			<MemoryRouter>
+				<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />
+			</MemoryRouter>,
 		);
 		const video = container.querySelector("video");
 		expect(video).not.toBeNull();
 		expect(video?.getAttribute("src")).toContain("segment.mp4");
-		expect(screen.getByText("视频预览")).toBeTruthy();
+		// CYB-3388: label 「视频预览」→「已就绪」to clarify Badge is a state
+		// indicator, not a switchable tab.
+		expect(screen.getByText("已就绪")).toBeTruthy();
 	});
 
 	it("falls back to placeholder when no preview video exists", () => {
@@ -79,7 +84,9 @@ describe("AssetPreviewHero", () => {
 			mode: "none",
 		};
 		const { container } = render(
-			<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />,
+			<MemoryRouter>
+				<AssetPreviewHero asset={makeAsset()} previewManifest={manifest} />
+			</MemoryRouter>,
 		);
 		expect(container.querySelector("video")).toBeNull();
 		expect(screen.getAllByText("暂无预览").length).toBeGreaterThan(0);
@@ -87,10 +94,12 @@ describe("AssetPreviewHero", () => {
 
 	it("labels delivery_count as completed deliveries", () => {
 		render(
-			<AssetPreviewHero
-				asset={makeAsset({ delivery_count: 2 })}
-				previewManifest={null}
-			/>,
+			<MemoryRouter>
+				<AssetPreviewHero
+					asset={makeAsset({ delivery_count: 2 })}
+					previewManifest={null}
+				/>
+			</MemoryRouter>,
 		);
 		expect(screen.getByText("已完成交付")).toBeTruthy();
 		expect(screen.queryByText("Deliveries")).toBeNull();

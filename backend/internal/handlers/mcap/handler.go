@@ -114,6 +114,31 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 			if err := h.assetRepo.InsertNew(txCtx, placeholder); err != nil {
 				return err
 			}
+			// CYB-3297 Phase D: emit an asset-scoped event so the ES subscriber
+			// indexes the placeholder raw_mcap immediately. The mcap_file_created
+			// event below carries no asset_id and is dropped by the subscriber, so
+			// without this a newly ingested raw_mcap is invisible in search until
+			// the next full reindex.
+			if h.eventRepo != nil {
+				assetBody, _ := json.Marshal(map[string]any{
+					"asset_id":     placeholder.AssetID,
+					"asset_type":   "raw_mcap",
+					"mcap_file_id": placeholder.McapFileID,
+				})
+				if err := h.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+					EventType:     "asset_created",
+					AggregateType: "asset",
+					AssetID:       placeholder.AssetID,
+					McapFileID:    placeholder.McapFileID,
+					TenantID:      placeholder.TenantID,
+					ProjectID:     placeholder.ProjectID,
+					EventSource:   "backend",
+					RequestID:     requestID,
+					EventPayload:  assetBody,
+				}); err != nil {
+					return err
+				}
+			}
 		}
 		return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, requestID, map[string]any{
 			"mcap_file_id": f.McapFileID,
@@ -127,6 +152,26 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 // maxMcapFileIDRetries is the maximum number of attempts to allocate a unique
 // auto-generated mcap_file_id before giving up.
 const maxMcapFileIDRetries = 16
+
+// uniqueViolationKind classifies a Postgres unique_violation (23505) raised by
+// createFileTx into either "hash" (raw_hash_md5 collision — unresolvable by
+// picking a new mcap_file_id) or "id" (mcap_file_id / asset_id collision —
+// resolvable by retrying with a new auto-generated ID). Returns the empty
+// string when err is not a 23505 or the constraint is unrecognized (caller
+// should treat as an unclassified server error).
+func uniqueViolationKind(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	switch pgErr.ConstraintName {
+	case "uq_mcap_files_hash_md5":
+		return "hash"
+	case "mcap_files_pkey", "assets_pkey":
+		return "id"
+	}
+	return "other"
+}
 
 // POST /api/v1/mcap-files
 func (h *Handler) CreateFile(c *gin.Context) {
@@ -212,9 +257,20 @@ func (h *Handler) CreateFile(c *gin.Context) {
 	if !autoID {
 		err := h.createFileTx(c.Request.Context(), f, c.GetHeader("X-Request-ID"))
 		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				httpresp.Conflict(c, "DUPLICATE_MCAP_FILE_ID", "mcap_file_id already exists", nil)
+			// AssetRepo.InsertNew wraps assets_pkey unique_violation into the
+			// ErrDuplicateAssetID sentinel, so the assets_pkey case inside
+			// uniqueViolationKind is unreachable from the auto-derived raw_mcap
+			// asset path. Catch the sentinel explicitly.
+			if errors.Is(err, repository.ErrDuplicateAssetID) {
+				httpresp.Conflict(c, httpresp.CodeDuplicateMcapFileID, "mcap_file_id already exists", nil)
+				return
+			}
+			switch uniqueViolationKind(err) {
+			case "hash":
+				httpresp.Conflict(c, httpresp.CodeDuplicateHash, "raw_hash_md5 already exists", nil)
+				return
+			case "id":
+				httpresp.Conflict(c, httpresp.CodeDuplicateMcapFileID, "mcap_file_id already exists", nil)
 				return
 			}
 			httpresp.Internal(c, err.Error())
@@ -236,8 +292,17 @@ func (h *Handler) CreateFile(c *gin.Context) {
 			c.JSON(http.StatusCreated, f)
 			return
 		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		// Sentinel from AssetRepo means the auto-picked mcap_file_id already
+		// has a raw_mcap asset with the same id — retry with a fresh id, same
+		// as the pgconn "id" case below.
+		if errors.Is(err, repository.ErrDuplicateAssetID) {
+			continue
+		}
+		switch uniqueViolationKind(err) {
+		case "hash":
+			httpresp.Conflict(c, httpresp.CodeDuplicateHash, "raw_hash_md5 already exists", nil)
+			return
+		case "id":
 			continue
 		}
 		httpresp.Internal(c, err.Error())

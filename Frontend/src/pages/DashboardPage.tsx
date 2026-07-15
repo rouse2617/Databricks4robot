@@ -141,16 +141,16 @@ function KpiCard({
 							title={String(value)}
 							style={{
 								display: "block",
-								minWidth: 0,
-								maxWidth: "100%",
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-								whiteSpace: "nowrap",
 								fontSize: 28,
 								fontWeight: 700,
 								color: "var(--color-text)",
 								fontVariantNumeric: "tabular-nums",
 								lineHeight: 1.18,
+								whiteSpace: "nowrap",
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								maxWidth: "100%",
+								minWidth: 0,
 							}}
 						>
 							{value}
@@ -658,6 +658,10 @@ function buildStackedOption(daily: DailyEventPoint[]) {
 			data: types,
 			top: 6,
 			type: "scroll",
+			// CYB-3305: reserve horizontal room for the "1/2" scroll paging arrows
+			// so long event-type names (e.g. "pipeline_processing") don't clash
+			// with the pager controls.
+			padding: [0, 44, 0, 44],
 			textStyle: { fontSize: 12, color: "#64748b" },
 		},
 		grid: { left: 64, right: 12, top: 48, bottom: 68 },
@@ -1307,7 +1311,7 @@ export default function DashboardPage() {
 	if (!pageReady) return <PageLoading />;
 
 	return (
-		<div style={{ maxWidth: 1400, paddingBottom: 8 }}>
+		<div style={{ width: "100%", paddingBottom: 8 }}>
 			<div
 				style={{
 					marginBottom: 20,

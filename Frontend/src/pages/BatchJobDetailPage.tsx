@@ -376,9 +376,7 @@ function extractAssetIds(runs: RunChildSummary[]): string[] {
 function exportAssetIdsCsv(assetIds: string[], batchId: string): void {
 	const header = "assetId\n";
 	// CSV 中双引号需要转义为两个双引号
-	const rows = assetIds
-		.map((id) => `"${id.replace(/"/g, '""')}"`)
-		.join("\n");
+	const rows = assetIds.map((id) => `"${id.replace(/"/g, '""')}"`).join("\n");
 	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
 	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement("a");
@@ -828,6 +826,9 @@ export default function BatchJobDetailPage() {
 
 	// 计算真实的批次状态（基于节点概览数据）
 	const actualStatus = job ? computeActualBatchStatus(job, nodeSummary) : null;
+	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
+	const batchTerminal =
+		actualStatus === "completed" || actualStatus === "failed";
 
 	if (loading && !job) {
 		return <Skeleton active paragraph={{ rows: 8 }} />;
@@ -873,7 +874,12 @@ export default function BatchJobDetailPage() {
 						<Title level={4} style={{ margin: 0 }}>
 							{job.name}
 						</Title>
-						<Text type="secondary">批次 ID: {job.id}</Text>
+						<Text type="secondary">
+							批次 ID:{" "}
+							<Text type="secondary" copyable={{ text: job.id }}>
+								{job.id}
+							</Text>
+						</Text>
 					</div>
 					<Space wrap>
 						{actualStatus === "running" ? (
@@ -966,9 +972,7 @@ export default function BatchJobDetailPage() {
 										}
 									} else if (key === "csv") {
 										exportAssetIdsCsv(assetIds, job.id);
-										message.success(
-											`已导出 ${assetIds.length} 个资产 ID`,
-										);
+										message.success(`已导出 ${assetIds.length} 个资产 ID`);
 									}
 								},
 							}}
@@ -1008,7 +1012,14 @@ export default function BatchJobDetailPage() {
 					column={{ xs: 1, sm: 2, md: 3 }}
 					style={{ marginTop: 16 }}
 					items={[
-						{ label: "模板", children: templateName },
+						{
+							label: "模板",
+							children: templateName ? (
+								<Text copyable={{ text: templateName }}>{templateName}</Text>
+							) : (
+								templateName
+							),
+						},
 						{
 							label: "状态",
 							children: (
@@ -1210,7 +1221,11 @@ export default function BatchJobDetailPage() {
 					<Alert
 						type="info"
 						showIcon
-						message="节点状态仍在同步中，概览会随刷新更新"
+						message={
+							batchTerminal
+								? "该批次已结束，部分或全部子任务未产生节点进度（例如提交前失败）"
+								: "节点状态仍在同步中，概览会随刷新更新"
+						}
 						style={{ marginBottom: 12 }}
 					/>
 				) : null}
@@ -1222,7 +1237,11 @@ export default function BatchJobDetailPage() {
 						rowKey="pipelineNodeId"
 						dataSource={nodeSummary?.nodes ?? []}
 						loading={nodeSummaryLoading}
-						locale={{ emptyText: "节点进度尚未生成" }}
+						locale={{
+							emptyText: batchTerminal
+								? "无节点进度（子任务未产生节点）"
+								: "节点进度尚未生成",
+						}}
 						pagination={false}
 						columns={[
 							{

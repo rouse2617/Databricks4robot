@@ -52,11 +52,20 @@ func assetVersionInsertArgs(a *models.Asset) (logicalID interface{}, revision in
 }
 
 // InsertRelation inserts a generic asset_relations edge (parent→child direction).
+// InsertRelation inserts a generic asset_relations edge with empty metadata.
+// Thin wrapper over InsertRelationWithMetadata (CYB-3281).
 func (r *AssetRepo) InsertRelation(ctx context.Context, parentAssetID, childAssetID, relationType, runID string) error {
+	return r.InsertRelationWithMetadata(ctx, parentAssetID, childAssetID, relationType, runID, nil)
+}
+
+// InsertRelationWithMetadata inserts a generic asset_relations edge, persisting
+// caller-context metadata (split_method / run_id / deployment_id …) into the
+// asset_relations.metadata column (CYB-3281). metadata may be nil ('{}').
+func (r *AssetRepo) InsertRelationWithMetadata(ctx context.Context, parentAssetID, childAssetID, relationType, runID string, metadata map[string]any) error {
 	const q = `
 WITH inserted AS (
-  INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
-  VALUES ($1, $2, $3, NULLIF($4, ''))
+  INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id, metadata)
+  VALUES ($1, $2, $3, NULLIF($4, ''), $5::jsonb)
   ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING
   RETURNING parent_asset_id, child_asset_id, relation_type, run_id
 ),
@@ -79,8 +88,18 @@ SELECT
     'lineage_direction', lineage_direction
   )
 FROM event_rows`
+	// CYB-3291: the SQL has 5 placeholders ($5 = metadata jsonb); metadata MUST be
+	// passed or pgx errors "mismatched param and argument count" (500). nil → {}.
+	metaJSON := []byte("{}")
+	if metadata != nil {
+		b, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("marshal relation metadata: %w", err)
+		}
+		metaJSON = b
+	}
 	db := dbFromCtx(ctx, r.c.db)
-	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID)
+	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID, metaJSON)
 }
 
 // InsertRevisionOf records new revision -> prior revision (parent=new, child=prior per PRD).
@@ -154,18 +173,25 @@ func prepAssetForWrite(a *models.Asset) {
 	if a.LifecycleState == "" {
 		a.LifecycleState = string(LifecycleReady)
 	}
+	// duration_ms is the canonical stored field. Callers may set it directly
+	// (child assets), provide only duration_sec (top-level / segment Create), or
+	// neither. Canonicalize it BEFORE SyncLegacyFields(), which re-derives
+	// duration_sec FROM duration_ms — otherwise a seconds-only value gets
+	// clobbered back to zero, which is why segments persisted duration_ms=0.
+	if a.DurationMs == 0 {
+		if a.DurationSec != 0 {
+			a.DurationMs = int64(a.DurationSec * 1000)
+		} else if a.EndTimestampNs > a.StartTimestampNs {
+			// Derive from the timestamp span, mirroring ComputeSegmentLocator above.
+			a.DurationMs = (a.EndTimestampNs - a.StartTimestampNs) / 1_000_000
+		}
+	}
 	a.SyncLegacyFields()
 	// SegType mirrors AssetType for API compat.
 	if a.AssetType != "" && a.SegType == "" {
 		a.SegType = a.AssetType
 	} else if a.SegType != "" && a.AssetType == "" {
 		a.AssetType = a.SegType
-	}
-	// duration_sec mirrors duration_ms for API compat.
-	if a.DurationMs != 0 && a.DurationSec == 0 {
-		a.DurationSec = float64(a.DurationMs) / 1000.0
-	} else if a.DurationSec != 0 && a.DurationMs == 0 {
-		a.DurationMs = int64(a.DurationSec * 1000)
 	}
 }
 
@@ -828,7 +854,8 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
-  created_at, updated_at, version
+  created_at, updated_at, version,
+  (SELECT COUNT(*) FROM assets a WHERE a.mcap_file_id = mcap_files.mcap_file_id AND a.asset_type = 'segment' AND a.is_deleted = FALSE)
 FROM mcap_files
 WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	var (
@@ -863,6 +890,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		&retentionTier, &expireAt, &tenantID, &projectID,
 		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
+		&f.SegmentCount,
 	)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
@@ -1066,7 +1094,8 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
-  created_at, updated_at, version
+  created_at, updated_at, version,
+  (SELECT COUNT(*) FROM assets a WHERE a.mcap_file_id = mcap_files.mcap_file_id AND a.asset_type = 'segment' AND a.is_deleted = FALSE)
 FROM mcap_files
 WHERE %s
 ORDER BY updated_at DESC
@@ -1103,6 +1132,7 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 			&retentionTier, &expireAt, &tenantID, &projectID,
 			&metadataBytes, &processStateBytes,
 			&f.CreatedAt, &f.UpdatedAt, &f.Version,
+			&f.SegmentCount,
 		); err != nil {
 			return nil, 0, fmt.Errorf("postgres McapFileRepo.List scan: %w", err)
 		}

@@ -84,6 +84,26 @@
 	background: var(--color-primary-light);
 }
 
+/* Assets table styling — CYB-3207 */
+.ant-table.assets-table thead > tr > th {
+	background: #f5f7fa !important;
+	color: #334155;
+	font-weight: 600;
+}
+
+.ant-table.assets-table tbody > tr > td {
+	color: #333;
+	padding: 12px 16px !important;
+}
+
+.ant-table.assets-table tbody > tr:hover > td {
+	background: #eef2ff;
+}
+
+.ant-table.assets-table--compact tbody > tr > td {
+	padding: 8px 12px !important;
+}
+
 /* Tag color overrides */
 .ant-tag.ready {
 	color: var(--color-success);

@@ -18,6 +18,7 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	algoRunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
+	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
@@ -37,6 +38,7 @@ import (
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
 )
@@ -71,6 +73,10 @@ func RegisterAll(
 	workflowHandler *workflowH.Handler,
 	backfillHandler *backfillH.Handler,
 	storageHandler *storageH.Handler,
+	apiKeyRepo repository.APIKeyRepository,
+	apiKeyHandler *apikeyH.Handler,
+	tagRegistryHandler *adminH.TagRegistryHandler,
+	clusterHandler *adminH.ClusterHandler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -134,7 +140,18 @@ func RegisterAll(
 				return
 			}
 
-			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
+			// SECURITY note: email-login has no proof of email ownership. An
+			// admin JWT obtained this way is treated as a *time-limited*
+			// operator session (24h TTL); it must NOT be usable to mint
+			// long-lived credentials that outlive the session. See the
+			// api_keys handler for the scope-issuance restriction that
+			// enforces this (privileged scopes require the static admin
+			// token, not a JWT).
+			role := "user"
+			if cfg.IsAdminEmail(email) {
+				role = "admin"
+			}
+			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, role, 24*time.Hour)
 			if err != nil {
 				httpresp.Internal(c, "failed to sign token")
 				return
@@ -143,9 +160,9 @@ func RegisterAll(
 			c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{
 				"authenticated": true,
-				"token":        jwtToken,
-				"email":        email,
-				"role":         "user",
+				"token":         jwtToken,
+				"email":         email,
+				"role":          role,
 			})
 		})
 
@@ -202,6 +219,17 @@ func RegisterAll(
 		releaseIngest.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
 	}
 
+	// Argo workflow run status push webhook (CYB-3058). Dedicated machine-token
+	// auth (not user/JWT): the caller is the Argo controller exit hook. Empty
+	// token disables the route (poll-only fallback).
+	if pipelineHandler != nil && cfg.ArgoRunWebhookToken != "" {
+		argoWebhook := r.Group("/api/v1", middleware.ArgoWebhookAuth(cfg.ArgoRunWebhookToken))
+		if cbMiddleware != nil {
+			argoWebhook.Use(cbMiddleware)
+		}
+		argoWebhook.POST("/pipeline-runs/webhook", pipelineHandler.HandleRunWebhook)
+	}
+
 	if workflowHandler != nil {
 		terminalAttach := r.Group("/api/v1")
 		if cbMiddleware != nil {
@@ -210,16 +238,17 @@ func RegisterAll(
 		terminalAttach.GET("/pod-terminal/sessions/:id/attach", workflowHandler.AttachTerminalSession)
 	}
 
-	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
+	api := r.Group("/api/v1", middleware.Authenticate(cfg.DatabrewToken, cfg.JWTSecret, apiKeyRepo))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
 	}
 	{
 		assets := api.Group("/assets")
-		assets.POST("", assetHandler.Create)
+		assets.POST("", middleware.RequireScope("assets:write"), assetHandler.Create)
 		assets.GET("/:id", assetHandler.Get)
-		assets.PATCH("/:id", assetHandler.Update)
-		assets.DELETE("/:id", assetHandler.Delete)
+		assets.GET("/:id/metadata", assetHandler.GetMetadata)
+		assets.PATCH("/:id", middleware.RequireScope("assets:write"), assetHandler.Update)
+		assets.DELETE("/:id", middleware.RequireScope("assets:write"), assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
@@ -227,8 +256,8 @@ func RegisterAll(
 		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
-		assets.POST("/:id/tags", assetHandler.UpsertTag)
-		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
+		assets.POST("/:id/tags", middleware.RequireScope("assets:write"), assetHandler.UpsertTag)
+		assets.DELETE("/:id/tags/:key", middleware.RequireScope("assets:write"), assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
@@ -315,16 +344,40 @@ func RegisterAll(
 		}
 
 		if adminRoutesEnabled && adminHandler != nil {
+			// Destructive admin ops: static admin/databrew token only.
 			admin := api.Group("/admin", adminAuth)
 			admin.POST("/search/reindex", adminHandler.SearchReindex)
 			admin.POST("/search/reindex-jobs", adminHandler.SearchReindexCreateJob)
-			admin.GET("/search/reindex-jobs", adminHandler.SearchReindexListJobs)
-			admin.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
 			admin.POST("/search/reindex-jobs/:id/stop", adminHandler.SearchReindexStopJob)
 			admin.POST("/search/reindex-jobs/:id/resume", adminHandler.SearchReindexResumeJob)
 			admin.POST("/search/reindex-jobs/:id/abandon", adminHandler.SearchReindexAbandonJob)
-			admin.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
-			admin.GET("/search/audit", adminHandler.SearchAudit)
+
+			// CYB-3229: read-only admin search views are also reachable by an
+			// admin-role web session (ADMIN_EMAILS) via Authenticate, not just the
+			// static token. No destructive capability here.
+			adminRO := api.Group("/admin", middleware.AdminTokenOrAdminRole(cfg.AdminToken, cfg.DatabrewToken, cfg.Env))
+			adminRO.GET("/search/reindex-jobs", adminHandler.SearchReindexListJobs)
+			adminRO.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
+			adminRO.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
+			adminRO.GET("/search/audit", adminHandler.SearchAudit)
+
+			// CYB-3246 Phase 2: managed tag-registry CRUD. Reachable by static
+			// admin token OR an admin-role web session (ADMIN_EMAILS) so the
+			// Settings UI can manage tags without a restart.
+			if tagRegistryHandler != nil {
+				adminRO.GET("/tag-registry", tagRegistryHandler.List)
+				adminRO.POST("/tag-registry", tagRegistryHandler.Create)
+				adminRO.PATCH("/tag-registry/:key", tagRegistryHandler.Update)
+				adminRO.DELETE("/tag-registry/:key", tagRegistryHandler.Delete)
+			}
+
+			// CYB-3425: cluster registry writes (delegate reads to public group
+			// above so any authed user can list clusters for the pool dropdown).
+			if clusterHandler != nil {
+				adminRO.POST("/clusters", clusterHandler.Create)
+				adminRO.PUT("/clusters/:id", clusterHandler.Update)
+				adminRO.DELETE("/clusters/:id", clusterHandler.Delete)
+			}
 		}
 
 		// Internal admin (hard delete). Requires ADMIN_TOKEN in production.
@@ -334,12 +387,31 @@ func RegisterAll(
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
 		}
 
-		// Actions (mcap → seg → action 第三层)
+		// API key management (issue/list/revoke keys for SDK/API callers).
+		// Under admin auth; keys themselves carry scopes for least-privilege.
+		if apiKeyHandler != nil { // pragma: allowlist secret
+			// Admin-scoped: admin-role web sessions (ADMIN_EMAILS) and the
+			// legacy static token (both carry "*") pass; regular users get 403.
+			keys := api.Group("/admin/api-keys", middleware.RequireScope("apikeys:manage"))
+			keys.POST("", apiKeyHandler.Create)
+			keys.GET("", apiKeyHandler.List)
+			keys.DELETE("/:id", apiKeyHandler.Revoke)
+		}
+
+		// Actions (mcap → seg → action 第三层) — CYB-3268: the 4 methods are now
+		// served as first-class assets (asset_type='action') by assetHandler on
+		// the assets table, unifying read+write. The legacy actionHandler is kept
+		// constructed for a future backfill issue but no longer routes here; the
+		// guard stays so routing tracks the action feature being wired.
 		if actionHandler != nil {
-			assets.POST("/:id/actions", actionHandler.Create)
-			assets.GET("/:id/actions", actionHandler.List)
-			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
-			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
+			// CYB-3296: these mutate child (action) assets and MUST require the
+			// same assets:write scope as their siblings (Create/Update/Delete
+			// above) — otherwise a read-only API key can create/patch/delete
+			// action assets (confirmed exploitable on dev).
+			assets.POST("/:id/actions", middleware.RequireScope("assets:write"), assetHandler.CreateAction)
+			assets.GET("/:id/actions", assetHandler.ListActions)
+			assets.PATCH("/:id/actions/:action_id", middleware.RequireScope("assets:write"), assetHandler.UpdateAction)
+			assets.DELETE("/:id/actions/:action_id", middleware.RequireScope("assets:write"), assetHandler.DeleteAction)
 		}
 
 		// Algo-runs (CYB-1018)
@@ -355,7 +427,8 @@ func RegisterAll(
 
 		// Eval / Metrics (Phase 1.5)
 		if evalHandler != nil {
-			assets.POST("/:id/eval-results", evalHandler.ReportEvalResult)
+			// CYB-3296: writing eval results mutates asset data — require assets:write.
+			assets.POST("/:id/eval-results", middleware.RequireScope("assets:write"), evalHandler.ReportEvalResult)
 			assets.GET("/:id/eval-results", evalHandler.ListEvalResults)
 			assets.GET("/:id/metrics", evalHandler.ListMetrics)
 			api.GET("/metrics/registry", evalHandler.GetRegistry)
@@ -380,6 +453,12 @@ func RegisterAll(
 		api.PUT("/execution-targets/:id", pipelineHandler.UpdateExecutionTarget)
 		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)
 		api.GET("/resource-quotas", workflowHandler.ListResourceQuotas)
+		api.GET("/elastic-quotas", workflowHandler.ListElasticQuotas)
+		// CYB-3425: cluster registry (reads any-authed-user, writes gated below).
+		if clusterHandler != nil {
+			api.GET("/clusters", clusterHandler.List)
+			api.GET("/clusters/:id", clusterHandler.Get)
+		}
 		api.GET("/pipeline/runtime-mounts", pipelineHandler.ListRuntimeMounts)
 		api.POST("/runs", pipelineHandler.CreateRun)
 		api.POST("/runs/template/:id", pipelineHandler.CreateRunByTemplate)

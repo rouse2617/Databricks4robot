@@ -59,6 +59,43 @@ describe("workflowNodeDisplay", () => {
 		);
 	});
 
+	it("maps readable step-<component> template names (CYB-3076)", () => {
+		const lookup = buildPipelineNodeLabelLookup({
+			name: "my-pipeline",
+			nodes: [
+				{
+					id: "node-8242f006-694e-4c17-945c-fdc485c50ff1",
+					component: {
+						name: "head-track-pycuvslam",
+						image: "example.com/head-track:latest",
+					},
+				},
+			],
+		});
+
+		const readable: WorkflowNodeStatus = {
+			id: "wf.step-head-track-pycuvslam",
+			name: "run-id.step-head-track-pycuvslam",
+			displayName: "step-head-track-pycuvslam",
+			templateName: "step-head-track-pycuvslam",
+			type: "Pod",
+			phase: "Running",
+		};
+		expect(getWorkflowNodeDisplayText(readable, lookup)).toBe(
+			"head-track-pycuvslam",
+		);
+
+		// Duplicate-component disambiguation form (step-<slug>-<uuid8>).
+		const withSuffix: WorkflowNodeStatus = {
+			...readable,
+			displayName: "step-head-track-pycuvslam-8242f006",
+			templateName: "step-head-track-pycuvslam-8242f006",
+		};
+		expect(getWorkflowNodeDisplayText(withSuffix, lookup)).toBe(
+			"head-track-pycuvslam",
+		);
+	});
+
 	it("falls back to Argo display name without pipeline labels", () => {
 		const node: WorkflowNodeStatus = {
 			id: "wf.step-1",

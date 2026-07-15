@@ -18,6 +18,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
@@ -32,6 +33,7 @@ var maxConcurrentBatchItems = func() int {
 	}
 	return 5
 }()
+
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and
@@ -54,18 +56,50 @@ const maxItemAttempts = 3
 // the stale reaper can reclaim it.
 const leaseTimeout = 120 * time.Second
 
+// maxFailedReconcilePerSync bounds how many already-failed items a single
+// syncJobProgress pass re-reconciles against runtime truth. Failed items are
+// otherwise never re-examined (the reconcile working set is running/pending
+// only), so a transient/misclassified failure stays stuck forever. Bounded so
+// large batches converge over successive syncs without flooding the Argo API.
+const maxFailedReconcilePerSync = 50
+
 type Usecase struct {
 	repo       repository.BackfillRepository
 	resultRepo repository.BackfillResultRepository
 	assetRepo  repository.AssetRepository
 	pipelineUC *pipelineUC.Usecase
-	pgClient any // *postgres.Client — set via NewWithPostgres
+	pgClient   any // *postgres.Client — set via NewWithPostgres
 
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
 	reaperStop chan struct{}
 	reaperWg   sync.WaitGroup
+
+	reconcileStop chan struct{}
+	reconcileWg   sync.WaitGroup
+
+	// Batch job completion Feishu notification (CYB-3071). notifier nil
+	// disables the feature entirely (no claim, no send).
+	notifier        Notifier
+	frontendBaseURL string
+}
+
+// Notifier is the minimal capability this package needs to deliver a
+// completion message. It is declared here (not imported from a notification
+// provider package) so backfill has no compile-time dependency on any
+// specific delivery mechanism; *feishu.Client satisfies this structurally.
+type Notifier interface {
+	SendText(ctx context.Context, text string) error
+}
+
+// SetNotifier configures the sender used for batch-job completion
+// notifications and the base URL used to build the job detail link in the
+// message. Passing a nil sender disables the feature (matches the zero-value
+// default, so this call is optional).
+func (uc *Usecase) SetNotifier(sender Notifier, frontendBaseURL string) {
+	uc.notifier = sender
+	uc.frontendBaseURL = strings.TrimSpace(frontendBaseURL)
 }
 
 // New creates a Usecase without transaction support.
@@ -111,6 +145,65 @@ func (uc *Usecase) StopReaper() {
 		close(uc.reaperStop)
 	}
 	uc.reaperWg.Wait()
+}
+
+// SyncJob force-syncs a batch job's progress from its child runs, flipping it to
+// a terminal status and sending the once-only completion notification if all
+// children have finished. Safe to call repeatedly (notification is claimed
+// atomically). Used by the run-status webhook cascade (CYB-3078, fast path).
+func (uc *Usecase) SyncJob(ctx context.Context, jobID string) error {
+	return uc.syncJobProgressForce(ctx, jobID)
+}
+
+// StartJobReconciler launches the reconcile backstop (CYB-3078): every interval
+// it force-syncs each non-terminal batch job, so a job whose children finished
+// in the background is finalized + notified without a user opening its page and
+// without depending on the exit hook firing. Runs until StopJobReconciler.
+func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	if scanLimit <= 0 {
+		scanLimit = 200
+	}
+	uc.reconcileStop = make(chan struct{})
+	uc.reconcileWg.Add(1)
+	go func() {
+		defer uc.reconcileWg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-uc.reconcileStop:
+				return
+			case <-ticker.C:
+				uc.reconcileActiveJobs(context.Background(), scanLimit)
+			}
+		}
+	}()
+}
+
+// StopJobReconciler signals the reconcile goroutine to stop and waits for it.
+func (uc *Usecase) StopJobReconciler() {
+	if uc.reconcileStop != nil {
+		close(uc.reconcileStop)
+	}
+	uc.reconcileWg.Wait()
+}
+
+// reconcileActiveJobs force-syncs every non-terminal batch job once. Best-effort:
+// a per-job failure is logged and does not stop the sweep.
+func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
+	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
+	if err != nil {
+		slog.Warn("job reconciler: find active jobs failed", "err", err)
+		return
+	}
+	for _, job := range jobs {
+		if err := uc.syncJobProgressForce(ctx, job.ID); err != nil {
+			slog.Warn("job reconciler: sync failed", "jobID", job.ID, "err", err)
+		}
+	}
 }
 
 // ResumeIncompleteBatches scans for running batch jobs with pending items
@@ -498,6 +591,28 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 	targetID := targetIDFromBackfillJob(job)
 
+	// Dedup guard: if this item was claimed while it ALREADY had a live workflow
+	// submitted to Argo, do not deploy a second one. ClaimNextItem always sets the
+	// item status to "running", so item.Status cannot tell a fresh claim from a
+	// re-claim — inspect the run itself. A run that was actually submitted to Argo
+	// has an ArgoWorkflowUID (assigned by Argo on creation, so even a queued/Pending
+	// workflow has one) or a StartedAt (set by CommitBatchSubtaskDeploy). An
+	// unsubmitted placeholder created by UpsertBatchSubtaskRun has neither, so
+	// genuine first-time deploys still proceed. Re-deploying an already-queued
+	// (Argo Pending) run is what orphaned tens of thousands of workflows.
+	if runID != "" && uc.pipelineUC != nil {
+		if existing, getErr := uc.pipelineUC.GetRun(ctx, runID); getErr == nil && runAlreadySubmitted(existing) {
+			wf := strings.TrimSpace(existing.WorkflowName)
+			if wf == "" {
+				wf = workflowName
+			}
+			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "running")
+			slog.Info("executeItem: skip duplicate deploy, run already live",
+				"jobID", jobID, "assetID", item.AssetID, "runID", runID, "runStatus", existing.Status)
+			return nil
+		}
+	}
+
 	if runID == "" && uc.pipelineUC != nil {
 		var initErr error
 		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
@@ -519,6 +634,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		TargetID:           targetID,
 		AllowUnknownAssets: true,
 		PreallocatedRunID:  runID,
+		Owner:              job.CreatedBy,
 	}
 	if job != nil && job.FilterJSON != nil {
 		deployOpts.TargetID = stringFromBackfillFilter(job.FilterJSON, "targetId", "target_id", "executionTargetId", "execution_target_id")
@@ -813,6 +929,15 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 				continue
 			}
 			result.StoppedCount++
+			// Stopping removes the workflow from Argo, so the item is no longer
+			// running. Reset it to "pending" and drop its run link so a later
+			// resume re-submits it cleanly. Leaving it "running" with a stale run
+			// both hides it from ResumeJob (ClaimNextItem only claims "pending")
+			// and trips executeItem's dedup guard (the run still looks submitted)
+			// — that combination is what stranded items after pause→resume.
+			if err := uc.repo.UpdateItemPipelineRun(ctx, item.ID, "", "", "pending"); err != nil {
+				slog.Warn("PauseJob: reset stopped item to pending failed", "jobID", id, "itemID", item.ID, "err", err)
+			}
 		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
@@ -1111,8 +1236,10 @@ func batchNodeOrderFromPipeline(pipeline map[string]interface{}) map[string]int 
 	if len(rawNodes) == 0 {
 		return nil
 	}
+	type nodeMeta struct{ id, component string }
 	nodeKeys := make([]string, 0, len(rawNodes))
 	nodeSet := make(map[string]struct{}, len(rawNodes))
+	metaByKey := make(map[string]nodeMeta, len(rawNodes))
 	for _, raw := range rawNodes {
 		node, _ := raw.(map[string]interface{})
 		id, _ := node["id"].(string)
@@ -1123,19 +1250,49 @@ func batchNodeOrderFromPipeline(pipeline map[string]interface{}) map[string]int 
 		if _, exists := nodeSet[key]; !exists {
 			nodeSet[key] = struct{}{}
 			nodeKeys = append(nodeKeys, key)
+			metaByKey[key] = nodeMeta{id: id, component: batchNodeComponentName(node)}
 		}
 	}
 	if len(nodeKeys) == 0 {
 		return nil
 	}
+	var out map[string]int
 	if order := batchNodeOrderFromEdges(pipeline, nodeKeys, nodeSet); len(order) > 0 {
-		return order
+		out = order
+	} else {
+		out = make(map[string]int, len(nodeKeys))
+		for i, key := range nodeKeys {
+			out[key] = i + 1
+		}
 	}
-	out := make(map[string]int, len(nodeKeys))
-	for i, key := range nodeKeys {
-		out[key] = i + 1
+	// Alias the readable template names (step-<component>[-<uuid8>]) to the same
+	// order so node-summary ordering works whether a node was stored under the
+	// legacy step-node-<uuid> name or the readable name (CYB-3076). No migration.
+	for key, meta := range metaByKey {
+		order, ok := out[key]
+		if !ok {
+			continue
+		}
+		for _, cand := range transpiler.StepCandidateKeys(meta.component, meta.id) {
+			nk := normalizeBatchPipelineNodeID(cand)
+			if nk == "" {
+				continue
+			}
+			if _, exists := out[nk]; !exists {
+				out[nk] = order
+			}
+		}
 	}
 	return out
+}
+
+func batchNodeComponentName(node map[string]interface{}) string {
+	comp, _ := node["component"].(map[string]interface{})
+	if comp == nil {
+		return ""
+	}
+	name, _ := comp["name"].(string)
+	return name
 }
 
 func batchNodeOrderFromEdges(pipeline map[string]interface{}, nodeKeys []string, nodeSet map[string]struct{}) map[string]int {
@@ -1365,6 +1522,49 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 		}
 	}
 
+	// Re-reconcile already-failed items against runtime truth. They are not in
+	// the running/pending working set above, so a transient/misclassified
+	// 'failed' — e.g. a run momentarily reconciled to Failed during a scheduling
+	// backlog while its Argo workflow was actually queued and later Succeeded —
+	// would otherwise stay stuck forever, inflating failedCount and blocking the
+	// job from settling to 'completed'. GetRun runs the existing
+	// reconcileMisclassifiedRunFromArgo path, whose guards preserve genuine
+	// pre-submission failures (isDefinitiveTerminalFailure). Bounded per sync.
+	if uc.pipelineUC != nil {
+		failedItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"failed"})
+		if err != nil {
+			return err
+		}
+		reconciled := 0
+		for _, item := range failedItems {
+			if reconciled >= maxFailedReconcilePerSync {
+				slog.Info("syncJobProgress: failed-item reconcile capped, deferring remainder to next sync",
+					"jobID", jobID, "processed", reconciled, "deferred", len(failedItems)-reconciled)
+				break
+			}
+			if item.PipelineRunID == nil || strings.TrimSpace(*item.PipelineRunID) == "" {
+				continue
+			}
+			reconciled++
+			run, err := uc.pipelineUC.GetRun(ctx, *item.PipelineRunID)
+			if err != nil || run == nil {
+				continue
+			}
+			mapped := mapRunStatusToItem(run.Status)
+			if mapped == "completed" {
+				mapped = uc.resolveCompletionStatus(ctx, job, item)
+			}
+			if mapped == "" || mapped == item.Status {
+				continue
+			}
+			errMsg := ""
+			if mapped == "failed" {
+				errMsg = strings.TrimSpace(run.Message)
+			}
+			_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, run.WorkflowName, errMsg)
+		}
+	}
+
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return err
@@ -1396,9 +1596,74 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 	if latestJob.PilotPhase == "running" && jobStatus == "completed" {
 		_ = uc.repo.UpdateJobPilotPhase(ctx, jobID, jobStatus, "done")
 		uc.ensureBatchParentRunByID(ctx, jobID)
+		uc.notifyJobTerminalIfNeeded(ctx, latestJob, jobStatus, summary)
 		return nil
 	}
-	return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
+	if err := uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus); err != nil {
+		return err
+	}
+	uc.notifyJobTerminalIfNeeded(ctx, latestJob, jobStatus, summary)
+	return nil
+}
+
+// isTerminalBackfillStatus reports whether a batch job status is one that
+// deriveJobStatus can settle on and that the watcher will stop re-scanning
+// (see FindIncompleteJobs, which only selects status='running' jobs) — i.e.
+// this transition will not be observed again.
+func isTerminalBackfillStatus(status string) bool {
+	return status == "completed" || status == "failed"
+}
+
+// notifyJobTerminalIfNeeded sends a completion notification exactly once when
+// a job crosses from non-terminal into a terminal status. previousJob must
+// reflect the job's status *before* this sync pass; newStatus is the status
+// about to be (or just) persisted. Safe to call unconditionally: it no-ops
+// when no notifier is configured, when the job was already terminal, when
+// the new status is not terminal, or when a concurrent caller already
+// claimed the notification for this job.
+func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *models.BackfillJob, newStatus string, summary repository.BackfillItemStatusSummary) {
+	if uc.notifier == nil || previousJob == nil {
+		return
+	}
+	if isTerminalBackfillStatus(previousJob.Status) || !isTerminalBackfillStatus(newStatus) {
+		return
+	}
+	claimed, err := uc.repo.ClaimJobNotification(ctx, previousJob.ID)
+	if err != nil {
+		slog.Warn("backfill: claim job notification failed", "jobID", previousJob.ID, "err", err)
+		return
+	}
+	if !claimed {
+		return
+	}
+	text := formatBatchJobNotificationText(previousJob, newStatus, summary, uc.frontendBaseURL)
+	if err := uc.notifier.SendText(ctx, text); err != nil {
+		slog.Warn("backfill: send completion notification failed", "jobID", previousJob.ID, "err", err)
+	}
+}
+
+// formatBatchJobNotificationText builds the Feishu message body for a batch
+// job reaching a terminal status. Kept in this package (not the notify
+// provider package) since it is specific to what a batch job is.
+func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, frontendBaseURL string) string {
+	name := job.Name
+	if strings.TrimSpace(name) == "" {
+		name = job.ID
+	}
+	text := fmt.Sprintf(
+		"【批量任务完成】%s\n状态：%s\n总数：%d　成功：%d　失败：%d",
+		name, status, job.TotalCount, summary.Completed, summary.Failed,
+	)
+	if job.CreatedBy != "" {
+		text += fmt.Sprintf("\n创建人：%s", job.CreatedBy)
+	}
+	if !job.CreatedAt.IsZero() {
+		text += fmt.Sprintf("\n耗时：%s", time.Since(job.CreatedAt).Round(time.Second))
+	}
+	if frontendBaseURL != "" {
+		text += fmt.Sprintf("\n链接：%s/pipeline/batch/%s", strings.TrimRight(frontendBaseURL, "/"), job.ID)
+	}
+	return text
 }
 
 // fetchBatchRunsByIDMap retrieves runs for a batch job in a single query
@@ -1493,12 +1758,44 @@ func mapRunStatusToItem(runStatus string) string {
 	case "failed", "error":
 		return "failed"
 	case "pending":
-		return "pending"
+		// Argo "Pending" means the workflow HAS been submitted and is queued
+		// (e.g. waiting for a concurrency/parallelism slot) — a healthy in-flight
+		// state. It is NOT the same as the backfill item's own "pending", which
+		// means "never submitted, free to be re-claimed". Mapping Argo-Pending to
+		// item-pending made ClaimNextItem re-select an already-queued asset and
+		// executeItem submit a duplicate workflow, orphaning the original. Treat a
+		// queued workflow as "running" so it is not re-claimed.
+		return "running"
 	case "running":
 		return "running"
 	default:
 		return "running"
 	}
+}
+
+// isTerminalRunStatus reports whether a pipeline run has reached a final state.
+// Queued ("Pending") and "Running" are explicitly non-terminal.
+func isTerminalRunStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success", "failed", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+// runAlreadySubmitted reports whether a pipeline run has already been dispatched
+// to Argo and is still in flight, so executeItem must not submit a duplicate.
+// A run counts as submitted once Argo has assigned a workflow UID (present even
+// while the workflow is queued/Pending) or once it has a StartedAt. An unsubmitted
+// placeholder (UpsertBatchSubtaskRun) has neither, so first-time deploys proceed.
+// Terminal runs return false so retries can re-deploy.
+func runAlreadySubmitted(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	submitted := strings.TrimSpace(run.ArgoWorkflowUID) != "" || run.StartedAt != nil
+	return submitted && !isTerminalRunStatus(run.Status)
 }
 
 // GetItemAttempts returns all pipeline runs (attempts) for one logical backfill item.

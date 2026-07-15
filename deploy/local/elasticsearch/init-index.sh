@@ -59,6 +59,10 @@ _es_curl -X PUT "${OS_URL}/assets" \
       "retention_tier":     { "type": "keyword" },
       "expire_at":          { "type": "date" },
 
+      "storage_uri":        { "type": "keyword" },
+      "thumb_uri":          { "type": "keyword" },
+      "files":              { "type": "flattened" },
+
       "tenant_id":          { "type": "keyword" },
       "project_id":         { "type": "keyword" },
 
@@ -130,6 +134,7 @@ _es_curl -X PUT "${OS_URL}/assets" \
 
       "mcap": {
         "properties": {
+          "mcap_uri":           { "type": "keyword" },
           "vendor_id":          { "type": "keyword" },
           "device_id":          { "type": "keyword" },
           "camera_model":       { "type": "keyword" },

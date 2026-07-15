@@ -55,6 +55,8 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		"version":                a.Version,
 		"retention_tier":         a.RetentionTier,
 		"storage_uri":            a.StorageURI,
+		"thumb_uri":              a.ThumbURI,
+		"files":                  a.Files, // CYB-3233: object-key URIs (algo_input_*/annot_*/delivery_*/raw_mcap/…)
 		"owner":                  a.Owner,
 		"reviewer":               a.Reviewer,
 		"start_timestamp_ns":     a.StartTimestampNs,
@@ -70,6 +72,14 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		"lineage_upstream_ids":   []string{},
 		"lineage_downstream_ids": []string{},
 		"lineage_relation_types": []string{},
+	}
+
+	// CYB-3268: action is a first-class asset but never traverses the
+	// created→processing→ready lifecycle. Omit lifecycle_state so ES facets don't
+	// surface a meaningless lifecycle:ready bucket for actions (PG hard-codes
+	// 'ready' only to satisfy the NOT NULL + CHECK column).
+	if a.AssetType == "action" {
+		delete(doc, "lifecycle_state")
 	}
 
 	if a.ParentAssetID != "" {
@@ -175,6 +185,42 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			if mf.StartTimestampNs > 0 {
 				mcapObj["recorded_at"] = time.Unix(0, mf.StartTimestampNs).UTC().Format(time.RFC3339Nano)
 			}
+			// CYB-3233: mcap object URI (mcap_uri column scans into GCSPath).
+			if mf.GCSPath != "" {
+				mcapObj["mcap_uri"] = mf.GCSPath
+			}
+			// CYB-3297 (Phase C): denormalize the mcap capture fields so the
+			// "采集" filters/facets (vendor/device/scene/...) that the mapping,
+			// registry and UI already advertise actually resolve. These columns
+			// exist on mcap_files and are scanned by McapFileRepo.Get; only the
+			// builder was omitting them. Additive: unset fields stay absent.
+			if mf.VendorID != "" {
+				mcapObj["vendor_id"] = mf.VendorID
+			}
+			if mf.DeviceID != "" {
+				mcapObj["device_id"] = mf.DeviceID
+			}
+			if mf.CameraModel != "" {
+				mcapObj["camera_model"] = mf.CameraModel
+			}
+			if mf.DataSource != "" {
+				mcapObj["data_source"] = mf.DataSource
+			}
+			if mf.LocationID != "" {
+				mcapObj["location_id"] = mf.LocationID
+			}
+			if mf.SceneID != "" {
+				mcapObj["scene_id"] = mf.SceneID
+			}
+			if mf.EnvironmentID != "" {
+				mcapObj["environment_id"] = mf.EnvironmentID
+			}
+			if mf.TaskID != "" {
+				mcapObj["task_id"] = mf.TaskID
+			}
+			if mf.FileDurationMs > 0 {
+				mcapObj["file_duration_ms"] = mf.FileDurationMs
+			}
 			doc["mcap"] = mcapObj
 		}
 	}
@@ -195,47 +241,11 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		}
 	}
 
-	// actions[] nested: re-read the seg's full action set on every projection.
-	// CDC writes are at-least-once and reads are idempotent, so this is safe.
-	if b.Actions != nil {
-		actions, err := b.Actions.ListByAsset(ctx, assetID, repository.ActionListOptions{Limit: 1000})
-		if err != nil {
-			return nil, false, err
-		}
-		actionsNested := make([]map[string]any, 0, len(actions))
-		for _, ax := range actions {
-			if ax == nil {
-				continue
-			}
-			entry := map[string]any{
-				"action_id":   ax.ActionID,
-				"start_ns":    ax.StartNs,
-				"end_ns":      ax.EndNs,
-				"labels":      ax.Labels,
-				"source_type": ax.SourceType,
-			}
-			if ax.PrimaryLabel != "" {
-				entry["primary_label"] = ax.PrimaryLabel
-			}
-			if ax.Description != "" {
-				entry["description"] = ax.Description
-			}
-			if ax.SourceName != "" {
-				entry["source_name"] = ax.SourceName
-			}
-			if ax.RunID != "" {
-				entry["run_id"] = ax.RunID
-			}
-			if ax.Confidence != nil {
-				entry["confidence"] = *ax.Confidence
-			}
-			if !ax.UpdatedAt.IsZero() {
-				entry["updated_at"] = ax.UpdatedAt.UTC().Format(time.RFC3339Nano)
-			}
-			actionsNested = append(actionsNested, entry)
-		}
-		doc["actions"] = actionsNested
-	}
+	// CYB-3268: actions[] nested projection removed. Actions are now first-class
+	// assets (asset_type='action') with their own top-level ES docs, so the seg
+	// no longer carries a nested actions[] array. The Builder.Actions field is
+	// retained (unused) pending cleanup; stale actions[] on old docs are wiped by
+	// a one-off _update_by_query at deploy time.
 
 	return doc, true, nil
 }

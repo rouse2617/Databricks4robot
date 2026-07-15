@@ -88,4 +88,3 @@ jobs:
 
       - name: Asset CRUD smoke (post-migration 025)
         run: go test -p 4 -tags integration -v -timeout 120s ./internal/postgres/ -run TestFreshDB_AssetCRUD
-

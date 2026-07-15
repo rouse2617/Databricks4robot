@@ -60,6 +60,7 @@ import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
 import {
 	STATUS_ACCENT_COLORS,
 	STATUS_COLORS,
+	WORKFLOW_PHASE_LABELS,
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -106,6 +107,10 @@ type ExecutionRecord = WorkflowSummary & {
 	templateName?: string;
 	owner?: string;
 	argoNamespace?: string;
+	videoDurationSec?: number;
+	// CYB-3392: propagate the parent batch id so the row can render a
+	// clickable "批次" badge that jumps to BatchJobList detail.
+	batchJobId?: string;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -404,6 +409,22 @@ const runMatchesFilters = (
 	return true;
 };
 
+// formatVideoDurationSec renders a raw second count as "m分s秒" (or "h时m分s秒"
+// for long videos). Returns "-" when the duration is unknown (some videos have
+// no recorded duration).
+const formatVideoDurationSec = (sec?: number): string => {
+	if (sec === undefined || sec === null || !Number.isFinite(sec) || sec < 0) {
+		return "-";
+	}
+	const total = Math.round(sec);
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	if (h > 0) return `${h}时${m}分${s}秒`;
+	if (m > 0) return `${m}分${s}秒`;
+	return `${s}秒`;
+};
+
 const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 	const labels = labelsForRun(run);
 	return {
@@ -424,10 +445,12 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		blockingMessage: run.blockingMessage,
 		owner: run.owner,
 		argoNamespace: run.argoNamespace,
+		videoDurationSec: run.videoDurationSec,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
 				: undefined,
+		batchJobId: run.batchJobId,
 	};
 };
 
@@ -833,7 +856,13 @@ export function WorkflowExecutionList({
 			};
 			const pipelineRunResponse = await listRuns({
 				view: "summary",
-				excludeBatch: true,
+				// CYB-3392b: was excludeBatch:true which dropped ALL runs
+				// tied to a batch (parent + children), so the CYB-3392 batch
+				// badge never had a row to render on. Switch to
+				// excludeBatchParents: only the aggregate parent row hides;
+				// children stay visible with a clickable badge that jumps
+				// to the batch detail page.
+				excludeBatchParents: true,
 				status: statusFilter,
 				q: nameSearch.trim() || undefined,
 				page,
@@ -1131,7 +1160,11 @@ export function WorkflowExecutionList({
 					const templateName = record.templateName?.trim();
 					return (
 						<div style={{ minWidth: 0 }}>
-							<Typography.Text strong ellipsis={{ tooltip: name }}>
+							<Typography.Text
+								strong
+								copyable={{ text: name }}
+								ellipsis={{ tooltip: name }}
+							>
 								{name}
 							</Typography.Text>
 							<Typography.Text
@@ -1169,6 +1202,26 @@ export function WorkflowExecutionList({
 								) : scope ? (
 									<Tag color="blue" style={{ fontSize: 11 }}>
 										Dev 草稿
+									</Tag>
+								) : null}
+								{/* CYB-3392: 批次徽标 — 单次执行属于批次时显示可跳转 tag,
+								    与 BatchJobList 形成双向导航;仅在非-batch scope 下显示,
+								    因为 batch scope 页面本身就在批次上下文里. */}
+								{!isBatchScope && record.batchJobId ? (
+									<Tag
+										color="purple"
+										style={{ fontSize: 11, cursor: "pointer" }}
+										title={`所属批次 ${record.batchJobId} — 点击查看批次详情`}
+										onClick={(e) => {
+											e.stopPropagation();
+											if (record.batchJobId) {
+												navigate(
+													`/pipeline/batch/${encodeURIComponent(record.batchJobId)}`,
+												);
+											}
+										}}
+									>
+										批次 {record.batchJobId.slice(0, 8)}
 									</Tag>
 								) : null}
 							</div>
@@ -1227,24 +1280,43 @@ export function WorkflowExecutionList({
 								const assetId = getWorkflowLabel(record.labels, "asset_id");
 								if (!assetId) return "—";
 								if (isCanonicalAssetId(assetId)) {
-									return <AssetIdLink id={assetId} />;
+									return (
+										<span
+											style={{
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 4,
+											}}
+										>
+											<AssetIdLink id={assetId} />
+											<Typography.Text copyable={{ text: assetId }} />
+										</span>
+									);
 								}
 								return (
 									<Tooltip title={assetId}>
-										<Typography.Text
-											code
+										<span
 											style={{
-												display: "inline-block",
-												fontSize: 12,
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 4,
 												maxWidth: 190,
-												overflow: "hidden",
-												textOverflow: "ellipsis",
-												verticalAlign: "bottom",
-												whiteSpace: "nowrap",
 											}}
 										>
-											{assetId}
-										</Typography.Text>
+											<Typography.Text
+												code
+												style={{
+													flex: "0 1 auto",
+													fontSize: 12,
+													overflow: "hidden",
+													textOverflow: "ellipsis",
+													whiteSpace: "nowrap",
+												}}
+											>
+												{assetId}
+											</Typography.Text>
+											<Typography.Text copyable={{ text: assetId }} />
+										</span>
 									</Tooltip>
 								);
 							},
@@ -1359,6 +1431,16 @@ export function WorkflowExecutionList({
 						finishedAt={record.finishedAt}
 					/>
 				),
+			},
+			{
+				title: "视频时长",
+				key: "videoDuration",
+				width: 100,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					((a as ExecutionRecord).videoDurationSec ?? -1) -
+					((b as ExecutionRecord).videoDurationSec ?? -1),
+				render: (_: unknown, record: WorkflowSummary) =>
+					formatVideoDurationSec((record as ExecutionRecord).videoDurationSec),
 			},
 			{
 				title: (
@@ -1642,8 +1724,13 @@ export function WorkflowExecutionList({
 					style={{ minWidth: 130, flex: "0 0 130px" }}
 					value={draftStatusFilter}
 					onChange={(val) => setDraftStatusFilter(val)}
+					// CYB-3391: use the localized zh-CN label from
+					// WORKFLOW_PHASE_LABELS so the dropdown matches the table
+					// status chips (previously label=status showed the raw English
+					// enum while cells rendered "运行中/成功/失败/…", forcing users
+					// to translate mentally when filtering).
 					options={WORKFLOW_PHASES.map((status) => ({
-						label: status,
+						label: WORKFLOW_PHASE_LABELS[status],
 						value: status,
 					}))}
 				/>

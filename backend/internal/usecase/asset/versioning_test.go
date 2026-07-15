@@ -81,6 +81,10 @@ func (r *versionedAssetRepo) InsertRelation(_ context.Context, parentID, childID
 	return nil
 }
 
+func (r *versionedAssetRepo) InsertRelationWithMetadata(ctx context.Context, parentID, childID, relType, runID string, _ map[string]any) error {
+	return r.InsertRelation(ctx, parentID, childID, relType, runID)
+}
+
 func hasEventForAsset(events []*models.AssetEvent, eventType, assetID string) bool {
 	for _, e := range events {
 		if e.EventType == eventType && e.AssetID == assetID {
@@ -101,7 +105,7 @@ func TestCreate_FirstVersionSetsLogicalFields(t *testing.T) {
 		AssetID:          "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 1,
-		EndTimestampNs:   2,
+		EndTimestampNs:   1000001,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})
@@ -139,7 +143,7 @@ func TestCreate_PromoteVersion(t *testing.T) {
 		LogicalAssetID:   "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 10,
-		EndTimestampNs:   20,
+		EndTimestampNs:   1000010,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})
@@ -179,7 +183,7 @@ func TestCreate_PromoteVersionWithGeneratedAssetID(t *testing.T) {
 		LogicalAssetID:   "aaaaaaaa",
 		McapFileID:       "bbbbbbbb",
 		StartTimestampNs: 10,
-		EndTimestampNs:   20,
+		EndTimestampNs:   1000010,
 		Reviewer:         "r",
 		AssetType:        "clip",
 	})

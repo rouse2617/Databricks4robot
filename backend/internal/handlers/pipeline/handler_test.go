@@ -559,6 +559,8 @@ func setupRouter(h *Handler) *gin.Engine {
 type mockBatchSubtaskReconciler struct {
 	reconcileCalls int
 	syncCalls      int
+	syncJobCalls   int
+	syncJobIDs     []string
 }
 
 func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, string) error {
@@ -572,6 +574,12 @@ func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) 
 
 func (m *mockBatchSubtaskReconciler) SyncBatchView(context.Context, string, []models.PipelineRun) error {
 	m.syncCalls++
+	return nil
+}
+
+func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
+	m.syncJobCalls++
+	m.syncJobIDs = append(m.syncJobIDs, jobID)
 	return nil
 }
 
@@ -670,8 +678,11 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 	}, &mockPipelineRunNodeRepo{
 		byRunID: map[string][]models.PipelineRunNode{
 			run.ID: {
-				{ID: "node-1", RunID: run.ID, DisplayName: "emit", EstimatedCostUSD: &emitCost},
-				{ID: "node-2", RunID: run.ID, DisplayName: "final", EstimatedCostUSD: &finalCost},
+				// CYB-3389: ComputeRunCost only sums leaf pod nodes (CYB-3073
+				// isLeafPodNode). Without Type=Pod the mocks are treated as
+				// aggregate DAG nodes, skipped, and the total stays nil.
+				{ID: "node-1", RunID: run.ID, DisplayName: "emit", Type: "Pod", EstimatedCostUSD: &emitCost},
+				{ID: "node-2", RunID: run.ID, DisplayName: "final", Type: "Pod", EstimatedCostUSD: &finalCost},
 			},
 		},
 	})
@@ -1231,8 +1242,9 @@ func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 	}, &mockPipelineRunNodeRepo{
 		byRunID: map[string][]models.PipelineRunNode{
 			run.ID: {
-				{ID: "node-1", RunID: run.ID, DisplayName: "expensive", EstimatedCostUSD: &expensiveCost},
-				{ID: "node-2", RunID: run.ID, DisplayName: "free"},
+				// CYB-3389: mark leaf-pod so ComputeRunCost aggregates it.
+				{ID: "node-1", RunID: run.ID, DisplayName: "expensive", Type: "Pod", EstimatedCostUSD: &expensiveCost},
+				{ID: "node-2", RunID: run.ID, DisplayName: "free", Type: "Pod"},
 			},
 		},
 	})

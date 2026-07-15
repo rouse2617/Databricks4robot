@@ -99,6 +99,9 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 		dataIndex: "asset_id",
 		width: 120,
 		fixed: "left" as const,
+		// CYB-3383: 表格视图不加 owner/asset_type/date 副标题 ——
+		// 这些字段已有独立列(所属方 / 资产类型 / 更新时间),塞副标题
+		// 就是同屏重复。CardView 保留副标题(卡片视图无独立列)。
 		render: (id: string) => (
 			<Space size={4}>
 				<Tooltip title="点击打开预览">
@@ -134,7 +137,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	mcap_file_id: (_onRowClick, onMcapClick) => ({
 		title: COLUMN_LABELS.mcapShort,
 		dataIndex: "mcap_file_id",
-		width: 100,
+		width: 80,
 		render: (v: string) => (
 			<Space size={4}>
 				<Tooltip title={v || "—"}>
@@ -178,7 +181,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 			"asc",
 		),
 		key: "duration",
-		width: 70,
+		width: 60,
 		render: (_: unknown, r: Asset) => formatDurationSeconds(r),
 	}),
 	asset_type: () => ({
@@ -190,7 +193,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	retention_tier: () => ({
 		title: "保留层级",
 		key: "retention_tier",
-		width: 100,
+		width: 90,
 		render: (_: unknown, r: Asset) => {
 			const tier = r.retention_tier;
 			if (!tier) return "—";
@@ -205,7 +208,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	env: () => ({
 		title: "环境",
 		key: "env",
-		width: 80,
+		width: 70,
 		render: (_: unknown, r: Asset) => r.env ?? "—",
 	}),
 	lifecycle_state: () => ({
@@ -218,13 +221,13 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	algo: () => ({
 		title: "算法状态",
 		key: "algo",
-		width: 200,
+		width: 150,
 		render: (_: unknown, record: Asset) => <AlgoSummaryCell record={record} />,
 	}),
 	tags: () => ({
 		title: "标签",
 		key: "tags",
-		width: 120,
+		width: 100,
 		render: (_: unknown, r: Asset) => {
 			if (!r.tags || Object.keys(r.tags).length === 0) return "—";
 			return (
@@ -243,7 +246,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	owner: () => ({
 		title: COLUMN_LABELS.owner,
 		dataIndex: "owner",
-		width: 120,
+		width: 160,
 		ellipsis: { showTitle: false },
 		render: (v: string) => {
 			if (!v) return "—";
@@ -267,7 +270,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	expire_at: () => ({
 		title: "过期时间",
 		dataIndex: "expire_at",
-		width: 130,
+		width: 100,
 		render: (v: string | null | undefined) => (v ? dayjs(v).fromNow() : "—"),
 	}),
 	updated_at: (_onRowClick, _onMcapClick, sort, onSortChange) => ({
@@ -432,6 +435,13 @@ export default function AssetsResultsPane({
 					共 {total}
 					{totalApprox ? "+" : ""} 条
 				</Text>
+				<Text
+					type="secondary"
+					style={{ fontSize: 12 }}
+					title="来自 PostgreSQL 实时读库；概览页 KPI 来自湖仓 Iceberg，按日聚合，可能滞后。"
+				>
+					· 数据源:PostgreSQL 实时
+				</Text>
 				<Text type="secondary" style={{ fontSize: 12 }}>
 					当前排序：{describeSort(sort)}
 				</Text>
@@ -456,7 +466,7 @@ export default function AssetsResultsPane({
 				dataSource={items}
 				loading={loading}
 				size="small"
-				className={viewMode === "compact" ? "assets-table--compact" : undefined}
+				className={`assets-table${viewMode === "compact" ? " assets-table--compact" : ""}`}
 				scroll={{ x: 900 }}
 				rowClassName={(record, index) => {
 					if (record.asset_id === activePreviewId)

@@ -30,7 +30,12 @@ type Handler struct {
 	planner       *queryplan.PGBridgePlanner
 	pgExecutor    *pgexec.Executor
 	esExecutor    *esexec.Executor
-	savedQueries  *postgres.SavedQueryRepo
+	// CYB-3384: pgFacetExec is engaged when the planner routes the facet
+	// aggregation phase to Postgres (either forced via DBK_FACET_ENGINE=pg or
+	// auto-triggered by a non-zero PG↔ES gap). nil when facet fallback is not
+	// wired — the ES path stays the only option.
+	pgFacetExec  *pgexec.FacetExecutor
+	savedQueries *postgres.SavedQueryRepo
 }
 
 func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry, esClient *corees.Client, savedQueries *postgres.SavedQueryRepo) *Handler {
@@ -42,6 +47,20 @@ func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry
 		esExecutor:    esexec.New(esClient),
 		savedQueries:  savedQueries,
 	}
+}
+
+// WithFacetFallback wires the CYB-3384 facet fallback path so the handler can
+// route facet aggregations to Postgres when the planner decides ES would
+// return drifted counts. source is typically *postgres.AssetRepo, gap is the
+// SyncHealthCache, and engine mirrors the DBK_FACET_ENGINE override. Any of
+// the three may be nil — a nil source disables the fallback while leaving the
+// planner override honored (useful in tests). Returns h for chaining.
+func (h *Handler) WithFacetFallback(source pgexec.FacetSource, gap queryplan.GapProvider, engine queryplan.FacetEngine) *Handler {
+	h.pgFacetExec = pgexec.NewFacetExecutor(source)
+	if h.planner != nil {
+		h.planner = h.planner.WithGapProvider(gap).WithFacetEngine(engine)
+	}
+	return h
 }
 
 func applyIncludeHistoryQueryParam(c *gin.Context, req *queryir.QueryRequest) {
@@ -209,21 +228,25 @@ func canSkipPGCount(plan *queryplan.Plan, compiled *queryir.CompiledQuery) bool 
 	return true
 }
 
-func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) {
+// applyESRecall runs ES recall in place on compiled and reports recallErrored:
+// true when ES was supposed to run but Compile/Execute failed, so the caller
+// must fall through to the PG fallback rather than trust MatchTotal==0. Returns
+// false when ES is disabled or ran successfully (including a real 0-hit result).
+func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) bool {
 	if !plan.UseESRecall || h.esExecutor == nil {
-		return
+		return false
 	}
 	body, err := h.esExecutor.Compile(plan, false)
 	if err != nil {
 		compiled.Warnings = append(compiled.Warnings, "elasticsearch compile unsupported; fell back to postgres-only execution")
-		return
+		return true
 	}
 	esRecallStarted := time.Now()
 	esCompiled, err := h.esExecutor.Execute(ctx, body, true)
 	if err != nil {
 		metrics.QueryRunPhaseDurationSeconds.WithLabelValues("es_recall", "error").Observe(time.Since(esRecallStarted).Seconds())
 		compiled.Warnings = append(compiled.Warnings, "elasticsearch unavailable; fell back to postgres-only execution")
-		return
+		return true
 	}
 	metrics.QueryRunPhaseDurationSeconds.WithLabelValues("es_recall", "ok").Observe(time.Since(esRecallStarted).Seconds())
 	if len(esCompiled.Warnings) > 0 {
@@ -242,6 +265,7 @@ func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compi
 		compiled.ESResults = normalized
 	}
 	compiled.MatchTotal = esCompiled.MatchTotal
+	return false
 }
 
 func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan, trackTotalHits bool) (*queryir.CompiledQuery, error) {
@@ -270,13 +294,15 @@ func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan
 }
 
 func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) (any, int64, error) {
-	h.applyESRecall(ctx, plan, compiled)
+	recallErrored := h.applyESRecall(ctx, plan, compiled)
 	if len(compiled.ESResults) > 0 {
 		return compiled.ESResults, compiled.MatchTotal, nil
 	}
 	// ES recall returned 0 results — short circuit, no PG fallback needed.
 	// ES is the authoritative search oracle for fulltext; if it says 0, trust it.
-	if plan.UseESRecall && compiled.MatchTotal == 0 {
+	// Only when ES actually ran, though: on Compile/Execute error (recallErrored)
+	// fall through to the PG _fulltext fallback instead of reporting a fake empty.
+	if plan.UseESRecall && !recallErrored && compiled.MatchTotal == 0 {
 		return []*models.Asset{}, 0, nil
 	}
 
@@ -357,6 +383,32 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
+		}
+	}
+
+	// CYB-3384: PG facet fallback. When the planner routed facets to Postgres
+	// (auto — pg_es_gap>0, or forced via DBK_FACET_ENGINE=pg), run one
+	// COUNT(*) GROUP BY per supported field using the same WHERE clause the
+	// list phase used. Dropped-fields from planner surface as a warning so the
+	// UI can flag partial coverage. Errors on facets are non-fatal — list
+	// response has already been prepared and the sidebar can gracefully hide.
+	if plan.UsePGFacets && h.pgFacetExec != nil {
+		pgFacetStarted := time.Now()
+		facets, facetWarnings, err := h.pgFacetExec.Execute(reqCtx, compiled)
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+			compiled.Warnings = append(compiled.Warnings, "pg facet fallback failed: "+err.Error())
+		}
+		metrics.QueryRunPhaseDurationSeconds.WithLabelValues("pg_facet", outcome).Observe(time.Since(pgFacetStarted).Seconds())
+		if len(facets) > 0 {
+			compiled.Facets = facets
+		}
+		if len(facetWarnings) > 0 {
+			compiled.Warnings = append(compiled.Warnings, facetWarnings...)
+		}
+		for _, dropped := range plan.PGFacetDroppedFields {
+			compiled.Warnings = append(compiled.Warnings, "facet field not supported by pg fallback: "+dropped)
 		}
 	}
 

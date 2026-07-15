@@ -20,6 +20,11 @@ export interface BatchJob {
 	createdAt: string;
 	updatedAt: string;
 	finishedAt?: string;
+	// Subtask run span (earliest subtask start / latest subtask finish), returned
+	// by the list endpoint. Used to show a real run duration excluding submit/
+	// queue/pause waiting, and as a completion-time fallback when finishedAt is unset.
+	runStartedAt?: string;
+	runFinishedAt?: string;
 }
 
 export interface CreateBatchJobRequest {

@@ -509,6 +509,49 @@ export function useWorkflowDetail(
 		});
 	}, [loadRunDetailData, name]);
 
+	// Shared by loadRunEvents (mount/pagination/manual refresh, guarded by
+	// skipNextRunEventsLoadRef) and loadWorkflow's workflowName branch (which
+	// already owns that guard for its own call): unlike refreshDetailData
+	// above, this surfaces a failure into the four ledger state slices instead
+	// of only logging it, since callers here represent a foreground load the
+	// user is waiting on, not a background poll tick.
+	const loadLedgerDataAndSurfaceErrors = useCallback(
+		(opts?: { append?: boolean; cursor?: number }) => {
+			if (!name) return;
+			setRunEventState((current) => ({
+				...current,
+				loading: true,
+				error: null,
+			}));
+			loadRunDetailData(name, opts).catch((err) => {
+				if (!isExpectedWorkflowNotFound(err)) {
+					console.error(err);
+				}
+				setRunEventState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setAssetNodeState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setCostSummaryState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setRunMetadataState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+			});
+		},
+		[loadRunDetailData, name],
+	);
+
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
 		setLoading(true);
@@ -593,26 +636,27 @@ export function useWorkflowDetail(
 				});
 			return;
 		}
+		// Mirrors the runId branch above: claim the ledger load here so the
+		// separate loadRunEvents mount effect (gated on this same ref) doesn't
+		// independently re-trigger the same run-ledger fetch a moment later.
+		skipNextRunEventsLoadRef.current = true;
 		getWorkflow(name)
 			.then((detail) => {
 				workflowRef.current = detail;
 				setWorkflow(detail);
 				setLoadError(null);
-				refreshDetailData();
+				loadLedgerDataAndSurfaceErrors();
 			})
 			.catch((err) => {
 				if (!isExpectedWorkflowNotFound(err)) {
 					console.error(err);
 				}
-				const nextLoadError = toLoadError(err);
 				setWorkflow(null);
-				setLoadError(nextLoadError);
-				if (nextLoadError.kind === "not_found") {
-					refreshDetailData();
-				}
+				setLoadError(toLoadError(err));
+				loadLedgerDataAndSurfaceErrors();
 			})
 			.finally(() => setLoading(false));
-	}, [loadRunLedgerData, lookupMode, name, refreshDetailData]);
+	}, [loadLedgerDataAndSurfaceErrors, loadRunLedgerData, lookupMode, name]);
 
 	useEffect(() => {
 		loadWorkflow();
@@ -625,38 +669,9 @@ export function useWorkflowDetail(
 				skipNextRunEventsLoadRef.current = false;
 				return;
 			}
-			setRunEventState((current) => ({
-				...current,
-				loading: true,
-				error: null,
-			}));
-			loadRunDetailData(name, opts).catch((err) => {
-				if (!isExpectedWorkflowNotFound(err)) {
-					console.error(err);
-				}
-				setRunEventState((current) => ({
-					...current,
-					loading: false,
-					error: toErrorMessage(err),
-				}));
-				setAssetNodeState((current) => ({
-					...current,
-					loading: false,
-					error: toErrorMessage(err),
-				}));
-				setCostSummaryState((current) => ({
-					...current,
-					loading: false,
-					error: toErrorMessage(err),
-				}));
-				setRunMetadataState((current) => ({
-					...current,
-					loading: false,
-					error: toErrorMessage(err),
-				}));
-			});
+			loadLedgerDataAndSurfaceErrors(opts);
 		},
-		[loadRunDetailData, name],
+		[loadLedgerDataAndSurfaceErrors, name],
 	);
 
 	useEffect(() => {

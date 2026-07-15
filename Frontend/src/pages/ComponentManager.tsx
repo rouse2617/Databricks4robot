@@ -1174,13 +1174,28 @@ function PortFormList({
 									}
 								/>
 							</Form.Item>
-							<Button
-								type="text"
-								danger
-								icon={<DeleteOutlined />}
-								aria-label={`移除${title}`}
-								onClick={() => remove(field.name)}
-							/>
+							<Tooltip
+								title={
+									fields.length <= 1
+										? `每个步骤至少需要一个${showOutputPath ? "输出" : "输入"}端口`
+										: ""
+								}
+							>
+								{/* Wrap in span so the tooltip still fires on the disabled button.
+								    CYB-3094: forbid removing the last port — the pipeline stack
+								    assumes every node has ≥1 input and ≥1 output port, so allowing
+								    zero would silently re-inject defaults and mismatch the canvas. */}
+								<span>
+									<Button
+										type="text"
+										danger
+										icon={<DeleteOutlined />}
+										aria-label={`移除${title}`}
+										disabled={fields.length <= 1}
+										onClick={() => remove(field.name)}
+									/>
+								</span>
+							</Tooltip>
 						</div>
 					))}
 					{showOutputPath ? (

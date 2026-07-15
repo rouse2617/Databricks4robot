@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -39,9 +40,10 @@ type Config struct {
 
 	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
 	DatabrewToken               string
-	ComponentReleaseIngestToken string // CI-only token for component release ingest
-	JWTSecret                   string // HMAC-SHA256 secret for JWT signing
-	AllowedDomain               string // email domain allowlisted (e.g. "cyberorigin.ai")
+	ComponentReleaseIngestToken string   // CI-only token for component release ingest
+	JWTSecret                   string   // HMAC-SHA256 secret for JWT signing
+	AllowedDomain               string   // email domain allowlisted (e.g. "cyberorigin.ai")
+	AdminEmails                 []string // emails granted role=admin on email-login (ADMIN_EMAILS, comma-sep)
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -126,6 +128,12 @@ type Config struct {
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
 
+	// FacetEngine (CYB-3384): "auto" (default) lets the planner pick between
+	// ES (fast, prod) and PG (strong-consistent, drift fallback) based on the
+	// live pg_es_gap. "es" forces the legacy ES aggregation path. "pg" forces
+	// the PostgreSQL GROUP BY path — useful when ES is misindexed or offline.
+	FacetEngine string
+
 	// OpenLineage emitter
 	OpenLineageEmitterEnabled string
 	OpenLineageEndpoint       string
@@ -143,12 +151,43 @@ type Config struct {
 	PipelineResourceMaxGPU                string
 	PipelineUnschedulablePendingThreshold string
 
+	// Argo run status push webhook (CYB-3058).
+	// ArgoRunWebhookURL empty disables exit-hook injection (poll-only fallback).
+	ArgoRunWebhookURL             string
+	ArgoRunWebhookToken           string // backend-side token to validate inbound webhook calls
+	ArgoRunWebhookTokenSecretName string // K8s Secret name referenced by the workflow hook env
+	ArgoRunWebhookTokenSecretKey  string // key within that Secret
+	ArgoRunWebhookImage           string // container image (with curl) for the exit-notify handler
+
+	// Batch job completion Feishu notification (CYB-3071).
+	// BackfillNotifyFeishuWebhookURL empty disables the notification entirely.
+	BackfillNotifyFeishuWebhookURL string
+	// FrontendBaseURL builds links in notification messages. Not tied to any
+	// single notification feature; empty omits the link rather than erroring.
+	FrontendBaseURL string
+
+	// Run status watcher (now a reconcile backstop behind the push path).
+	PipelineRunWatcherIntervalSec int32
+	PipelineRunWatcherScanLimit   int32
+
+	// Batch job reconcile backstop (CYB-3078): finalizes + notifies batch jobs
+	// whose children finished, independent of the exit hook or a page open.
+	BackfillReconcileIntervalSec int32
+	BackfillReconcileScanLimit   int32
+
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
 
 	// PricingConfigPath points to the GCP pricing YAML for cost estimation.
 	// Empty means cost estimation is skipped.
 	PricingConfigPath string
+
+	// Grace API (CYB-3072). Reusable client config; video-duration sync is the
+	// first consumer. Empty URL/creds disables the Grace sync loop entirely.
+	GraceAPIURL                  string
+	GraceUsername                string
+	GracePassword                string // plain or JSON {"AUTH_PASSWORD":...} from grace-api-dev
+	VideoDurationSyncIntervalSec int32
 }
 
 func Load() *Config {
@@ -183,6 +222,7 @@ func Load() *Config {
 		ComponentReleaseIngestToken: getenv("COMPONENT_RELEASE_INGEST_TOKEN", getenv("DATABREW_CI_INGEST_TOKEN", "")),
 		JWTSecret:                   getenv("JWT_SECRET", "dev-jwt-secret"),
 		AllowedDomain:               getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
+		AdminEmails:                 splitCSVLower(getenv("ADMIN_EMAILS", "")),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -229,6 +269,7 @@ func Load() *Config {
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
 		AdminToken:                getenv("ADMIN_TOKEN", ""),
+		FacetEngine:               getenv("DBK_FACET_ENGINE", "auto"),
 		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", ""),
 		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
 		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
@@ -246,7 +287,27 @@ func Load() *Config {
 		PipelineResourceMaxGPU:                getenv("PIPELINE_RESOURCE_MAX_GPU", ""),
 		PipelineUnschedulablePendingThreshold: getenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "15m"),
 
+		ArgoRunWebhookURL:             getenv("ARGO_RUN_WEBHOOK_URL", ""),
+		ArgoRunWebhookToken:           getenv("ARGO_RUN_WEBHOOK_TOKEN", ""),
+		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),
+		ArgoRunWebhookTokenSecretKey:  getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_KEY", "token"),
+		ArgoRunWebhookImage:           getenv("ARGO_RUN_WEBHOOK_IMAGE", "curlimages/curl:8.11.1"),
+
+		BackfillNotifyFeishuWebhookURL: getenv("BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL", ""),
+		FrontendBaseURL:                getenv("FRONTEND_BASE_URL", ""),
+
+		PipelineRunWatcherIntervalSec: getenvInt32("PIPELINE_RUN_WATCHER_INTERVAL_SEC", 30),
+		PipelineRunWatcherScanLimit:   getenvInt32("PIPELINE_RUN_WATCHER_SCAN_LIMIT", 100),
+
+		BackfillReconcileIntervalSec: getenvInt32("BACKFILL_RECONCILE_INTERVAL_SEC", 60),
+		BackfillReconcileScanLimit:   getenvInt32("BACKFILL_RECONCILE_SCAN_LIMIT", 200),
+
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
+
+		GraceAPIURL:                  getenv("GRACE_API_URL", ""),
+		GraceUsername:                getenv("GRACE_USERNAME", ""),
+		GracePassword:                getenv("GRACE_PASSWORD", ""),
+		VideoDurationSyncIntervalSec: getenvInt32("VIDEO_DURATION_SYNC_INTERVAL_SEC", 600),
 	}
 }
 
@@ -312,6 +373,33 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSVLower splits a comma-separated list, trimming + lowercasing each
+// non-empty element. Returns nil for empty input.
+func splitCSVLower(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.ToLower(strings.TrimSpace(p)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// IsAdminEmail reports whether an email is in the admin allowlist (ADMIN_EMAILS).
+func (c *Config) IsAdminEmail(email string) bool {
+	e := strings.ToLower(strings.TrimSpace(email))
+	for _, a := range c.AdminEmails {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 func getenvInt32(key string, fallback int32) int32 {

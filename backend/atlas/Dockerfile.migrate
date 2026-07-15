@@ -1,0 +1,28 @@
+# Minimal image for running Atlas versioned migrations as a one-shot Cloud Run Job.
+# Uses only the `migrate` Atlas env (atlas/atlas.hcl), which reads backend/migrations
+# + atlas.sum and requires no `atlas login` for hash / validate / apply.
+#
+# Build (build context is backend/, so migrations/ is at the context root):
+#   docker build -f backend/atlas/Dockerfile.migrate \
+#     -t REGION-docker.pkg.dev/PROJECT/REPO/cyber-databrew-migrate:TAG backend/
+# Push:
+#   docker push REGION-docker.pkg.dev/PROJECT/REPO/cyber-databrew-migrate:TAG
+#
+# Run (Cloud Run Job; default ENTRYPOINT applies pending migrations; pass
+# --baseline 000_initial.sql on the first run against an existing DB so Atlas
+# records 000 as applied without re-running):
+#   /atlas migrate apply --config file:///work/atlas/atlas.hcl --env migrate
+#   /atlas migrate apply --config file:///work/atlas/atlas.hcl --env migrate --baseline 000_initial.sql
+#
+# The arigaio/atlas image is distroless with ENTRYPOINT=[/atlas] (no shell, no
+# PATH lookup for a bare name), so the binary must be referenced by absolute path.
+FROM arigaio/atlas:latest
+
+WORKDIR /work
+
+# atlas.hcl defines env "migrate" (URL composition + migration dir).
+COPY atlas/atlas.hcl ./atlas/atlas.hcl
+# migrations/ holds the versioned SQL + atlas.sum checksum.
+COPY migrations ./migrations
+
+ENTRYPOINT ["/atlas", "migrate", "apply", "--config", "file:///work/atlas/atlas.hcl", "--env", "migrate"]

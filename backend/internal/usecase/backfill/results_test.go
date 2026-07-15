@@ -48,8 +48,8 @@ func (s *stubAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (m
 }
 func (s *stubAssetRepo) GetAll(context.Context, string) (*models.Asset, error) { return nil, nil }
 func (s *stubAssetRepo) InsertNew(context.Context, *models.Asset) error        { return nil }
-func (s *stubAssetRepo) Set(context.Context, *models.Asset) error                { return nil }
-func (s *stubAssetRepo) SoftDelete(context.Context, string) error                  { return nil }
+func (s *stubAssetRepo) Set(context.Context, *models.Asset) error              { return nil }
+func (s *stubAssetRepo) SoftDelete(context.Context, string) error              { return nil }
 func (s *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
@@ -78,6 +78,9 @@ func (s *stubBackfillRepo) FindJobByID(context.Context, string) (*models.Backfil
 func (s *stubBackfillRepo) UpdateJobStatus(context.Context, string, string) error { return nil }
 func (s *stubBackfillRepo) UpdateJobPilotPhase(context.Context, string, string, string) error {
 	return nil
+}
+func (s *stubBackfillRepo) ClaimJobNotification(context.Context, string) (bool, error) {
+	return false, nil
 }
 func (s *stubBackfillRepo) IncrementCompleted(context.Context, string) error { return nil }
 func (s *stubBackfillRepo) IncrementFailed(context.Context, string) error    { return nil }
@@ -113,6 +116,10 @@ func (s *stubBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec 
 }
 
 func (s *stubBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
+func (s *stubBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 

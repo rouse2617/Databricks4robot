@@ -49,23 +49,42 @@ function stableStringify(value: unknown): string {
 	return JSON.stringify(walk(value));
 }
 
-function buildStructuredQueryWhere(
+// CYB-3385: multi-value facet semantics — same (field, op) group is OR
+// (inter-value), different groups are AND (inter-field). Fixes the bug where
+// selecting two asset_type values (segment + action) produced
+// `type=segment AND type=action` → 0 hits. Keeps single-chip queries as a
+// plain {pred:...} to avoid a needless {or:[single]} wrapper on the wire.
+// Exported so pure tests can exercise the grouping without spinning up the
+// full hook + queryApi mock stack.
+export function buildStructuredQueryWhere(
 	queryState: AssetsDiscoveryState["queryState"],
 ): QueryExpr | undefined {
-	const predicates: QueryExpr[] = queryState.activeFilters.map((chip) => ({
-		pred: {
-			field: chip.field,
-			op: chip.op,
-			value: chip.value,
-		},
-	}));
-	if (predicates.length === 0) {
+	if (queryState.activeFilters.length === 0) {
 		return undefined;
 	}
-	if (predicates.length === 1) {
-		return predicates[0];
+	const grouped = new Map<string, QueryExpr[]>();
+	const order: string[] = [];
+	for (const chip of queryState.activeFilters) {
+		const key = `${chip.field}\x00${chip.op}`;
+		const pred: QueryExpr = {
+			pred: { field: chip.field, op: chip.op, value: chip.value },
+		};
+		const bucket = grouped.get(key);
+		if (bucket) {
+			bucket.push(pred);
+		} else {
+			grouped.set(key, [pred]);
+			order.push(key);
+		}
 	}
-	return { and: predicates };
+	const groupExprs = order.map((key) => {
+		const preds = grouped.get(key) ?? [];
+		return preds.length === 1 ? preds[0] : { or: preds };
+	});
+	if (groupExprs.length === 1) {
+		return groupExprs[0];
+	}
+	return { and: groupExprs };
 }
 
 function buildStructuredQuerySort(sort: string): QuerySort[] {
@@ -86,6 +105,9 @@ const ASSET_DISCOVERY_FACETS: NonNullable<QueryRequest["facets"]> = [
 	{ field: "mcap.scene_id", size: 20 },
 	{ field: "tag.priority", size: 20 },
 	{ field: "tag.quality", size: 20 },
+	// CYB-3297 Phase B: env is free-form data (metadata.env); request it as a
+	// facet so the sidebar can list the real values instead of a hardcoded set.
+	{ field: "env", size: 50 },
 ];
 
 function buildStructuredQueryWhereExpr(
@@ -138,6 +160,32 @@ function buildListQueryRequest(
 	};
 }
 
+/**
+ * CYB-3231: cap for "select all filtered results" — we resolve matching asset_ids
+ * client-side, so bound how many we pull to avoid unbounded id lists.
+ */
+export const SELECT_ALL_MAX = 1000;
+
+/**
+ * Build a query that returns just the asset_ids matching the current filters
+ * (same where/sort as the list), one page up to `limit`. Used to populate the
+ * selection for "select all filtered results".
+ */
+export function buildSelectAllIdsQueryRequest(
+	queryState: AssetsDiscoveryState["queryState"],
+	limit: number,
+): QueryRequest {
+	return {
+		schema_version: "v1",
+		mode: queryState.searchMode,
+		scope: { resource: "assets" },
+		select: { fields: ["asset_id"] },
+		where: buildStructuredQueryWhereExpr(queryState),
+		sort: buildStructuredQuerySort(queryState.sort),
+		page: { page: 1, page_size: limit, offset: 0, limit },
+	};
+}
+
 type FacetFilterSlice = Pick<
 	AssetsDiscoveryState["queryState"],
 	"searchMode" | "queryText" | "activeFilters" | "sort"
@@ -180,6 +228,8 @@ function mapFacetFieldToAggregationKey(field: string): string {
 			return "priority_agg";
 		case "tag.quality":
 			return "quality_agg";
+		case "env":
+			return "env_agg";
 		default:
 			return field;
 	}
@@ -199,23 +249,6 @@ function mapFacetsToAggregations(
 		);
 	}
 	return out;
-}
-
-function assetMatchesAlgoStatusFilter(
-	asset: Asset,
-	statuses: string[],
-): boolean {
-	if (statuses.length === 0) return true;
-	const algoResults = asset.algo_results ?? {};
-	const seenStatuses = new Set<string>();
-	for (const [key, value] of Object.entries(algoResults)) {
-		if (!key.endsWith(":status")) continue;
-		seenStatuses.add(String(value));
-	}
-	if (seenStatuses.size === 0) {
-		seenStatuses.add("pending");
-	}
-	return statuses.some((status) => seenStatuses.has(status));
 }
 
 // ─── Hook ───
@@ -278,13 +311,6 @@ export function useAssetsDiscoveryReducer(): [
 	const isURLHydrated = state.routerState.urlHydrated;
 	const activePreviewAssetID = state.previewState.activeAssetId;
 	const pageSize = state.queryState.pageSize;
-	const activeAlgoStatusFilters = useMemo(
-		() =>
-			state.queryState.activeFilters
-				.filter((chip) => chip.field === "algo_status" && chip.op === "eq")
-				.map((chip) => String(chip.value)),
-		[state.queryState.activeFilters],
-	);
 
 	// ── Results fetch effect ──
 	// Fires when resultsState.isStale becomes true OR when the derived query key
@@ -300,28 +326,20 @@ export function useAssetsDiscoveryReducer(): [
 		listKeyRef.current = currentListKey;
 
 		let cancelled = false;
-		const facetsKeyAtStart = facetsRequestKey;
-		const shouldRefreshFacets = facetsLoadedKeyRef.current !== facetsKeyAtStart;
 
 		const fetchResults = async () => {
 			dispatch({ type: "RESULTS_LOADING" });
 
 			try {
 				const data = await queryApi.run(listQueryRequest);
-				const fetchedItems: Asset[] = data.items ?? [];
-				const hasAlgoStatusFallback = activeAlgoStatusFilters.length > 0;
-				const items = hasAlgoStatusFallback
-					? fetchedItems.filter((asset) =>
-							assetMatchesAlgoStatusFilter(asset, activeAlgoStatusFilters),
-						)
-					: fetchedItems;
+				const items: Asset[] = data.items ?? [];
 				// The list query's `total` is unreliable when ES is unavailable
 				// (it can be smaller than the rows actually returned). Prefer the
 				// authoritative count from the facets query when it has loaded for
 				// the current filters, and always floor by the rows on this page so
 				// the UI never shows `total < rows`.
 				const cachedAuthoritativeTotal =
-					facetsLoadedKeyRef.current === facetsKeyAtStart
+					facetsLoadedKeyRef.current === facetsRequestKey
 						? facetsTotalRef.current
 						: null;
 				const total: number = Math.max(
@@ -333,11 +351,6 @@ export function useAssetsDiscoveryReducer(): [
 					return;
 				}
 				const warnings = [...(data.warnings ?? [])];
-				if (hasAlgoStatusFallback) {
-					warnings.push(
-						"⚠️ algo_status 筛选仅在当前页生效：列表已过滤，但总数和分页仍为全量数据。如需精确结果请在算法页复核，或清除 algo_status 筛选。",
-					);
-				}
 				dispatch({
 					type: "RESULTS_SUCCESS",
 					payload: {
@@ -356,48 +369,6 @@ export function useAssetsDiscoveryReducer(): [
 					dispatch({ type: "PREVIEW_CLEAR" });
 				}
 				inFlightRef.current = false;
-
-				if (!shouldRefreshFacets || cancelled) {
-					return;
-				}
-
-				try {
-					const facetData = await queryApi.run(facetsQueryRequest);
-					if (
-						cancelled ||
-						listKeyRef.current !== currentListKey ||
-						facetsKeyAtStart !== facetsRequestKeyRef.current
-					) {
-						return;
-					}
-					if (facetsLoadedKeyRef.current === facetsKeyAtStart) {
-						return;
-					}
-					// The count/facets query returns the authoritative total
-					// (postgres count fallback when ES is down). Apply it even when
-					// no aggregation buckets come back (facets === null).
-					const authoritativeTotal =
-						typeof facetData.total === "number" ? facetData.total : null;
-					const aggregations = mapFacetsToAggregations(facetData.facets);
-					if (authoritativeTotal == null && !aggregations) {
-						return;
-					}
-					if (authoritativeTotal != null) {
-						facetsTotalRef.current = authoritativeTotal;
-					}
-					facetsLoadedKeyRef.current = facetsKeyAtStart;
-					dispatch({
-						type: "FACETS_SUCCESS",
-						payload: {
-							...(aggregations ? { aggregations } : {}),
-							...(authoritativeTotal != null
-								? { total: authoritativeTotal }
-								: {}),
-						},
-					});
-				} catch {
-					// Facet sidebar can keep previous counts; list is already shown.
-				}
 				return;
 			} catch (err) {
 				if (cancelled || listKeyRef.current !== currentListKey) {
@@ -423,14 +394,64 @@ export function useAssetsDiscoveryReducer(): [
 	}, [
 		activePreviewAssetID,
 		currentListKey,
-		facetsQueryRequest,
 		facetsRequestKey,
 		isResultsStale,
 		isURLHydrated,
 		pageSize,
-		activeAlgoStatusFilters,
 		listQueryRequest,
 	]);
+
+	// ── Facets fetch effect ──
+	// Decoupled from the list fetch on purpose (CYB-3301). Previously the facets
+	// request was chained after the list request in the effect above; the list's
+	// RESULTS_SUCCESS flips isStale true→false, which re-runs that effect and
+	// fires its cleanup (cancelled=true) — cancelling the still-in-flight facets
+	// fetch before it could dispatch FACETS_SUCCESS. Net effect: the facets
+	// request was sent and answered, but its aggregations were discarded, so no
+	// facet ever showed counts. Keying this effect on the filter key only (not
+	// isStale) avoids that race.
+	useEffect(() => {
+		if (!isURLHydrated) return;
+		if (facetsLoadedKeyRef.current === facetsRequestKey) return;
+
+		let cancelled = false;
+		(async () => {
+			try {
+				const facetData = await queryApi.run(facetsQueryRequest);
+				if (cancelled || facetsRequestKeyRef.current !== facetsRequestKey) {
+					return;
+				}
+				// The count/facets query returns the authoritative total (postgres
+				// count fallback when ES is down). Apply it even when no aggregation
+				// buckets come back (facets === null).
+				const authoritativeTotal =
+					typeof facetData.total === "number" ? facetData.total : null;
+				const aggregations = mapFacetsToAggregations(facetData.facets);
+				if (authoritativeTotal == null && !aggregations) {
+					return;
+				}
+				if (authoritativeTotal != null) {
+					facetsTotalRef.current = authoritativeTotal;
+				}
+				facetsLoadedKeyRef.current = facetsRequestKey;
+				dispatch({
+					type: "FACETS_SUCCESS",
+					payload: {
+						...(aggregations ? { aggregations } : {}),
+						...(authoritativeTotal != null
+							? { total: authoritativeTotal }
+							: {}),
+					},
+				});
+			} catch {
+				// Facet sidebar keeps previous counts; the list is unaffected.
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isURLHydrated, facetsRequestKey, facetsQueryRequest]);
 
 	// ── Preview fetch effect ──
 	// Fires when active preview asset or retry nonce changes.

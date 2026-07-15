@@ -16,6 +16,7 @@ ENDPOINTS: dict[str, str] = {
     "asset_update": "/api/v1/assets/{asset_id}",
     "asset_delete": "/api/v1/assets/{asset_id}",
     "asset_batch_get": "/api/v1/assets:batch_get",
+    "asset_metadata": "/api/v1/assets/{asset_id}/metadata",
     "asset_tags_list": "/api/v1/assets/{asset_id}/tags",
     "asset_tags_set": "/api/v1/assets/{asset_id}/tags",
     "asset_tags_get": "/api/v1/assets/{asset_id}/tags/{key}",

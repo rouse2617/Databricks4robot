@@ -86,6 +86,8 @@ export interface PipelineRun extends Deployment {
 	totalEstimatedCost?: number | null;
 	batchJobId?: string;
 	nodeProgress?: PipelineRunNodeProgress;
+	/** Source video duration in seconds (from video_durations; may be absent). */
+	videoDurationSec?: number;
 }
 
 export interface PipelineRunListResponse {
@@ -192,15 +194,43 @@ export interface PipelineRunCostSummary {
 	generatedAt: string;
 }
 
+export interface TargetToleration {
+	key: string;
+	operator: "Equal" | "Exists";
+	value?: string;
+	effect: "NoSchedule" | "NoExecute" | "PreferNoSchedule";
+}
+
+export interface TargetResourceDefaults {
+	computeTier?: string;
+	templateTolerations?: TargetToleration[];
+	templateNodeSelector?: Record<string, string>;
+	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
+	[key: string]: unknown;
+}
+
 export interface ExecutionTarget {
 	id: string;
 	name: string;
+	// clusterId is the FK to clusters.id (CYB-3425). Optional to keep
+	// backwards compatibility with old responses; new targets always carry it.
+	clusterId?: string;
+	// cluster is the legacy free-text field; still returned by the backend for
+	// display. New callers should populate clusterId instead.
 	cluster: string;
 	namespace: string;
+	serviceAccount?: string;
 	argoServerConfigured: boolean;
+	argoInsecureSkipTls?: boolean;
 	status: "available" | "unavailable";
+	enabled?: boolean;
 	isDefault: boolean;
 	description?: string;
+	resourceDefaults?: TargetResourceDefaults;
+	quotaPolicy?: Record<string, unknown>;
+	labels?: Record<string, string>;
+	createdAt?: string;
+	updatedAt?: string;
 }
 
 export interface RuntimeSecretMountResource {
@@ -290,6 +320,7 @@ export function listPipelines(
 	if (params.q) qs.set("q", params.q);
 	if (params.scope) qs.set("scope", params.scope);
 	if (params.sort) qs.set("sort", params.sort);
+	if (params.excludeAutoDrafts) qs.set("exclude_auto_drafts", "true");
 	const query = qs.toString();
 	return request<
 		Partial<ListPipelinesResponse> & {
@@ -321,6 +352,10 @@ export interface ListPipelinesParams {
 	q?: string;
 	scope?: string;
 	sort?: "updated_at_desc" | "name_asc" | "name_desc" | "created_at_desc";
+	// CYB-3390: drop auto-named single-step drafts (pipeline-<10+ digits>)
+	// at the DB layer so pagination reflects the curated set rather than
+	// asking the client to skip past pages of throwaway drafts.
+	excludeAutoDrafts?: boolean;
 }
 
 export interface ListPipelinesResponse {
@@ -547,6 +582,95 @@ export function listExecutionTargets(): Promise<ExecutionTarget[]> {
 		"GET",
 		"/execution-targets",
 	).then((r) => r.items);
+}
+
+export function createExecutionTarget(
+	body: Partial<ExecutionTarget>,
+): Promise<ExecutionTarget> {
+	return request<ExecutionTarget>("POST", "/execution-targets", body);
+}
+
+export function updateExecutionTarget(
+	id: string,
+	body: Partial<ExecutionTarget>,
+): Promise<ExecutionTarget> {
+	return request<ExecutionTarget>(
+		"PUT",
+		`/execution-targets/${encodeURIComponent(id)}`,
+		body,
+	);
+}
+
+export function deleteExecutionTarget(id: string): Promise<void> {
+	return request<void>(
+		"DELETE",
+		`/execution-targets/${encodeURIComponent(id)}`,
+	);
+}
+
+// Cluster is a K8s execution destination (CYB-3425). Read is exposed to any
+// authenticated user (targets need it for the pool dropdown); write is
+// admin-only via /api/v1/admin/clusters.
+export interface Cluster {
+	id: string;
+	name: string;
+	displayName: string;
+	description?: string;
+	isDefault: boolean;
+	status: string;
+	k8sApiEndpoint?: string;
+	k8sAudience?: string;
+	k8sCaData?: string;
+	argoServerUrl?: string;
+	argoNamespace?: string;
+	koordInstalled: boolean;
+	createdAt?: string;
+	updatedAt?: string;
+	deletedAt?: string;
+}
+
+export function listClusters(): Promise<Cluster[]> {
+	return request<{ items: Cluster[] }>("GET", "/clusters").then(
+		(r) => r.items ?? [],
+	);
+}
+
+export function createCluster(body: Partial<Cluster>): Promise<Cluster> {
+	return request<Cluster>("POST", "/admin/clusters", body);
+}
+
+export function updateCluster(
+	id: string,
+	body: Partial<Cluster>,
+): Promise<Cluster> {
+	return request<Cluster>(
+		"PUT",
+		`/admin/clusters/${encodeURIComponent(id)}`,
+		body,
+	);
+}
+
+export function deleteCluster(id: string): Promise<void> {
+	return request<void>("DELETE", `/admin/clusters/${encodeURIComponent(id)}`);
+}
+
+// ElasticQuota is a read-only view of a Koordinator elastic-quota pool
+// (scheduling.sigs.k8s.io/v1alpha1). It shows live min / max / used and
+// utilisation across the cluster; the backend returns an empty list when
+// Koordinator is not installed.
+export interface ElasticQuota {
+	name: string;
+	namespace: string;
+	min: { cpu: string; memory: string };
+	max: { cpu: string; memory: string };
+	used: { cpu: string; memory: string };
+	utilizationPercent: { cpu: number; memory: number };
+}
+
+export function listElasticQuotas(): Promise<ElasticQuota[]> {
+	return request<{ items: ElasticQuota[] }>("GET", "/elastic-quotas").then(
+		(r) => r.items ?? [],
+	);
 }
 
 export function deleteDeployment(id: string): Promise<void> {

@@ -542,6 +542,20 @@ export function assetsDiscoveryReducer(
 				},
 			};
 
+		// CYB-3231: replace selection with an explicit id set. "Select all filtered"
+		// resolves the matching asset_ids up front (capped) and dispatches this, so
+		// selectedCount and every bulk action (which read selectedIds) reflect it.
+		case "SET_SELECTED_IDS": {
+			const ids = action.payload.ids;
+			return {
+				...state,
+				selectionState: {
+					selectedIds: new Set(ids),
+					mode: ids.length > 0 ? "explicit_rows" : "none",
+				},
+			};
+		}
+
 		case "CLEAR_SELECTION":
 			return {
 				...state,

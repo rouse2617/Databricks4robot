@@ -40,6 +40,16 @@ function formatBytes(bytes: number): string {
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+// CYB-3305: summarized rows without a recorded size_bytes should read "未记录"
+// rather than the ambiguous "—" that pending rows use.
+function formatSizeCell(bytes: number, record: McapFile): string {
+	if (!bytes || bytes === 0) {
+		if (record.ingest_state === "summarized") return "未记录";
+		return "—";
+	}
+	return formatBytes(bytes);
+}
+
 const stateFilterOptions = [
 	{ value: "", label: "全部状态" },
 	{ value: "pending", label: "待处理" },
@@ -177,7 +187,7 @@ export default function McapFilesPage() {
 			title: "大小",
 			dataIndex: "size_bytes",
 			width: 100,
-			render: (v: number) => formatBytes(v),
+			render: (v: number, record: McapFile) => formatSizeCell(v, record),
 		},
 		{
 			title: "入库状态",
@@ -190,18 +200,12 @@ export default function McapFilesPage() {
 			),
 		},
 		{
-			title: COLUMN_LABELS.channels,
-			dataIndex: "channel_count",
-			width: 90,
-			responsive: ["lg"],
-			render: (v: number) => v || "—",
-		},
-		{
-			title: COLUMN_LABELS.chunks,
-			dataIndex: "chunk_count",
-			width: 80,
-			responsive: ["lg"],
-			render: (v: number) => v || "—",
+			// CYB-3285: child-segment count replaces the (always-empty for grace)
+			// channel/chunk columns.
+			title: "子 segment 数",
+			dataIndex: "segment_count",
+			width: 110,
+			render: (v: number | undefined) => v ?? 0,
 		},
 		{
 			title: COLUMN_LABELS.owner,

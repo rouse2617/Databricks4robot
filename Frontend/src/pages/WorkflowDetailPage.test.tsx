@@ -251,7 +251,11 @@ describe("WorkflowDetailPage", () => {
 		);
 	});
 
-	it("renders external video IDs without asset detail links", () => {
+	it("renders UUID asset ids as asset detail links", () => {
+		// Grace videos are now first-class DataBrew assets addressed by UUID
+		// asset_id (CYB-1215 / grace_video), so a UUID asset id is canonical and
+		// links to its asset detail page. (Previously these were treated as
+		// external ids with no link.)
 		const videoID = "019dabf3-5685-769f-8ec3-3992767ebe65";
 		mockWorkflowDetailState({
 			workflow: {
@@ -270,7 +274,8 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText(videoID)).toBeInTheDocument();
-		expect(screen.queryByRole("link", { name: videoID })).toBeNull();
+		const link = screen.getByRole("link", { name: videoID });
+		expect(link).toHaveAttribute("href", `/assets/${videoID}`);
 	});
 
 	it("uses product-facing copy when run events are unavailable", () => {
@@ -285,6 +290,9 @@ describe("WorkflowDetailPage", () => {
 
 		renderWorkflowDetail();
 
+		// The unavailable-events copy lives under the "事件时间线" tab, whose content
+		// only mounts once the tab is activated (CYB-1565 tabbed layout).
+		fireEvent.click(screen.getByRole("tab", { name: /事件时间线/ }));
 		expect(screen.getByText("事件暂不可用")).toBeInTheDocument();
 		expect(
 			screen.getByText(/这是历史工作流或外部提交的工作流/),
@@ -406,10 +414,12 @@ describe("WorkflowDetailPage", () => {
 
 		renderWorkflowDetail();
 
-		expect(screen.getByText("运行上下文")).toBeInTheDocument();
+		// Inputs/outputs metadata now live under the "运行上下文" tab; its content
+		// only mounts once the tab is activated (CYB-1565 tabbed layout). The
+		// panel shows the config input (refId@version) and the outputs table.
+		fireEvent.click(screen.getByRole("tab", { name: /运行上下文/ }));
 		expect(screen.getByText("cfg-1@2")).toBeInTheDocument();
-		expect(screen.getByText("/mnt/parameters")).toBeInTheDocument();
-		expect(screen.getByText("params.yaml")).toBeInTheDocument();
+		expect(screen.getByText("argo://wf-asset/node-1")).toBeInTheDocument();
 		expect(screen.getByText("argo://wf-asset/node-1")).toBeInTheDocument();
 		expect(screen.getByText("video-proc-dev")).toBeInTheDocument();
 		expect(screen.getByText("target-gpu")).toBeInTheDocument();
@@ -582,7 +592,7 @@ describe("WorkflowDetailPage", () => {
 
 		renderWorkflowDetail();
 
-		expect(screen.getByText("未找到工作流")).toBeInTheDocument();
+		expect(screen.getByText("未找到该工作流")).toBeInTheDocument();
 		expect(screen.getByText("workflow not found")).toBeInTheDocument();
 		expect(screen.queryByText("正在加载执行记录…")).not.toBeInTheDocument();
 	});
@@ -601,6 +611,10 @@ describe("WorkflowDetailPage", () => {
 					workflowName: "wf-expired",
 					pipelineName: "asset-pipeline",
 					status: "Error",
+					// A genuinely TTL-cleaned workflow existed in Argo and was
+					// assigned a UID (persisted by DataBrew), distinguishing it from
+					// a run that failed before any workflow was created (CYB-3082).
+					argoWorkflowUid: "wf-expired-uid",
 					nodeCount: 1,
 					createdAt: "2026-06-03T00:00:00Z",
 					finishedAt: "2026-06-03T00:10:00Z",
@@ -667,6 +681,49 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.getAllByText("wf-expired").length).toBeGreaterThan(0);
 		expect(screen.getByText("video-proc-dev")).toBeInTheDocument();
 		expect(screen.queryByText("未找到工作流")).not.toBeInTheDocument();
+	});
+
+	it("explains runs that failed before any workflow was created", () => {
+		// A run rejected before submission (e.g. by the resource guard) is
+		// terminally failed but never obtained an Argo workflow UID. The banner
+		// must not imply TTL cleanup — the workflow never existed (CYB-3082).
+		mockWorkflowDetailState({
+			workflow: null,
+			loading: false,
+			loadError: {
+				kind: "not_found",
+				message: "workflow not found",
+			},
+			runEventState: {
+				run: {
+					id: "run-rejected",
+					workflowName: "youxin-all-batch-abc123",
+					pipelineName: "youxin-all",
+					status: "Failed",
+					nodeCount: 0,
+					createdAt: "2026-06-03T00:00:00Z",
+					finishedAt: "2026-06-03T00:00:05Z",
+					blockingReason: "resource_incompatible",
+					blockingMessage:
+						'执行目标 "Default Argo target"不支持该资源规格：节点 "head-track" 请求 cpu=14000m',
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(
+			screen.getByText("该运行在提交到 Runtime 前失败，未创建底层 workflow"),
+		).toBeInTheDocument();
+		expect(screen.getByText(/该运行未生成底层 workflow/)).toBeInTheDocument();
+		// Must NOT show the TTL-cleanup wording for a never-created workflow.
+		expect(
+			screen.queryByText("底层 Runtime 已不可用，正在展示 DataBrew 历史账本"),
+		).not.toBeInTheDocument();
 	});
 
 	it("explains pending Runs that have not been submitted to runtime", () => {

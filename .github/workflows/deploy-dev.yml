@@ -9,6 +9,7 @@ on:
     paths:
       - "backend/**"
       - "deploy/cloudrun/backend-dev.sh"
+      - "deploy/cloudrun/create-migrate-jobs.sh"
       - "services/mcap-preview/**"
       - "deploy/cloudrun/mcap-preview-dev.sh"
       - "Frontend/**"
@@ -32,7 +33,15 @@ jobs:
       mcap: ${{ steps.filter.outputs.mcap }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
+      # fetch-depth: 2 lets dorny/paths-filter compute a real
+      # `git diff <before>...<after>` for push events. The default
+      # fetch-depth=1 has no `before` commit available locally, so
+      # paths-filter falls back to "treat every filter as changed",
+      # which fired deploy-backend / deploy-mcap / deploy-migrate on
+      # every push even for pure Frontend-only changes. See CYB-3380.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -40,7 +49,9 @@ jobs:
             backend:
               - 'backend/**'
               - 'deploy/cloudrun/backend-dev.sh'
+              - 'deploy/cloudrun/create-migrate-jobs.sh'
               - '.github/workflows/deploy-dev.yml'
+              - '.github/workflows/db-migrate-lint.yml'
             mcap:
               - 'services/mcap-preview/**'
               - 'deploy/cloudrun/mcap-preview-dev.sh'
@@ -122,11 +133,15 @@ jobs:
             --progress=auto \
             --platform=linux/amd64 \
             \$CACHE_ARGS \
+            --no-cache-filter=builder \
+            --build-arg VERSION=dev \
+            --build-arg COMMIT=$COMMIT_SHA \
+            --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -f ${{ env.REPO_DIR }}/backend/Dockerfile \
             -t ${{ env.IMAGE }} \
             --push \
             ${{ env.REPO_DIR }}/backend
-          echo "    pushed: ${{ env.IMAGE }}"
+          echo "    pushed: ${{ env.IMAGE }} (commit $COMMIT_SHA)"
           ENDSSH
 
       - name: Deploy to Cloud Run dev
@@ -134,7 +149,125 @@ jobs:
           IMAGE=${{ env.IMAGE }} \
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
+          CLOUDRUN_ENV=development \
           bash deploy/cloudrun/backend-dev.sh
+
+      # The dev service has no real DATABREW_TOKEN / JWT_SECRET, so ENV=production
+      # (the backend-dev.sh default) makes every new revision fail the fail-fast
+      # config check and crash on boot — freezing traffic on the last good
+      # revision. CLOUDRUN_ENV=development matches the known-good running revision.
+      #
+      # Traffic routing is deferred to the deploy-migrate job below so the new
+      # revision only receives traffic AFTER Atlas migrations have been applied.
+
+  # ─── Atlas migrations (Cloud Run Job) ───────────────────────────────────────
+  # Runs AFTER the new backend image is deployed (revision exists but is not
+  # yet serving traffic) and BEFORE traffic is routed to it. This keeps the
+  # new revision idle against the old schema, then migrates, then routes
+  # traffic — so the new code never serves a partially-migrated schema.
+  #
+  # The Job (cyber-databrew-migrate-dev) is created once via
+  # deploy/cloudrun/create-migrate-jobs.sh; this job only updates its image
+  # reference, executes it, and finally routes traffic.
+  deploy-migrate:
+    needs: deploy-backend
+    name: Apply Atlas migrations & route traffic → Cloud Run dev
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-migrate-dev
+      cancel-in-progress: false
+    env:
+      MIGRATE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-migrate:cloudrun-dev-latest
+      MIGRATE_JOB: cyber-databrew-migrate-dev
+      REGION: us-central1
+      PROJECT_ID: green-valley-442103
+    steps:
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/234851712830/locations/global/workloadIdentityPools/github-actions-pool-v2/providers/github-provider
+          service_account: cyber-databrew-gha@green-valley-442103.iam.gserviceaccount.com
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build & push migrate image on VM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          AR_TOKEN=$(gcloud auth print-access-token)
+          CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+
+          ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
+          set -euo pipefail
+          if [ -d ${{ env.REPO_DIR }}/.git ]; then
+            rm -f ${{ env.REPO_DIR }}/.git/shallow
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL" 2>/dev/null
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin dev -q
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
+          else
+            git clone --depth=1 --branch dev "$CLONE_URL" ${{ env.REPO_DIR }} -q
+          fi
+          echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev 2>&1 | grep -v "^$"
+          docker buildx build \
+            --progress=auto \
+            --platform=linux/amd64 \
+            -f ${{ env.REPO_DIR }}/backend/atlas/Dockerfile.migrate \
+            -t ${{ env.MIGRATE_IMAGE }} \
+            --push \
+            ${{ env.REPO_DIR }}/backend
+          echo "    pushed: ${{ env.MIGRATE_IMAGE }}"
+          ENDSSH
+
+      - name: Update Job image reference
+        run: |
+          # NOTE: gcloud run jobs update wipes plain --set-env-vars (but keeps
+          # --set-secrets). We re-assert the DB_* env vars on every update so
+          # the Job's container can compose the connection URL via atlas.hcl.
+          gcloud run jobs update "${{ env.MIGRATE_JOB }}" \
+            --image="${{ env.MIGRATE_IMAGE }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --update-env-vars=DB_HOST=172.27.160.7,DB_PORT=5432,DB_USER=postgres,DB_NAME=cyber_databrew_dev,DB_SSLMODE=disable
+
+      - name: Execute migrate Job
+        run: |
+          # Apply pending migrations only — the Job's default entrypoint is
+          # `atlas migrate apply --env migrate`, so a plain execute (no --args)
+          # applies whatever is pending. dev and prod are already baselined,
+          # so there is no first-run baseline gymnastics here.
+          #
+          # Adopting a NEW pre-existing (pre-Atlas) database is a deliberate,
+          # one-off `atlas migrate apply --baseline <version>` run by hand — see
+          # docs/atlas-migrations.md. It is intentionally NOT auto-run at deploy
+          # (the old hardcoded `--baseline 000_initial.sql` was removed when the
+          # baseline was reset to a single reverse-engineered snapshot).
+          gcloud run jobs execute "${{ env.MIGRATE_JOB }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --wait
+
+      - name: Route dev traffic to latest revision
+        run: |
+          # gcloud run deploy leaves traffic pinned to the previously-serving
+          # revision when the service is in manual-traffic mode, so new revisions
+          # never receive traffic. Force 100% onto the newest ready revision
+          # — only AFTER the migrate Job above has finished.
+          for i in 1 2 3 4 5; do
+            if gcloud run services update-traffic cyber-databrew-backend-dev \
+                 --project=green-valley-442103 --region=us-central1 \
+                 --to-latest --quiet; then
+              echo "traffic routed to latest"
+              break
+            fi
+            echo "traffic routing attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
 
   # ─── MCAP Preview ───────────────────────────────────────────────────────────
   deploy-mcap:

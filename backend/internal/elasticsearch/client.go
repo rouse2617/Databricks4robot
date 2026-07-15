@@ -336,12 +336,26 @@ func buildSearchBody(req SearchRequest) map[string]any {
 		},
 	}
 
+	// If a fulltext query is provided, sort by relevance (_score) first,
+	// then by recency (updated_at) for ties. Otherwise, use pure recency.
+	var sort []map[string]any
+	if strings.TrimSpace(req.Query) != "" {
+		sort = []map[string]any{
+			{"_score": map[string]any{"order": "desc"}},
+			{"updated_at": map[string]any{"order": "desc"}},
+		}
+	} else {
+		sort = []map[string]any{
+			{"updated_at": map[string]any{"order": "desc"}},
+		}
+	}
+
 	return map[string]any{
 		"query":     query,
 		"from":      from,
 		"size":      req.PageSize,
 		"aggs":      aggs,
-		"sort":      []map[string]any{{"updated_at": map[string]any{"order": "desc"}}},
+		"sort":      sort,
 		"highlight": highlight,
 	}
 }
@@ -423,6 +437,14 @@ func buildFilterClause(f FilterOp) (positive, negative map[string]any) {
 
 // normalizeScalarField maps legacy/public filter aliases to ES document fields.
 func normalizeScalarField(field string) string {
+	// Singular tag.<key> scalar filters map to the flattened tags_flat.<key>
+	// field — the same path facet aggregations use (facetFieldPath). Nested
+	// tags.<key> is caught earlier by nestedPath and never reaches here, and an
+	// already-qualified tags_flat.<key> keeps a "tags" prefix (not "tag."), so
+	// it is left untouched.
+	if strings.HasPrefix(field, "tag.") {
+		return "tags_flat." + strings.TrimPrefix(field, "tag.")
+	}
 	switch field {
 	case "env":
 		return "metadata.env"

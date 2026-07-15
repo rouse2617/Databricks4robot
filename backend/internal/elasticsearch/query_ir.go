@@ -168,6 +168,11 @@ func facetFieldPath(field string) (string, error) {
 		return "tags_flat.priority", nil
 	case "tag.quality":
 		return "tags_flat.quality", nil
+	case "env":
+		// CYB-3297 Phase B: env lives in the flattened metadata field; terms agg
+		// on the subkey surfaces the real env values so the facet is discoverable
+		// instead of a hardcoded list.
+		return "metadata.env", nil
 	default:
 		return "", fmt.Errorf("unsupported facet field %q", field)
 	}

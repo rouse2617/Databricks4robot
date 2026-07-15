@@ -41,6 +41,8 @@ const { useBreakpoint } = Grid;
 export interface AssetPreviewHeroProps {
 	asset: Asset;
 	previewManifest: PreviewManifest | null;
+	/** CYB-3294: jump to the 算法处理 tab (e.g. clicking the algo status summary). */
+	onJumpToAlgo?: () => void;
 }
 
 // ─── Color Maps ───
@@ -74,7 +76,13 @@ const AVAILABILITY_BADGE: Record<
 
 const ALGO_STATUS_ORDER = ["ok", "failed", "running", "pending", "blocked"];
 
-function AlgoSummaryInline({ asset }: { asset: Asset }) {
+function AlgoSummaryInline({
+	asset,
+	onJumpToAlgo,
+}: {
+	asset: Asset;
+	onJumpToAlgo?: () => void;
+}) {
 	const entries = parseAlgoEntries(asset.algo_results);
 	if (entries.length === 0) {
 		return <Text type="secondary">—</Text>;
@@ -97,7 +105,7 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 		}
 	}
 
-	return (
+	const content = (
 		<span style={{ fontSize: 13 }}>
 			{parts.map((p, i) => (
 				<span key={p.label}>
@@ -109,6 +117,29 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 			))}
 		</span>
 	);
+
+	// CYB-3294: clicking the algo summary jumps to the 算法处理 tab for triage.
+	if (onJumpToAlgo) {
+		return (
+			<Tooltip title="查看算法处理">
+				<span
+					role="button"
+					tabIndex={0}
+					onClick={onJumpToAlgo}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							onJumpToAlgo();
+						}
+					}}
+					style={{ cursor: "pointer" }}
+				>
+					{content}
+				</span>
+			</Tooltip>
+		);
+	}
+	return content;
 }
 
 // ─── Left Panel: Preview Media Placeholder ───
@@ -151,7 +182,7 @@ function PreviewMediaPanel({
 						status={badge.status}
 						text={
 							<Text type="secondary" style={{ fontSize: 12 }}>
-								视频预览
+								已就绪
 							</Text>
 						}
 					/>
@@ -269,9 +300,11 @@ function PreviewMediaPanel({
 function AssetSummaryPanel({
 	asset,
 	isNarrow,
+	onJumpToAlgo,
 }: {
 	asset: Asset;
 	isNarrow: boolean;
+	onJumpToAlgo?: () => void;
 }) {
 	const priority = asset.tags?.priority;
 	const quality = asset.tags?.quality;
@@ -331,7 +364,7 @@ function AssetSummaryPanel({
 				</Descriptions.Item>
 				<Descriptions.Item label="Env">{asset.env ?? "—"}</Descriptions.Item>
 				<Descriptions.Item label="Algo">
-					<AlgoSummaryInline asset={asset} />
+					<AlgoSummaryInline asset={asset} onJumpToAlgo={onJumpToAlgo} />
 				</Descriptions.Item>
 				<Descriptions.Item label="已完成交付">
 					{asset.delivery_count ?? 0}
@@ -347,6 +380,7 @@ function AssetSummaryPanel({
 export default function AssetPreviewHero({
 	asset,
 	previewManifest,
+	onJumpToAlgo,
 }: AssetPreviewHeroProps) {
 	const screens = useBreakpoint();
 	const isNarrow =
@@ -372,7 +406,11 @@ export default function AssetPreviewHero({
 					asset={asset}
 					isNarrow={isNarrow}
 				/>
-				<AssetSummaryPanel asset={asset} isNarrow={isNarrow} />
+				<AssetSummaryPanel
+					asset={asset}
+					isNarrow={isNarrow}
+					onJumpToAlgo={onJumpToAlgo}
+				/>
 			</div>
 		</Card>
 	);

@@ -1293,6 +1293,13 @@ function ExpiredWorkflowLedgerView({
 	const isRuntimeNotSubmitted =
 		run?.blockingReason === "runtime_not_submitted" ||
 		(run?.status === "Pending" && !hasRuntimeReference);
+	// A run that reached a terminal failure without ever obtaining an Argo
+	// workflow UID never created a workflow at all (e.g. rejected before
+	// submission by the resource guard). It was NOT TTL-cleaned, so the
+	// ledger-fallback banner must not imply the workflow once existed.
+	const isFailedBeforeWorkflow =
+		(run?.status === "Failed" || run?.status === "Error") &&
+		!run?.argoWorkflowUid;
 	const runTitle =
 		run?.pipelineName || run?.workflowName || name || run?.id || "运行详情";
 	const assetIds =
@@ -1337,17 +1344,23 @@ function ExpiredWorkflowLedgerView({
 					) : null}
 				</Space>
 				<Alert
-					type={isRuntimeNotSubmitted ? "info" : "warning"}
+					type={
+						isRuntimeNotSubmitted || isFailedBeforeWorkflow ? "info" : "warning"
+					}
 					showIcon
 					message={
 						isRuntimeNotSubmitted
 							? "Run 已创建，等待提交到 Runtime"
-							: "底层 Runtime 已不可用，正在展示 DataBrew 历史账本"
+							: isFailedBeforeWorkflow
+								? "该运行在提交到 Runtime 前失败，未创建底层 workflow"
+								: "底层 Runtime 已不可用，正在展示 DataBrew 历史账本"
 					}
 					description={
 						isRuntimeNotSubmitted
 							? "该 Run 已记录到 DataBrew，正在等待提交到运行时；DAG、Pod、实时日志暂不可用，页面会随账本更新自动恢复。"
-							: "底层 workflow 可能已被 TTL 清理或暂时不可访问；状态、输入、输出、事件和失败原因仍以 DataBrew 账本为准。"
+							: isFailedBeforeWorkflow
+								? "该运行未生成底层 workflow（例如提交前被资源/规格校验拒绝），因此没有 DAG、Pod 或实时日志；失败原因见下方诊断。"
+								: "底层 workflow 可能已被 TTL 清理或暂时不可访问；状态、输入、输出、事件和失败原因仍以 DataBrew 账本为准。"
 					}
 					action={
 						<Button size="small" onClick={onRefreshEvents}>

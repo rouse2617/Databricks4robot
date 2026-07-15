@@ -26,6 +26,23 @@ interface SearchFieldSpec {
 
 export const SEARCH_FIELD_SPECS: SearchFieldSpec[] = [
 	{ key: "asset_id", label: "Asset ID", type: "string" },
+	{
+		key: "asset_type",
+		label: "资产类型",
+		type: "enum",
+		values: [
+			"segment",
+			"raw_mcap",
+			"frame",
+			"action",
+			"dataset",
+			"annotation_result",
+			"ml_model",
+			"evaluation_report",
+			"grace_video",
+			"derived_asset",
+		],
+	},
 	{ key: "mcap_file_id", label: "MCAP ID", type: "string" },
 	{ key: "owner", label: "Owner", type: "string" },
 	{ key: "reviewer", label: "Reviewer", type: "string" },
@@ -49,12 +66,12 @@ export const SEARCH_FIELD_SPECS: SearchFieldSpec[] = [
 		type: "enum",
 		values: ["approved", "rejected", "superseded", "archived"],
 	},
-	{
-		key: "env",
-		label: "环境",
-		type: "enum",
-		values: ["kitchen", "outdoor", "warehouse", "office", "factory"],
-	},
+	// env is a data-driven, open-valued field (real values are Chinese scene
+	// labels like 家庭/工厂/学校, not a fixed English set), so it must NOT be a
+	// hardcoded enum — that rejected valid values. Free-form string like
+	// scene/task/batch; any current or future env value passes to the backend
+	// filter (CYB-3230).
+	{ key: "env", label: "环境", type: "string" },
 	{ key: "scene", label: "场景", type: "string" },
 	{ key: "task", label: "任务", type: "string" },
 	{ key: "batch", label: "批次", type: "string" },
@@ -319,6 +336,16 @@ export function tokenizeDraftText(text: string): QueryToken[] {
 
 // ─── Search Mode Options ───
 
+function getSearchPlaceholder(mode: SearchMode): string {
+	const placeholders: Record<SearchMode, string> = {
+		structured: "例如：env:warehouse algo_status:failed asset_type:video…",
+		keyword: "搜索关键词：Asset ID、MCAP、Owner、Tag 等…",
+		semantic: "用自然语言描述你要找什么…（例如：失败的视频处理）",
+		similar: "上传或指定资产 ID 来寻找相似内容…",
+	};
+	return placeholders[mode] ?? "输入搜索条件…";
+}
+
 const SEARCH_MODE_OPTIONS: {
 	value: SearchMode;
 	label: string;
@@ -412,7 +439,7 @@ export default function AssetsSearchBar({
 				{/* Search Input */}
 				<Input
 					id="assets-search-input"
-					placeholder="搜索 Asset、MCAP、Owner、Tag，或输入 env:warehouse algo_status:failed…"
+					placeholder={getSearchPlaceholder(searchMode)}
 					prefix={<SearchOutlined />}
 					value={draftText}
 					onChange={(e) => onDraftChange(e.target.value)}
@@ -507,8 +534,8 @@ export default function AssetsSearchBar({
 							<code>field!=value</code> — 不等于
 						</div>
 						<div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-							可用字段: env, lifecycle_state, owner, algo_status, duration_ms,
-							tag.priority, tag.quality 等
+							可用字段: asset_type, env, lifecycle_state, owner, algo_status,
+							duration_ms, tag.priority, tag.quality 等
 						</div>
 					</div>
 				}

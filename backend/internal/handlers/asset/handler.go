@@ -127,6 +127,94 @@ func (h *Handler) GetAssetTypeSchema(c *gin.Context) {
 	c.Data(http.StatusOK, "application/schema+json", schema)
 }
 
+// GetMetadata returns the raw `assets.metadata` and `mcap_files.metadata` JSONB
+// trees for an asset, plus a few convenience subtrees lifted from the mcap
+// metadata for quick UI rendering. Used by the asset detail page's
+// "Advanced / metadata" collapsible section.
+//
+// Auth: same as `GET /assets/:id` (any Authenticate-passing principal).
+//
+// 200 with mcap_metadata=null when the asset exists but has no mcap_files row
+// (e.g. a grace_video without an underlying mcap).
+//
+// @Summary      Get asset metadata
+// @Description  Return raw assets.metadata + mcap_files.metadata JSONB trees.
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/metadata [get]
+func (h *Handler) GetMetadata(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	a, err := h.uc.GetAll(c.Request.Context(), assetID)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+
+	// Best-effort mcap lookup; missing mcap_files row is not an error.
+	var mcapMeta map[string]interface{}
+	var mcapProcessState map[string]string
+	var gcsStorage, aliyunStorage map[string]interface{}
+	var collection, processInfo, videoInfo map[string]interface{}
+	if h.mcapRepo != nil && a.McapFileID != "" {
+		mf, mErr := h.mcapRepo.Get(c.Request.Context(), a.McapFileID)
+		if mErr == nil && mf != nil {
+			mcapMeta = mf.Metadata
+			mcapProcessState = mf.ProcessState
+			if sm, ok := mcapMeta["storage_meta"].(map[string]interface{}); ok {
+				if gcs, ok := sm["gcs"].(map[string]interface{}); ok {
+					gcsStorage = gcs
+				}
+				if ali, ok := sm["aliyun"].(map[string]interface{}); ok {
+					aliyunStorage = ali
+				}
+			}
+			if ci, ok := mcapMeta["collection_meta"].(map[string]interface{}); ok {
+				collection = ci
+			}
+			if pi, ok := mcapMeta["process_info"].(map[string]interface{}); ok {
+				processInfo = pi
+			}
+			if vi, ok := mcapMeta["video_info"].(map[string]interface{}); ok {
+				videoInfo = vi
+			}
+		}
+	}
+
+	var graceSnapshot map[string]interface{}
+	if a.Metadata != nil {
+		if gs, ok := a.Metadata["grace_video_snapshot"].(map[string]interface{}); ok {
+			graceSnapshot = gs
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"asset_id":             a.AssetID,
+		"segment_locator":      a.SegmentLocator,
+		"lifecycle_state":      a.LifecycleState,
+		"asset_metadata":       a.Metadata,
+		"mcap_metadata":        mcapMeta,
+		"grace_video_snapshot": graceSnapshot,
+		"storage": gin.H{
+			"gcs":    gcsStorage,
+			"aliyun": aliyunStorage,
+		},
+		"mcap_process_state": mcapProcessState,
+		"collection":         collection,
+		"process_info":       processInfo,
+		"video_info":         videoInfo,
+	})
+}
+
 // List returns assets with optional filters and pagination.
 // Deprecated: asset list queries should use POST /api/v1/queries/run.
 func (h *Handler) List(c *gin.Context) {
@@ -544,19 +632,19 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 // @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
-		AssetID             string                 `json:"asset_id" label:"资产ID"`
-		LogicalAssetID      string                 `json:"logical_asset_id" label:"逻辑资产ID"`
-		McapFileID          string                 `json:"mcap_file_id" label:"MCAP文件ID"`
-		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
-		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
-		Reviewer            string                 `json:"reviewer" binding:"required" label:"审核人"`
-		Owner               string                 `json:"owner" label:"所有者"`
-		SegType             string                 `json:"type" label:"片段类型"`
-		AssetType           string                 `json:"asset_type" label:"资产类型"`
-		Status              string                 `json:"status" label:"旧生命周期状态"`
-		LifecycleState      string                 `json:"lifecycle_state" label:"新生命周期状态"`
-		Env                 string                 `json:"env" label:"环境"`
-		Task                string                 `json:"task" label:"任务"`
+		AssetID             string                 `json:"asset_id"`
+		LogicalAssetID      string                 `json:"logical_asset_id"`
+		McapFileID          string                 `json:"mcap_file_id"`
+		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0"`
+		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0"`
+		Reviewer            string                 `json:"reviewer" binding:"required"`
+		Owner               string                 `json:"owner"`
+		SegType             string                 `json:"type"`
+		AssetType           string                 `json:"asset_type"`
+		Status              string                 `json:"status"`
+		LifecycleState      string                 `json:"lifecycle_state"`
+		Env                 string                 `json:"env"`
+		Task                string                 `json:"task"`
 		Tags                map[string]string      `json:"tags"`
 		Files               map[string]string      `json:"files"`
 		Metadata            map[string]interface{} `json:"metadata"`
@@ -709,6 +797,104 @@ func (h *Handler) CreateFrame(c *gin.Context) { h.createChildAsset(c, "frame") }
 // POST /api/v1/assets/:id/tasks
 func (h *Handler) CreateTask(c *gin.Context) { h.createChildAsset(c, "task") }
 
+// requirePathActionAssetID reads and validates the :action_id path param, which
+// for the first-class actions API (CYB-3268) is an 8-char asset_id.
+func requirePathActionAssetID(c *gin.Context) (string, bool) {
+	raw := strings.TrimSpace(c.Param("action_id"))
+	if raw == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "action_id is required", nil)
+		return "", false
+	}
+	if !id.ValidateAssetID(raw) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid action_id: must be a valid asset id", nil)
+		return "", false
+	}
+	return raw, true
+}
+
+// ListActions handles GET /assets/:id/actions — first-class action assets under
+// the given parent (asset_type='action', reads the assets table, not the legacy
+// actions table; CYB-3268). Pagination: limit (default 50, max 1000) + offset.
+// Response envelope matches the legacy endpoint: {items, asset_id, total}.
+func (h *Handler) ListActions(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseBoundedInt(c.Query("limit"), 50, 1, 1000)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid limit", map[string]any{"error": err.Error()})
+		return
+	}
+	offset, err := parseBoundedInt(c.Query("offset"), 0, 0, 1_000_000)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid offset", map[string]any{"error": err.Error()})
+		return
+	}
+	items, total, err := h.uc.ListActionsByParent(c.Request.Context(), parentID, limit, offset)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	if items == nil {
+		items = []*models.Asset{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "asset_id": parentID, "total": total})
+}
+
+// UpdateAction handles PATCH /assets/:id/actions/:action_id — merges metadata
+// into a first-class action asset (CYB-3268). Cross-parent or missing
+// action_id → 404; unregistered label → 422 INVALID_ACTION.
+func (h *Handler) UpdateAction(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	aid, ok := requirePathActionAssetID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	a, err := h.uc.UpdateActionAsset(c.Request.Context(), parentID, aid, assetUC.UpdateActionInput{
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(http.StatusOK, a)
+}
+
+// DeleteAction handles DELETE /assets/:id/actions/:action_id — soft-deletes a
+// first-class action asset (CYB-3268). Cross-parent or missing action_id → 404.
+func (h *Handler) DeleteAction(c *gin.Context) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	aid, ok := requirePathActionAssetID(c)
+	if !ok {
+		return
+	}
+	if err := h.uc.SoftDeleteActionAsset(c.Request.Context(), parentID, aid); err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // PATCH /api/v1/assets/:id
 func (h *Handler) Update(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -721,6 +907,9 @@ func (h *Handler) Update(c *gin.Context) {
 		Reviewer       *string           `json:"reviewer"`
 		Owner          *string           `json:"owner"`
 		Tags           map[string]string `json:"tags"`
+		Files          map[string]string `json:"files"`       // CYB-3232: merge into asset files
+		StorageURI     *string           `json:"storage_uri"` // CYB-3232
+		ThumbURI       *string           `json:"thumb_uri"`   // CYB-3232
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -732,6 +921,9 @@ func (h *Handler) Update(c *gin.Context) {
 		Reviewer:       req.Reviewer,
 		Owner:          req.Owner,
 		Tags:           req.Tags,
+		Files:          req.Files,
+		StorageURI:     req.StorageURI,
+		ThumbURI:       req.ThumbURI,
 	})
 	if err != nil {
 		if !mapAssetError(c, err) {
@@ -790,7 +982,7 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 		Owner:      req.Owner,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) {
+		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) || errors.Is(err, assetUC.ErrDurationTooSmall) {
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), map[string]any{"partial": created})
 		} else if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())

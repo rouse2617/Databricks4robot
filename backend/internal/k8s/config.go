@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -28,6 +29,21 @@ func NewClientset(kubeconfigPath string) (kubernetes.Interface, error) {
 		return nil, fmt.Errorf("%w: create clientset: %v", ErrUnavailable, err)
 	}
 	return clientset, nil
+}
+
+// NewDynamicClient builds a dynamic K8s client for CRDs whose typed structs
+// are not vendored (e.g. Koordinator ElasticQuota). Shares the same config
+// resolution as NewClientset.
+func NewDynamicClient(kubeconfigPath string) (dynamic.Interface, error) {
+	config, err := buildConfig(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create dynamic client: %v", ErrUnavailable, err)
+	}
+	return client, nil
 }
 
 func buildConfig(kubeconfigPath string) (*rest.Config, error) {

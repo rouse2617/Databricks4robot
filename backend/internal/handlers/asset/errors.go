@@ -25,8 +25,13 @@ func mapAssetError(c *gin.Context, err error) bool {
 		httpresp.Conflict(c, httpresp.CodeTagImmutable, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrCustomerNotFound):
 		httpresp.Unprocessable(c, httpresp.CodeCustomerNotFound, err.Error(), nil)
+	case errors.Is(err, assetUC.ErrInvalidActionLabel):
+		// CYB-3268: keep the legacy INVALID_ACTION code so clients that already
+		// handle the old actions API see the same error envelope.
+		httpresp.Unprocessable(c, "INVALID_ACTION", err.Error(), nil)
 	case errors.Is(err, assetUC.ErrMcapFileIDRequired),
-		errors.Is(err, assetUC.ErrInvalidRange):
+		errors.Is(err, assetUC.ErrInvalidRange),
+		errors.Is(err, assetUC.ErrDurationTooSmall):
 		httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrLogicalAssetNotFound),
 		errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):

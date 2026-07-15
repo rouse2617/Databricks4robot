@@ -238,7 +238,7 @@ curl -X POST "$BASE/api/v1/mcap-files" \
   }"
 ```
 
-> ⚠️ `raw_hash_md5` 有唯一约束（`uq_mcap_files_hash_md5`）。同一环境重复运行时需使用不同的值，或省略该字段（后端允许 NULL）。
+> ⚠️ `raw_hash_md5` 有唯一约束（`uq_mcap_files_hash_md5`）。重复的 `raw_hash_md5` 返回 `409 DUPLICATE_HASH`（不区分显式 / 自动 `mcap_file_id`，也不会重试）；调用方可据此做幂等。省略该字段则不参与去重（后端允许 NULL）。
 
 再创建资产：
 
@@ -308,8 +308,10 @@ curl -X POST "$BASE/api/v1/assets" \
 必填字段:
 - `mcap_file_id` — 关联的 MCAP 文件 ID
 - `start_timestamp_ns` — 起始时间戳 (纳秒, 不能为 0)
-- `end_timestamp_ns` — 结束时间戳 (必须 > start)
+- `end_timestamp_ns` — 结束时间戳 (必须 > start，且时长 ≥ 1ms，即 `end - start >= 1_000_000` ns；否则返回 `422 INVALID_STATE`)
 - `reviewer` — 审核人
+
+> 时间范围校验 (CYB-3226) 对所有资产写入生效：`POST /api/v1/assets`、`POST /api/v1/assets/:id/{clips,frames,tasks}`、以及批量 ranges 提交。`end <= start` 或时长 < 1ms（会取整成 `duration_ms=0`）均被拒绝，返回 `422 INVALID_STATE`。写入成功时后端会从 `end - start` 推导并持久化 `duration_ms`。
 
 可选字段: `owner`, `asset_type`, `env`, `task`, `tags`。可选 **`asset_id`**：若传入则须为 **8 位字母数字** 且全局唯一；不传则由服务端生成。
 
@@ -319,6 +321,7 @@ Tags 校验规则:
 - `scene`: 枚举 `indoor | outdoor | warehouse | office | factory`
 - `task`, `batch`: 自由字符串
 - `notes`: 自由字符串, 最大 500 字节
+- **其它未注册 key**（CYB-3246 开放词汇）: 作为自由字符串标签接受, 最大 500 字节; 无需改 `tag_registry.yaml`。已注册 key 仍按上述定义严格校验。
 
 ### 1.2 获取资产
 
@@ -440,11 +443,18 @@ curl -X PATCH "$BASE/api/v1/assets/{asset_id}" \
   -d '{
     "reviewer": "bob",
     "lifecycle_state": "rejected",
-    "tags": {"quality": "poor"}
+    "tags": {"quality": "poor"},
+    "files": {"algo_input_forward_stereo": "gs://bucket/forward_stereo/abc.mp4"},
+    "storage_uri": "gs://bucket/segments/abc.mcap",
+    "thumb_uri": "gs://bucket/thumbs/abc.jpg"
   }'
 ```
 
 所有字段都是可选的，只更新传入的字段，不影响其他字段。
+
+- `tags` 和 `files` 为**合并语义**（传入的 key 逐个 upsert；未传的 key 保留）。要整体替换需另加开关。（CYB-3232 新增 `files`/`storage_uri`/`thumb_uri`）
+- `files` 常见 key：`raw_mcap`、`algo_input_*`、`annot_*`、`delivery_*` 等对象 URI。
+- PATCH 会发 `asset_updated` 事件，因此改动（含 files）会自动同步到搜索索引。
 
 并发安全：服务端使用乐观锁（`assets.version` CAS）。如果在你 GET 之后有其他写入提交，PATCH 会返回 `409 CONCURRENT_CONFLICT`，请重新拉取最新资产后再重试。
 
@@ -506,11 +516,22 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
   ],
   "lineage": {
     "asset_id": "bbbbbbbb",
-    "upstream": {"mcap_file_id": "z7zyx6sl"},
-    "downstream": {"algo_results": [], "deliveries": [], "eval_results": []}
+    "upstream": {
+      "mcap_file_id": "z7zyx6sl", "mcap_uri": "gs://…/x.mcap", "ingest_state": "summarized",
+      "asset_id": "z7zyx6sl", "asset_type": "raw_mcap", "root_asset_id": "z7zyx6sl",
+      "start_timestamp_ns": 0, "end_timestamp_ns": 0
+    },
+    "downstream": {
+      "algo_results": [], "deliveries": [], "eval_results": [],
+      "children": [
+        {"asset_id": "cccccccc", "asset_type": "segment", "parent_asset_id": "bbbbbbbb", "root_asset_id": "z7zyx6sl", "import_batch": "grace-sync-20260710"}
+      ]
+    }
   }
 }
 ```
+
+> **CYB-3281**：`upstream` 现在**在保留 raw-mcap 顶层字段**（`mcap_file_id`/`mcap_uri`/`ingest_state`，前端沿用)的同时,新增**直接父资产**(`asset_id`/`asset_type`/`root_asset_id`/`start`/`end`,来自 `assets.parent_asset_id`；segment 的父是 raw_mcap 资产,其 `asset_id == mcap_file_id`)。`downstream.children[]` 新增,列出直接子资产(mcap 下的 segment、seg 下的 action/frame),与 `algo_results`/`deliveries`/`eval_results` 并列。
 
 错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
 
@@ -937,13 +958,19 @@ curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality" \
 # 5) 查询标签变更历史
 curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
   -H "X-Databrew-Token: $TOKEN"
+
+# 6) 开放词汇（CYB-3246）— 未注册 key 作为自由字符串接受，无需改 YAML
+curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"description","value":"高清城市街道场景 下午时段","source_type":"human","source_name":"ops_007"}'
 ```
 
 错误路径：
 
 | 状态 | 错误码 | 触发条件 |
 |------|--------|----------|
-| `422` | `INVALID_TAG` | key 未在 `tags{}` 注册 / enum 值不合法 |
+| `422` | `INVALID_TAG` | 已注册 enum key 的值不合法；或值超长（已注册 `notes` 等按其 `max_length`，未注册 key 超 500 字节） |
 | `422` | `TAG_SOURCE_INVALID` | `source_type` 未在 `tag_sources[]` 注册，或缺 `requires_source_name` / `requires_source_version` 要求的字段 |
 | `409` | `TAG_IMMUTABLE` | 对 `immutable: true` 来源（`algo_sdk` / `compliance`）的已有 `(key, source_type, source_version)` 再次写入 |
 | `404` | `ASSET_NOT_FOUND` | asset_id 不存在 |
@@ -952,6 +979,37 @@ curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
 - `source_type` 缺省时按 `human` 处理（UI 流的默认）。
 - `DELETE /tags/{key}` 对不存在的 key 按幂等成功处理，但不会伪造 `tag_deleted` 事件。
 - `GET /tags/history` 仍是统一 `asset_events` 形状，过滤 `tag_upserted / tag_deleted`；event payload 含 `source_name` / `source_version` / `run_id`。
+
+#### 2.4.1 受管标签注册表 CRUD（Admin — CYB-3246 Phase 2）
+
+受管标签定义（enum 型及其允许值、string 型长度、传播策略）存于 DB，可通过 admin 接口自助注册/修改/删除，**无需改 `tag_registry.yaml` 或重启后端**。鉴权为 `AdminTokenOrAdminRole`（静态 admin token 或 `ADMIN_EMAILS` 网页会话）。写入后内存校验 map 立即刷新。未注册 key 仍走开放词汇（自由字符串），不出现在此表。
+
+```bash
+# 列出受管标签
+curl "$BASE/api/v1/admin/tag-registry" -H "X-Databrew-Token: $ADMIN_TOKEN"
+
+# 注册一个 enum 标签（即时生效，无需重启）
+curl -X POST "$BASE/api/v1/admin/tag-registry" \
+  -H "X-Databrew-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"severity","description":"严重程度","type":"enum","values":["critical","high","medium","low"]}'
+
+# 更新（key 取自路径；body 的 key 被忽略）
+curl -X PATCH "$BASE/api/v1/admin/tag-registry/severity" \
+  -H "X-Databrew-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"type":"enum","values":["critical","high","medium","low","info"]}'
+
+# 删除
+curl -X DELETE "$BASE/api/v1/admin/tag-registry/severity" -H "X-Databrew-Token: $ADMIN_TOKEN"
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `401` | `UNAUTHORIZED` | 非 admin token 且非 admin-role 会话 |
+| `409` | `TAG_KEY_EXISTS` | 创建的 key 已存在 |
+| `422` | `INVALID_ARGUMENT` | `type` 非 `enum`/`string`；`enum` 缺 `values`；缺 `key` |
+| `404` | `TAG_NOT_FOUND` | 更新/删除不存在的 key |
 
 ### 2.5 查询资产事件 / 算法事件子集
 
@@ -1191,7 +1249,15 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 
 ## 2.7 Action 段（seg 内时间分段标注）
 
-> 状态：**Phase 1 已上线**：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，可用 `expected_version` 做 CAS）。平台级反查 `GET /actions` 与 `GET /lookup` 仍在 §2.7.4 / §2.7.5 标记为「待上线」。
+> ⚠️ **v2 / BREAKING（CYB-3268，2026-07-10）**：`/assets/:id/actions` 的 **4 个方法（POST/GET/PATCH/DELETE）已统一切到一等资产实现**——读写 `assets` 表 `asset_type='action'` 行，不再走独立 `actions` 表。**响应 shape 变了**：老的 action 表行（`action_id` / `start_ns` / 顶层 `primary_label`）→ 一等资产行（`asset_id` / `asset_type='action'` / `parent_asset_id` / `start_timestamp_ns` / `metadata.*`）。字段映射与老 `actions` 表数据查询见 [`docs/agents/knowledge/action-first-class.md`](../agents/knowledge/action-first-class.md)。老 `actions` 表数据**不再经 API 暴露**（等单独 backfill issue）。下方 §2.7.1–2.7.3 的 v1 示例以本横幅为准替换 shape。
+>
+> v2 关键变化：
+> - **创建 body**：`createChildAssetRequest{start_timestamp_ns, end_timestamp_ns, split_method?, split_run_id?, metadata:{primary_label, labels, description, source_type, source_name, …}}`——action 富字段进 `metadata.*`；`primary_label`/`labels[]` 不在 `config/action_label_registry.yaml` 内返 `422 INVALID_ACTION`。
+> - **List** `GET /assets/:id/actions`：仅 `limit`/`offset` 分页（老的 `at`/`from`/`to` + server-side `label` 过滤已下线；label 过滤走客户端）。envelope 仍是 `{items, asset_id, total}`，但 item 是 asset 行。
+> - **PATCH/DELETE** `/:action_id`：校验 `asset_type='action'` + `parent_asset_id` 匹配 URL，跨 parent / 不存在 → **404**。
+> - `lifecycle_state` 对 action 恒为 `'ready'`（PG 兜底），ES doc 不写该字段（避免无意义 facet bucket）。
+>
+> 旧状态（v1，供参考）：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，`expected_version` CAS）。
 
 业务模型：`mcap → seg → action`。一条 action 是 seg 内某段时间窗上的一组标注（label + 描述 + 多源溯源）。
 
@@ -1209,17 +1275,22 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 将下面示例中的时间戳换成目标 seg 的 `GET /api/v1/assets/{asset_id}` 响应里真实区间内的值（可与父区间同量级，例如纳秒级绝对时间）。
 
 ```bash
+# v2 (CYB-3268): body = createChildAssetRequest; action 富字段进 metadata.*
 curl -X POST "$BASE/api/v1/assets/{asset_id}/actions" \
   -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
-    "start_ns": 1640056114776298435,
-    "end_ns":   1640056115776298435,
-    "primary_label": "pickup",
-    "labels": ["pickup", "left_hand"],
-    "description": "操作员从料盒中取出零件",
-    "source_type": "human",
-    "source_name": "annotator-001"
+    "start_timestamp_ns": 1640056114776298435,
+    "end_timestamp_ns":   1640056115776298435,
+    "metadata": {
+      "primary_label": "pickup",
+      "labels": ["pickup", "left_hand"],
+      "description": "操作员从料盒中取出零件",
+      "source_type": "human",
+      "source_name": "annotator-001"
+    }
   }'
+# → 201 { "asset_id": "…", "asset_type": "action", "parent_asset_id": "{asset_id}",
+#         "start_timestamp_ns": …, "metadata": { "primary_label": "pickup", … } }
 ```
 
 幂等：当前实现支持 `external_id`——同 `(asset_id, source_name, external_id)` 已存在时返回 `409 CONCURRENT_CONFLICT`（不自动覆盖；如需更新已有行请用 §2.7.2 的 PATCH）。`Idempotency-Key` header **未**在 actions 端点强制（与 `POST /deliveries` 不同）。
@@ -1633,6 +1704,7 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
       "ingest_state": "summarized",
       "channel_count": 12,
       "chunk_count": 5,
+      "segment_count": 37,
       "owner": "team-a",
       "created_at": "2025-01-15T10:00:00Z",
       "updated_at": "2025-01-15T10:05:00Z",
@@ -1644,6 +1716,8 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
   "page_size": 20
 }
 ```
+
+> `segment_count`（CYB-3285）：该 MCAP 的**子 segment 数** —— `asset_type='segment'` 且同 `mcap_file_id` 的非删资产数（派生字段，非存储列，`List` 与 `Get` 均返回）。前端 MCAP 文件列表以此列取代旧的「通道数 / 分块数」两列。
 
 ### 5.3 获取单个 MCAP 文件
 
@@ -2217,6 +2291,8 @@ curl -X POST "$BASE/api/v1/metrics:search" \
 | 404 | `MCAP_FILE_NOT_FOUND` | MCAP 文件不存在（如 mcap-locator 找不到底层文件） |
 | 409 | `ASSET_NOT_PREVIEWABLE` | 资产 lifecycle_state 不支持预览（如 `created` / `failed`） |
 | 409 | `DUPLICATE_ASSET_ID` | `POST /assets` 指定了已存在的 `asset_id` |
+| 409 | `DUPLICATE_MCAP_FILE_ID` | `POST /mcap-files` 显式指定了已存在的 `mcap_file_id` |
+| 409 | `DUPLICATE_HASH` | `POST /mcap-files` 的 `raw_hash_md5` 已存在（幂等去重信号；不区分显式 / 自动 `mcap_file_id`） |
 | 409 | `ALGO_ALREADY_RUNNING` | 算法已在运行 |
 | 409 | `CONCURRENT_CONFLICT` | 乐观锁冲突 — 算法路径重试 3 次后仍失败，或 PATCH /assets/:id 期间资产被并发修改 |
 | 414 | `URI_TOO_LONG` | URL 超过 2048 字符 |
@@ -3456,3 +3532,31 @@ curl -i -X POST "$BASE/api/v1/backfill/results" \
     "result": {}
   }'
 ```
+
+## Run status push webhook (CYB-3058)
+
+Machine endpoint called by the Argo workflow exit hook to push run status.
+Authenticated with a dedicated token in `X-Databrew-Webhook-Token` (not user/JWT).
+The payload phase is a hint only — DataBrew re-reads the workflow from Argo for
+authoritative state, so the call is safe to replay and cannot inject false status.
+
+```bash
+# Happy path: poke for a known workflow -> 200, run refreshed from Argo
+curl -sS -X POST "$BASE/api/v1/pipeline-runs/webhook" \
+  -H "Content-Type: application/json" \
+  -H "X-Databrew-Webhook-Token: $ARGO_RUN_WEBHOOK_TOKEN" \
+  -d '{"workflowName":"pipeline-1783238030952-1a87815c","uid":"<argo-uid>","phase":"Succeeded"}'
+# -> {"runId":"...","status":"Succeeded"}
+
+# Error: bad token -> 401
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/api/v1/pipeline-runs/webhook" \
+  -H "Content-Type: application/json" -H "X-Databrew-Webhook-Token: wrong" \
+  -d '{"workflowName":"x"}'          # 401
+
+# Error: missing workflowName -> 400 ; unknown workflow -> 404
+```
+
+Notes:
+- The Argo hook is injected at transpile time only when `ARGO_RUN_WEBHOOK_URL` is set (empty = poll-only fallback). The token is sent from a K8s Secret (`databrew-run-webhook-token`) via `valueFrom.secretKeyRef`, never embedded in the manifest.
+- The polling watcher remains a reconcile backstop (`PIPELINE_RUN_WATCHER_INTERVAL_SEC`, default 30s); dropped pokes are eventually reconciled.
+- Smoke: `scripts/smoke-argo-push-dev.sh` (covers 401/400/404, plus 200 when passed a known workflow name).

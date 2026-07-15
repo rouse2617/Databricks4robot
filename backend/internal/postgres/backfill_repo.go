@@ -99,8 +99,17 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 
 // FindAllJobs returns all backfill jobs ordered by created_at DESC.
 func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	q := `SELECT ` + backfillJobSelectCols + `
+	// Enrich the list with each job's subtask run span (earliest start, latest
+	// finish) so the UI can show a real run duration that excludes submit/queue/
+	// pause waiting. MIN/MAX ignore NULL item timestamps, so jobs whose subtasks
+	// never started yield NULL spans.
+	q := `SELECT ` + backfillJobSelectCols + `,
+	  rs.run_started_at, rs.run_finished_at
 	FROM backfill_jobs
+	LEFT JOIN (
+	  SELECT job_id, MIN(started_at) AS run_started_at, MAX(finished_at) AS run_finished_at
+	  FROM backfill_items GROUP BY job_id
+	) rs ON rs.job_id = backfill_jobs.id
 	ORDER BY created_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
@@ -110,13 +119,37 @@ func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, e
 	defer rows.Close()
 	var out []models.BackfillJob
 	for rows.Next() {
-		j, err := scanBackfillJob(rows)
+		j, err := scanBackfillJobWithRunSpan(rows)
 		if err != nil {
 			return nil, fmt.Errorf("postgres BackfillRepo.FindAllJobs scan: %w", err)
 		}
 		out = append(out, *j)
 	}
 	return out, nil
+}
+
+// scanBackfillJobWithRunSpan scans the base job columns plus the aggregated
+// subtask run span (run_started_at, run_finished_at). Used by list queries that
+// LEFT JOIN the per-job MIN(started_at)/MAX(finished_at) of backfill_items.
+func scanBackfillJobWithRunSpan(rs rowScanner) (*models.BackfillJob, error) {
+	var (
+		j          models.BackfillJob
+		filterJSON []byte
+	)
+	if err := rs.Scan(
+		&j.ID, &j.Name, &j.TemplateID, &filterJSON,
+		&j.TotalCount, &j.CompletedCount, &j.FailedCount, &j.Status,
+		&j.TemplateVersion, &j.PilotCount, &j.PilotPhase,
+		&j.CreatedAt, &j.UpdatedAt,
+		&j.CreatedBy, &j.FinishedAt,
+		&j.RunStartedAt, &j.RunFinishedAt,
+	); err != nil {
+		return nil, err
+	}
+	if len(filterJSON) > 0 {
+		_ = json.Unmarshal(filterJSON, &j.FilterJSON)
+	}
+	return &j, nil
 }
 
 // FindJobByID returns a backfill job by id, or (nil, nil) when not found.
@@ -150,12 +183,36 @@ func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) e
 }
 
 func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error {
-	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW() WHERE id = $1`
+	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW(),
+	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status, pilotPhase); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobPilotPhase: %w", err)
 	}
 	return nil
+}
+
+// ClaimJobNotification atomically claims the completion-notification slot for
+// a job: it returns true only for the one caller that flips
+// notification_sent_at from NULL to now(), across any number of concurrent
+// backend instances racing on the same job. Callers that lose the race (or
+// call again for an already-notified job) get false with no error.
+func (r *BackfillRepo) ClaimJobNotification(ctx context.Context, id string) (bool, error) {
+	const q = `
+	UPDATE backfill_jobs
+	SET notification_sent_at = NOW()
+	WHERE id = $1 AND notification_sent_at IS NULL
+	RETURNING id`
+	db := dbFromCtx(ctx, r.c.db)
+	var claimedID string
+	if err := db.QueryRow(ctx, q, id).Scan(&claimedID); err != nil {
+		if errors.Is(err, errNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("postgres BackfillRepo.ClaimJobNotification: %w", err)
+	}
+	return true, nil
 }
 
 // IncrementCompleted increments the completed_count for a backfill job.
@@ -499,7 +556,8 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 // UpdateJobProgress updates aggregate counters and job status.
 func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
 	const q = `UPDATE backfill_jobs SET
-	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW()
+	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW(),
+	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
 	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, completed, failed, status); err != nil {
@@ -916,15 +974,38 @@ FROM (
 
 // ClaimNextItem atomically claims one pending item using FOR UPDATE SKIP LOCKED.
 func (r *BackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	// Besides 'pending' items, also reclaim "half-committed orphans": items stuck
+	// 'running' whose pipeline run was never submitted to Argo (no argo_workflow_uid,
+	// still a `<pipeline>-batch-<suffix>` placeholder name) and was created long
+	// enough ago that it cannot be a normal in-flight deploy. These arise when the
+	// materialize worker pool exits before claiming items written late in the loop;
+	// they otherwise oscillate running<->pending (reaper clears -> syncJobProgress
+	// maps Argo-Pending back to running) and never get re-claimed. We key the
+	// staleness on pipeline_runs.created_at (stable) rather than backfill_items.
+	// started_at (which the oscillation keeps refreshing). FOR UPDATE SKIP LOCKED
+	// still guarantees a single claimer, and once deployed the run gains a UID and
+	// no longer matches, so there is no duplicate submission.
 	const q = `
 	UPDATE backfill_items
 	SET status = 'running',
 	    started_at = NOW(),
 	    attempts = attempts + 1
 	WHERE id = (
-		SELECT id FROM backfill_items
-		WHERE job_id = $1 AND status = 'pending'
-		ORDER BY created_at ASC
+		SELECT bi.id FROM backfill_items bi
+		WHERE bi.job_id = $1 AND (
+			bi.status = 'pending'
+			OR (
+				bi.status = 'running'
+				AND EXISTS (
+					SELECT 1 FROM pipeline_runs pr
+					WHERE pr.id = bi.pipeline_run_id
+					  AND pr.argo_workflow_uid = ''
+					  AND pr.workflow_name LIKE '%-batch-%'
+					  AND pr.created_at < NOW() - INTERVAL '5 minutes'
+				)
+			)
+		)
+		ORDER BY (bi.status = 'pending') DESC, bi.created_at ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED
 	)
@@ -956,7 +1037,7 @@ func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int,
 		FROM backfill_jobs bj
 		WHERE bi.job_id = bj.id
 		  AND bi.status = 'running'
-		  AND bi.started_at < NOW() - ($1 || ' seconds')::interval
+		  AND bi.started_at < NOW() - ($1::bigint * interval '1 second')
 		  AND bj.status = 'running'
 		RETURNING bi.id
 	)
@@ -971,6 +1052,9 @@ func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int,
 
 // FindIncompleteJobs returns running backfill jobs with at least one pending item.
 func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	// Also treat a job as incomplete when it has half-committed orphans (items
+	// stuck 'running' on an unsubmitted placeholder run — see ClaimNextItem), so
+	// startup recovery re-spawns a worker pool that ClaimNextItem can drain.
 	const q = `
 	SELECT DISTINCT bj.id, bj.template_id, bj.name, bj.status,
 	  bj.completed_count, bj.failed_count, bj.total_count,
@@ -979,7 +1063,19 @@ func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backfil
 	FROM backfill_jobs bj
 	JOIN backfill_items bi ON bi.job_id = bj.id
 	WHERE bj.status = 'running'
-	  AND bi.status = 'pending'
+	  AND (
+	    bi.status = 'pending'
+	    OR (
+	      bi.status = 'running'
+	      AND EXISTS (
+	        SELECT 1 FROM pipeline_runs pr
+	        WHERE pr.id = bi.pipeline_run_id
+	          AND pr.argo_workflow_uid = ''
+	          AND pr.workflow_name LIKE '%-batch-%'
+	          AND pr.created_at < NOW() - INTERVAL '5 minutes'
+	      )
+	    )
+	  )
 	ORDER BY bj.created_at ASC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
@@ -997,6 +1093,45 @@ func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.Backfil
 			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgres BackfillRepo.FindIncompleteJobs scan: %w", err)
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+// FindActiveJobs returns non-terminal, non-paused batch jobs (running, pending,
+// pilot_running, …) up to limit, oldest first. Unlike FindIncompleteJobs it does
+// not require pending items — the reconcile backstop (CYB-3078) must also catch
+// jobs whose items are all dispatched and merely waiting on Argo to finish.
+func (r *BackfillRepo) FindActiveJobs(ctx context.Context, limit int) ([]models.BackfillJob, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	const q = `
+	SELECT bj.id, bj.template_id, bj.name, bj.status,
+	  bj.completed_count, bj.failed_count, bj.total_count,
+	  bj.pilot_phase, bj.pilot_count,
+	  bj.filter_json, bj.created_at, bj.updated_at
+	FROM backfill_jobs bj
+	WHERE bj.status NOT IN ('completed', 'failed', 'paused')
+	ORDER BY bj.created_at ASC
+	LIMIT $1`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindActiveJobs: %w", err)
+	}
+	defer rows.Close()
+	var jobs []models.BackfillJob
+	for rows.Next() {
+		var j models.BackfillJob
+		if err := rows.Scan(
+			&j.ID, &j.TemplateID, &j.Name, &j.Status,
+			&j.CompletedCount, &j.FailedCount, &j.TotalCount,
+			&j.PilotPhase, &j.PilotCount,
+			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindActiveJobs scan: %w", err)
 		}
 		jobs = append(jobs, j)
 	}

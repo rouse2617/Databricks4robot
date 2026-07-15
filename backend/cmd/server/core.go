@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/grace"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
@@ -19,10 +20,11 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"       // NEW
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
@@ -67,7 +69,8 @@ func setupCore(inf *infra) *coreHandlers {
 		deliveryrules.NewAssetRepoParentGetter(assetRepo),
 		assetTypeSchemas,
 	))
-	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
+	assetUsecase.SetUsageStatsRepo(usageStatsRepo)          // CYB-1095/1096: usage stats
+	assetUsecase.SetActionLabelRegistry(inf.actionLabelReg) // CYB-3268: action label vocabulary
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)
@@ -117,6 +120,12 @@ func setupCore(inf *infra) *coreHandlers {
 		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
 	}
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	puc.SetArgoRunWebhook(
+		inf.cfg.ArgoRunWebhookURL,
+		inf.cfg.ArgoRunWebhookTokenSecretName,
+		inf.cfg.ArgoRunWebhookTokenSecretKey,
+		inf.cfg.ArgoRunWebhookImage,
+	)
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
 		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,
@@ -128,6 +137,8 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.SetRunEventRepo(pipelineRunEventRepo)
 	puc.SetRunFactRepositories(runRelationRepo, runInputRepo)
 	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
+	videoDurationRepo := postgres.NewVideoDurationRepo(pg)
+	puc.SetVideoDurationRepo(videoDurationRepo)
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
@@ -136,6 +147,8 @@ func setupCore(inf *infra) *coreHandlers {
 		slog.Warn("runtime config projection store disabled", "err", err)
 	} else {
 		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
+		// Price pipeline step costs by the node's real machine type (CYB-3073).
+		puc.SetNodeInstanceResolver(k8s.NewNodeInstanceResolver(clientset))
 	}
 	if inf.cfg.PricingConfigPath != "" {
 		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
@@ -144,14 +157,48 @@ func setupCore(inf *infra) *coreHandlers {
 		}
 		puc.SetPricing(priceCfg)
 	}
-	puc.StartRunEventWatcher(context.Background(), 3*time.Second, 100)
+	// Push (Argo exit hook) is the primary status signal (CYB-3058); the watcher
+	// is a low-frequency reconcile backstop. Interval/scan-limit are configurable.
+	watcherInterval := time.Duration(inf.cfg.PipelineRunWatcherIntervalSec) * time.Second
+	if watcherInterval <= 0 {
+		watcherInterval = 30 * time.Second
+	}
+	watcherScanLimit := int(inf.cfg.PipelineRunWatcherScanLimit)
+	if watcherScanLimit <= 0 {
+		watcherScanLimit = 100
+	}
+	puc.StartRunEventWatcher(context.Background(), watcherInterval, watcherScanLimit)
+
+	// Grace video-duration sync (CYB-3072): DataBrew actively pulls durations
+	// from Grace and upserts video_durations on a background loop. Best-effort;
+	// disabled when GRACE_* is unconfigured. Reusable grace.Client can grow other
+	// Grace data needs later.
+	if graceClient := grace.NewClient(grace.ConfigFromEnv()); graceClient.Enabled() {
+		syncInterval := time.Duration(inf.cfg.VideoDurationSyncIntervalSec) * time.Second
+		grace.NewSyncer(graceClient, videoDurationRepo).StartSyncLoop(context.Background(), syncInterval)
+		slog.Info("grace video duration sync enabled", "intervalSec", inf.cfg.VideoDurationSyncIntervalSec)
+	} else {
+		slog.Info("grace video duration sync disabled (GRACE_API_URL/USERNAME/PASSWORD not set)")
+	}
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
 	puc.SetBackfillRepo(backfillRepo)
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+	// Batch job completion Feishu notification (CYB-3071). Empty webhook URL
+	// disables it; feishu.Client.SendText becomes a no-op in that case.
+	backfillUC.SetNotifier(
+		feishu.NewClient(feishu.Config{WebhookURL: inf.cfg.BackfillNotifyFeishuWebhookURL}),
+		inf.cfg.FrontendBaseURL,
+	)
 	backfillUC.StartReaper()
+	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
+	// finished, without depending on the exit hook or a user opening the page.
+	backfillUC.StartJobReconciler(
+		time.Duration(inf.cfg.BackfillReconcileIntervalSec)*time.Second,
+		int(inf.cfg.BackfillReconcileScanLimit),
+	)
 	backfillUC.ResumeIncompleteBatches(context.Background())
 	backfillHandler := backfillH.New(backfillUC)
 
@@ -172,7 +219,7 @@ func setupCore(inf *infra) *coreHandlers {
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	workflowHandler.SetPodClient(inf.podClient)
 	workflowHandler.SetExecClient(inf.execClient)
-	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo)
+	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo, pipelineRunNodeRepo)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler
@@ -198,5 +245,6 @@ func setupCore(inf *infra) *coreHandlers {
 		workflow:          workflowHandler,
 		storage:           storageHandler,
 		assetUC:           assetUsecase,
+		assetRepo:         assetRepo,
 	}
 }

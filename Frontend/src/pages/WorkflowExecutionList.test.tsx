@@ -210,7 +210,7 @@ describe("WorkflowExecutionList", () => {
 		expect(mockListRuns).toHaveBeenCalledWith(
 			expect.objectContaining({
 				view: "summary",
-				excludeBatch: true,
+				excludeBatchParents: true,
 				page: 1,
 				pageSize: 20,
 			}),
@@ -238,7 +238,7 @@ describe("WorkflowExecutionList", () => {
 			expect(mockListRuns).toHaveBeenLastCalledWith(
 				expect.objectContaining({
 					view: "summary",
-					excludeBatch: true,
+					excludeBatchParents: true,
 					q: "daily-ingest-template",
 				}),
 			);
@@ -384,7 +384,7 @@ describe("WorkflowExecutionList", () => {
 
 		await waitFor(() => {
 			expect(mockListRuns).toHaveBeenCalledWith(
-				expect.objectContaining({ view: "summary", excludeBatch: true }),
+				expect.objectContaining({ view: "summary", excludeBatchParents: true }),
 			);
 		});
 		expect(mockListWorkflows).not.toHaveBeenCalled();

@@ -17,6 +17,12 @@ type BackfillRepository interface {
 	IncrementCompleted(ctx context.Context, id string) error
 	IncrementFailed(ctx context.Context, id string) error
 
+	// ClaimJobNotification atomically claims the completion-notification slot
+	// for a job (notification_sent_at IS NULL -> now()). Returns true only for
+	// the caller that performs the claim; concurrent/repeat callers get false
+	// with no error, so at most one caller ever proceeds to send.
+	ClaimJobNotification(ctx context.Context, id string) (bool, error)
+
 	// Item operations.
 	SaveItem(ctx context.Context, item *models.BackfillItem) error
 	SaveItems(ctx context.Context, items []models.BackfillItem) error
@@ -52,6 +58,11 @@ type BackfillRepository interface {
 	// FindIncompleteJobs returns all backfill jobs that are still running
 	// and have at least one pending item. Used for startup recovery.
 	FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error)
+
+	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
+	// oldest first, regardless of whether items are still pending. Used by the
+	// reconcile backstop to finalize + notify jobs whose children have finished.
+	FindActiveJobs(ctx context.Context, limit int) ([]models.BackfillJob, error)
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

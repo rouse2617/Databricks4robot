@@ -181,8 +181,13 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 					_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "failed", "", errMsg)
 					_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
 				} else {
-					_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, "", "completed")
-					_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
+					// Submission only queues the workflow in Argo (the run starts
+					// Pending); it has NOT finished. Mark the item "running" and
+					// persist the workflow name so the backfill status sync can
+					// reconcile real completion from Argo. Previously this marked
+					// "completed" on submit, which made batches report 100% success
+					// while every workflow was still Pending and never executed.
+					_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, "running")
 				}
 			}
 		}()
@@ -199,12 +204,21 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		return
 	}
 
-	status := "completed"
+	// Submission is done, but the workflows are still executing in Argo. Derive
+	// status from real item state instead of assuming "completed": items just
+	// submitted are "running" (Pending in Argo). The backfill status sync only
+	// promotes the job to "completed" once Argo workflows actually finish.
+	status := "running"
 	switch {
 	case ctx.Err() != nil:
 		status = "cancelled"
-	case summary.Failed > 0 && summary.Completed == 0:
-		status = "failed"
+	case summary.Pending == 0 && summary.Running == 0:
+		// Every item already reached a terminal state.
+		if summary.Completed == 0 && summary.Failed > 0 {
+			status = "failed"
+		} else {
+			status = "completed"
+		}
 	}
 	total := summary.Completed + summary.Failed + summary.Pending + summary.Running
 	if err := uc.backfillRepo.UpdateJobProgress(finalCtx, jobID, summary.Completed, summary.Failed, status); err != nil {

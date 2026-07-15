@@ -264,6 +264,32 @@ describe("page ComponentManager", () => {
 		});
 	}, 60000);
 
+	it("forbids removing the last input/output port in the create form (CYB-3094)", async () => {
+		render(<ComponentManager />);
+
+		expect(await screen.findByText("报告生成")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+
+		// The create form starts with exactly one default input and one output
+		// port. Their remove buttons must be disabled so the user can't reach a
+		// zero-port state — the pipeline stack assumes every node has ≥1 input and
+		// ≥1 output, and would otherwise silently re-inject defaults on save,
+		// mismatching what the form showed.
+		const inputRemove = await screen.findByLabelText("移除输入数据");
+		const outputRemove = screen.getByLabelText("移除输出结果");
+		expect(inputRemove).toBeDisabled();
+		expect(outputRemove).toBeDisabled();
+
+		// Adding a second input port re-enables removal on both input rows.
+		fireEvent.click(screen.getAllByRole("button", { name: /添加端口/ })[0]);
+		await waitFor(() => {
+			expect(screen.getAllByLabelText("移除输入数据")).toHaveLength(2);
+		});
+		for (const button of screen.getAllByLabelText("移除输入数据")) {
+			expect(button).not.toBeDisabled();
+		}
+	}, 60000);
+
 	it("shows release task path and separates image tag from digest identity", async () => {
 		apiMocks.listComponents.mockResolvedValue({ items: [] });
 		apiMocks.listComponentReleases.mockResolvedValue({

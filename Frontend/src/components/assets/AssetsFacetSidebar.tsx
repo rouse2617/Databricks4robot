@@ -11,10 +11,19 @@ import {
 	Input,
 	InputNumber,
 	Switch,
+	Tag,
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+import {
+	ASSET_TYPE_OPTIONS,
+	mergeAssetTypeOptions,
+} from "../../lib/assets/assetTypes";
+
+// Re-export so downstream code (e.g. AddFilterPopover, tests) can keep the
+// existing import path if they want; the canonical source lives in lib/assets.
+export { ASSET_TYPE_OPTIONS };
 
 const { Text } = Typography;
 
@@ -35,12 +44,8 @@ export const LIFECYCLE_OPTIONS = [
 	"archived",
 	"superseded",
 ];
-export const ASSET_TYPE_OPTIONS = [
-	"segment",
-	"clip",
-	"frame_set",
-	"derived_asset",
-];
+// ASSET_TYPE_OPTIONS is re-exported near the top of this file from
+// ../../lib/assets/assetTypes; do not redeclare it here.
 export const RETENTION_TIER_OPTIONS = ["standard", "archive", "cold"];
 export const ENV_OPTIONS = [
 	"kitchen",
@@ -66,6 +71,8 @@ export const QUALITY_OPTIONS = [
 ];
 
 export const GROUP_KEYS = [
+	"quick",
+	"frequent",
 	"basic",
 	"capture",
 	"algorithm",
@@ -82,8 +89,9 @@ const AGG_KEY_MAP: Record<string, string> = {
 	owner_agg: "owner",
 	vendor_agg: "mcap.vendor_id",
 	scene_agg: "mcap.scene_id",
-	priority_agg: "tags_flat.priority",
-	quality_agg: "tags_flat.quality",
+	priority_agg: "tag.priority",
+	quality_agg: "tag.quality",
+	env_agg: "env",
 };
 
 export interface AssetsFacetSidebarProps {
@@ -170,8 +178,14 @@ function CheckboxFacet({
 	const checked = getCheckedValues(activeFilters, field);
 	const optionsWithLabels = options.map((opt) => {
 		const count = counts?.[opt];
+		// CYB-3310: empty/blank bucket values (e.g. env "-") read as "（未标注）";
+		// the filter value sent to the backend keeps the original `opt`.
+		const display = opt === "" || opt === "-" ? "（未标注）" : opt;
 		return {
-			label: count !== undefined ? `${opt} (${count.toLocaleString()})` : opt,
+			label:
+				count !== undefined
+					? `${display} (${count.toLocaleString()})`
+					: display,
 			value: opt,
 		};
 	});
@@ -207,6 +221,65 @@ function CheckboxFacet({
 					</Checkbox>
 				))}
 			</Checkbox.Group>
+		</div>
+	);
+}
+
+function CheckableTagFacet({
+	label,
+	field,
+	options,
+	activeFilters,
+	onToggleFacet,
+	counts,
+	span = "full",
+}: {
+	label: string;
+	field: string;
+	options: string[];
+	activeFilters: FilterChip[];
+	onToggleFacet: (field: string, value: string) => void;
+	counts?: Record<string, number>;
+	span?: "full" | "half";
+}) {
+	const checked = getCheckedValues(activeFilters, field);
+	return (
+		<div style={facetFieldStyle(false, span)}>
+			<Text
+				type="secondary"
+				style={{ fontSize: 12, display: "block", marginBottom: 6 }}
+			>
+				{label}
+			</Text>
+			<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+				{options.map((opt) => {
+					const count = counts?.[opt];
+					const isChecked = checked.includes(opt);
+					const label = count !== undefined ? `${opt} (${count})` : opt;
+					return (
+						<Tag.CheckableTag
+							key={opt}
+							checked={isChecked}
+							onChange={() => onToggleFacet(field, opt)}
+							style={{
+								cursor: "pointer",
+								borderRadius: 16,
+								paddingInline: 10,
+								height: 28,
+								display: "flex",
+								alignItems: "center",
+								fontSize: 12,
+								lineHeight: "28px",
+								border: isChecked ? "1px solid #1890ff" : "1px solid #d9d9d9",
+								background: isChecked ? "#e6f7ff" : "#fff",
+								color: isChecked ? "#1890ff" : "rgba(0,0,0,0.65)",
+							}}
+						>
+							{label}
+						</Tag.CheckableTag>
+					);
+				})}
+			</div>
 		</div>
 	);
 }
@@ -455,6 +528,8 @@ function SwitchFacet({
 // ─── Group Label Map ───
 
 const GROUP_LABELS: Record<string, string> = {
+	quick: "快速筛选",
+	frequent: "常用筛选",
 	basic: "基础",
 	capture: "采集",
 	algorithm: "算法",
@@ -463,21 +538,24 @@ const GROUP_LABELS: Record<string, string> = {
 };
 
 const GROUP_FIELDS: Record<string, string[]> = {
-	basic: ["lifecycle_state", "retention_tier", "owner", "reviewer"],
+	quick: ["asset_type", "algo_status"],
+	frequent: ["owner", "retention_tier", "created_at"],
+	basic: ["lifecycle_state", "reviewer"],
 	capture: [
-		"asset_type",
 		"env",
 		"mcap.vendor_id",
 		"mcap.device_id",
 		"mcap.scene_id",
 		"duration_ms",
-		"created_at",
 		"updated_at",
 	],
 	algorithm: ["algo_status"],
 	delivery: ["has:delivery", "delivery_count"],
-	tags: ["tags_flat.priority", "tags_flat.quality", "tags_flat.scene"],
+	tags: ["tag.priority", "tag.quality", "tags.scene"],
 };
+
+// Quick filter groups that should always be visible in horizontal layout
+const QUICK_FILTER_GROUPS = ["quick"];
 
 // ─── Main Component ───
 
@@ -512,6 +590,21 @@ export default function AssetsFacetSidebar({
 	}
 
 	const items = [
+		{
+			key: "quick",
+			label: GROUP_LABELS.quick,
+			children: (
+				<CheckboxFacet
+					compact={compact}
+					label="资产类型"
+					field="asset_type"
+					options={mergeAssetTypeOptions(fieldCounts.asset_type)}
+					activeFilters={activeFilters}
+					onToggleFacet={onToggleFacet}
+					counts={fieldCounts.asset_type}
+				/>
+			),
+		},
 		{
 			key: "basic",
 			label: GROUP_LABELS.basic,
@@ -560,21 +653,17 @@ export default function AssetsFacetSidebar({
 			label: GROUP_LABELS.capture,
 			children: (
 				<>
-					<CheckboxFacet
-						compact={compact}
-						label="资产类型"
-						field="asset_type"
-						options={ASSET_TYPE_OPTIONS}
-						activeFilters={activeFilters}
-						onToggleFacet={onToggleFacet}
-						counts={fieldCounts.asset_type}
-					/>
 					{fieldCounts.env && Object.keys(fieldCounts.env).length > 0 && (
 						<CheckboxFacet
 							compact={compact}
 							label="环境"
 							field="env"
-							options={ENV_OPTIONS}
+							// CYB-3297 Phase B: env is free-form data — list the real
+							// values from the aggregation (most frequent first) instead
+							// of a hardcoded set, so users can discover what exists.
+							options={Object.keys(fieldCounts.env).sort(
+								(a, b) => (fieldCounts.env[b] ?? 0) - (fieldCounts.env[a] ?? 0),
+							)}
 							activeFilters={activeFilters}
 							onToggleFacet={onToggleFacet}
 							counts={fieldCounts.env}
@@ -641,12 +730,14 @@ export default function AssetsFacetSidebar({
 			key: "algorithm",
 			label: GROUP_LABELS.algorithm,
 			children: (
-				<CheckboxFacet
+				<CheckableTagFacet
 					label="算法状态"
 					field="algo_status"
 					options={ALGO_STATUS_OPTIONS}
 					activeFilters={activeFilters}
 					onToggleFacet={onToggleFacet}
+					counts={fieldCounts.algo_status}
+					span="full"
 				/>
 			),
 		},
@@ -687,6 +778,7 @@ export default function AssetsFacetSidebar({
 						options={PRIORITY_OPTIONS}
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
+						counts={fieldCounts["tag.priority"]}
 					/>
 					<CheckboxFacet
 						compact={compact}
@@ -695,13 +787,14 @@ export default function AssetsFacetSidebar({
 						options={QUALITY_OPTIONS}
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
+						counts={fieldCounts["tag.quality"]}
 					/>
 					<InputFacet
 						compact={compact}
 						span="half"
 						label="场景标签"
 						field="tags.scene"
-						placeholder="eq 操作在关键词模式下走 nested"
+						placeholder="按场景标签精确匹配（如 城市街道）"
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
 					/>
@@ -727,8 +820,20 @@ export default function AssetsFacetSidebar({
 
 	if (layout === "horizontal") {
 		const expandedGroupCount = horizontalItems.filter(
-			(item) => item.isExpanded,
+			(item) =>
+				item.isExpanded &&
+				!QUICK_FILTER_GROUPS.includes(item.key) &&
+				item.key !== "frequent",
 		).length;
+		const quickGroup = horizontalItems.find((item) => item.key === "quick");
+		const frequentGroup = horizontalItems.find(
+			(item) => item.key === "frequent",
+		);
+		const otherGroups = horizontalItems.filter(
+			(item) =>
+				!QUICK_FILTER_GROUPS.includes(item.key) && item.key !== "frequent",
+		);
+
 		return (
 			<div
 				style={{
@@ -737,6 +842,44 @@ export default function AssetsFacetSidebar({
 					gap: compact ? 8 : 12,
 				}}
 			>
+				{quickGroup && (
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "repeat(auto-fit, minmax(200px, 280px))",
+							justifyContent: "start",
+							gap: compact ? 10 : 12,
+							alignItems: "start",
+							padding: compact ? "10px 12px" : 12,
+							border: "1px solid #e5e7eb",
+							borderRadius: 10,
+							background: "#fff",
+							boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+						}}
+					>
+						{quickGroup.children}
+					</div>
+				)}
+
+				{frequentGroup && (
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "repeat(auto-fit, minmax(200px, 280px))",
+							justifyContent: "start",
+							gap: compact ? 10 : 12,
+							alignItems: "start",
+							padding: compact ? "10px 12px" : 12,
+							border: "1px solid #e5e7eb",
+							borderRadius: 10,
+							background: "#fff",
+							boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+						}}
+					>
+						{frequentGroup.children}
+					</div>
+				)}
+
 				<div
 					style={{
 						display: "flex",
@@ -745,7 +888,7 @@ export default function AssetsFacetSidebar({
 						alignItems: "center",
 					}}
 				>
-					{horizontalItems.map((item) => (
+					{otherGroups.map((item) => (
 						<Badge
 							key={item.key}
 							count={item.activeCount}
@@ -770,22 +913,36 @@ export default function AssetsFacetSidebar({
 							</Button>
 						</Badge>
 					))}
+					{expandedGroupCount > 0 && (
+						<Button
+							size="small"
+							type="link"
+							onClick={() => {
+								for (const it of otherGroups) {
+									if (it.isExpanded) onToggleGroup(it.groupKey);
+								}
+							}}
+							style={{ height: 28, paddingInline: 8, fontSize: 12 }}
+						>
+							全部收起
+						</Button>
+					)}
 				</div>
 
 				{expandedGroupCount > 0 && (
 					<div
 						style={{
 							display: "grid",
-							gridTemplateColumns:
-								"repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+							gridTemplateColumns: "repeat(auto-fit, minmax(240px, 280px))",
+							justifyContent: "start",
 							gap: compact ? 10 : 12,
 							alignItems: "start",
-							maxHeight: compact ? 320 : undefined,
-							overflowY: compact ? "auto" : undefined,
+							maxHeight: compact ? 320 : "min(60vh, 560px)",
+							overflowY: "auto",
 							paddingRight: compact ? 4 : 0,
 						}}
 					>
-						{horizontalItems
+						{otherGroups
 							.filter((item) => item.isExpanded)
 							.map((item) => (
 								<section
@@ -826,6 +983,8 @@ export default function AssetsFacetSidebar({
 												"repeat(auto-fit, minmax(min(280px, 100%), 1fr))",
 											gap: compact ? 8 : 12,
 											alignItems: "start",
+											maxHeight: 260,
+											overflowY: "auto",
 										}}
 									>
 										{item.children}

@@ -49,6 +49,95 @@ type Options struct {
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
 	GlobalEnv    []EnvVar
 	ExtraVolumes []Volume // additional workflow-level volumes
+
+	// ExitHookURL, when non-empty, injects a workflow-level exit lifecycle hook
+	// that POSTs a lightweight "run finished" poke to DataBrew when the workflow
+	// reaches a terminal phase. Empty disables the hook entirely (kill switch).
+	ExitHookURL string
+	// ExitHookTokenSecretName / ExitHookTokenSecretKey reference a Kubernetes
+	// Secret (in the workflow namespace) holding the webhook auth token, injected
+	// as an env var via valueFrom.secretKeyRef so the token is never embedded in
+	// the manifest.
+	ExitHookTokenSecretName string
+	ExitHookTokenSecretKey  string
+	// ExitHookImage is the container image (must contain curl) used by the exit
+	// notify handler. Empty falls back to defaultExitNotifyImage.
+	ExitHookImage string
+
+	// PodLabels are applied verbatim to every pod created for this workflow (via
+	// Spec.PodMetadata), for cost-attribution via GKE Cost Allocation. Callers own
+	// sanitizing values to valid Kubernetes label syntax before setting this field;
+	// Transpile does not validate or mutate it. Nil/empty is a no-op.
+	PodLabels map[string]string
+}
+
+// ExitNotifyTemplateName is the template invoked by the workflow-level exit hook.
+// It is distinct from node templates (which are prefixed "step-") so DataBrew can
+// exclude this node from run status derivation and the step list.
+const ExitNotifyTemplateName = "databrew-exit-notify"
+
+// exitNotifyHeaderName is the HTTP header carrying the webhook auth token.
+const exitNotifyHeaderName = "X-Databrew-Webhook-Token"
+
+// defaultExitNotifyImage is the fallback image for the exit notify handler.
+// It must contain curl. Overridable via Options.ExitHookImage.
+const defaultExitNotifyImage = "curlimages/curl:8.11.1"
+
+// buildExitNotifyTemplate builds a plain container template that pokes DataBrew
+// on workflow completion via curl. A container (not an Argo `http` template) is
+// used deliberately: the http template runs on the Argo agent pod, which on this
+// cluster cannot mount its service-account token (K8s 1.24+ dropped the legacy
+// secret) and hangs, stalling the workflow. A normal pod schedules fine and its
+// exit code is controlled here (always 0) so a webhook error never fails or
+// hangs the workflow. The token is injected via env valueFrom.secretKeyRef so it
+// never lands in the manifest; DataBrew treats the call as a trigger and re-reads
+// authoritative state, so the body only needs to identify the workflow.
+func buildExitNotifyTemplate(opts *Options) wfv1.Template {
+	image := opts.ExitHookImage
+	if image == "" {
+		image = defaultExitNotifyImage
+	}
+	env := []corev1.EnvVar{{Name: "DATABREW_WEBHOOK_URL", Value: opts.ExitHookURL}}
+	if opts.ExitHookTokenSecretName != "" && opts.ExitHookTokenSecretKey != "" {
+		env = append(env, corev1.EnvVar{
+			Name: "DATABREW_WEBHOOK_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: opts.ExitHookTokenSecretName},
+					Key:                  opts.ExitHookTokenSecretKey,
+				},
+			},
+		})
+	}
+	// Best-effort: never fail the workflow on a webhook error (|| true, exit 0).
+	body := `{"workflowName":"{{workflow.name}}","namespace":"{{workflow.namespace}}","uid":"{{workflow.uid}}","phase":"{{workflow.status}}"}`
+	script := `curl -sS --max-time 10 -o /dev/null -w 'databrew webhook: HTTP %{http_code}\n' ` +
+		`-X POST "$DATABREW_WEBHOOK_URL" ` +
+		`-H 'Content-Type: application/json' ` +
+		`-H "` + exitNotifyHeaderName + `: $DATABREW_WEBHOOK_TOKEN" ` +
+		`-d '` + body + `' || true; exit 0`
+	return wfv1.Template{
+		Name: ExitNotifyTemplateName,
+		Container: &corev1.Container{
+			Image:   image,
+			Command: []string{"sh", "-c"},
+			Args:    []string{script},
+			Env:     env,
+			// Minimal footprint: a curl once-off needs almost nothing. Explicit
+			// tiny requests/limits keep it predictable and cheap (and avoid a
+			// LimitRange assigning large defaults).
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10m"),
+					corev1.ResourceMemory: resource.MustParse("32Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+			},
+		},
+	}
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -100,6 +189,19 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	for _, s := range opts.ImagePullSecrets {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
 	}
+	if len(opts.PodLabels) > 0 {
+		wf.Spec.PodMetadata = &wfv1.Metadata{Labels: opts.PodLabels}
+	}
+
+	// Workflow-level exit hook: poke DataBrew on terminal phase (push status).
+	// Kept out of the entrypoint DAG so the notify node is never treated as a
+	// business step; DataBrew excludes it from run status derivation.
+	if opts.ExitHookURL != "" {
+		wf.Spec.Templates = append(wf.Spec.Templates, buildExitNotifyTemplate(opts))
+		wf.Spec.Hooks = wfv1.LifecycleHooks{
+			wfv1.ExitLifecycleEvent: wfv1.LifecycleHook{Template: ExitNotifyTemplateName},
+		}
+	}
 
 	if p.Parallelism > 0 {
 		v := int64(p.Parallelism)
@@ -121,16 +223,16 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	// Build node input specs: for each node, which input params come from where
 	nodeInputs := buildInputSpecs(p)
 	outputConsumers := buildOutputConsumers(p)
-	nodeTemplates := make(map[string]string)
-	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts)
+	// Single source of truth for template (and therefore pod) names, covering
+	// top-level and nested sub-nodes. Readable "step-<component>" names make raw
+	// pod names identifiable by business step (CYB-3076).
+	nodeTemplates := buildStepTemplateNames(p.Nodes)
+	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts, nodeTemplates)
 	if err != nil {
 		return nil, fmt.Errorf("build node templates: %w", err)
 	}
 	for _, tmpl := range allTmpls {
 		wf.Spec.Templates = append(wf.Spec.Templates, tmpl)
-	}
-	for _, node := range p.Nodes {
-		nodeTemplates[node.ID] = templateName(node.ID)
 	}
 
 	dagTmpl := buildDAGTemplate(p.Nodes, p.Edges, nodeTemplates, nodeInputs)
@@ -372,7 +474,7 @@ func componentWritesOutputPath(c Component, outputName string) bool {
 
 // buildContainerTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
-func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
+func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -383,7 +485,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		pullPolicy = corev1.PullIfNotPresent
 	}
 	tmpl := wfv1.Template{
-		Name: templateName(node.ID),
+		Name: nodeTemplates[node.ID],
 		Container: &corev1.Container{
 			Image:           node.Component.Image,
 			Command:         node.Component.Command,
@@ -515,7 +617,7 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 			for _, is := range inputs {
 				params = append(params, wfv1.Parameter{
 					Name:  is.paramName,
-					Value: wfv1.AnyStringPtr(fmt.Sprintf("{{tasks.%s.outputs.parameters.%s}}", templateName(is.srcNode), is.srcPort)),
+					Value: wfv1.AnyStringPtr(fmt.Sprintf("{{tasks.%s.outputs.parameters.%s}}", nodeTemplates[is.srcNode], is.srcPort)),
 				})
 			}
 			task.Arguments = wfv1.Arguments{Parameters: params}
@@ -533,10 +635,10 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 // buildAllNodeTemplates recursively builds templates for a list of nodes.
 // For container nodes returns 1 template; for sub-graph nodes returns N+1
 // templates (1 DAG template + N leaf templates for sub-nodes).
-func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options) ([]wfv1.Template, error) {
+func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	var all []wfv1.Template
 	for _, node := range nodes {
-		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts)
+		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts, nodeTemplates)
 		if err != nil {
 			return nil, err
 		}
@@ -547,39 +649,36 @@ func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputCo
 
 // buildNodeTemplates returns all templates for a single node.
 // For sub-graph nodes this recursively includes sub-node templates.
-func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) ([]wfv1.Template, error) {
+func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	if len(node.SubNodes) > 0 {
-		return buildSubGraphTemplates(node, inputs, opts)
+		return buildSubGraphTemplates(node, inputs, opts, nodeTemplates)
 	}
 	if node.Component.Mode == "script" {
-		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts)}, nil
+		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts, nodeTemplates)}, nil
 	}
-	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts)}, nil
+	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts, nodeTemplates)}, nil
 }
 
 // buildSubGraphTemplates builds templates for a sub-graph node.
-// Returns container templates for sub-nodes plus the DAG template.
-func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+// Returns container templates for sub-nodes plus the DAG template. Template
+// names come from the shared nodeTemplates map (built over the full flat node
+// set, so it already holds every sub-node's readable name).
+func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options, nodeTemplates map[string]string) ([]wfv1.Template, error) {
 	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
 	subInputs := buildInputSpecs(subPipe)
 	subOutputConsumers := buildOutputConsumers(subPipe)
 
 	var templates []wfv1.Template
 	for _, subNode := range node.SubNodes {
-		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts)
+		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts, nodeTemplates)
 		if err != nil {
 			return nil, err
 		}
 		templates = append(templates, tms...)
 	}
 
-	subTemplateNames := make(map[string]string)
-	for _, subNode := range node.SubNodes {
-		subTemplateNames[subNode.ID] = templateName(subNode.ID)
-	}
-
-	dagTmpl := buildDAGTemplate(node.SubNodes, node.SubEdges, subTemplateNames, subInputs)
-	dagTmpl.Name = templateName(node.ID)
+	dagTmpl := buildDAGTemplate(node.SubNodes, node.SubEdges, nodeTemplates, subInputs)
+	dagTmpl.Name = nodeTemplates[node.ID]
 	templates = append(templates, *dagTmpl)
 	return templates, nil
 }
@@ -591,7 +690,7 @@ func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv
 //   - Argo writes source to a temp file and runs `command < tmpfile`
 //   - Stdout is automatically captured as outputs.result
 //   - File-based output params use valueFrom.path (same as container mode)
-func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
+func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options, nodeTemplates map[string]string) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -624,7 +723,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 	}
 
 	tmpl := wfv1.Template{
-		Name: templateName(node.ID),
+		Name: nodeTemplates[node.ID],
 		Script: &wfv1.ScriptTemplate{
 			Container: corev1.Container{
 				Image:           node.Component.Image,
@@ -863,7 +962,6 @@ func splitArgValue(raw string) []string {
 	}
 	return []string{v}
 }
-
 
 // or Command=["sh", "-c"], Args=["..."].
 func shellScriptArgIndex(cmd []string, args []string) int {

@@ -30,7 +30,7 @@ func TestCreate_LifecycleDefaults(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-001",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})
@@ -86,6 +86,32 @@ func TestCreate_LifecycleDefaults(t *testing.T) {
 	}
 }
 
+// CYB-3267 Bug 2: Create sets duration_ms directly from the timestamp span
+// (the mock repo does not run prepAssetForWrite, so this isolates the
+// create-site assignment). Without the fix, DurationMs would be 0 here.
+func TestCreate_SetsDurationMsFromSpan(t *testing.T) {
+	repo := newMockAssetRepo()
+	uc := NewFull(repo, nil, buildTestAlgoRegistry(t))
+	ctx := context.Background()
+
+	asset, err := uc.Create(ctx, CreateInput{
+		McapFileID:       "mcap-test-001",
+		StartTimestampNs: 1_000_000_000,
+		EndTimestampNs:   3_000_000_000, // span = 2s
+		Reviewer:         "tester",
+		Owner:            "owner",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if asset.DurationMs != 2000 {
+		t.Errorf("DurationMs = %d, want 2000", asset.DurationMs)
+	}
+	if asset.DurationSec != 2 {
+		t.Errorf("DurationSec = %v, want 2", asset.DurationSec)
+	}
+}
+
 func TestCreate_DefaultAssetTypeWhenMissing(t *testing.T) {
 	repo := newMockAssetRepo()
 	uc := New(repo)
@@ -94,7 +120,7 @@ func TestCreate_DefaultAssetTypeWhenMissing(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-assettype-001",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})
@@ -117,7 +143,7 @@ func TestCreate_TrimAndMirrorAssetTypeFields(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-assettype-002",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 		AssetType:        " clip ",
@@ -141,7 +167,7 @@ func TestCreate_DatasetAllowsMissingMcapAndValidatesMetadata(t *testing.T) {
 
 	asset, err := uc.Create(ctx, CreateInput{
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		AssetType:        "dataset",
 		Metadata: map[string]interface{}{
@@ -159,7 +185,7 @@ func TestCreate_DatasetAllowsMissingMcapAndValidatesMetadata(t *testing.T) {
 
 	_, err = uc.Create(ctx, CreateInput{
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		AssetType:        "dataset",
 		Metadata:         map[string]interface{}{"format": "jsonl"},
@@ -187,7 +213,7 @@ func TestCommitSegments_LifecycleDefaults(t *testing.T) {
 
 	ids, err := uc.CommitSegments(ctx, CommitSegmentsInput{
 		McapFileID: "mcap-test-002",
-		Ranges:     [][2]int64{{1000, 2000}, {3000, 4000}},
+		Ranges:     [][2]int64{{1000000, 2000000}, {3000000, 4000000}},
 		Reviewer:   "tester",
 		Owner:      "owner",
 	})
@@ -226,7 +252,7 @@ func TestCreate_AlgoStateInitialization(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-003",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})
@@ -271,7 +297,7 @@ func TestCreate_AlgoStateInitialization_ActionAnnotationBlocked(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-004",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})
@@ -310,7 +336,7 @@ func TestCommitSegments_AlgoStateInitialization(t *testing.T) {
 
 	ids, err := uc.CommitSegments(ctx, CommitSegmentsInput{
 		McapFileID: "mcap-test-005",
-		Ranges:     [][2]int64{{1000, 2000}},
+		Ranges:     [][2]int64{{1000000, 2000000}},
 		Reviewer:   "tester",
 		Owner:      "owner",
 	})
@@ -342,7 +368,7 @@ func TestCreate_CfFilesRawMcap(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-006",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})
@@ -368,7 +394,7 @@ func TestCommitSegments_CfFilesRawMcap(t *testing.T) {
 
 	ids, err := uc.CommitSegments(ctx, CommitSegmentsInput{
 		McapFileID: "mcap-test-007",
-		Ranges:     [][2]int64{{1000, 2000}, {3000, 4000}},
+		Ranges:     [][2]int64{{1000000, 2000000}, {3000000, 4000000}},
 		Reviewer:   "tester",
 		Owner:      "owner",
 	})
@@ -400,7 +426,7 @@ func TestCreate_WithoutAlgoRegistry_NoAlgoStates(t *testing.T) {
 	asset, err := uc.Create(ctx, CreateInput{
 		McapFileID:       "mcap-test-008",
 		StartTimestampNs: 1000,
-		EndTimestampNs:   2000,
+		EndTimestampNs:   1001000,
 		Reviewer:         "tester",
 		Owner:            "owner",
 	})

@@ -15,6 +15,7 @@ import {
 	Space,
 	Table,
 	Tag,
+	Tooltip,
 	Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -32,7 +33,10 @@ import {
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
 import {
+	batchJobCompletionAt,
 	batchJobCreatedAtMs,
+	batchJobRunDurationSeconds,
+	formatDurationSeconds,
 	sortBatchJobsByCreatedDesc,
 } from "../lib/batchJobs";
 import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
@@ -205,23 +209,22 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			dataIndex: "finishedAt",
 			key: "finishedAt",
 			width: 180,
-			render: (value?: string) =>
-				value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—",
+			render: (_: unknown, record: BatchJob) => {
+				const finished = batchJobCompletionAt(record);
+				return finished ? dayjs(finished).format("YYYY-MM-DD HH:mm:ss") : "—";
+			},
 		},
 		{
-			title: "耗时",
+			title: (
+				<Tooltip title="运行耗时:首个子任务开始 → 最后一个子任务完成,不含提交排队与暂停等待">
+					<span>耗时</span>
+				</Tooltip>
+			),
 			key: "duration",
 			width: 100,
 			render: (_: unknown, record: BatchJob) => {
-				if (!record.finishedAt) return "—";
-				const secs = dayjs(record.finishedAt).diff(
-					dayjs(record.createdAt),
-					"second",
-				);
-				if (secs < 60) return `${secs}s`;
-				const m = Math.floor(secs / 60);
-				const s = secs % 60;
-				return `${m}m ${s}s`;
+				const secs = batchJobRunDurationSeconds(record);
+				return secs === null ? "—" : formatDurationSeconds(secs);
 			},
 		},
 		{

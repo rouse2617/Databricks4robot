@@ -18,6 +18,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/openlineage"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/outbox"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
 	adminUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/admin"
 )
@@ -421,6 +422,36 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		)
 	}
 
+	// CYB-3384: sync-health cache feeds the query planner so it can route
+	// facet aggregations to PG when ES has drifted. Wire only when both PG
+	// and ES are present — the cache is meaningless with just one side.
+	var syncHealth *queryplan.SyncHealthCache
+	var syncHealthCancel context.CancelFunc
+	if pg != nil && es != nil {
+		gapFetcher := func(fctx context.Context) (int64, error) {
+			progress, ferr := searchProgressFn(fctx)
+			if ferr != nil {
+				return 0, ferr
+			}
+			return progress.PGESGap, nil
+		}
+		syncHealth = queryplan.NewSyncHealthCache(gapFetcher, 30*time.Second)
+		var runCtx context.Context
+		runCtx, syncHealthCancel = context.WithCancel(context.Background())
+		go func() { _ = syncHealth.Run(runCtx) }()
+	}
+
+	// CYB-3384: hand the sync-health cache + facet source to the already-
+	// constructed query handler so its planner can route facets by gap and
+	// DBK_FACET_ENGINE. Skipped when the query handler is nil (no assetUC).
+	if core != nil && core.query != nil && core.assetRepo != nil {
+		core.query.WithFacetFallback(
+			core.assetRepo,
+			syncHealth,
+			queryplan.ParseFacetEngine(cfg.FacetEngine),
+		)
+	}
+
 	return &optional{
 		admin:                     adminHandler,
 		purge:                     purgeHandler,
@@ -430,5 +461,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		outboxESSubscriberStarted: outboxESSubscriberStarted,
 		searchSyncFn:              searchSyncFn,
 		searchProgressFn:          searchProgressFn,
+		syncHealth:                syncHealth,
+		syncHealthCancel:          syncHealthCancel,
 	}
 }

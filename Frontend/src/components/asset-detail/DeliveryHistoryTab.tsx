@@ -77,7 +77,7 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 		return (
 			<Card size="small">
 				<Empty
-					description="该资产尚未交付"
+					description="该资产尚未交付。可在资产列表选中后「创建交付」。"
 					image={Empty.PRESENTED_IMAGE_SIMPLE}
 				/>
 			</Card>

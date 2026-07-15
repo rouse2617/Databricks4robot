@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 var (
 	ErrNotFound           = errors.New("asset not found")
 	ErrInvalidRange       = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
+	ErrDurationTooSmall   = errors.New("asset duration must be at least 1ms (end_timestamp_ns - start_timestamp_ns >= 1000000)")
 	ErrMcapFileIDRequired = errors.New("mcap_file_id is required")
 	ErrInvalidTag         = errors.New("invalid tag")
 	ErrTagSourceInvalid   = errors.New("invalid tag source")
@@ -30,7 +32,47 @@ var (
 	ErrInvalidMcapFileID  = errors.New("mcap_file_id must be exactly 8 alphanumeric characters")
 	ErrMcapFileNotFound   = errors.New("mcap_file_id does not exist")
 	ErrCustomerNotFound   = errors.New("customer not found for customer.* tag namespace") // CYB-1070
+	// ErrInvalidActionLabel is returned when an action asset's primary_label or
+	// labels[] are not in the action-label controlled vocabulary (CYB-3268).
+	ErrInvalidActionLabel = errors.New("invalid action label")
 )
+
+// minAssetDurationNs is the smallest allowed asset span: below 1ms the derived
+// duration_ms rounds to 0 (the 0.0s bad-data class), so such writes are rejected.
+const minAssetDurationNs = 1_000_000
+
+// validateAssetTimeRange enforces the write-time invariants shared by every asset
+// create path: the range must be forward (end > start) and at least 1ms wide.
+func validateAssetTimeRange(startNs, endNs int64) error {
+	if endNs <= startNs {
+		return ErrInvalidRange
+	}
+	if endNs-startNs < minAssetDurationNs {
+		return ErrDurationTooSmall
+	}
+	return nil
+}
+
+// warnIfRangeOutsideParent logs (without rejecting) when a child asset's
+// [start,end] falls outside its already-loaded parent's [start,end] beyond a
+// small tolerance. Both ranges must share the same reference frame (file-relative
+// offsets). Warn-only per CYB-3226; hard enforcement + the segment-vs-raw_mcap
+// case (parent mcap uses an absolute-epoch frame) are a deferred follow-up — see
+// decisions.md.
+func warnIfRangeOutsideParent(ctx context.Context, childType, parentID string, childStart, childEnd, parentStart, parentEnd int64) {
+	if parentEnd <= parentStart {
+		return // parent range unknown; nothing to compare against
+	}
+	const toleranceNs = int64(1_000_000) // 1ms slack for rounding / whole-parent spans
+	if childStart < parentStart-toleranceNs || childEnd > parentEnd+toleranceNs {
+		slog.WarnContext(ctx, "asset time range falls outside parent range",
+			"asset_type", childType,
+			"parent_asset_id", parentID,
+			"child_start_ns", childStart, "child_end_ns", childEnd,
+			"parent_start_ns", parentStart, "parent_end_ns", parentEnd,
+		)
+	}
+}
 
 func mapCreateDBError(err error) error {
 	var pgErr *pgconn.PgError
@@ -72,6 +114,9 @@ type Usecase struct {
 	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
 	validator      *deliveryrules.AssetWriteValidator  // CYB-1164: hierarchy invariants
 	schemaRegistry *models.SchemaRegistry
+	// actionLabelRegistry validates action assets' controlled label vocabulary
+	// (CYB-3268). nil disables validation.
+	actionLabelRegistry *config.ActionLabelRegistry
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -135,6 +180,12 @@ func (u *Usecase) SetValidator(v *deliveryrules.AssetWriteValidator) {
 
 func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
 	u.schemaRegistry = r
+}
+
+// SetActionLabelRegistry wires the action-label controlled vocabulary used to
+// validate asset_type='action' creates/updates (CYB-3268). Pass nil to disable.
+func (u *Usecase) SetActionLabelRegistry(r *config.ActionLabelRegistry) {
+	u.actionLabelRegistry = r
 }
 
 func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
@@ -584,6 +635,9 @@ type UpdateInput struct {
 	Reviewer       *string
 	Owner          *string
 	Tags           map[string]string
+	Files          map[string]string // CYB-3232: merged into asset.Files (like Tags)
+	StorageURI     *string           // CYB-3232: set when non-nil
+	ThumbURI       *string           // CYB-3232: set when non-nil
 }
 
 type ListEventsInput struct {
@@ -808,8 +862,8 @@ func (u *Usecase) ListGlobalEvents(ctx context.Context, in ListEventsInput) (*Li
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
-	if in.EndTimestampNs <= in.StartTimestampNs {
-		return nil, ErrInvalidRange
+	if err := validateAssetTimeRange(in.StartTimestampNs, in.EndTimestampNs); err != nil {
+		return nil, err
 	}
 	if in.ParentAssetID != "" && !id.ValidateAssetID(in.ParentAssetID) {
 		return nil, ErrInvalidAssetID
@@ -855,10 +909,14 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	// Schema-registered types (e.g. grace_video) may omit mcap_file_id; the
 	// DB column allows empty/NULL per assets_mcap_file_id_check.
 	a := &models.Asset{
-		AssetID:             "",
-		McapFileID:          mcapFileID,
-		StartTimestampNs:    in.StartTimestampNs,
-		EndTimestampNs:      in.EndTimestampNs,
+		AssetID:          "",
+		McapFileID:       mcapFileID,
+		StartTimestampNs: in.StartTimestampNs,
+		EndTimestampNs:   in.EndTimestampNs,
+		// CYB-3267: set duration_ms directly at the create site (like
+		// CreateChildAsset) so the canonical field is correct without relying on
+		// the downstream DurationSec*1000 round-trip in prepAssetForWrite.
+		DurationMs:          (in.EndTimestampNs - in.StartTimestampNs) / 1_000_000,
 		DurationSec:         float64(in.EndTimestampNs-in.StartTimestampNs) / 1e9,
 		Reviewer:            in.Reviewer,
 		Status:              models.AssetStatusApproved,
@@ -984,8 +1042,16 @@ func splitMethodToRelation(splitMethod string) string {
 // asset_relations edge insertion. This is the usecase behind the layered API
 // (POST /assets/:id/{clips,actions,frames,tasks}).
 func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput) (*models.Asset, error) {
-	if in.EndTimestampNs <= in.StartTimestampNs {
-		return nil, ErrInvalidRange
+	if err := validateAssetTimeRange(in.StartTimestampNs, in.EndTimestampNs); err != nil {
+		return nil, err
+	}
+	// CYB-3268: action is a first-class asset with a controlled label vocabulary.
+	// primary_label / labels[] travel in metadata; validate before persisting.
+	if in.AssetType == "action" && u.actionLabelRegistry != nil {
+		primary, labels := actionLabelsFromMetadata(in.Metadata)
+		if err := u.actionLabelRegistry.Validate(primary, labels); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidActionLabel, err)
+		}
 	}
 	if in.ParentAssetID == "" {
 		return nil, ErrNotFound
@@ -999,6 +1065,11 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 	if parent == nil {
 		return nil, ErrNotFound
 	}
+	// Warn-only: the child's range should sit within the parent's (same
+	// file-relative frame). Does not reject — see CYB-3226 decisions.md.
+	warnIfRangeOutsideParent(ctx, in.AssetType, in.ParentAssetID,
+		in.StartTimestampNs, in.EndTimestampNs,
+		parent.StartTimestampNs, parent.EndTimestampNs)
 
 	// Build the asset model with a zero ID; InsertNew + prepAssetForWrite will
 	// allocate timestamps and derive duration.
@@ -1023,6 +1094,14 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 		Files:            map[string]string{},
 		Tags:             map[string]string{},
 		AlgoResults:      map[string]string{},
+	}
+	// CYB-3268 (Plan A): action never traverses created→processing→ready, but
+	// lifecycle_state is NOT NULL + CHECK-constrained. Hard-code 'ready' so the
+	// column is valid; any "ready ⇒ deliverable" logic MUST exclude
+	// asset_type='action'. (prepAssetForWrite already defaults empty→ready; this
+	// makes the contract explicit rather than incidental.)
+	if in.AssetType == "action" {
+		a.LifecycleState = "ready"
 	}
 	if u.schemaRegistry != nil {
 		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
@@ -1056,7 +1135,13 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 				return err
 			}
 			if relRepo, ok := u.repo.(repository.AssetRelationWriter); ok {
-				if err := relRepo.InsertRelation(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID); err != nil {
+				// CYB-3281: carry creation context into the edge metadata instead
+				// of leaving asset_relations.metadata as '{}'.
+				relMeta := map[string]any{"asset_type": in.AssetType}
+				if in.SplitMethod != "" {
+					relMeta["split_method"] = in.SplitMethod
+				}
+				if err := relRepo.InsertRelationWithMetadata(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID, relMeta); err != nil {
 					return err
 				}
 			}
@@ -1126,6 +1211,27 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 			a.Tags = map[string]string{}
 		}
 		a.Tags[k] = v
+	}
+	// CYB-3232: merge files (same merge semantics as tags) + optional storage/thumb
+	// pointers, giving a proper API update path instead of direct DB edits.
+	// The write path (bindAssetJSONAndRefs) serializes FilesJSON when it is
+	// non-nil (it is, after repo.Get), so we must merge into FilesJSON — updating
+	// only the derived Files map would be dropped on write. Keep both in sync.
+	for k, v := range in.Files {
+		if a.Files == nil {
+			a.Files = map[string]string{}
+		}
+		a.Files[k] = v
+		if a.FilesJSON == nil {
+			a.FilesJSON = map[string]interface{}{}
+		}
+		a.FilesJSON[k] = v
+	}
+	if in.StorageURI != nil {
+		a.StorageURI = *in.StorageURI
+	}
+	if in.ThumbURI != nil {
+		a.ThumbURI = *in.ThumbURI
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
@@ -1292,8 +1398,8 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 	var created []string
 	for _, r := range in.Ranges {
 		startNs, endNs := r[0], r[1]
-		if endNs <= startNs {
-			return created, ErrInvalidRange
+		if err := validateAssetTimeRange(startNs, endNs); err != nil {
+			return created, err
 		}
 		a := &models.Asset{
 			McapFileID:       in.McapFileID,
@@ -1369,4 +1475,142 @@ func (u *Usecase) ToggleFavorite(ctx context.Context, assetID string) (int, erro
 		return 0, fmt.Errorf("usage stats repository not configured")
 	}
 	return u.usageStatsRepo.ToggleFavorite(ctx, assetID)
+}
+
+// --- CYB-3268: action as a first-class asset (assets table, asset_type='action') ---
+
+// actionLabelsFromMetadata extracts primary_label + labels[] from a child-asset
+// metadata map for action-label-registry validation. Missing or wrong-typed
+// values coerce to empty so the registry rejects them consistently. JSON decodes
+// labels as []interface{}; a []string is also accepted for programmatic callers.
+func actionLabelsFromMetadata(md map[string]interface{}) (string, []string) {
+	if md == nil {
+		return "", nil
+	}
+	primary, _ := md["primary_label"].(string)
+	var labels []string
+	switch raw := md["labels"].(type) {
+	case []string:
+		labels = raw
+	case []interface{}:
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				labels = append(labels, s)
+			}
+		}
+	}
+	return primary, labels
+}
+
+// UpdateActionInput carries the mutable fields for PATCH /assets/:id/actions/:aid.
+type UpdateActionInput struct {
+	Metadata map[string]interface{}
+}
+
+// ListActionsByParent returns first-class action assets under parentID
+// (asset_type='action', parent_asset_id=parentID), ordered by start_timestamp_ns.
+// Backs GET /assets/:id/actions on the assets table (not the legacy actions
+// table). Returns the page plus the total count for the response envelope.
+func (u *Usecase) ListActionsByParent(ctx context.Context, parentID string, limit, offset int) ([]*models.Asset, int64, error) {
+	if parentID == "" {
+		return nil, 0, ErrNotFound
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	page := offset/limit + 1
+	items, total, err := u.repo.ListWithFilters(ctx,
+		"parent_asset_id = $1 AND asset_type = $2",
+		[]interface{}{parentID, "action"},
+		page, limit,
+		filter.OrderByClause{SQL: "start_timestamp_ns ASC"},
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	if items == nil {
+		items = []*models.Asset{}
+	}
+	return items, total, nil
+}
+
+// getActionForParent loads an action asset and enforces it belongs to parentID.
+// Returns ErrNotFound when the asset is missing, soft-deleted (repo.Get excludes
+// deleted), not an action, or owned by a different parent — a cross-parent
+// reference is a 404, not a 403.
+func (u *Usecase) getActionForParent(ctx context.Context, parentID, aid string) (*models.Asset, error) {
+	a, err := u.repo.Get(ctx, aid)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil || a.AssetType != "action" || a.ParentAssetID != parentID {
+		return nil, ErrNotFound
+	}
+	return a, nil
+}
+
+// UpdateActionAsset merges metadata into an action asset under parentID and
+// re-validates the controlled label vocabulary. Cross-parent / missing aid →
+// ErrNotFound (404). CYB-3268.
+func (u *Usecase) UpdateActionAsset(ctx context.Context, parentID, aid string, in UpdateActionInput) (*models.Asset, error) {
+	a, err := u.getActionForParent(ctx, parentID, aid)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Metadata) > 0 {
+		if a.Metadata == nil {
+			a.Metadata = map[string]interface{}{}
+		}
+		for k, v := range in.Metadata {
+			a.Metadata[k] = v
+		}
+	}
+	if u.actionLabelRegistry != nil {
+		primary, labels := actionLabelsFromMetadata(a.Metadata)
+		if primary != "" || len(labels) > 0 {
+			if verr := u.actionLabelRegistry.Validate(primary, labels); verr != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidActionLabel, verr)
+			}
+		}
+	}
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if serr := u.repo.Set(txCtx, a); serr != nil {
+			return serr
+		}
+		return u.appendAssetEvent(txCtx, "asset_updated", a, map[string]any{
+			"asset_id":        a.AssetID,
+			"lifecycle_state": a.LifecycleState,
+			"owner":           a.Owner,
+			"reviewer":        a.Reviewer,
+		})
+	}); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// SoftDeleteActionAsset soft-deletes an action asset under parentID. Cross-parent
+// / missing aid → ErrNotFound (404). Emits asset_lifecycle_changed (mirroring
+// Delete) since there is no asset_deleted event type. CYB-3268.
+func (u *Usecase) SoftDeleteActionAsset(ctx context.Context, parentID, aid string) error {
+	a, err := u.getActionForParent(ctx, parentID, aid)
+	if err != nil {
+		return err
+	}
+	prevStatus := string(a.Status)
+	prevLifecycle := a.LifecycleState
+	return u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if derr := u.repo.SoftDelete(txCtx, aid); derr != nil {
+			return derr
+		}
+		return u.appendAssetEvent(txCtx, "asset_lifecycle_changed", a, map[string]any{
+			"prev_status":          prevStatus,
+			"new_status":           string(models.AssetStatusArchived),
+			"prev_lifecycle_state": prevLifecycle,
+			"new_lifecycle_state":  "archived",
+		})
+	})
 }

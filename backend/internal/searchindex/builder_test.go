@@ -83,6 +83,21 @@ func (s *stubLineageRepo) GetLineageProjection(context.Context, string) (*reposi
 	return s.projection, nil
 }
 
+type stubMcapRepo struct {
+	file *models.McapFile
+}
+
+func (s *stubMcapRepo) Get(_ context.Context, _ string) (*models.McapFile, error) {
+	return s.file, nil
+}
+func (s *stubMcapRepo) Set(context.Context, *models.McapFile) error { return nil }
+func (s *stubMcapRepo) UpdateIngestState(context.Context, string, models.IngestState) error {
+	return nil
+}
+func (s *stubMcapRepo) List(context.Context, int, int, string, string) ([]*models.McapFile, int64, error) {
+	return nil, 0, nil
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 func TestBuild_LifecycleStateIsPrimary(t *testing.T) {
@@ -116,6 +131,45 @@ func TestBuild_LifecycleStateIsPrimary(t *testing.T) {
 	// status should still be present (dual-write window).
 	if got := doc["status"]; got != "approved" {
 		t.Errorf("status = %q, want %q", got, "approved")
+	}
+}
+
+// CYB-3268: action assets are first-class but never traverse the lifecycle, so
+// the ES doc must omit lifecycle_state (no meaningless facet bucket) and must not
+// carry a nested actions[] array (actions are top-level docs now).
+func TestBuild_ActionAssetOmitsLifecycleState(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "act00001",
+			McapFileID:     "m-1",
+			AssetType:      "action",
+			LifecycleState: "ready",
+			ParentAssetID:  "seg00001",
+			Metadata:       map[string]interface{}{"primary_label": "pickup"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+
+	doc, ok, err := b.Build(context.Background(), "act00001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if _, present := doc["lifecycle_state"]; present {
+		t.Errorf("action doc must omit lifecycle_state, got %v", doc["lifecycle_state"])
+	}
+	if _, present := doc["actions"]; present {
+		t.Errorf("action doc must not carry nested actions[], got %v", doc["actions"])
+	}
+	// asset_type must still be present so actions remain facetable.
+	if doc["asset_type"] != "action" {
+		t.Errorf("asset_type = %v, want action", doc["asset_type"])
 	}
 }
 
@@ -385,5 +439,85 @@ func TestBuild_LineageProjection(t *testing.T) {
 	}
 	if got := doc["lineage_downstream_ids"].([]string); len(got) != 1 || got[0] != "asset-child" {
 		t.Fatalf("lineage_downstream_ids = %#v", doc["lineage_downstream_ids"])
+	}
+}
+
+// CYB-3297 (Phase C): the builder must denormalize the mcap capture fields so
+// the vendor/device/scene/... filters and facets the mapping+UI advertise
+// actually resolve. Regression guard: before this, only mcap_uri/recorded_at
+// were emitted and vendor_agg/scene_agg were permanently empty.
+func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:    "seg00001",
+			McapFileID: "m-1",
+			AssetType:  "segment",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+		Mcap: &stubMcapRepo{file: &models.McapFile{
+			McapFileID:     "m-1",
+			GCSPath:        "gs://bucket/m-1.mcap",
+			VendorID:       "vendor-x",
+			DeviceID:       "device-y",
+			CameraModel:    "CyberCap2",
+			DataSource:     "vendor",
+			SceneID:        "scene-z",
+			EnvironmentID:  "warehouse",
+			TaskID:         "task-1",
+			FileDurationMs: 1234,
+		}},
+	}
+
+	doc, ok, err := b.Build(context.Background(), "seg00001")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	mcap, _ := doc["mcap"].(map[string]any)
+	if mcap == nil {
+		t.Fatal("doc[mcap] missing or wrong type")
+	}
+	want := map[string]any{
+		"vendor_id":        "vendor-x",
+		"device_id":        "device-y",
+		"camera_model":     "CyberCap2",
+		"data_source":      "vendor",
+		"scene_id":         "scene-z",
+		"environment_id":   "warehouse",
+		"task_id":          "task-1",
+		"mcap_uri":         "gs://bucket/m-1.mcap",
+		"file_duration_ms": int64(1234),
+	}
+	for k, v := range want {
+		if got := mcap[k]; got != v {
+			t.Errorf("mcap[%q] = %#v, want %#v", k, got, v)
+		}
+	}
+}
+
+// Empty mcap fields must stay absent (additive, no empty-string buckets).
+func TestBuild_OmitsEmptyMcapFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID: "seg00002", McapFileID: "m-2", AssetType: "segment",
+			CreatedAt: now, UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+		Mcap:  &stubMcapRepo{file: &models.McapFile{McapFileID: "m-2", GCSPath: "gs://b/x.mcap"}},
+	}
+	doc, ok, err := b.Build(context.Background(), "seg00002")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	mcap, _ := doc["mcap"].(map[string]any)
+	for _, k := range []string{"vendor_id", "device_id", "scene_id", "environment_id", "task_id", "file_duration_ms"} {
+		if _, present := mcap[k]; present {
+			t.Errorf("mcap[%q] should be absent when source is empty", k)
+		}
 	}
 }

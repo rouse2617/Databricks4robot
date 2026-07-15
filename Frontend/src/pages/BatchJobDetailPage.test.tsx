@@ -266,8 +266,10 @@ describe("BatchJobDetailPage", () => {
 	});
 
 	it("uses status-aware batch polling intervals", () => {
-		expect(batchJobPollIntervalMs("running")).toBe(5_000);
-		expect(batchJobPollIntervalMs("paused")).toBe(30_000);
+		// Throttled cadence (rely on the watcher for freshness): running 30s,
+		// paused 60s, terminal none.
+		expect(batchJobPollIntervalMs("running")).toBe(30_000);
+		expect(batchJobPollIntervalMs("paused")).toBe(60_000);
 		expect(batchJobPollIntervalMs("completed")).toBeNull();
 		expect(batchJobPollIntervalMs("failed")).toBeNull();
 	});
@@ -280,11 +282,11 @@ describe("BatchJobDetailPage", () => {
 		expect(await screen.findByText("Batch 1")).toBeInTheDocument();
 		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(1));
 		expect(
-			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 5_000),
+			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 30_000),
 		).toHaveLength(1);
 
 		const pollOnce = setIntervalSpy.mock.calls.find(
-			([, delay]) => delay === 5_000,
+			([, delay]) => delay === 30_000,
 		)?.[0];
 		expect(typeof pollOnce).toBe("function");
 		await act(async () => {
@@ -294,7 +296,7 @@ describe("BatchJobDetailPage", () => {
 
 		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(2));
 		expect(
-			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 5_000),
+			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 30_000),
 		).toHaveLength(1);
 	});
 
@@ -308,7 +310,7 @@ describe("BatchJobDetailPage", () => {
 		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
 
 		const pollOnce = setIntervalSpy.mock.calls.find(
-			([, delay]) => delay === 5_000,
+			([, delay]) => delay === 30_000,
 		)?.[0];
 		expect(typeof pollOnce).toBe("function");
 		await act(async () => {

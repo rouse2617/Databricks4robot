@@ -140,25 +140,35 @@ func validateNoCycles(p *Pipeline) []string {
 // silently overwrite templates or parameters.
 func validateNormalizedNameCollisions(p *Pipeline) []string {
 	var problems []string
-	seenTemplate := make(map[string]string, len(p.Nodes))
-	for _, node := range p.Nodes {
-		norm := templateName(node.ID)
-		if prior, ok := seenTemplate[norm]; ok {
+
+	// Template-name collisions across the full flat node set (top-level +
+	// sub-graphs). buildStepTemplateNames is dup-aware, so two nodes sharing a
+	// component name are NOT a collision (they get a uuid suffix); a residual
+	// clash means duplicate node ids.
+	names := buildStepTemplateNames(p.Nodes)
+	seenTemplate := make(map[string]string, len(names))
+	for _, node := range flattenNodes(p.Nodes) {
+		norm := names[node.ID]
+		if prior, ok := seenTemplate[norm]; ok && prior != node.ID {
 			problems = append(problems, fmt.Sprintf("node ids %q and %q map to the same workflow template name %q", prior, node.ID, norm))
 			continue
 		}
 		seenTemplate[norm] = node.ID
 	}
-	for _, node := range p.Nodes {
+
+	// Port-name collisions (per node, recursing into sub-graphs).
+	problems = append(problems, validatePortNameCollisionsRecursive(p.Nodes)...)
+	return problems
+}
+
+func validatePortNameCollisionsRecursive(nodes []Node) []string {
+	var problems []string
+	for _, node := range nodes {
 		problems = append(problems, validatePortNameCollisions(node)...)
-	}
-	for _, node := range p.Nodes {
-		if len(node.SubNodes) == 0 {
-			continue
-		}
-		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
-		for _, problem := range validateNormalizedNameCollisions(sub) {
-			problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+		if len(node.SubNodes) > 0 {
+			for _, problem := range validatePortNameCollisionsRecursive(node.SubNodes) {
+				problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+			}
 		}
 	}
 	return problems

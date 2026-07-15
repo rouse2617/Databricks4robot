@@ -56,6 +56,16 @@ class AssetManager(BaseManager):
         """Retrieve multiple assets by ID."""
         return self._request("POST", self._endpoint("asset_batch_get"), json_body={"ids": asset_ids})
 
+    def get_metadata(self, asset_id: str) -> dict[str, Any]:
+        """Retrieve asset metadata (raw JSONB + convenience fields).
+
+        Returns raw assets.metadata and mcap_files.metadata JSONB trees,
+        plus convenience fields (grace_video_snapshot, storage, collection,
+        process_info, video_info) extracted from mcap metadata.
+        Returns 200 with mcap_metadata=null if asset exists but has no mcap_files row.
+        """
+        return self._request("GET", self._endpoint("asset_metadata", asset_id=asset_id))
+
     # ------------------------------------------------------------------
     # Tags
     # ------------------------------------------------------------------

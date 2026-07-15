@@ -52,7 +52,7 @@ jobs:
   # ─── Backend ────────────────────────────────────────────────────────────────
   deploy-backend:
     name: Build & Deploy backend → Cloud Run prod
-    needs: resolve-version
+    needs: [resolve-version, deploy-migrate]
     runs-on: ubuntu-latest
     environment: production
     concurrency:
@@ -143,6 +143,97 @@ jobs:
             --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }} \
             --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest
+
+  # ─── Atlas migrations (Cloud Run Job) ───────────────────────────────────────
+  # Runs BEFORE deploy-backend so the new image deploys against an already-
+  # migrated schema. The Job (cyber-databrew-migrate-prod) is created once via
+  # deploy/cloudrun/create-migrate-jobs.sh. This job rebuilds the migrate
+  # image pinned to the same release tag as the backend (so a given tag can
+  # never apply a migration that isn't also in the corresponding code).
+  deploy-migrate:
+    name: Apply Atlas migrations → CloudSQL prod
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-migrate-prod
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+      MIGRATE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-migrate:${{ needs.resolve-version.outputs.version }}
+      MIGRATE_JOB: cyber-databrew-migrate-prod
+      REGION: us-central1
+      PROJECT_ID: green-valley-442103
+    steps:
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/234851712830/locations/global/workloadIdentityPools/github-actions-pool-v2/providers/github-provider
+          service_account: cyber-databrew-gha@green-valley-442103.iam.gserviceaccount.com
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build & push migrate image on VM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          AR_TOKEN=$(gcloud auth print-access-token)
+          AUTH_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+          PUBLIC_URL="https://github.com/CyberOrigin2077/cyber-databrew.git"
+
+          ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
+          set -euo pipefail
+          if [ -d ${{ env.REPO_DIR }}/.git ]; then
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 "$AUTH_URL" "refs/tags/$VERSION" -q
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
+          else
+            git clone --depth=1 --branch "$VERSION" "$AUTH_URL" ${{ env.REPO_DIR }} -q
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$PUBLIC_URL"
+          fi
+          echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev 2>&1 | grep -v "^$"
+          docker buildx build \
+            --progress=auto \
+            --platform=linux/amd64 \
+            -f ${{ env.REPO_DIR }}/backend/atlas/Dockerfile.migrate \
+            -t ${{ env.MIGRATE_IMAGE }} \
+            --push \
+            ${{ env.REPO_DIR }}/backend
+          echo "    pushed: ${{ env.MIGRATE_IMAGE }}"
+          ENDSSH
+
+      - name: Update Job image reference
+        run: |
+          # NOTE: gcloud run jobs update wipes plain --set-env-vars (but keeps
+          # --set-secrets). We re-assert the DB_* env vars on every update so
+          # the Job's container can compose the connection URL via atlas.hcl.
+          gcloud run jobs update "${{ env.MIGRATE_JOB }}" \
+            --image="${{ env.MIGRATE_IMAGE }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --update-env-vars=DB_HOST=172.27.160.9,DB_PORT=5432,DB_USER=postgres,DB_NAME=cyber_databrew_prod,DB_SSLMODE=disable
+
+      - name: Execute migrate Job
+        run: |
+          # Apply pending migrations only — the Job's default entrypoint is
+          # `atlas migrate apply --env migrate`, so a plain execute (no --args)
+          # applies whatever is pending. prod is already baselined, so there is
+          # no first-run baseline gymnastics here.
+          #
+          # Adopting a NEW pre-existing (pre-Atlas) database is a deliberate,
+          # one-off `atlas migrate apply --baseline <version>` run by hand — see
+          # docs/atlas-migrations.md. It is intentionally NOT auto-run at deploy
+          # (the old hardcoded `--baseline 000_initial.sql` was removed when the
+          # baseline was reset to a single reverse-engineered snapshot).
+          gcloud run jobs execute "${{ env.MIGRATE_JOB }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --wait
 
   # ─── Frontend (Cloudflare Worker) ───────────────────────────────────────────
   deploy-frontend:

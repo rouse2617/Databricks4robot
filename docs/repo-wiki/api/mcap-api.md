@@ -188,14 +188,22 @@ wired, inserts a placeholder `raw_mcap` asset sharing the same ID with
 `lifecycle_state = "created"` and `version = 1` (the 1:1 extension); (c) appends
 a `mcap_file_created` outbox event.
 
+A `23505` unique violation is classified by constraint name via
+`uniqueViolationKind`:
+
+- `uq_mcap_files_hash_md5` → `409 DUPLICATE_HASH` (unresolvable by
+  picking a new ID; the auto-generated-ID path does **not** retry)
+- `mcap_files_pkey` / `assets_pkey` → `409 DUPLICATE_MCAP_FILE_ID` on the
+  caller-supplied-ID path, or a fresh-ID retry on the auto-generated path
+
 Two ID paths exist:
 
-- **Caller-supplied ID** — one `createFileTx` attempt. A Postgres unique
-  violation (`23505`) maps to `409 DUPLICATE_MCAP_FILE_ID`.
+- **Caller-supplied ID** — one `createFileTx` attempt. Hash conflicts return
+  `409 DUPLICATE_HASH`; ID collisions return `409 DUPLICATE_MCAP_FILE_ID`.
 - **Auto-generated ID** — loops up to `maxMcapFileIDRetries` (16) times calling
-  `GenerateMcapFileID`; a `23505` collision retries with a fresh ID, any other
-  error is `500`, and exhausting retries returns
-  `500 "failed to allocate unique mcap_file_id"`.
+  `GenerateMcapFileID`. Hash conflicts short-circuit with `409 DUPLICATE_HASH`;
+  ID collisions retry with a fresh ID. Any other error is `500`, and exhausting
+  retries returns `500 "failed to allocate unique mcap_file_id"`.
 
 On success the handler responds `201` with the full `McapFile` JSON.
 
@@ -206,14 +214,16 @@ flowchart TD
   ValID -- yes --> CheckFmt{"valid 8-char id?"}
   CheckFmt -- no --> Err400["400 INVALID_ARGUMENT"]
   CheckFmt -- yes --> TxOne["createFileTx (1 attempt)"]
-  TxOne --> Dup{"23505?"}
-  Dup -- yes --> Err409["409 DUPLICATE_MCAP_FILE_ID"]
-  Dup -- no --> Ok201["201 McapFile"]
+  TxOne --> Kind{"23505 constraint?"}
+  Kind -- "uq_mcap_files_hash_md5" --> Err409H["409 DUPLICATE_HASH"]
+  Kind -- "pkey (mcap/assets)" --> Err409ID["409 DUPLICATE_MCAP_FILE_ID"]
+  Kind -- none --> Ok201["201 McapFile"]
   ValID -- no --> Loop["loop up to 16: GenerateMcapFileID + createFileTx"]
-  Loop --> LoopOk{"success?"}
-  LoopOk -- yes --> Ok201
-  LoopOk -- "23505" --> Loop
-  LoopOk -- exhausted --> Err500["500 allocate failed"]
+  Loop --> LoopKind{"23505 constraint?"}
+  LoopKind -- "uq_mcap_files_hash_md5" --> Err409H
+  LoopKind -- "pkey (mcap/assets)" --> Loop
+  LoopKind -- none --> Ok201
+  Loop -- exhausted --> Err500["500 allocate failed"]
 ```
 
 **Diagram sources**
@@ -450,7 +460,8 @@ not depend on `bytesSrc`.
 | `400 INVALID_ARGUMENT` on create/finalize | `mcap_file_id` not 8 alphanumeric chars | `ValidateMcapFileID` |
 | `400` "gcs_path must be a gs:// URI" | stored `gcs_path` is not a `gs://` URI | `Bytes` prefix check |
 | `404 MCAP_FILE_NOT_FOUND` on `/bytes` | no row, empty `gcs_path`, or GCS object missing | `repo.Get` result; `storage.ErrObjectNotExist` mapping |
-| `409 DUPLICATE_MCAP_FILE_ID` | caller-supplied ID already exists | Postgres `23505` in `createFileTx` |
+| `409 DUPLICATE_MCAP_FILE_ID` | caller-supplied ID already exists | `mcap_files_pkey` / `assets_pkey` in `createFileTx` (see `uniqueViolationKind`) |
+| `409 DUPLICATE_HASH` | `raw_hash_md5` already exists (idempotency signal) | `uq_mcap_files_hash_md5` in `createFileTx` (see `uniqueViolationKind`) |
 | `416` on a range request | malformed/unsatisfiable `Range` (multi-range, signed, `start >= size`) | `parseSingleByteRange` |
 | Empty `messages` array | iteration is a Phase-0 placeholder | `IterMessages` |
 | Finalize returns `200` but state unchanged | wrong route, or footer parse not yet run | only body-route is wired; `summarized` is set immediately, parse is async |

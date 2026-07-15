@@ -26,6 +26,11 @@ type PipelineTemplateListFilter struct {
 	Sort     string
 	Page     int
 	PageSize int
+	// CYB-3390: ExcludeAutoDrafts drops throwaway single-step drafts whose
+	// name matches `pipeline-<10+ digits>` (the client's default when the
+	// user hits "run" without naming). Pushed to the DB so the pagination
+	// total reflects the real curated set rather than the raw pile.
+	ExcludeAutoDrafts bool
 }
 
 // PipelineDeployment represents a single deployment of a pipeline template
@@ -53,10 +58,17 @@ type PipelineDeployment struct {
 
 // ExecutionTarget describes a runtime destination for pipeline workflows.
 type ExecutionTarget struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	Cluster              string                 `json:"cluster"`
-	Namespace            string                 `json:"namespace"`
+	ID string `json:"id"`
+	// ClusterID is the FK to clusters.id (CYB-3425). Nullable in the DB during
+	// migration; the app treats an empty ClusterID as "default cluster" for
+	// pre-3425 rows. Newly created targets always carry a real cluster_id.
+	ClusterID string `json:"clusterId,omitempty"`
+	Name      string `json:"name"`
+	// Cluster is the legacy free-text field kept for backward compatibility.
+	// Prefer ClusterID + join to clusters(name) going forward; this field will
+	// be removed once all callers migrate.
+	Cluster   string `json:"cluster"`
+	Namespace string `json:"namespace"`
 	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
 	ArgoServerURL        string                 `json:"argoServerUrl,omitempty"`
 	ArgoAuthSecretRef    string                 `json:"argoAuthSecretRef,omitempty"`
@@ -110,6 +122,11 @@ type PipelineRun struct {
 	StartedAt          *time.Time               `json:"startedAt,omitempty"`
 	FinishedAt         *time.Time               `json:"finishedAt,omitempty"`
 	NodeProgress       *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
+	// VideoDurationSec is the source video's duration in seconds, looked up by
+	// asset_id from the video_durations table (populated by an external system).
+	// Nil when unknown. Surfaced as the "video duration" column in the batch
+	// subtask runs list (CYB-3059).
+	VideoDurationSec *float64 `json:"videoDurationSec,omitempty"`
 }
 
 // PipelineRunNodeProgress is a compact summary for batch subtask list views.
@@ -429,15 +446,20 @@ type LedgerHealth struct {
 
 // PipelineRunListFilter scopes summary list queries for batch-aware UIs.
 type PipelineRunListFilter struct {
-	BatchJobID     string
-	ExcludeBatch   bool
-	Status         string
-	Query          string
-	PipelineNodeID string
-	NodeStatus     string
-	Page           int
-	PageSize       int
-	RefreshActive  bool
+	BatchJobID   string
+	ExcludeBatch bool
+	// CYB-3392b: hide the batch parent row (id == batch_job_id) but keep
+	// the child rows so the "单次执行" tab can show them with a clickable
+	// batch badge. ExcludeBatch stays as-is for callers that want a purely
+	// standalone-runs view.
+	ExcludeBatchParents bool
+	Status              string
+	Query               string
+	PipelineNodeID      string
+	NodeStatus          string
+	Page                int
+	PageSize            int
+	RefreshActive       bool
 	// SummaryOnly drops per-run nodes (and other heavy fields) for lightweight
 	// list views. When false the default list keeps nodes so callers can show
 	// per-run estimated cost.
@@ -446,21 +468,21 @@ type PipelineRunListFilter struct {
 
 // PipelineUserStats aggregates usage metrics for smart pipeline grouping.
 type PipelineUserStats struct {
-	ClickCounts      map[string]int       `json:"clickCounts"`      // pipeline_id → click count
-	RunCounts        map[string]int       `json:"runCounts"`        // pipeline_id → run count
-	ExecutionTimes   map[string]int64     `json:"executionTimes"`   // pipeline_id → total ms
-	LastAccessTimes  map[string]time.Time `json:"lastAccessTimes"`  // pipeline_id → last access
-	Window           string               `json:"window"`           // e.g. "30d"
-	ComputedAt       time.Time            `json:"computedAt"`
+	ClickCounts     map[string]int       `json:"clickCounts"`     // pipeline_id → click count
+	RunCounts       map[string]int       `json:"runCounts"`       // pipeline_id → run count
+	ExecutionTimes  map[string]int64     `json:"executionTimes"`  // pipeline_id → total ms
+	LastAccessTimes map[string]time.Time `json:"lastAccessTimes"` // pipeline_id → last access
+	Window          string               `json:"window"`          // e.g. "30d"
+	ComputedAt      time.Time            `json:"computedAt"`
 }
 
 // PipelineRecommendation ranks a pipeline for display in "most used" grouping.
 type PipelineRecommendation struct {
-	PipelineID  string  `json:"pipelineId"`
-	Name        string  `json:"name"`
-	Score       float64 `json:"score"`       // 0-10 composite score
-	Reason      string  `json:"reason"`      // human-readable explanation
-	ClickCount  int     `json:"clickCount"`
-	RunCount    int     `json:"runCount"`
-	LastAccess  *time.Time `json:"lastAccess,omitempty"`
+	PipelineID string     `json:"pipelineId"`
+	Name       string     `json:"name"`
+	Score      float64    `json:"score"`  // 0-10 composite score
+	Reason     string     `json:"reason"` // human-readable explanation
+	ClickCount int        `json:"clickCount"`
+	RunCount   int        `json:"runCount"`
+	LastAccess *time.Time `json:"lastAccess,omitempty"`
 }

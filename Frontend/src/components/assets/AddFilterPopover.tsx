@@ -6,6 +6,7 @@ import { Button, Input, Popover, Select, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { createFilterChip } from "../../lib/assets/assetsDiscoveryActions";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+import { ASSET_TYPE_OPTIONS } from "../../lib/assets/assetTypes";
 
 // ─── Field Metadata ───
 
@@ -38,7 +39,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 		key: "asset_type",
 		label: "资产类型",
 		type: "enum",
-		values: ["segment", "clip", "frame_set", "derived_asset"],
+		values: ASSET_TYPE_OPTIONS,
 	},
 	{
 		key: "retention_tier",
@@ -65,13 +66,13 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 		values: ["ok", "failed", "running", "pending", "blocked"],
 	},
 	{
-		key: "tags_flat.priority",
+		key: "tag.priority",
 		label: "优先级",
 		type: "enum",
 		values: ["critical", "high", "medium", "low"],
 	},
 	{
-		key: "tags_flat.quality",
+		key: "tag.quality",
 		label: "质量",
 		type: "enum",
 		values: ["excellent", "good", "acceptable", "poor", "unusable"],
@@ -127,7 +128,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 const QUICK_FIELDS = [
 	"lifecycle_state",
 	"duration_ms",
-	"tags_flat.priority",
+	"tag.priority",
 	"tags_flat.source_type",
 	"mcap.vendor_id",
 	"mcap.scene_id",

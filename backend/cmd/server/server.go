@@ -8,11 +8,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/routes"
 )
 
@@ -27,6 +30,37 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 	var pgPingFn func(context.Context) error
 	if inf.pg != nil {
 		pgPingFn = inf.pg.Ping
+	}
+
+	// Unified auth: API keys for SDK/API callers (postgres-backed).
+	var apiKeyRepo repository.APIKeyRepository
+	var apiKeyHandler *apikeyH.Handler
+	if inf.pg != nil {
+		akr := postgres.NewAPIKeyRepo(inf.pg)
+		apiKeyRepo = akr                 // pragma: allowlist secret
+		apiKeyHandler = apikeyH.New(akr) // pragma: allowlist secret
+	}
+
+	// CYB-3246 Phase 2: managed tag registry (DB-backed overlay). Load DB
+	// definitions into the in-memory managed overlay on top of the YAML
+	// baseline; the validation hot path stays DB-free. On error (e.g. table not
+	// yet migrated) the YAML baseline still validates — no seeding, so startup
+	// never races the migration job and admin writes never erase the baseline.
+	var tagRegistryHandler *adminH.TagRegistryHandler
+	if inf.pg != nil {
+		tagRegistryRepo := postgres.NewTagRegistryRepo(inf.pg)
+		if err := adminH.LoadManagedTags(context.Background(), tagRegistryRepo, inf.tagRegistry); err != nil {
+			slog.Error("tag registry load failed; using YAML baseline only", "err", err)
+		}
+		tagRegistryHandler = adminH.NewTagRegistryHandler(tagRegistryRepo, inf.tagRegistry)
+	}
+
+	// CYB-3425 Phase B PR 1: cluster registry. Reads exposed to any authed
+	// user so the frontend can render cluster names; writes gated by admin.
+	var clusterHandler *adminH.ClusterHandler
+	if inf.pg != nil {
+		clusterRepo := postgres.NewClusterRepo(inf.pg)
+		clusterHandler = adminH.NewClusterHandler(clusterRepo)
 	}
 
 	routes.RegisterAll(
@@ -56,6 +90,10 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.workflow,
 		core.backfill,
 		core.storage,
+		apiKeyRepo,
+		apiKeyHandler,
+		tagRegistryHandler,
+		clusterHandler,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

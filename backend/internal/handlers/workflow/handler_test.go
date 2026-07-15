@@ -650,7 +650,7 @@ func TestGetWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
 			WorkflowName:  "wf-video",
 			ArgoNamespace: "video-proc-dev",
 		},
-	}}, nil)
+	}}, nil, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-video", nil)
@@ -1149,6 +1149,47 @@ func TestStreamWorkflowLogs_StructuredEvents(t *testing.T) {
 	if client.lastStreamOpts.TailLines == nil || *client.lastStreamOpts.TailLines != defaultWorkflowLogTailLines {
 		t.Fatalf("expected default stream tailLines, got %#v", client.lastStreamOpts.TailLines)
 	}
+	// Running node → live-tail (CYB-3483).
+	if !client.lastStreamOpts.Follow {
+		t.Fatalf("running node must be followed for live tail")
+	}
+}
+
+// A finished node must NOT be followed: following a completed pod never EOFs
+// through Argo's follow API, hanging the SSE until the Cloud Run timeout → 504
+// and triggering client reconnect storms. (CYB-3483)
+func TestStreamWorkflowLogs_DoesNotFollowFinishedNode(t *testing.T) {
+	wf := makeWorkflow("test-wf-done", "Succeeded", 1)
+	wf.Status.Nodes["a"] = wfv1.NodeStatus{
+		ID:           "a",
+		Name:         "step-a",
+		DisplayName:  "step-a",
+		Type:         wfv1.NodeTypePod,
+		TemplateName: "template-a",
+		Phase:        wfv1.NodeSucceeded,
+	}
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) { return wf, nil },
+		streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(`{"result":{"podName":"a","content":"done\n"}}` + "\n")), nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/test-wf-done/logs/stream?nodeId=a")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+	if client.lastStreamOpts.Follow {
+		t.Fatalf("finished node must NOT be followed (Follow=true hangs until request timeout)")
+	}
 }
 
 func TestWorkflowOperations(t *testing.T) {
@@ -1242,7 +1283,7 @@ func TestResubmitWorkflow_CreatesPipelineRunLedger(t *testing.T) {
 	}}
 	eventRepo := &mockRunEventRepo{}
 	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
-	h.SetRunRepositories(runRepo, eventRepo)
+	h.SetRunRepositories(runRepo, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
@@ -1298,7 +1339,7 @@ func TestResubmitWorkflow_DoesNotDuplicateExistingLedger(t *testing.T) {
 		"source-wf-gthtk": existingRun,
 	}}
 	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
-	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
@@ -1323,7 +1364,7 @@ func TestStopWorkflow_SyncsPipelineRunLedger(t *testing.T) {
 	eventRepo := &mockRunEventRepo{}
 	client := &mockWorkflowClient{}
 	h := New(client, "argo")
-	h.SetRunRepositories(runRepo, eventRepo)
+	h.SetRunRepositories(runRepo, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-1/stop", nil)
@@ -1363,7 +1404,7 @@ func TestStopWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
 	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{"wf-video": run}}
 	client := &mockWorkflowClient{}
 	h := New(client, "default")
-	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-video/stop", nil)
@@ -1622,7 +1663,7 @@ func TestCreateTerminalSession_DisabledByDefault(t *testing.T) {
 		ID:             "run-1",
 		WorkflowName:   "test-wf",
 		TargetSnapshot: map[string]interface{}{},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))
@@ -1655,7 +1696,7 @@ func TestCreateTerminalSession_AllowedPolicyCreatesSession(t *testing.T) {
 				"allowedCommands": []interface{}{"sh", "pwd"},
 			},
 		},
-	}}, eventRepo)
+	}}, eventRepo, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
@@ -1702,7 +1743,7 @@ func TestCreateTerminalSession_ResourceDefaultsPolicyCreatesSession(t *testing.T
 				},
 			},
 		},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
@@ -1747,7 +1788,7 @@ func TestTerminateTerminalSession(t *testing.T) {
 		TargetSnapshot: map[string]interface{}{
 			"terminal": map[string]interface{}{"enabled": true},
 		},
-	}}, &mockRunEventRepo{})
+	}}, &mockRunEventRepo{}, nil)
 	r := setupRouter(h)
 
 	createReq := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))

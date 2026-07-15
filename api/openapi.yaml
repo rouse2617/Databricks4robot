@@ -68,6 +68,10 @@ components:
       type: apiKey
       in: header
       name: X-Admin-Token
+    DatabrewWebhookToken:
+      type: apiKey
+      in: header
+      name: X-Databrew-Webhook-Token
   parameters:
     RequestIdHeader:
       in: header
@@ -372,6 +376,61 @@ components:
           additionalProperties: true
         expires_at: { type: string }
 
+    # ── AssetMetadata ──────────────────────────────────────────────────────
+    AssetMetadataResponse:
+      type: object
+      description: Raw JSONB metadata trees + convenience fields extracted from mcap metadata
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        segment_locator: { type: string }
+        lifecycle_state: { type: string }
+        asset_metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Raw assets.metadata JSONB tree
+        mcap_metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Raw mcap_files.metadata JSONB tree (null if no mcap_files row)
+        grace_video_snapshot:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from asset_metadata.grace_video_snapshot
+        storage:
+          type: object
+          properties:
+            gcs:
+              type: object
+              additionalProperties: true
+              nullable: true
+            aliyun:
+              type: object
+              additionalProperties: true
+              nullable: true
+        mcap_process_state:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: mcap_files.process_state
+        collection:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.collection_meta
+        process_info:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.process_info
+        video_info:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Extracted from mcap_metadata.video_info
+
     # ── LogicalAsset ───────────────────────────────────────────────────────
     LogicalAsset:
       type: object
@@ -461,10 +520,18 @@ components:
         updated_at: { type: string, format: date-time }
     TagUpsertRequest:
       type: object
+      required: [key, value]
       properties:
-        tag_key: { type: string }
-        tag_value: { type: string }
-        source_type: { type: string }
+        key:
+          type: string
+          description: >-
+            Tag key. Open vocabulary (CYB-3246): a key not present in the tag
+            registry is accepted as a free-form string tag (value length capped
+            at 500). A registered key is validated strictly against its
+            definition (enum membership or string max_length).
+          example: description
+        value: { type: string, example: "高清城市街道场景" }
+        source_type: { type: string, description: "human/algo_sdk/rule_engine/system/compliance; identity fields required per tag_sources contract" }
         source_name: { type: string }
         source_version: { type: string }
         run_id: { type: string }
@@ -1172,6 +1239,7 @@ components:
         end_timestamp_ns: { type: integer, format: int64 }
         channel_count: { type: integer }
         chunk_count: { type: integer }
+        segment_count: { type: integer, description: "Derived (CYB-3285): number of non-deleted asset_type='segment' assets with this mcap_file_id." }
         vendor_id: { type: string }
         collector_id: { type: string }
         task_id: { type: string }
@@ -1373,6 +1441,38 @@ components:
           type: array
           items: { type: string }
         max_length: { type: integer }
+    TagRegistryEntry:
+      type: object
+      description: Managed tag definition (CYB-3246 Phase 2). Superset of TagRegistryItem with propagation + audit columns.
+      properties:
+        key: { type: string }
+        description: { type: string }
+        type: { type: string, enum: [enum, string] }
+        values:
+          type: array
+          items: { type: string }
+        max_length: { type: integer }
+        propagation: { type: string, enum: [none, descendants] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TagDefRequest:
+      type: object
+      required: [key, type]
+      properties:
+        key:
+          type: string
+          description: Required on create; on update it is taken from the path and the body value is ignored.
+          example: severity
+        description: { type: string }
+        type: { type: string, enum: [enum, string] }
+        values:
+          type: array
+          items: { type: string }
+          description: Required and non-empty when type=enum.
+          example: [critical, high, medium, low]
+        max_length: { type: integer, description: "Applies when type=string; 0 = unlimited." }
+        propagation: { type: string, enum: [none, descendants], default: none }
     LifecycleState:
       type: object
       properties:
@@ -1608,8 +1708,37 @@ components:
       type: object
       properties:
         asset_id: { $ref: '#/components/schemas/AssetID' }
-        upstream: {}
-        downstream: {}
+        upstream:
+          type: object
+          description: >
+            Immediate upstream. Raw-mcap source fields stay at the top level;
+            CYB-3281 adds the immediate parent asset as sibling keys.
+          properties:
+            mcap_file_id: { type: string }
+            mcap_uri: { type: string }
+            ingest_state: { type: string }
+            asset_id: { type: string, description: "Immediate parent asset id (CYB-3281); for a segment this is the raw_mcap asset." }
+            asset_type: { type: string }
+            root_asset_id: { type: string }
+            start_timestamp_ns: { type: integer, format: int64 }
+            end_timestamp_ns: { type: integer, format: int64 }
+        downstream:
+          type: object
+          properties:
+            algo_results: { type: array, items: { type: object } }
+            deliveries: { type: array, items: { type: object } }
+            eval_results: { type: array, items: { type: object } }
+            children:
+              type: array
+              description: "Immediate child assets — segments under an mcap, actions/frames under a seg (CYB-3281)."
+              items:
+                type: object
+                properties:
+                  asset_id: { type: string }
+                  asset_type: { type: string }
+                  parent_asset_id: { type: string }
+                  root_asset_id: { type: string }
+                  import_batch: { type: string }
     ProvenanceEntry:
       type: object
       properties:
@@ -1755,7 +1884,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: End timestamp in nanoseconds
+          description: "End timestamp in nanoseconds. Must be > start_timestamp_ns and the span must be >= 1ms (end - start >= 1_000_000 ns); otherwise 422 INVALID_STATE. (CYB-3226)"
           example: 1700000100000000000
         split_method:
           type: string
@@ -1779,7 +1908,7 @@ components:
         logical_asset_id: { type: string, description: "Logical asset group ID", example: "aaaaaaaa" }
         mcap_file_id: { $ref: '#/components/schemas/McapFileID', description: "Source MCAP file" }
         start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds", example: 1700000000000000000 }
-        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds", example: 1700000360000000000 }
+        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds. Must be > start_timestamp_ns and span >= 1ms (end - start >= 1_000_000 ns); else 422 INVALID_STATE. duration_ms is derived from the span. (CYB-3226)", example: 1700000360000000000 }
         reviewer: { type: string, description: "Reviewer name for the asset", example: "zhangsan" }
         owner: { type: string, description: "Owner name", example: "lisi" }
         type: { type: string, description: "Segment type (legacy)", example: "segment" }
@@ -2158,6 +2287,10 @@ components:
           format: double
           nullable: true
           description: Sum of node estimated costs in USD when pricing data is available.
+        videoDurationSec:
+          type: number
+          format: double
+          description: Source video duration in seconds (from video_durations, by asset_id). Absent when unknown. (CYB-3059)
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
@@ -3083,6 +3216,8 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true, description: "set when status reaches completed or failed" }
+        runStartedAt: { type: string, format: date-time, nullable: true, description: "list view only: earliest subtask start (MIN of item started_at)" }
+        runFinishedAt: { type: string, format: date-time, nullable: true, description: "list view only: latest subtask finish (MAX of item finished_at); use runFinishedAt - runStartedAt for real run duration excluding queue/pause waiting" }
     BackfillItem:
       type: object
       properties:
@@ -3374,11 +3509,39 @@ paths:
     patch:
       tags: [Assets]
       summary: Update asset
+      description: |
+        Partial update. All fields optional. `tags` and `files` use MERGE
+        semantics (provided keys are upserted; omitted keys are kept).
+        `storage_uri` / `thumb_uri` are set when provided. Emits `asset_updated`
+        (which also syncs the search index). (CYB-3232 added files/storage_uri/thumb_uri.)
       parameters:
         - in: path
           name: id
           required: true
           schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, description: "Legacy status (lifecycle_state wins if both set)" }
+                lifecycle_state: { type: string, description: "Lifecycle state" }
+                reviewer: { type: string }
+                owner: { type: string }
+                tags:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Merged into asset tags (upsert per key)"
+                files:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Merged into asset files (upsert per key), e.g. algo_input_*/annot_*/delivery_* URIs (CYB-3232)"
+                storage_uri: { type: string, description: "Set when provided (CYB-3232)" }
+                thumb_uri: { type: string, description: "Set when provided (CYB-3232)" }
+              example:
+                files: { algo_input_forward_stereo: "gs://bucket/forward_stereo/abc.mp4" }
+                storage_uri: "gs://bucket/segments/abc.mcap"
       responses:
         '200':
           description: OK
@@ -3411,6 +3574,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/metadata:
+    get:
+      tags: [Assets]
+      summary: Get asset metadata (JSONB trees + convenience fields)
+      description: |
+        Returns raw assets.metadata and mcap_files.metadata JSONB, plus convenience
+        fields (grace_video_snapshot, storage, collection, process_info, video_info)
+        lifted from mcap metadata for UI rendering.
+        Returns 200 with mcap_metadata=null if asset exists but has no mcap_files row.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetMetadataResponse' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/assets:batch_get:
     post:
       tags: [Assets]
@@ -3712,7 +3901,13 @@ paths:
   /api/v1/assets/{id}/actions:
     post:
       tags: [Assets]
-      summary: Create action-type child asset under a parent (layered creation, CYB-1228)
+      summary: Create action-type child asset (first-class asset_type='action', CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): actions are first-class assets on the `assets` table.
+        Body is ChildAssetCreateRequest (start_timestamp_ns / end_timestamp_ns / metadata);
+        primary_label + labels[] travel in `metadata` and are validated against the
+        action-label registry (422 INVALID_ACTION). Response is an `Asset` row, not the
+        legacy actions-table shape.
       parameters:
         - in: path
           name: id
@@ -3730,7 +3925,96 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Asset' }
         '422':
-          description: Hierarchy violation or invalid domain state
+          description: Hierarchy violation, invalid domain state, or unregistered action label (INVALID_ACTION)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [Assets]
+      summary: List first-class action assets under a parent (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): reads the `assets` table (asset_type='action',
+        parent_asset_id={id}), not the legacy actions table. Envelope is
+        {items:[Asset], asset_id, total}. Label filtering is client-side.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, minimum: 1, maximum: 1000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        '200':
+          description: Action assets under the parent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
+                  asset_id: { type: string }
+                  total: { type: integer }
+  /api/v1/assets/{id}/actions/{action_id}:
+    patch:
+      tags: [Assets]
+      summary: Update a first-class action asset's metadata (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): updates an `assets` row (asset_type='action').
+        Cross-parent or missing action_id → 404; unregistered label → 422 INVALID_ACTION.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: path
+          name: action_id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated action asset
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '404':
+          description: Action not found or not under this parent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Assets]
+      summary: Soft-delete a first-class action asset (CYB-3268)
+      description: >
+        BREAKING (v2, CYB-3268): soft-deletes an `assets` row (asset_type='action').
+        Cross-parent or missing action_id → 404.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: path
+          name: action_id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      responses:
+        '204':
+          description: Action soft-deleted
+        '404':
+          description: Action not found or not under this parent
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -3813,6 +4097,12 @@ paths:
     post:
       tags: [AssetTags]
       summary: Upsert a tag on an asset
+      description: >-
+        Upsert a tag. Open vocabulary (CYB-3246): unregistered keys are accepted
+        as free-form string tags; registered keys are validated against their
+        definition. Returns 422 when a registered enum value is not allowed, a
+        value exceeds its max length (registered) or 500 chars (unregistered),
+        or the source contract (source_name/source_version) is violated.
       parameters:
         - in: path
           name: id
@@ -3829,6 +4119,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AssetTag' }
+        '422':
+          description: Tag validation failed (invalid enum value, over-length value, or source contract violation)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
   /api/v1/assets/{id}/tags/{key}:
     delete:
       tags: [AssetTags]
@@ -4453,6 +4748,15 @@ paths:
     post:
       tags: [MCAPFiles]
       summary: Create MCAP file metadata entry
+      description: |
+        Idempotency is enforced by `raw_hash_md5` (partial UNIQUE index
+        `uq_mcap_files_hash_md5`). A duplicate hash returns
+        `409 DUPLICATE_HASH` — regardless of whether the caller supplies
+        `mcap_file_id` explicitly or lets the server auto-generate it.
+
+        Explicitly-supplied `mcap_file_id` collisions return
+        `409 DUPLICATE_MCAP_FILE_ID`. When the ID is auto-generated the
+        server retries up to 16 times on ID collisions before giving up.
       requestBody:
         required: true
         content:
@@ -4464,6 +4768,18 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/McapFile' }
+        '400':
+          description: Invalid request body or `mcap_file_id` format
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: |
+            Duplicate — either `raw_hash_md5` (`DUPLICATE_HASH`) or
+            caller-supplied `mcap_file_id` (`DUPLICATE_MCAP_FILE_ID`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [MCAPFiles]
       summary: List MCAP files
@@ -4681,6 +4997,118 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/TagRegistryItem' }
+  /api/v1/admin/tag-registry:
+    get:
+      tags: [Admin]
+      summary: List managed tag definitions (admin)
+      description: >-
+        Managed tag-registry CRUD (CYB-3246 Phase 2). Auth: static admin token
+        OR admin-role web session (AdminTokenOrAdminRole). Registered definitions
+        take effect for validation immediately (no restart). Unregistered keys
+        remain open-vocabulary free-form string tags and are not listed here.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    post:
+      tags: [Admin]
+      summary: Register a managed tag definition (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagDefRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '409':
+          description: Tag key already exists (TAG_KEY_EXISTS)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '422':
+          description: Validation failed (bad type, enum without values, missing key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/admin/tag-registry/{key}:
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Admin]
+      summary: Update a managed tag definition (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagDefRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagRegistryEntry' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Tag key not found (TAG_NOT_FOUND)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Admin]
+      summary: Delete a managed tag definition (admin)
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean }
+                  key: { type: string }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Tag key not found (TAG_NOT_FOUND)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
   /api/v1/metric-registry:
     get:
       tags: [Registry]
@@ -6370,6 +6798,58 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
+
+  /api/v1/pipeline-runs/webhook:
+    post:
+      tags: [Runs]
+      summary: Argo workflow run status push webhook (CYB-3058)
+      description: >
+        Receives a lightweight "poke" from an Argo workflow exit hook when a
+        workflow reaches a terminal phase. The payload phase is a trigger only:
+        DataBrew resolves the run by workflow name, cross-checks the workflow
+        UID, and re-reads the authoritative state from Argo before applying it,
+        so a forged or replayed call cannot inject false status. Idempotent.
+        Authenticated with a dedicated machine token (not user/JWT); an empty
+        configured token disables the route.
+      security:
+        - DatabrewWebhookToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflowName]
+              properties:
+                workflowName: { type: string, description: Argo workflow name }
+                namespace: { type: string, description: Argo namespace }
+                uid: { type: string, description: Argo workflow UID (cross-checked against the run) }
+                phase: { type: string, description: Argo workflow phase (hint only; not trusted) }
+      responses:
+        '200':
+          description: Run refreshed (or idempotent no-op)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runId: { type: string }
+                  status: { type: string }
+        '400':
+          description: Missing or invalid payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Missing or invalid webhook token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: No run matches the workflow name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/runs/by-workflow/{workflowName}:
     get:

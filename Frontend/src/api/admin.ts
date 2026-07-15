@@ -56,44 +56,64 @@ export interface SearchAuditResult {
 	duration_ms: number;
 }
 
+// These endpoints are guarded by the admin STATIC TOKEN (AdminTokenAuth), a
+// credential the browser session does not carry. A 401 here therefore means
+// "not authorized for admin search" — NOT "your session expired" — so every
+// call opts out of the global 401 → logout redirect.
+const ADMIN_TOKEN_CFG = { skipAuthRedirect: true } as const;
+
 export const adminApi = {
 	reindex: (dryRun: boolean) =>
 		apiClient
-			.post<ReindexResult>("/admin/search/reindex", {
-				dry_run: dryRun,
-			})
+			.post<ReindexResult>(
+				"/admin/search/reindex",
+				{ dry_run: dryRun },
+				ADMIN_TOKEN_CFG,
+			)
 			.then((r) => r.data),
 
 	createReindexJob: (dryRun: boolean, pageSize = 200) =>
 		apiClient
-			.post<ReindexJob>("/admin/search/reindex-jobs", {
-				dry_run: dryRun,
-				page_size: pageSize,
-			})
+			.post<ReindexJob>(
+				"/admin/search/reindex-jobs",
+				{ dry_run: dryRun, page_size: pageSize },
+				ADMIN_TOKEN_CFG,
+			)
 			.then((r) => r.data),
 
 	getReindexJob: (jobID: string) =>
 		apiClient
-			.get<ReindexJob>(`/admin/search/reindex-jobs/${jobID}`)
+			.get<ReindexJob>(`/admin/search/reindex-jobs/${jobID}`, ADMIN_TOKEN_CFG)
 			.then((r) => r.data),
 
 	listReindexJobs: (limit = 20) =>
 		apiClient
 			.get<ReindexJobListResponse>("/admin/search/reindex-jobs", {
+				...ADMIN_TOKEN_CFG,
 				params: { limit },
 			})
 			.then((r) => r.data.items),
 
 	stopReindexJob: (jobID: string) =>
 		apiClient
-			.post<ReindexJob>(`/admin/search/reindex-jobs/${jobID}/stop`)
+			.post<ReindexJob>(
+				`/admin/search/reindex-jobs/${jobID}/stop`,
+				undefined,
+				ADMIN_TOKEN_CFG,
+			)
 			.then((r) => r.data),
 
 	resumeReindexJob: (jobID: string) =>
 		apiClient
-			.post<ReindexJob>(`/admin/search/reindex-jobs/${jobID}/resume`)
+			.post<ReindexJob>(
+				`/admin/search/reindex-jobs/${jobID}/resume`,
+				undefined,
+				ADMIN_TOKEN_CFG,
+			)
 			.then((r) => r.data),
 
 	auditSearch: () =>
-		apiClient.get<SearchAuditResult>("/admin/search/audit").then((r) => r.data),
+		apiClient
+			.get<SearchAuditResult>("/admin/search/audit", ADMIN_TOKEN_CFG)
+			.then((r) => r.data),
 };
