@@ -938,7 +938,7 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 	}
 	result := &PauseJobResult{Status: "paused"}
 	if opts.StopRunning && uc.pipelineUC != nil {
-		items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, id, []string{"running"})
+		items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, id, []string{"running", "submitted"})
 		if err != nil {
 			return result, err
 		}
@@ -1043,7 +1043,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 	runnable := make([]models.BackfillItem, 0, len(items))
 	itemIDs := make([]string, 0, len(items))
 	for _, item := range items {
-		if item.Status == "running" {
+		if item.Status == "running" || item.Status == "submitted" {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: item.ID, Reason: "already_running"})
 			continue
 		}
@@ -1508,7 +1508,7 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 	}
 
 	if uc.pipelineUC != nil {
-		ledgerItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "pending"})
+		ledgerItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "pending", "submitted"})
 		if err != nil {
 			return err
 		}

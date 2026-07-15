@@ -751,6 +751,7 @@ const batchItemRunStatusExpr = `CASE bi.status
       WHEN 'cancelled' THEN 'Error'
       WHEN 'running' THEN 'Running'
       WHEN 'pending' THEN 'Pending'
+      WHEN 'submitted' THEN COALESCE(NULLIF(pr.status, ''), 'Pending')
       ELSE pr.status
     END`
 

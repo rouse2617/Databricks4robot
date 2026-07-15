@@ -446,7 +446,7 @@ SELECT
   COUNT(*) FILTER (WHERE status = 'completed'),
   COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')),
   COUNT(*) FILTER (WHERE status = 'pending'),
-  COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result'))
+  COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result', 'submitted'))
 FROM current_items`
 	db := dbFromCtx(ctx, r.c.db)
 	var summary repository.BackfillItemStatusSummary
