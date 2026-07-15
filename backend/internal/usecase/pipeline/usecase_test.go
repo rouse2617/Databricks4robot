@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1991,6 +1992,9 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	for _, r := range m.byID {
 		out = append(out, *r)
 	}
+	// Deterministic order: the real repo is SQL-ordered; map iteration is
+	// random and would make ordering-sensitive tests (watcher rotation) flaky.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
@@ -2207,8 +2211,9 @@ func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
 	if len(got.Summary.TopFailureReasons) != 1 || got.Summary.TopFailureReasons[0].Reason != "image_startup" {
 		t.Fatalf("top failure reasons = %+v, want image_startup", got.Summary.TopFailureReasons)
 	}
-	if len(runRepo.listFilters) != 1 || !runRepo.listFilters[0].RefreshActive {
-		t.Fatalf("ListRunChildren batch filter = %+v, want RefreshActive=true", runRepo.listFilters)
+	// CYB-3490: children listing is a pure read — no refresh requested.
+	if len(runRepo.listFilters) != 1 || runRepo.listFilters[0].RefreshActive {
+		t.Fatalf("ListRunChildren batch filter = %+v, want a single pure (no-refresh) listing", runRepo.listFilters)
 	}
 }
 
@@ -3370,6 +3375,45 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 	}
 }
 
+// CYB-3490: with more active runs than the per-cycle cap, the refresh window
+// must rotate so no active run starves. 3 actives, cap 2 — after two cycles
+// every workflow has been refreshed at least once (the old always-from-0 scan
+// would never reach the third).
+func TestSyncActiveRunEvents_RotatesActiveWindowNoStarvation(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: "Running"},
+			"run-2": {ID: "run-2", WorkflowName: "wf-2", Status: "Running"},
+			"run-3": {ID: "run-3", WorkflowName: "wf-3", Status: "Running"},
+		},
+	}
+	refreshedByName := map[string]int{}
+	wfClient := &mockWorkflowClient{
+		getWorkflowFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			refreshedByName[name]++
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	for cycle := 0; cycle < 2; cycle++ {
+		if _, err := uc.SyncActiveRunEvents(ctx, 2); err != nil {
+			t.Fatalf("SyncActiveRunEvents cycle %d: %v", cycle, err)
+		}
+	}
+	for _, name := range []string{"wf-1", "wf-2", "wf-3"} {
+		if refreshedByName[name] == 0 {
+			t.Fatalf("active run %s starved: never refreshed across cycles (got %v)", name, refreshedByName)
+		}
+	}
+}
+
 func TestSyncActiveRunEvents_ReconcilesMisclassifiedTerminalRun(t *testing.T) {
 	ctx := context.Background()
 	createdAt := time.Now().UTC().Add(-10 * time.Minute)
@@ -3677,7 +3721,9 @@ func TestListRunSummaries_NormalizesActiveStaleTerminalFields(t *testing.T) {
 	}
 }
 
-func TestListRunSummaries_RefreshActiveOptInRefreshesActiveRuns(t *testing.T) {
+// CYB-3490: list reads are pure — RefreshActive is accepted but ignored,
+// and no Argo call happens on the request path.
+func TestListRunSummaries_PureRead_IgnoresRefreshActive(t *testing.T) {
 	ctx := context.Background()
 	batchJobID := "batch-1"
 	runRepo := &mockRunRepo{
@@ -3711,8 +3757,8 @@ func TestListRunSummaries_RefreshActiveOptInRefreshesActiveRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRunSummaries: %v", err)
 	}
-	if getWorkflowCalls == 0 {
-		t.Fatal("expected refreshActive batch summary to refresh Argo")
+	if getWorkflowCalls != 0 {
+		t.Fatalf("expected pure list read (0 Argo calls), got %d", getWorkflowCalls)
 	}
 }
 
@@ -3935,7 +3981,8 @@ func TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification(t *testing.
 	}
 }
 
-func TestListBatchAssetRuns_RefreshesMisclassifiedAttempt(t *testing.T) {
+// CYB-3490: batch-asset attempt list is a pure ledger read.
+func TestListBatchAssetRuns_PureRead_NoArgoRefresh(t *testing.T) {
 	ctx := context.Background()
 	batchJobID := "batch-1"
 	assetID := "asset-1"
@@ -3953,13 +4000,8 @@ func TestListBatchAssetRuns_RefreshesMisclassifiedAttempt(t *testing.T) {
 	}
 	wfClient := &mockWorkflowClient{}
 	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
-		if name != "wf-1" {
-			t.Fatalf("unexpected workflow name %q", name)
-		}
-		return &wfv1.Workflow{
-			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
-			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
-		}, nil
+		t.Fatalf("unexpected Argo call on pure list read (workflow %q)", name)
+		return nil, nil
 	}
 	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
@@ -3971,11 +4013,13 @@ func TestListBatchAssetRuns_RefreshesMisclassifiedAttempt(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected one run, got %d", len(runs))
 	}
-	if runs[0].Status != "Running" {
-		t.Fatalf("expected returned run status Running, got %q", runs[0].Status)
+	// CYB-3490: pure read — the ledger row is returned as persisted; healing
+	// belongs to the background watcher, not the list request.
+	if runs[0].Status != "Error" {
+		t.Fatalf("expected as-persisted status Error, got %q", runs[0].Status)
 	}
-	if runRepo.byID["run-1"].Status != "Running" {
-		t.Fatalf("expected persisted run status Running, got %q", runRepo.byID["run-1"].Status)
+	if runRepo.byID["run-1"].Status != "Error" {
+		t.Fatalf("expected persisted run untouched (Error), got %q", runRepo.byID["run-1"].Status)
 	}
 }
 

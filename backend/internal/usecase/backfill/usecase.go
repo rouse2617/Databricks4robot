@@ -236,6 +236,10 @@ func (uc *Usecase) StopPoolRecovery() {
 
 // reconcileActiveJobs force-syncs every non-terminal batch job once. Best-effort:
 // a per-job failure is logged and does not stop the sweep.
+//
+// CYB-3490: this loop is the single background home for batch-ledger
+// convergence — missing-run repair (formerly done on GetJob/node-summary
+// reads) plus counter/settle sync. Reads never do this work anymore.
 func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
 	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
 	if err != nil {
@@ -243,6 +247,9 @@ func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
 		return
 	}
 	for _, job := range jobs {
+		if err := uc.reconcileMissingRuns(ctx, job.ID); err != nil {
+			slog.Warn("job reconciler: missing-run repair failed", "jobID", job.ID, "err", err)
+		}
 		if err := uc.syncJobProgressForce(ctx, job.ID); err != nil {
 			slog.Warn("job reconciler: sync failed", "jobID", job.ID, "err", err)
 		}
@@ -775,21 +782,6 @@ func (uc *Usecase) ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	return uc.reconcileMissingRuns(ctx, jobID)
 }
 
-// SyncBatchView reconciles batch subtasks, refreshes the current list page from
-// Argo when needed, and updates backfill job counters. Call after reading runs
-// for a batch list/detail view — not for global pipeline lists.
-func (uc *Usecase) SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error {
-	if err := uc.ReconcileSubtaskRuns(ctx, jobID); err != nil {
-		return err
-	}
-	if uc.pipelineUC != nil {
-		for i := range runs {
-			uc.pipelineUC.RefreshRunForList(ctx, &runs[i])
-		}
-	}
-	return uc.syncJobProgressForce(ctx, jobID)
-}
-
 // ReconcileItemByID materializes or repairs the ledger row for a single backfill item.
 func (uc *Usecase) ReconcileItemByID(ctx context.Context, itemID string) (string, error) {
 	item, err := uc.repo.FindItemByID(ctx, itemID)
@@ -918,20 +910,12 @@ func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
 }
 
 // GetJob returns a backfill job without loading all items.
+//
+// CYB-3490: pure ledger read. Reconcile/sync moved off the request path —
+// the webhook cascade (SyncJob) plus the background job reconciler own
+// convergence; a read must not fan out to Argo (latency scaled with failed
+// count, measured 12.7s at failed=76).
 func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, error) {
-	job, err := uc.repo.FindJobByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if job == nil {
-		return nil, nil
-	}
-	// GetJob returns the freshly-reconciled view; force sync so a recent
-	// throttle doesn't hide terminal state from a single-job read.
-	_ = uc.ReconcileSubtaskRuns(ctx, id)
-	if err := uc.syncJobProgressForce(ctx, id); err != nil {
-		slog.Warn("GetJob: syncJobProgressForce failed", "jobID", id, "err", err)
-	}
 	return uc.repo.FindJobByID(ctx, id)
 }
 
@@ -1174,10 +1158,8 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
-	uc.refreshBatchReadModel(ctx, jobID)
-	if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
-		job = fresh
-	}
+	// CYB-3490: pure ledger read — no reconcile on the request path. The
+	// background reconciler + webhook cascade keep the ledger converged.
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -1446,18 +1428,9 @@ func (uc *Usecase) ListNodeFailures(ctx context.Context, jobID string, filter re
 	} else if job == nil {
 		return nil, ErrNotFound
 	}
-	uc.refreshBatchReadModel(ctx, jobID)
+	// CYB-3490: pure ledger read — background reconciler owns convergence.
 	filter.JobID = jobID
 	return uc.repo.ListNodeFailures(ctx, filter)
-}
-
-func (uc *Usecase) refreshBatchReadModel(ctx context.Context, jobID string) {
-	if uc == nil {
-		return
-	}
-	if err := uc.SyncBatchView(ctx, jobID, nil); err != nil {
-		slog.Warn("refreshBatchReadModel: sync batch view failed", "jobID", jobID, "err", err)
-	}
 }
 
 func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
@@ -1488,9 +1461,10 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// syncProgressMinInterval avoids back-to-back full syncs when multiple
-// callers (GetJob, GetBatchNodeSummary, refreshBatchReadModel) trigger
-// syncJobProgress on the same page load.
+// syncProgressMinInterval throttles non-forced syncJobProgress calls (e.g.
+// per-item post-execution sync) so overlapping background triggers don't
+// stack full syncs. Since CYB-3490, reads never trigger sync — callers are
+// the webhook cascade (SyncJob, forced) and the job reconciler (forced).
 const syncProgressMinInterval = 30 * time.Second
 
 func (uc *Usecase) shouldSyncProgress(jobID string) bool {
@@ -1719,9 +1693,8 @@ func (uc *Usecase) fetchBatchRunsByIDMap(ctx context.Context, jobID string, item
 		return m
 	}
 	all, _, err := uc.pipelineUC.ListRunSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID:    jobID,
-		PageSize:      max(len(items), 1),
-		RefreshActive: true,
+		BatchJobID: jobID,
+		PageSize:   max(len(items), 1),
 	})
 	if err != nil || len(all) == 0 {
 		if err != nil {

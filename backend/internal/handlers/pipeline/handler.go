@@ -26,7 +26,6 @@ import (
 type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
-	SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error
 	// SyncJob force-syncs a batch job's progress (terminal detection + once-only
 	// completion notification). Used to cascade a child run's terminal status
 	// push up to its parent batch (CYB-3078).

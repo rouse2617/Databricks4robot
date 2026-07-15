@@ -58,6 +58,11 @@ type Usecase struct {
 	assetNodeRepo           repository.PipelineRunAssetNodeRepository
 	notifyRepo              repository.PipelineRunNotificationRepository
 	watcherRepo             repository.PipelineRunWatcherStateRepository
+	// watcherActiveCursor rotates the active-run refresh window across watcher
+	// cycles so runs beyond the per-cycle cap don't starve (CYB-3490). Only the
+	// single watcher goroutine touches it; resets on restart, which is fine —
+	// coverage is eventual, the webhook remains the primary signal.
+	watcherActiveCursor     int
 	backfillRepo            repository.BackfillRepository
 	assetRepo               repository.AssetRepository
 	assetEventRepo          repository.AssetEventRepository
@@ -2442,37 +2447,6 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	return needsMisclassifiedReconcile(run)
 }
 
-func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
-	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
-		return
-	}
-	refreshed := 0
-	// Pass 1: fix misclassified Failed/Error/Expired runs first.
-	// These are the ones users see as inaccurate — a run marked Failed
-	// in the DB while its Argo workflow is still Running.
-	for i := range items {
-		if refreshed >= maxActiveDeploymentStatusRefresh {
-			break
-		}
-		if !needsMisclassifiedReconcile(&items[i]) {
-			continue
-		}
-		refreshed++
-		uc.RefreshRunForList(ctx, &items[i])
-	}
-	// Pass 2: refresh active runs (Running/Pending).
-	for i := range items {
-		if refreshed >= maxActiveDeploymentStatusRefresh {
-			break
-		}
-		if !isActiveDeploymentStatus(items[i].Status) {
-			continue
-		}
-		refreshed++
-		uc.RefreshRunForList(ctx, &items[i])
-	}
-}
-
 func needsLedgerReconcile(run *models.PipelineRun) bool {
 	if run == nil || run.FinishedAt == nil || run.FinishedAt.IsZero() {
 		return false
@@ -2786,16 +2760,26 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		}
 		return 0, err
 	}
-	synced := 0
+	// CYB-3490: rotate the refresh window over ALL active runs instead of
+	// always taking the first `limit` — with more actives than the cap, the
+	// tail would otherwise never be refreshed (starvation). The cursor makes
+	// coverage round-robin: every active run is visited within
+	// ceil(actives/limit) cycles. This rotation is the drift sweep.
+	activeIdx := make([]int, 0, len(runs))
 	for i := range runs {
-		if synced >= limit {
-			break
+		if isActiveDeploymentStatus(runs[i].Status) {
+			activeIdx = append(activeIdx, i)
 		}
-		if !isActiveDeploymentStatus(runs[i].Status) {
-			continue
+	}
+	synced := 0
+	if n := len(activeIdx); n > 0 {
+		start := uc.watcherActiveCursor % n
+		for k := 0; k < n && synced < limit; k++ {
+			i := activeIdx[(start+k)%n]
+			uc.refreshPipelineRunStatus(ctx, &runs[i])
+			synced++
 		}
-		uc.refreshPipelineRunStatus(ctx, &runs[i])
-		synced++
+		uc.watcherActiveCursor = (start + synced) % n
 	}
 	anomalyLimit := watcherAnomalyReconcileLimit(limit)
 	anomalyReconciled := 0
@@ -3903,12 +3887,9 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if err != nil {
 			return nil, 0, err
 		}
-		// Refresh misclassified runs so the list view shows live Argo
-		// status instead of stale DB records. Active runs are refreshed
-		// asynchronously by the background watcher.
-		if filter[0].RefreshActive {
-			uc.refreshRunSummariesForList(ctx, items)
-		}
+		// CYB-3490: list reads are pure — no Argo refresh on the request
+		// path (RefreshActive is accepted but ignored). The background
+		// watcher owns active-run refresh and misclassified-run healing.
 		normalizeActiveRunRuntimeFields(items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
@@ -3930,7 +3911,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 	if err != nil {
 		return nil, 0, err
 	}
-	uc.refreshRunSummariesForList(ctx, items)
+	// CYB-3490: pure read — the background watcher owns refresh/healing.
 	normalizeActiveRunRuntimeFields(items)
 	annotateRunDiagnostics(items)
 	uc.attachVideoDurations(ctx, items)
@@ -3988,9 +3969,8 @@ func (uc *Usecase) ListBatchAssetRuns(ctx context.Context, batchJobID, assetID s
 	if err != nil {
 		return nil, err
 	}
-	for i := range runs {
-		uc.RefreshRunForList(ctx, &runs[i])
-	}
+	// CYB-3490: pure read — per-run live refresh happens on single-run
+	// drill-in (GetRun) and in the background watcher, not on list reads.
 	return runs, nil
 }
 
@@ -4677,12 +4657,8 @@ func (uc *Usecase) listDurableRunChildren(ctx context.Context, parentRunID strin
 		if child == nil {
 			continue
 		}
-		if needsRunListRefresh(child) {
-			if fresh, refreshErr := uc.GetRun(ctx, child.ID); refreshErr == nil && fresh != nil {
-				stripRunHeavyFields(fresh)
-				child = fresh
-			}
-		}
+		// CYB-3490: pure list read — no per-child GetRun/Argo refresh here;
+		// the webhook + background watcher keep children fresh.
 		if relation.Source == "" {
 			relation.Source = "run_relations"
 		}
@@ -4723,25 +4699,15 @@ func normalizeRunChildrenFilter(filters ...models.PipelineRunListFilter) models.
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string, filter models.PipelineRunListFilter) (*models.RunChildList, error) {
 	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID:    batchJobID,
-		Page:          filter.Page,
-		PageSize:      filter.PageSize,
-		RefreshActive: true,
+		BatchJobID: batchJobID,
+		Page:       filter.Page,
+		PageSize:   filter.PageSize,
 	})
 	if err != nil {
 		return nil, err
 	}
-	for i := range items {
-		if !needsRunListRefresh(&items[i]) {
-			continue
-		}
-		fresh, refreshErr := uc.GetRun(ctx, items[i].ID)
-		if refreshErr != nil || fresh == nil {
-			continue
-		}
-		stripRunHeavyFields(fresh)
-		items[i] = *fresh
-	}
+	// CYB-3490: pure list read — no per-child GetRun/Argo refresh on the
+	// request path; the webhook + background watcher keep children fresh.
 	if parentRunID == "" {
 		parentRunID = batchJobID
 	}
