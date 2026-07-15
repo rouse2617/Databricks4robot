@@ -55,6 +55,14 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		tagRegistryHandler = adminH.NewTagRegistryHandler(tagRegistryRepo, inf.tagRegistry)
 	}
 
+	// CYB-3425 Phase B PR 1: cluster registry. Reads exposed to any authed
+	// user so the frontend can render cluster names; writes gated by admin.
+	var clusterHandler *adminH.ClusterHandler
+	if inf.pg != nil {
+		clusterRepo := postgres.NewClusterRepo(inf.pg)
+		clusterHandler = adminH.NewClusterHandler(clusterRepo)
+	}
+
 	routes.RegisterAll(
 		r,
 		cfg,
@@ -85,6 +93,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		apiKeyRepo,
 		apiKeyHandler,
 		tagRegistryHandler,
+		clusterHandler,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

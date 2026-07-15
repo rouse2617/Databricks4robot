@@ -76,6 +76,7 @@ func RegisterAll(
 	apiKeyRepo repository.APIKeyRepository,
 	apiKeyHandler *apikeyH.Handler,
 	tagRegistryHandler *adminH.TagRegistryHandler,
+	clusterHandler *adminH.ClusterHandler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -369,6 +370,14 @@ func RegisterAll(
 				adminRO.PATCH("/tag-registry/:key", tagRegistryHandler.Update)
 				adminRO.DELETE("/tag-registry/:key", tagRegistryHandler.Delete)
 			}
+
+			// CYB-3425: cluster registry writes (delegate reads to public group
+			// above so any authed user can list clusters for the pool dropdown).
+			if clusterHandler != nil {
+				adminRO.POST("/clusters", clusterHandler.Create)
+				adminRO.PUT("/clusters/:id", clusterHandler.Update)
+				adminRO.DELETE("/clusters/:id", clusterHandler.Delete)
+			}
 		}
 
 		// Internal admin (hard delete). Requires ADMIN_TOKEN in production.
@@ -445,6 +454,11 @@ func RegisterAll(
 		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)
 		api.GET("/resource-quotas", workflowHandler.ListResourceQuotas)
 		api.GET("/elastic-quotas", workflowHandler.ListElasticQuotas)
+		// CYB-3425: cluster registry (reads any-authed-user, writes gated below).
+		if clusterHandler != nil {
+			api.GET("/clusters", clusterHandler.List)
+			api.GET("/clusters/:id", clusterHandler.Get)
+		}
 		api.GET("/pipeline/runtime-mounts", pipelineHandler.ListRuntimeMounts)
 		api.POST("/runs", pipelineHandler.CreateRun)
 		api.POST("/runs/template/:id", pipelineHandler.CreateRunByTemplate)

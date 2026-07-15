@@ -58,10 +58,17 @@ type PipelineDeployment struct {
 
 // ExecutionTarget describes a runtime destination for pipeline workflows.
 type ExecutionTarget struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	Cluster              string                 `json:"cluster"`
-	Namespace            string                 `json:"namespace"`
+	ID string `json:"id"`
+	// ClusterID is the FK to clusters.id (CYB-3425). Nullable in the DB during
+	// migration; the app treats an empty ClusterID as "default cluster" for
+	// pre-3425 rows. Newly created targets always carry a real cluster_id.
+	ClusterID string `json:"clusterId,omitempty"`
+	Name      string `json:"name"`
+	// Cluster is the legacy free-text field kept for backward compatibility.
+	// Prefer ClusterID + join to clusters(name) going forward; this field will
+	// be removed once all callers migrate.
+	Cluster   string `json:"cluster"`
+	Namespace string `json:"namespace"`
 	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
 	ArgoServerURL        string                 `json:"argoServerUrl,omitempty"`
 	ArgoAuthSecretRef    string                 `json:"argoAuthSecretRef,omitempty"`

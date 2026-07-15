@@ -71,7 +71,7 @@ func TestMutatingAssetRoutesRequireWriteScope(t *testing.T) {
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		evalHandler, actionHandler,
 		nil, nil, nil, nil, nil, nil, nil,
-		roRepo, nil, nil,
+		roRepo, nil, nil, nil,
 	)
 
 	cases := []struct {

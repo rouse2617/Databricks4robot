@@ -22,10 +22,12 @@ import {
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import {
+	type Cluster,
 	createExecutionTarget,
 	deleteExecutionTarget,
 	type ElasticQuota,
 	type ExecutionTarget,
+	listClusters,
 	listElasticQuotas,
 	listExecutionTargets,
 	type TargetToleration,
@@ -47,7 +49,7 @@ interface NodeSelectorEntry {
 interface FormValues {
 	name: string;
 	namespace: string;
-	cluster?: string;
+	clusterId?: string;
 	description?: string;
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: NodeSelectorEntry[];
@@ -84,6 +86,7 @@ export default function PoolManager() {
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [quotas, setQuotas] = useState<Record<string, QuotaInfo>>({});
 	const [elasticQuotas, setElasticQuotas] = useState<ElasticQuota[]>([]);
+	const [clusters, setClusters] = useState<Cluster[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [modalOpen, setModalOpen] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -93,14 +96,16 @@ export default function PoolManager() {
 	const fetchData = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [t, q, eq] = await Promise.all([
+			const [t, q, eq, cs] = await Promise.all([
 				listExecutionTargets(),
 				fetch("/api/v1/resource-quotas").then((r) => r.json()),
 				listElasticQuotas().catch(() => [] as ElasticQuota[]),
+				listClusters().catch(() => [] as Cluster[]),
 			]);
 			setTargets(t);
 			setQuotas(q.items || {});
 			setElasticQuotas(eq);
+			setClusters(cs);
 		} catch {
 			/* ignore */
 		}
@@ -149,10 +154,15 @@ export default function PoolManager() {
 
 	const openEdit = (target: ExecutionTarget) => {
 		setEditTarget(target);
+		// Prefer FK clusterId; fall back to matching legacy cluster string by name.
+		const clusterId =
+			target.clusterId ??
+			clusters.find((c) => c.name === target.cluster)?.id ??
+			clusters.find((c) => c.isDefault)?.id;
 		form.setFieldsValue({
 			name: target.name,
 			namespace: target.namespace,
-			cluster: target.cluster,
+			clusterId,
 			description: target.description,
 			templateTolerations: target.resourceDefaults?.templateTolerations ?? [],
 			templateNodeSelector: nodeSelectorMapToEntries(
@@ -194,10 +204,15 @@ export default function PoolManager() {
 			delete preservedDefaults.templateNodeSelector;
 		}
 
+		// Backend still requires the legacy `cluster` string field; look it up
+		// from the selected clusterId (falling back to "default" if the picker
+		// list is empty for any reason).
+		const selectedCluster = clusters.find((c) => c.id === values.clusterId);
 		const body: Partial<ExecutionTarget> = {
 			name: values.name.trim(),
 			namespace: values.namespace.trim(),
-			cluster: (values.cluster || "default").trim(),
+			clusterId: values.clusterId,
+			cluster: selectedCluster?.name ?? "default",
 			description: values.description?.trim(),
 			status: "available",
 			resourceDefaults: preservedDefaults,
@@ -267,6 +282,28 @@ export default function PoolManager() {
 					) : null}
 				</Text>
 			),
+		},
+		{
+			title: "集群",
+			key: "cluster",
+			width: 140,
+			render: (_: unknown, r: ExecutionTarget) => {
+				// Prefer FK lookup; fall back to legacy string.
+				const cluster = clusters.find(
+					(c) => c.id === r.clusterId || c.name === r.cluster,
+				);
+				const label = cluster?.displayName || cluster?.name || r.cluster;
+				return (
+					<Text style={{ fontSize: 12 }}>
+						{label}
+						{cluster?.koordInstalled ? (
+							<Tag color="green" style={{ marginLeft: 6, fontSize: 10 }}>
+								Koord
+							</Tag>
+						) : null}
+					</Text>
+				);
+			},
 		},
 		{
 			title: "命名空间",
@@ -516,8 +553,33 @@ export default function PoolManager() {
 					>
 						<Input placeholder="例如: pool-customer-a" />
 					</Form.Item>
-					<Form.Item name="cluster" label="集群" initialValue="default">
-						<Input placeholder="default" />
+					<Form.Item
+						name="clusterId"
+						label="集群"
+						initialValue={
+							clusters.find((c) => c.isDefault)?.id ?? clusters[0]?.id
+						}
+						rules={[{ required: true, message: "请选择集群" }]}
+					>
+						<Select
+							placeholder="选择集群"
+							options={clusters.map((c) => ({
+								value: c.id,
+								label: (
+									<span>
+										{c.displayName || c.name}
+										{c.koordInstalled ? (
+											<Tag
+												color="green"
+												style={{ marginLeft: 6, fontSize: 10 }}
+											>
+												Koord
+											</Tag>
+										) : null}
+									</span>
+								),
+							}))}
+						/>
 					</Form.Item>
 					<Form.Item name="description" label="描述">
 						<Input.TextArea rows={2} placeholder="可选,一句话说明用途" />

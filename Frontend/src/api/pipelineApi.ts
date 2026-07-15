@@ -212,6 +212,11 @@ export interface TargetResourceDefaults {
 export interface ExecutionTarget {
 	id: string;
 	name: string;
+	// clusterId is the FK to clusters.id (CYB-3425). Optional to keep
+	// backwards compatibility with old responses; new targets always carry it.
+	clusterId?: string;
+	// cluster is the legacy free-text field; still returned by the backend for
+	// display. New callers should populate clusterId instead.
 	cluster: string;
 	namespace: string;
 	serviceAccount?: string;
@@ -601,6 +606,52 @@ export function deleteExecutionTarget(id: string): Promise<void> {
 		"DELETE",
 		`/execution-targets/${encodeURIComponent(id)}`,
 	);
+}
+
+// Cluster is a K8s execution destination (CYB-3425). Read is exposed to any
+// authenticated user (targets need it for the pool dropdown); write is
+// admin-only via /api/v1/admin/clusters.
+export interface Cluster {
+	id: string;
+	name: string;
+	displayName: string;
+	description?: string;
+	isDefault: boolean;
+	status: string;
+	k8sApiEndpoint?: string;
+	k8sAudience?: string;
+	k8sCaData?: string;
+	argoServerUrl?: string;
+	argoNamespace?: string;
+	koordInstalled: boolean;
+	createdAt?: string;
+	updatedAt?: string;
+	deletedAt?: string;
+}
+
+export function listClusters(): Promise<Cluster[]> {
+	return request<{ items: Cluster[] }>("GET", "/clusters").then(
+		(r) => r.items ?? [],
+	);
+}
+
+export function createCluster(body: Partial<Cluster>): Promise<Cluster> {
+	return request<Cluster>("POST", "/admin/clusters", body);
+}
+
+export function updateCluster(
+	id: string,
+	body: Partial<Cluster>,
+): Promise<Cluster> {
+	return request<Cluster>(
+		"PUT",
+		`/admin/clusters/${encodeURIComponent(id)}`,
+		body,
+	);
+}
+
+export function deleteCluster(id: string): Promise<void> {
+	return request<void>("DELETE", `/admin/clusters/${encodeURIComponent(id)}`);
 }
 
 // ElasticQuota is a read-only view of a Koordinator elastic-quota pool
