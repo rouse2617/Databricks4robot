@@ -33,6 +33,7 @@ import {
 	type TargetToleration,
 	updateExecutionTarget,
 } from "../../api/pipelineApi";
+import ClusterManager from "./ClusterManager";
 
 const { Text } = Typography;
 
@@ -478,6 +479,7 @@ export default function PoolManager() {
 
 	return (
 		<>
+			<ClusterManager />
 			<Card
 				size="small"
 				title="资源池管理"
