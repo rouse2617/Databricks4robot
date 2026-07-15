@@ -530,7 +530,7 @@ func (r *ExecutionTargetRepo) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-const executionTargetSelectCols = `id, name, description, cluster, namespace, service_account,
+const executionTargetSelectCols = `id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
   enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at`
 
@@ -567,7 +567,7 @@ func scanExecutionTarget(rs rowScanner) (*models.ExecutionTarget, error) {
 		labels           []byte
 	)
 	if err := rs.Scan(
-		&t.ID, &t.Name, &t.Description, &t.Cluster, &t.Namespace, &t.ServiceAccount,
+		&t.ID, &t.Name, &t.Description, &t.Cluster, &t.ClusterID, &t.Namespace, &t.ServiceAccount,
 		&t.ArgoServerURL, &t.ArgoAuthSecretRef, &t.ArgoInsecureSkipTLS, &t.ArgoCACertRef,
 		&t.Enabled, &t.Status, &t.IsDefault, &resourceDefaults, &quotaPolicy, &labels,
 		&t.CreatedAt, &t.UpdatedAt,
@@ -607,20 +607,30 @@ func (r *ExecutionTargetRepo) Save(ctx context.Context, t *models.ExecutionTarge
 		return fmt.Errorf("postgres ExecutionTargetRepo.Save: marshal labels: %w", err)
 	}
 
+	// CYB-3425: default new-row cluster_id to the singleton "cluster-default"
+	// row when the caller hasn't set one (yet). This keeps API callers that
+	// don't know about clusters (SDK / legacy scripts) from tripping the
+	// cluster_id NOT NULL constraint added by 20260715070000.
+	clusterID := t.ClusterID
+	if clusterID == "" {
+		clusterID = "cluster-default"
+	}
+
 	const q = `
 INSERT INTO execution_targets (
-  id, name, description, cluster, namespace, service_account,
+  id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
   enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10,
-  $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17, $18
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11,
+  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19
 )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,
   cluster = EXCLUDED.cluster,
+  cluster_id = EXCLUDED.cluster_id,
   namespace = EXCLUDED.namespace,
   service_account = EXCLUDED.service_account,
   argo_server_url = EXCLUDED.argo_server_url,
@@ -637,7 +647,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		t.ID, t.Name, t.Description, t.Cluster, t.Namespace, t.ServiceAccount,
+		t.ID, t.Name, t.Description, t.Cluster, clusterID, t.Namespace, t.ServiceAccount,
 		t.ArgoServerURL, t.ArgoAuthSecretRef, t.ArgoInsecureSkipTLS, t.ArgoCACertRef,
 		t.Enabled, t.Status, t.IsDefault, resourceDefaults, quotaPolicy, labels,
 		t.CreatedAt, t.UpdatedAt,
