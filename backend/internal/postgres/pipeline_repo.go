@@ -730,12 +730,12 @@ var _ repository.PipelineRunRepository = (*PipelineRunRepo)(nil)
 const pipelineRunSelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
   manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at`
+  created_at, updated_at, started_at, finished_at, progress`
 
 const pipelineRunSummarySelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at`
+  created_at, updated_at, started_at, finished_at, progress`
 
 func qualifyPipelineRunCols(cols, alias string) string {
 	parts := strings.Split(cols, ",")
@@ -788,6 +788,7 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
   COALESCE(pr.updated_at, bi.created_at) AS updated_at,
   COALESCE(pr.started_at, bi.started_at) AS started_at,
   COALESCE(pr.finished_at, bi.finished_at) AS finished_at,
+  COALESCE(pr.progress, '') AS progress,
   COALESCE(pt.name, '') AS template_name,
   (
     SELECT SUM(n.estimated_cost_usd)
@@ -814,6 +815,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Progress,
 		&r.TemplateName, &totalCost,
 	); err != nil {
 		return nil, err
@@ -842,7 +844,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
-		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt, &r.Progress,
 	); err != nil {
 		return nil, err
 	}
@@ -859,7 +861,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at, template_name, total_estimated_cost`
+  created_at, updated_at, started_at, finished_at, progress, template_name, total_estimated_cost`
 
 // Save inserts or updates a pipeline run.
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
@@ -907,12 +909,12 @@ INSERT INTO pipeline_runs (
   id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
   manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at
+  created_at, updated_at, started_at, finished_at, progress
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7::jsonb, $8, $9, $10::text[], $11, $12,
   $13, $14::jsonb, $15, $16, $17, $18, $19, $20,
-  $21, $22, $23, $24
+  $21, $22, $23, $24, $25
 )
 ON CONFLICT (id) DO UPDATE SET
   template_id = EXCLUDED.template_id,
@@ -936,7 +938,8 @@ ON CONFLICT (id) DO UPDATE SET
   batch_job_id = EXCLUDED.batch_job_id,
   updated_at = EXCLUDED.updated_at,
   started_at = EXCLUDED.started_at,
-  finished_at = EXCLUDED.finished_at`
+  finished_at = EXCLUDED.finished_at,
+  progress = EXCLUDED.progress`
 
 	db := dbFromCtx(ctx, r.c.db)
 	assetIDs := pgtype.FlatArray[string](run.AssetIDs)
@@ -944,7 +947,7 @@ ON CONFLICT (id) DO UPDATE SET
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
 		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
 		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner, run.BatchJobID,
-		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt,
+		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.Progress,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineRunRepo.Save: %w", err)
 	}

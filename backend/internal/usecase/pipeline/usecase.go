@@ -1979,10 +1979,11 @@ func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
 	return false
 }
 
-func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow, nodeMode nodeProjectionMode) {
 	if uc.runRepo == nil || run == nil || wf == nil {
 		return
 	}
+	prevStatus := run.Status
 	uc.appendWorkflowEvents(ctx, run, wf)
 	status := run.Status
 	if wf.Status.Phase != "" {
@@ -2056,7 +2057,55 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 			},
 		})
 	}
+	// CYB-3490: workflow-level progress is the continuous projection —
+	// one column per run, straight from Argo's status.progress ("done/total").
+	if p := strings.TrimSpace(string(wf.Status.Progress)); p != "" {
+		run.Progress = p
+	}
 	uc.persistRunObservation(ctx, run)
+	uc.projectRunNodes(ctx, run, wf, nodeMode, prevStatus)
+}
+
+// nodeProjectionMode controls whether an Argo observation projects per-node
+// rows (CYB-3490). Continuous observation is workflow-level only; the full
+// node snapshot is archived exactly once when the workflow reaches terminal.
+type nodeProjectionMode int
+
+const (
+	// nodeProjectTerminalArchive skips node writes while the workflow is
+	// active and archives the final snapshot once at terminal. Default for
+	// the watcher, webhook, and reconcile paths — at 1000 workflows x 100
+	// steps the per-cycle delete+insert of node rows was the write amplifier.
+	nodeProjectTerminalArchive nodeProjectionMode = iota
+	// nodeProjectLive always projects nodes while the workflow is active —
+	// reserved for bounded single-run drill-in (GetRun), where the user is
+	// looking at one workflow's step detail.
+	nodeProjectLive
+)
+
+// projectRunNodes applies the node-projection policy for one observation.
+// prevStatus is the run's status BEFORE this observation was applied, so the
+// active->terminal transition archives exactly once; re-observations of an
+// already-terminal run only backfill a missing archive (lost webhook, or a
+// restart between the status persist and the archive write).
+func (uc *Usecase) projectRunNodes(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow, mode nodeProjectionMode, prevStatus string) {
+	if isActiveDeploymentStatus(run.Status) {
+		if mode == nodeProjectLive {
+			uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+		}
+		return
+	}
+	if isActiveDeploymentStatus(prevStatus) {
+		uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+		return
+	}
+	if uc.runNodeRepo == nil {
+		return
+	}
+	rows, err := uc.runNodeRepo.FindByRunID(ctx, run.ID)
+	if err != nil || len(rows) > 0 {
+		return
+	}
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 }
 
@@ -2342,7 +2391,7 @@ func runAgeWithinStaleLimit(run *models.PipelineRun, now time.Time) bool {
 	return now.Sub(ref) < staleActiveRunMaxAge
 }
 
-func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun) {
+func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun, nodeMode nodeProjectionMode) {
 	if uc.wfClient == nil || run == nil {
 		return
 	}
@@ -2393,7 +2442,7 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 		}
 		return
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
 }
 
 // RefreshRunForList performs a bounded status refresh for batch list views.
@@ -2407,9 +2456,9 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 		return
 	}
 	if isActiveDeploymentStatus(run.Status) {
-		uc.refreshRunStatus(ctx, run)
+		uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
 	}
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectTerminalArchive)
 	if isActiveDeploymentStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
 		if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 			*run = *fresh
@@ -2561,7 +2610,7 @@ func inferTerminalRunFromAssetNodes(nodes []models.PipelineRunAssetNode) (string
 	return string(wfv1.WorkflowSucceeded), "", true
 }
 
-func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
+func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun, nodeMode nodeProjectionMode) {
 	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
 	}
@@ -2602,7 +2651,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if wf == nil {
 		return
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
 	uc.maybeMarkStaleRun(ctx, run, wf)
 }
 
@@ -2632,7 +2681,17 @@ func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.Pip
 	if uc.runRepo == nil {
 		return
 	}
-	uc.refreshRunStatus(ctx, run)
+	uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
+}
+
+// refreshPipelineRunStatusLive is the single-run drill-in variant: it also
+// projects live per-node rows so the run detail view shows fresh step state
+// while the workflow is running (bounded: one workflow per call).
+func (uc *Usecase) refreshPipelineRunStatusLive(ctx context.Context, run *models.PipelineRun) {
+	if uc.runRepo == nil {
+		return
+	}
+	uc.refreshRunStatus(ctx, run, nodeProjectLive)
 }
 
 // backfillRunStatus refreshes a run from Argo regardless of its current status.
@@ -2718,7 +2777,7 @@ func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowNam
 	if wf == nil {
 		return run, nil
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeProjectTerminalArchive)
 	return run, nil
 }
 
@@ -3957,6 +4016,16 @@ func (uc *Usecase) attachBatchNodeProgress(ctx context.Context, items []models.P
 	progressByRun := batchprogress.ByRunID(rows, items)
 	for i := range items {
 		items[i].NodeProgress = progressByRun[items[i].ID]
+		// CYB-3490: while a workflow runs, per-node rows are no longer
+		// continuously projected — surface the workflow-level progress
+		// ("done/total" from Argo status.progress) as the compact label so
+		// batch lists stay near-realtime without per-node writes.
+		if items[i].NodeProgress == nil && items[i].Progress != "" && isActiveDeploymentStatus(items[i].Status) {
+			items[i].NodeProgress = &models.PipelineRunNodeProgress{
+				FocusStatus: "Running",
+				Label:       items[i].Progress,
+			}
+		}
 	}
 }
 
@@ -4034,9 +4103,11 @@ func (uc *Usecase) GetRunByWorkflowName(ctx context.Context, workflowName string
 	if run == nil {
 		return nil, nil
 	}
-	uc.refreshPipelineRunStatus(ctx, run)
+	// CYB-3490: single-run drill-in is the sanctioned live path — it also
+	// projects fresh node rows while the workflow runs (bounded: one wf).
+	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
 	uc.enrichRun(ctx, run)
 	return run, nil
 }
@@ -4065,9 +4136,11 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	}
 	initialStatus := run.Status
 	initialMessage := run.Message
-	uc.refreshPipelineRunStatus(ctx, run)
+	// CYB-3490: single-run drill-in is the sanctioned live path — it also
+	// projects fresh node rows while the workflow runs (bounded: one wf).
+	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
 	uc.enrichRun(ctx, run)
 	if run.Status != initialStatus || run.Message != initialMessage {
 		slog.Warn("GetRun status changed",
@@ -4402,7 +4475,7 @@ func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.Pi
 	}
 	if uc.runCostSnapshotMissing(run) {
 		if isActiveDeploymentStatus(run.Status) {
-			uc.refreshRunStatus(ctx, run)
+			uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
 		} else {
 			uc.backfillRunStatus(ctx, run)
 		}

@@ -366,7 +366,7 @@ func (uc *Usecase) CommitBatchSubtaskDeploy(ctx context.Context, runID string, d
 	if err := uc.runRepo.Save(ctx, existing); err != nil {
 		return err
 	}
-	uc.refreshRunStatus(ctx, existing)
+	uc.refreshRunStatus(ctx, existing, nodeProjectTerminalArchive)
 	return nil
 }
 

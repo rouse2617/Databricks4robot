@@ -2621,10 +2621,12 @@ func (m *mockTargetRepo) Delete(_ context.Context, id string) error {
 }
 
 type mockRunNodeRepo struct {
-	byRun map[string][]models.PipelineRunNode
+	byRun        map[string][]models.PipelineRunNode
+	replaceCalls int
 }
 
 func (m *mockRunNodeRepo) ReplaceByRunID(_ context.Context, runID string, nodes []models.PipelineRunNode) error {
+	m.replaceCalls++
 	if m.byRun == nil {
 		m.byRun = map[string][]models.PipelineRunNode{}
 	}
@@ -3375,6 +3377,94 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 	}
 }
 
+// CYB-3490 P1b: continuous observation is workflow-level only — node rows are
+// written once at terminal (or live on single-run drill-in), never per cycle
+// while the workflow runs.
+func TestProjectRunNodes_TerminalArchiveOncePolicy(t *testing.T) {
+	ctx := context.Background()
+	newUC := func(runStatus string) (*Usecase, *mockRunRepo, *mockRunNodeRepo) {
+		runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: runStatus},
+		}}
+		nodeRepo := &mockRunNodeRepo{}
+		uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+		uc.SetRunRepositories(&mockTargetRepo{}, runRepo, nodeRepo)
+		uc.SetRunEventRepo(&mockRunEventRepo{})
+		return uc, runRepo, nodeRepo
+	}
+	wfWith := func(phase wfv1.WorkflowPhase) *wfv1.Workflow {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:    phase,
+				Progress: wfv1.Progress("37/100"),
+				Nodes: map[string]wfv1.NodeStatus{
+					"n1": {ID: "n1", Name: "wf-1.step", Phase: wfv1.NodeRunning},
+				},
+			},
+		}
+	}
+
+	// 1. Running + terminal-archive mode: zero node writes (the old code
+	// delete+inserted every node on every cycle — the 100k-node amplifier).
+	uc, runRepo, nodeRepo := newUC("Running")
+	uc.applyWorkflowToRun(ctx, runRepo.byID["run-1"], wfWith(wfv1.WorkflowRunning), nodeProjectTerminalArchive)
+	if nodeRepo.replaceCalls != 0 {
+		t.Fatalf("running+terminalArchive: expected 0 node writes, got %d", nodeRepo.replaceCalls)
+	}
+	// ...but the workflow-level progress IS projected.
+	if runRepo.byID["run-1"].Progress != "37/100" {
+		t.Fatalf("expected progress 37/100 projected, got %q", runRepo.byID["run-1"].Progress)
+	}
+
+	// 2. Running + live (single-run drill-in): nodes projected.
+	uc, runRepo, nodeRepo = newUC("Running")
+	uc.applyWorkflowToRun(ctx, runRepo.byID["run-1"], wfWith(wfv1.WorkflowRunning), nodeProjectLive)
+	if nodeRepo.replaceCalls != 1 {
+		t.Fatalf("running+live: expected 1 node write, got %d", nodeRepo.replaceCalls)
+	}
+
+	// 3. Active -> terminal transition: archived exactly once...
+	uc, runRepo, nodeRepo = newUC("Running")
+	uc.applyWorkflowToRun(ctx, runRepo.byID["run-1"], wfWith(wfv1.WorkflowSucceeded), nodeProjectTerminalArchive)
+	if nodeRepo.replaceCalls != 1 {
+		t.Fatalf("transition: expected 1 archive write, got %d", nodeRepo.replaceCalls)
+	}
+	// ...and a re-observation of the already-terminal run does not rewrite.
+	uc.applyWorkflowToRun(ctx, runRepo.byID["run-1"], wfWith(wfv1.WorkflowSucceeded), nodeProjectTerminalArchive)
+	if nodeRepo.replaceCalls != 1 {
+		t.Fatalf("terminal re-observation with archive: expected no rewrite, got %d", nodeRepo.replaceCalls)
+	}
+
+	// 4. Already-terminal run whose archive is missing (lost webhook or a
+	// restart between persist and archive): the observation backfills it.
+	uc, runRepo, nodeRepo = newUC("Succeeded")
+	uc.applyWorkflowToRun(ctx, runRepo.byID["run-1"], wfWith(wfv1.WorkflowSucceeded), nodeProjectTerminalArchive)
+	if nodeRepo.replaceCalls != 1 {
+		t.Fatalf("terminal without archive: expected 1 backfill write, got %d", nodeRepo.replaceCalls)
+	}
+}
+
+// CYB-3490 P1b: batch lists surface near-realtime progress from the
+// workflow-level column when no node rows exist for a running item.
+func TestAttachBatchNodeProgress_FallsBackToWorkflowProgress(t *testing.T) {
+	ctx := context.Background()
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetObservabilityRepositories(&mockAssetNodeRepo{}, nil, nil)
+	items := []models.PipelineRun{
+		{ID: "run-1", Status: "Running", Progress: "37/100"},
+		{ID: "run-2", Status: "Succeeded", Progress: "100/100"},
+	}
+	uc.attachBatchNodeProgress(ctx, items)
+	if items[0].NodeProgress == nil || items[0].NodeProgress.Label != "37/100" {
+		t.Fatalf("running item: expected progress label fallback, got %+v", items[0].NodeProgress)
+	}
+	// Terminal items keep the ledger-derived summary (已完成), not the raw N/M.
+	if items[1].NodeProgress == nil || items[1].NodeProgress.Label != "已完成" {
+		t.Fatalf("terminal item: expected ledger label, got %+v", items[1].NodeProgress)
+	}
+}
+
 // CYB-3490: with more active runs than the per-cycle cap, the refresh window
 // must rotate so no active run starves. 3 actives, cap 2 — after two cycles
 // every workflow has been refreshed at least once (the old always-from-0 scan
@@ -3509,7 +3599,7 @@ func TestRefreshRunStatus_SkipsBatchPlaceholderNotFound(t *testing.T) {
 	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
 
-	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"])
+	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"], nodeProjectTerminalArchive)
 	if runRepo.byID["run-batch"].Status != "Pending" {
 		t.Fatalf("expected Pending placeholder run to stay Pending, got %q", runRepo.byID["run-batch"].Status)
 	}
@@ -3537,7 +3627,7 @@ func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.
 	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
 
-	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"])
+	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"], nodeProjectTerminalArchive)
 	run := runRepo.byID["run-batch"]
 	if run.Status != "Running" {
 		t.Fatalf("expected Running placeholder run, got %q", run.Status)
@@ -3575,7 +3665,7 @@ func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testi
 	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
 
-	uc.refreshRunStatus(ctx, runRepo.byID["run-1"])
+	uc.refreshRunStatus(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
 
 	run := runRepo.byID["run-1"]
 	if run.Status != "Running" {
@@ -3622,7 +3712,7 @@ func TestRefreshRunStatus_PreservesRecentActiveRunBeforeStaleLedger(t *testing.T
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
 	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
 
-	uc.refreshRunStatus(ctx, runRepo.byID["run-1"])
+	uc.refreshRunStatus(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
 
 	run := runRepo.byID["run-1"]
 	if run.Status != "Running" {
@@ -3929,7 +4019,7 @@ func TestRefreshRunStatus_MarksStaleRunWithPersistedMessage(t *testing.T) {
 	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
 
 	run := runRepo.byID["run-1"]
-	uc.refreshRunStatus(ctx, run)
+	uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
 	if run.Status != string(wfv1.WorkflowFailed) {
 		t.Fatalf("expected stale run marked Failed, got %q", run.Status)
 	}
@@ -5179,7 +5269,7 @@ func TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun(t *t
 
 	// Operate on a fresh copy, as GetRun does after FindByID.
 	run := *existing
-	uc.reconcileMisclassifiedRunFromArgo(ctx, &run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, &run, nodeProjectTerminalArchive)
 
 	if runRepo.byID["run-1"].Status != "Failed" {
 		t.Fatalf("resource-rejected run must stay Failed, got %q", runRepo.byID["run-1"].Status)

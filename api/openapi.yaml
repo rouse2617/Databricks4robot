@@ -2265,6 +2265,10 @@ components:
         argoNamespace: { type: string }
         argoWorkflowUid: { type: string }
         message: { type: string }
+        progress:
+          type: string
+          description: Workflow-level step progress mirrored from Argo status.progress ("done/total", e.g. "37/100"). Near-realtime for running workflows; empty when unknown.
+          example: 37/100
         failureReason:
           type: string
           description: Normalized terminal failure reason derived from Run ledger, events, or runtime diagnostics.
