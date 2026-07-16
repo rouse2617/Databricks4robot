@@ -6,6 +6,7 @@ import {
 	ReloadOutlined,
 } from "@ant-design/icons";
 import {
+	AutoComplete,
 	Button,
 	Card,
 	Divider,
@@ -20,7 +21,7 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	type Cluster,
 	createExecutionTarget,
@@ -35,6 +36,7 @@ import {
 	updateExecutionTarget,
 } from "../../api/pipelineApi";
 import ClusterManager from "./ClusterManager";
+import { KOORD_EQ_LABEL_KEY, poolUsageSummary } from "./poolUsage";
 
 const { Text } = Typography;
 
@@ -59,10 +61,15 @@ interface FormValues {
 	templateNodeSelector?: KVEntry[];
 	// CYB-3486 pool.3: pool scheduling config. All optional; written to
 	// resourceDefaults.scheduling. Empty = cluster / K8s defaults (any scheduler).
-	// The frontend hardcodes no koord / ElasticQuota semantics — the admin types
-	// the scheduler name and the pod-label key/value themselves.
+	// The backend stays generic; the frontend maps the "Koord 资源池" picker onto
+	// the standard EQ pod-label (KOORD_EQ_LABEL_KEY) at save time.
 	schedulerName?: string;
 	priorityClassName?: string;
+	// elasticQuotaName is a UI-only convenience field holding the chosen
+	// Koordinator ElasticQuota. On save it is folded into
+	// podLabels[KOORD_EQ_LABEL_KEY]; on load it is split back out of podLabels so
+	// the picker owns that one key and the manual podLabels editor never shows it.
+	elasticQuotaName?: string;
 	podLabels?: KVEntry[];
 	podAnnotations?: KVEntry[];
 }
@@ -101,7 +108,19 @@ export default function PoolManager() {
 	const [modalOpen, setModalOpen] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [editTarget, setEditTarget] = useState<ExecutionTarget | null>(null);
+	// EQs for the cluster currently selected IN THE MODAL (may differ from the
+	// default-cluster `elasticQuotas` the page pre-fetches). Feeds the "Koord
+	// 资源池" picker and the namespace suggestions.
+	const [modalEqs, setModalEqs] = useState<ElasticQuota[]>([]);
+	const [modalEqsLoading, setModalEqsLoading] = useState(false);
+	// Node-constraint section (tolerations / nodeSelector) is advanced; collapsed
+	// by default so the common path stays short.
+	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [form] = Form.useForm<FormValues>();
+	const watchedClusterId = Form.useWatch("clusterId", form);
+	const watchedNamespace = Form.useWatch("namespace", form);
+	const watchedScheduler = Form.useWatch("schedulerName", form);
+	const watchedEqName = Form.useWatch("elasticQuotaName", form);
 
 	const fetchData = useCallback(async () => {
 		setLoading(true);
@@ -156,9 +175,71 @@ export default function PoolManager() {
 		};
 	}, [fetchData]);
 
+	// Fetch ElasticQuotas for the cluster chosen in the modal so the "Koord 资源池"
+	// picker and namespace suggestions reflect the RIGHT cluster (the page-level
+	// `elasticQuotas` only ever holds the default cluster's). Re-runs when the
+	// modal opens or the cluster picker changes.
+	useEffect(() => {
+		if (!modalOpen) return;
+		let cancelled = false;
+		setModalEqsLoading(true);
+		listElasticQuotas(watchedClusterId)
+			.then((eqs) => {
+				if (!cancelled) setModalEqs(eqs);
+			})
+			.catch(() => {
+				if (!cancelled) setModalEqs([]);
+			})
+			.finally(() => {
+				if (!cancelled) setModalEqsLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [modalOpen, watchedClusterId]);
+
+	// Namespace suggestions (zero new backend API — CYB-3486): the namespaces the
+	// selected cluster's EQs live in, unioned with namespaces already used by
+	// pools on that cluster. The field stays free-text, so an unlisted namespace
+	// is still typable.
+	const namespaceOptions = useMemo(() => {
+		const set = new Set<string>();
+		for (const eq of modalEqs) {
+			if (eq.namespace) set.add(eq.namespace);
+		}
+		const clusterKeyVal = watchedClusterId ?? "";
+		for (const t of targets) {
+			if ((t.clusterId ?? "") === clusterKeyVal && t.namespace) {
+				set.add(t.namespace);
+			}
+		}
+		return Array.from(set)
+			.sort()
+			.map((ns) => ({ value: ns }));
+	}, [modalEqs, targets, watchedClusterId]);
+
+	// EQ picker options, scoped to the pool's namespace when one is set (koord EQs
+	// are namespace-scoped; a pod may only use an EQ in its own namespace). Before
+	// a namespace is chosen, show all of the cluster's EQs.
+	const eqOptions = useMemo(() => {
+		const ns = (watchedNamespace ?? "").trim();
+		const list = ns ? modalEqs.filter((eq) => eq.namespace === ns) : modalEqs;
+		return list.map((eq) => ({
+			value: eq.name,
+			label: `${eq.name}　—　${poolUsageSummary(eq)}`,
+		}));
+	}, [modalEqs, watchedNamespace]);
+
+	const selectedEq = useMemo(
+		() => modalEqs.find((eq) => eq.name === watchedEqName),
+		[modalEqs, watchedEqName],
+	);
+
 	const openCreate = () => {
 		setEditTarget(null);
 		form.resetFields();
+		setShowAdvanced(false);
+		setModalEqs([]);
 		setModalOpen(true);
 	};
 
@@ -170,6 +251,18 @@ export default function PoolManager() {
 			clusters.find((c) => c.name === target.cluster)?.id ??
 			clusters.find((c) => c.isDefault)?.id;
 		const scheduling = target.resourceDefaults?.scheduling ?? {};
+		// Split the koord EQ label out of podLabels so the "Koord 资源池" picker
+		// owns it and the manual podLabels editor shows only the OTHER labels.
+		const allLabels = scheduling.podLabels ?? {};
+		const eqName = allLabels[KOORD_EQ_LABEL_KEY] ?? "";
+		const otherLabels = { ...allLabels };
+		delete otherLabels[KOORD_EQ_LABEL_KEY];
+		// Auto-expand the node-constraint section when the pool actually uses it.
+		setShowAdvanced(
+			(target.resourceDefaults?.templateTolerations?.length ?? 0) > 0 ||
+				Object.keys(target.resourceDefaults?.templateNodeSelector ?? {})
+					.length > 0,
+		);
 		form.setFieldsValue({
 			name: target.name,
 			namespace: target.namespace,
@@ -181,7 +274,8 @@ export default function PoolManager() {
 			),
 			schedulerName: scheduling.schedulerName ?? "",
 			priorityClassName: scheduling.priorityClassName ?? "",
-			podLabels: kvMapToEntries(scheduling.podLabels),
+			elasticQuotaName: eqName,
+			podLabels: kvMapToEntries(otherLabels),
 			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
 		});
 		setModalOpen(true);
@@ -210,6 +304,17 @@ export default function PoolManager() {
 		const podAnnotations = kvEntriesToMap(values.podAnnotations);
 		const schedulerName = (values.schedulerName ?? "").trim();
 		const priorityClassName = (values.priorityClassName ?? "").trim();
+		// Fold the "Koord 资源池" picker into the standard EQ pod-label. The picker
+		// is meaningful only under koord-scheduler, so bind the label to it: a
+		// non-koord scheduler drops any EQ label (dead weight other schedulers
+		// ignore), and the picker owns this key either way — a stale value left in
+		// the manual editor never wins.
+		const eqName = (values.elasticQuotaName ?? "").trim();
+		if (schedulerName === "koord-scheduler" && eqName) {
+			podLabels[KOORD_EQ_LABEL_KEY] = eqName;
+		} else {
+			delete podLabels[KOORD_EQ_LABEL_KEY];
+		}
 
 		// Assemble the scheduling sub-object (CYB-3486 pool.3). Start from
 		// whatever the server already had under `.scheduling` so keys this editor
@@ -628,13 +733,6 @@ export default function PoolManager() {
 						<Input placeholder="例如: 客户A生产池" />
 					</Form.Item>
 					<Form.Item
-						name="namespace"
-						label="K8s 命名空间"
-						rules={[{ required: true, message: "请输入命名空间" }]}
-					>
-						<Input placeholder="例如: pool-customer-a" />
-					</Form.Item>
-					<Form.Item
 						name="clusterId"
 						label="集群"
 						initialValue={
@@ -662,6 +760,22 @@ export default function PoolManager() {
 							}))}
 						/>
 					</Form.Item>
+					<Form.Item
+						name="namespace"
+						label="K8s 命名空间"
+						rules={[{ required: true, message: "请选择或输入命名空间" }]}
+						extra="可从集群已知命名空间中选,也可直接输入。"
+					>
+						<AutoComplete
+							options={namespaceOptions}
+							placeholder="例如: cyber-delivery-prod"
+							filterOption={(input, option) =>
+								(option?.value ?? "")
+									.toLowerCase()
+									.includes(input.toLowerCase())
+							}
+						/>
+					</Form.Item>
 					<Form.Item name="description" label="描述">
 						<Input.TextArea rows={2} placeholder="可选,一句话说明用途" />
 					</Form.Item>
@@ -676,28 +790,78 @@ export default function PoolManager() {
 						type="secondary"
 						style={{ fontSize: 12, marginBottom: 12 }}
 					>
-						全部留空 → 使用集群默认调度器(适配任意调度器,不接入弹性配额)。
-						如需接入 Koordinator 弹性配额池:调度器填{" "}
-						<Text code>koord-scheduler</Text>,并在 Pod labels 加一条
-						ElasticQuota label(key 通常是{" "}
-						<Text code>quota.scheduling.koordinator.sh/name</Text>,value
-						为配额名)。 key / value 均由管理员按目标集群填写,页面不写死。
+						留空 → 使用集群默认调度器(适配任意调度器,不接入弹性配额)。 如需接入
+						Koordinator 弹性配额:调度器填 <Text code>koord-scheduler</Text>
+						,下方会出现该集群的资源池供选择。
 					</Typography.Paragraph>
 
-					<Form.Item name="schedulerName" label="Scheduler 名称">
+					<Form.Item name="schedulerName" label="调度器">
 						<Input placeholder="留空 = 集群默认调度器;例如 koord-scheduler" />
 					</Form.Item>
+
+					{watchedScheduler?.trim() === "koord-scheduler" ? (
+						<Form.Item
+							name="elasticQuotaName"
+							label="Koord 资源池(选填)"
+							extra="从所选集群实时拉取;选中后自动写入 EQ pod label,无需手填。"
+						>
+							<Select
+								allowClear
+								showSearch
+								loading={modalEqsLoading}
+								placeholder={
+									eqOptions.length > 0
+										? "选择一个 ElasticQuota"
+										: "该集群/命名空间未发现 ElasticQuota"
+								}
+								options={eqOptions}
+								notFoundContent={
+									modalEqsLoading ? "加载中…" : "无可用 ElasticQuota"
+								}
+								onChange={(val) => {
+									// koord EQs are namespace-scoped; align the pool's
+									// namespace to the chosen quota so the pod lands where
+									// the EQ actually lives.
+									const eq = modalEqs.find((e) => e.name === val);
+									if (eq?.namespace && eq.namespace !== watchedNamespace) {
+										form.setFieldValue("namespace", eq.namespace);
+										message.info(
+											`已将命名空间设为 ${eq.namespace}(匹配所选资源池)`,
+										);
+									}
+								}}
+							/>
+						</Form.Item>
+					) : null}
+					{watchedScheduler?.trim() === "koord-scheduler" && selectedEq ? (
+						<div style={{ marginTop: -8, marginBottom: 16 }}>
+							<Text type="secondary" style={{ fontSize: 12 }}>
+								<Space size="large">
+									<span>
+										min {selectedEq.min.cpu} / {selectedEq.min.memory}
+									</span>
+									<span>
+										max {selectedEq.max.cpu} / {selectedEq.max.memory}
+									</span>
+									<span>
+										used {selectedEq.used.cpu} / {selectedEq.used.memory}
+									</span>
+								</Space>
+							</Text>
+						</div>
+					) : null}
+
 					<Form.Item name="priorityClassName" label="PriorityClass">
 						<Input placeholder="留空 = K8s 全局默认;例如 cyber-databrew-prod" />
 					</Form.Item>
 					<Form.Item
 						label="Pod labels"
-						extra="随每个 workflow pod 下发;接入弹性配额时在此填 EQ label。"
+						extra="额外的 pod 标签(EQ label 由上方资源池管理,无需在此重复)。"
 					>
 						<KeyValueListEditor
 							name="podLabels"
-							keyPlaceholder="label key,如 quota.scheduling.koordinator.sh/name"
-							valuePlaceholder="label value,如 cyberorigin-delivery-low"
+							keyPlaceholder="label key"
+							valuePlaceholder="label value"
 							addLabel="添加 pod label"
 							ariaPrefix="podlabel"
 						/>
@@ -713,108 +877,116 @@ export default function PoolManager() {
 					</Form.Item>
 
 					<Divider style={{ margin: "12px 0" }} orientation="left" plain>
-						<Text type="secondary" style={{ fontSize: 12 }}>
-							节点约束(可选)—— 与集群节点污点匹配才能调度
-						</Text>
+						<Button
+							type="link"
+							size="small"
+							style={{ padding: 0, fontSize: 12 }}
+							onClick={() => setShowAdvanced((v) => !v)}
+						>
+							{showAdvanced ? "▾" : "▸"} 节点约束(可选)——
+							与集群节点污点匹配才能调度
+						</Button>
 					</Divider>
 
-					<Form.Item label="Tolerations(容忍污点)">
-						<Form.List name="templateTolerations">
-							{(fields, { add, remove }) => (
-								<>
-									{fields.map((field) => (
-										<Space
-											key={field.key}
-											align="baseline"
-											style={{ display: "flex", marginBottom: 4 }}
-										>
-											<Form.Item
-												name={[field.name, "key"]}
-												rules={[
-													{
-														required: true,
-														message: "key 必填",
-														whitespace: true,
-													},
-												]}
-												style={{ marginBottom: 0, width: 180 }}
+					<div style={{ display: showAdvanced ? "block" : "none" }}>
+						<Form.Item label="Tolerations(容忍污点)">
+							<Form.List name="templateTolerations">
+								{(fields, { add, remove }) => (
+									<>
+										{fields.map((field) => (
+											<Space
+												key={field.key}
+												align="baseline"
+												style={{ display: "flex", marginBottom: 4 }}
 											>
-												<Input placeholder="key(如 compute-tier)" />
-											</Form.Item>
-											<Form.Item
-												name={[field.name, "operator"]}
-												initialValue="Equal"
-												style={{ marginBottom: 0, width: 100 }}
-											>
-												<Select options={[...TOLERATION_OPERATORS]} />
-											</Form.Item>
-											<Form.Item
-												name={[field.name, "value"]}
-												dependencies={[
-													["templateTolerations", field.name, "operator"],
-												]}
-												rules={[
-													({ getFieldValue }) => ({
-														validator(_, val) {
-															const op = getFieldValue([
-																"templateTolerations",
-																field.name,
-																"operator",
-															]);
-															if (
-																op === "Exists" ||
-																(val != null && String(val).trim() !== "")
-															) {
-																return Promise.resolve();
-															}
-															return Promise.reject(
-																new Error("operator=Equal 时 value 必填"),
-															);
+												<Form.Item
+													name={[field.name, "key"]}
+													rules={[
+														{
+															required: true,
+															message: "key 必填",
+															whitespace: true,
 														},
-													}),
-												]}
-												style={{ marginBottom: 0, width: 180 }}
-											>
-												<Input placeholder="value(如 med)" />
-											</Form.Item>
-											<Form.Item
-												name={[field.name, "effect"]}
-												initialValue="NoSchedule"
-												style={{ marginBottom: 0, width: 160 }}
-											>
-												<Select options={[...TOLERATION_EFFECTS]} />
-											</Form.Item>
-											<MinusCircleOutlined
-												onClick={() => remove(field.name)}
-												aria-label={`remove-toleration-${field.name}`}
-											/>
-										</Space>
-									))}
-									<Button
-										type="dashed"
-										size="small"
-										onClick={() =>
-											add({ operator: "Equal", effect: "NoSchedule" })
-										}
-										icon={<PlusOutlined />}
-									>
-										添加 toleration
-									</Button>
-								</>
-							)}
-						</Form.List>
-					</Form.Item>
+													]}
+													style={{ marginBottom: 0, width: 180 }}
+												>
+													<Input placeholder="key(如 compute-tier)" />
+												</Form.Item>
+												<Form.Item
+													name={[field.name, "operator"]}
+													initialValue="Equal"
+													style={{ marginBottom: 0, width: 100 }}
+												>
+													<Select options={[...TOLERATION_OPERATORS]} />
+												</Form.Item>
+												<Form.Item
+													name={[field.name, "value"]}
+													dependencies={[
+														["templateTolerations", field.name, "operator"],
+													]}
+													rules={[
+														({ getFieldValue }) => ({
+															validator(_, val) {
+																const op = getFieldValue([
+																	"templateTolerations",
+																	field.name,
+																	"operator",
+																]);
+																if (
+																	op === "Exists" ||
+																	(val != null && String(val).trim() !== "")
+																) {
+																	return Promise.resolve();
+																}
+																return Promise.reject(
+																	new Error("operator=Equal 时 value 必填"),
+																);
+															},
+														}),
+													]}
+													style={{ marginBottom: 0, width: 180 }}
+												>
+													<Input placeholder="value(如 med)" />
+												</Form.Item>
+												<Form.Item
+													name={[field.name, "effect"]}
+													initialValue="NoSchedule"
+													style={{ marginBottom: 0, width: 160 }}
+												>
+													<Select options={[...TOLERATION_EFFECTS]} />
+												</Form.Item>
+												<MinusCircleOutlined
+													onClick={() => remove(field.name)}
+													aria-label={`remove-toleration-${field.name}`}
+												/>
+											</Space>
+										))}
+										<Button
+											type="dashed"
+											size="small"
+											onClick={() =>
+												add({ operator: "Equal", effect: "NoSchedule" })
+											}
+											icon={<PlusOutlined />}
+										>
+											添加 toleration
+										</Button>
+									</>
+								)}
+							</Form.List>
+						</Form.Item>
 
-					<Form.Item label="Node Selector(节点选择)">
-						<KeyValueListEditor
-							name="templateNodeSelector"
-							keyPlaceholder="label key"
-							valuePlaceholder="label value"
-							addLabel="添加 nodeSelector"
-							ariaPrefix="nodeselector"
-							requireValue
-						/>
-					</Form.Item>
+						<Form.Item label="Node Selector(节点选择)">
+							<KeyValueListEditor
+								name="templateNodeSelector"
+								keyPlaceholder="label key"
+								valuePlaceholder="label value"
+								addLabel="添加 nodeSelector"
+								ariaPrefix="nodeselector"
+								requireValue
+							/>
+						</Form.Item>
+					</div>
 				</Form>
 			</Modal>
 		</>

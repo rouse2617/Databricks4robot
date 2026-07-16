@@ -58,6 +58,7 @@ const mockMessage = vi.hoisted(() => ({
 	success: vi.fn(),
 	error: vi.fn(),
 	warning: vi.fn(),
+	info: vi.fn(),
 }));
 
 vi.mock("antd", async (importOriginal) => {
@@ -371,12 +372,16 @@ describe("PoolManager — create", () => {
 		const newBtn = await screen.findByRole("button", { name: /新建/ });
 		fireEvent.click(newBtn);
 
-		// Fill name / namespace
+		// Fill name / namespace (namespace is an AutoComplete — its placeholder is
+		// not a real input attribute, so locate it by its form label instead).
 		const nameInput = await screen.findByPlaceholderText("例如: 客户A生产池");
 		fireEvent.change(nameInput, { target: { value: "test-pool" } });
-		fireEvent.change(screen.getByPlaceholderText("例如: pool-customer-a"), {
+		fireEvent.change(screen.getByLabelText("K8s 命名空间"), {
 			target: { value: "test-ns" },
 		});
+
+		// Node constraints are collapsed by default — expand before editing them.
+		fireEvent.click(screen.getByRole("button", { name: /节点约束/ }));
 
 		// Add one toleration
 		const addTolBtn = screen.getByRole("button", { name: /添加 toleration/ });
@@ -439,7 +444,17 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 		]);
 	});
 
-	it("prefills scheduler / priorityclass / pod labels from resourceDefaults.scheduling", async () => {
+	it("prefills scheduler / priorityclass and splits the EQ label into the pool picker", async () => {
+		mockListElasticQuotas.mockResolvedValue([
+			{
+				name: "cyberorigin-delivery-low",
+				namespace: "video-proc-dev",
+				min: { cpu: "1", memory: "2Gi" },
+				max: { cpu: "10", memory: "20Gi" },
+				used: { cpu: "0", memory: "0" },
+				utilizationPercent: { cpu: 0, memory: 0 },
+			},
+		]);
 		renderPoolManager();
 		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
@@ -455,11 +470,12 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 		) as HTMLInputElement;
 		expect(prioInput.value).toBe("cyber-databrew-prod");
 
-		// The one prefilled pod-label row (key + value as display values).
+		// scheduler=koord-scheduler → the Koord pool picker is shown, and it OWNS
+		// the EQ label: it must NOT leak into the manual podLabels editor as a row.
+		expect(screen.getByText("Koord 资源池(选填)")).toBeDefined();
 		expect(
-			screen.getByDisplayValue("quota.scheduling.koordinator.sh/name"),
-		).toBeDefined();
-		expect(screen.getByDisplayValue("cyberorigin-delivery-low")).toBeDefined();
+			screen.queryByDisplayValue("quota.scheduling.koordinator.sh/name"),
+		).toBeNull();
 	});
 
 	it("writes edits into resource_defaults.scheduling and no legacy top-level fields", async () => {
@@ -468,10 +484,11 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 
 		fireEvent.click(await screen.findByLabelText("edit-koord-pool"));
 
-		const schedulerInput =
-			await screen.findByPlaceholderText(/koord-scheduler/);
-		fireEvent.change(schedulerInput, {
-			target: { value: "koord-scheduler-canary" },
+		// Edit priorityClass — scheduler stays koord-scheduler, so the EQ picker
+		// (and the EQ label it owns) persists across the save.
+		const prioInput = await screen.findByPlaceholderText(/cyber-databrew-prod/);
+		fireEvent.change(prioInput, {
+			target: { value: "cyber-databrew-canary" },
 		});
 
 		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
@@ -482,9 +499,10 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 		const [id, body] = mockUpdateExecutionTarget.mock.calls[0];
 		expect(id).toBe("sched-target-1");
 		const scheduling = body.resourceDefaults?.scheduling;
-		expect(scheduling?.schedulerName).toBe("koord-scheduler-canary");
+		expect(scheduling?.priorityClassName).toBe("cyber-databrew-canary");
 		// Untouched scheduling keys survive the PUT.
-		expect(scheduling?.priorityClassName).toBe("cyber-databrew-prod");
+		expect(scheduling?.schedulerName).toBe("koord-scheduler");
+		// The EQ label — owned by the picker — is folded back into podLabels.
 		expect(scheduling?.podLabels).toEqual({
 			"quota.scheduling.koordinator.sh/name": "cyberorigin-delivery-low",
 		});
@@ -525,7 +543,7 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 		fireEvent.change(await screen.findByPlaceholderText("例如: 客户A生产池"), {
 			target: { value: "custom-pool" },
 		});
-		fireEvent.change(screen.getByPlaceholderText("例如: pool-customer-a"), {
+		fireEvent.change(screen.getByLabelText("K8s 命名空间"), {
 			target: { value: "custom-ns" },
 		});
 		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
@@ -534,9 +552,9 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 
 		// Admin supplies both the label key and value — nothing is hardcoded.
 		fireEvent.click(screen.getByRole("button", { name: /添加 pod label/ }));
-		const keyInput = await screen.findByPlaceholderText(/label key,如 quota/);
+		const keyInput = await screen.findByPlaceholderText("label key");
 		fireEvent.change(keyInput, { target: { value: "example.com/pool" } });
-		const valInput = screen.getByPlaceholderText(/label value,如/);
+		const valInput = screen.getByPlaceholderText("label value");
 		fireEvent.change(valInput, { target: { value: "gold" } });
 
 		fireEvent.click(screen.getByRole("button", { name: /创\s*建/ }));
@@ -551,5 +569,59 @@ describe("PoolManager — scheduling config (resource_defaults.scheduling)", () 
 		expect(body.resourceDefaults?.scheduling?.podLabels).toEqual({
 			"example.com/pool": "gold",
 		});
+	});
+});
+
+// CYB-3486 pool UX: the "Koord 资源池" picker turns the raw EQ pod-label into a
+// cluster-pulled dropdown. It only appears for scheduler=koord-scheduler, and on
+// pick it folds the choice into podLabels[EQ key] and aligns the pool namespace
+// to the EQ's namespace (koord EQs are namespace-scoped).
+describe("PoolManager — Koord 资源池 picker", () => {
+	const koordEqs: ElasticQuota[] = [
+		{
+			name: "cyberorigin-delivery-low",
+			namespace: "cyber-delivery-prod",
+			min: { cpu: "1", memory: "2Gi" },
+			max: { cpu: "10", memory: "20Gi" },
+			used: { cpu: "0", memory: "0" },
+			utilizationPercent: { cpu: 0, memory: 0 },
+		},
+	];
+
+	beforeEach(() => {
+		mockListExecutionTargets.mockResolvedValue([defaultTarget]);
+		mockListElasticQuotas.mockResolvedValue(koordEqs);
+	});
+
+	it("stays hidden until the scheduler is koord-scheduler", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByRole("button", { name: /新建/ }));
+		expect(screen.queryByText("Koord 资源池(选填)")).toBeNull();
+
+		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
+			target: { value: "koord-scheduler" },
+		});
+		expect(await screen.findByText("Koord 资源池(选填)")).toBeDefined();
+	});
+
+	it("populates the picker with the cluster's ElasticQuotas (name + usage)", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByRole("button", { name: /新建/ }));
+		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
+			target: { value: "koord-scheduler" },
+		});
+
+		// The picker pulls the selected cluster's EQs and lists each by name with
+		// its live usage, so the admin picks a pool instead of typing a raw label.
+		fireEvent.mouseDown(screen.getByLabelText("Koord 资源池(选填)"));
+		expect(
+			await screen.findByRole("option", {
+				name: /cyberorigin-delivery-low.*CPU 0%/,
+			}),
+		).toBeDefined();
 	});
 });
