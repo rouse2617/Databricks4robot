@@ -232,6 +232,13 @@ func setupCore(inf *infra) *coreHandlers {
 	// through the factory. Nil-safe: if inf.k8sFactory is nil (no PG), the
 	// handlers fall back to the pre-3486 env singleton.
 	workflowHandler.SetK8sFactory(inf.k8sFactory)
+	// CYB-3486: /workflows/:name resolves the workflow's owning cluster (by name
+	// → run → target → cluster_id) and routes its Argo calls there, so
+	// non-default-cluster runs (e.g. delivery-clust) return logs/detail instead
+	// of "workflow not found" from the default argo-server. Nil-safe: no PG →
+	// nil factory → env singleton, unchanged behavior.
+	workflowHandler.SetArgoFactory(inf.argoFactory)
+	workflowHandler.SetExecutionTargetRepo(executionTargetRepo)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler

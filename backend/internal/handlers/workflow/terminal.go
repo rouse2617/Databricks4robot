@@ -181,8 +181,12 @@ func (h *Handler) CreateTerminalSession(c *gin.Context) {
 		command = "sh"
 	}
 
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	// CYB-3486: validate the pod against the workflow's owning cluster. NOTE: the
+	// exec attach (AttachTerminalSession) still uses the default-cluster
+	// ExecClient — per-cluster exec needs a rest.Config seam on k8s.ClientFactory
+	// (deferred); see openspec CYB-3486-workflow-cluster-aware/decisions.md.
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
+	wf, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -34,22 +35,30 @@ const (
 const workflowLogPaginationUnavailableReason = "live Argo logs do not provide stable historical cursor pagination"
 
 type Handler struct {
-	wfClient        argo.WorkflowClient
-	podClient       k8s.PodClient
-	execClient      k8s.ExecClient
+	wfClient   argo.WorkflowClient
+	podClient  k8s.PodClient
+	execClient k8s.ExecClient
 	// CYB-3486 PR 4b: per-cluster K8s client factory. When set, elastic_quota
 	// / resource_quota handlers route by ?clusterId=. Nil falls back to the
 	// pre-3486 env-based singleton (k8s.NewClientset/NewDynamicClient) — same
 	// behavior as before this PR.
-	k8sFactory      k8s.ClientFactory
-	namespace       string
-	runRepo         repository.PipelineRunRepository
-	runEventRepo    repository.PipelineRunEventRepository
-	runNodeRepo     repository.PipelineRunNodeRepository
-	terminalStore   *terminalSessionStore
-	terminalNowFunc func() time.Time
-	sseRingBuffers  *ringBufferStore
-	archiveStore    ArchiveLogStore
+	k8sFactory k8s.ClientFactory
+	// CYB-3486: per-cluster Argo client factory + execution-target repo used to
+	// resolve which cluster a workflow lives on (by name → run → target →
+	// cluster_id) so /workflows/:name calls hit the owning cluster instead of
+	// the default-cluster singleton. Both nil-safe: resolution falls back to
+	// wfClient / the default namespace. See cluster_routing.go.
+	argoFactory        argo.ClientFactory
+	targetRepo         repository.ExecutionTargetRepository
+	targetClusterCache sync.Map // execution_target_id → cluster_id memo
+	namespace          string
+	runRepo            repository.PipelineRunRepository
+	runEventRepo       repository.PipelineRunEventRepository
+	runNodeRepo        repository.PipelineRunNodeRepository
+	terminalStore      *terminalSessionStore
+	terminalNowFunc    func() time.Time
+	sseRingBuffers     *ringBufferStore
+	archiveStore       ArchiveLogStore
 }
 
 type workflowNodeItem struct {
@@ -105,6 +114,22 @@ func (h *Handler) SetK8sFactory(f k8s.ClientFactory) {
 	h.k8sFactory = f
 }
 
+// SetArgoFactory wires the per-cluster Argo client factory (CYB-3486). When set,
+// /workflows/:name endpoints resolve the workflow's owning cluster by name and
+// route to that cluster's Argo client (argo-server HTTP or in-cluster CRD). Nil
+// falls back to the env-based singleton wfClient — same behavior as before.
+func (h *Handler) SetArgoFactory(f argo.ClientFactory) {
+	h.argoFactory = f
+}
+
+// SetExecutionTargetRepo wires the execution-target repo used to resolve a run's
+// cluster_id from its execution_target_id when the run row carries no nested
+// target (the FindByWorkflowName path). Nil-safe: resolution falls back to
+// cluster-default.
+func (h *Handler) SetExecutionTargetRepo(repo repository.ExecutionTargetRepository) {
+	h.targetRepo = repo
+}
+
 func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository, runNodeRepo repository.PipelineRunNodeRepository) {
 	h.runRepo = runRepo
 	h.runEventRepo = eventRepo
@@ -134,7 +159,11 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		parsedLabels = append(parsedLabels, [2]string{key, value})
 	}
 
-	list, err := h.wfClient.ListWorkflows(c.Request.Context(), h.namespaceFor(c), "")
+	// CYB-3486: list is not name-scoped, so there's no run to derive the cluster
+	// from — accept an optional ?clusterId= (default cluster) like the elastic /
+	// resource quota siblings. Nil factory falls back to the singleton.
+	client := h.argoClientForCluster(c.Request.Context(), c.Query("clusterId"))
+	list, err := client.ListWorkflows(c.Request.Context(), h.namespaceFor(c), "")
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -233,8 +262,10 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		}
 	}
 
-	namespace := h.namespaceForWorkflow(ctx, c, name)
-	wf, err := h.wfClient.GetWorkflow(ctx, name, namespace)
+	// The run loaded above (may be nil, or active) both derives the namespace
+	// and routes the Argo call to the workflow's owning cluster (CYB-3486).
+	namespace := h.namespaceForRequest(c, run)
+	wf, err := h.argoClientForRun(ctx, run).GetWorkflow(ctx, name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -489,8 +520,8 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow name and nodeId are required", nil)
 		return
 	}
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
+	workflow, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -535,7 +566,7 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	result, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, podName, namespace, opts)
+	result, err := client.GetWorkflowLogs(c.Request.Context(), name, podName, namespace, opts)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -579,8 +610,8 @@ func (h *Handler) RetryWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
+	wf, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -595,7 +626,7 @@ func (h *Handler) RetryWorkflow(c *gin.Context) {
 		})
 		return
 	}
-	h.workflowOperation(c, h.wfClient.RetryWorkflow)
+	h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.RetryWorkflow })
 }
 
 // ResubmitWorkflow handles POST /api/v1/workflows/:name/resubmit
@@ -606,13 +637,13 @@ func (h *Handler) ResubmitWorkflow(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
 	var newWorkflow *wfv1.Workflow
 	var err error
-	if client, ok := h.wfClient.(argo.WorkflowResubmitResultClient); ok {
-		newWorkflow, err = client.ResubmitWorkflowWithResult(c.Request.Context(), name, namespace)
+	if rc, ok := client.(argo.WorkflowResubmitResultClient); ok {
+		newWorkflow, err = rc.ResubmitWorkflowWithResult(c.Request.Context(), name, namespace)
 	} else {
-		err = h.wfClient.ResubmitWorkflow(c.Request.Context(), name, namespace)
+		err = client.ResubmitWorkflow(c.Request.Context(), name, namespace)
 	}
 	if err != nil {
 		httpresp.Internal(c, err.Error())
@@ -637,41 +668,48 @@ func (h *Handler) ResubmitWorkflow(c *gin.Context) {
 
 // SuspendWorkflow handles POST /api/v1/workflows/:name/suspend
 func (h *Handler) SuspendWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.SuspendWorkflow)
+	h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.SuspendWorkflow })
 }
 
 // StopWorkflow handles POST /api/v1/workflows/:name/stop
 func (h *Handler) StopWorkflow(c *gin.Context) {
-	if h.workflowOperation(c, h.wfClient.StopWorkflow) {
+	if h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.StopWorkflow }) {
 		h.syncWorkflowOperationPipelineRun(c.Request.Context(), strings.TrimSpace(c.Param("name")), string(wfv1.WorkflowFailed), "workflow shutdown with strategy: Stop")
 	}
 }
 
 // ResumeWorkflow handles POST /api/v1/workflows/:name/resume
 func (h *Handler) ResumeWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.ResumeWorkflow)
+	h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.ResumeWorkflow })
 }
 
 // TerminateWorkflow handles POST /api/v1/workflows/:name/terminate
 func (h *Handler) TerminateWorkflow(c *gin.Context) {
-	if h.workflowOperation(c, h.wfClient.TerminateWorkflow) {
+	if h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.TerminateWorkflow }) {
 		h.syncWorkflowOperationPipelineRun(c.Request.Context(), strings.TrimSpace(c.Param("name")), string(wfv1.WorkflowFailed), "Stopped with strategy 'Terminate'")
 	}
 }
 
 // DeleteWorkflow handles DELETE /api/v1/workflows/:name
 func (h *Handler) DeleteWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.DeleteWorkflow)
+	h.workflowOperation(c, func(cl argo.WorkflowClient) clientOp { return cl.DeleteWorkflow })
 }
 
-func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, string, string) error) bool {
+// clientOp is one of the WorkflowClient lifecycle methods
+// (suspend/stop/resume/terminate/retry/delete). workflowOperation resolves the
+// per-cluster client first, then a pick selector binds the method off it, so the
+// operation targets the workflow's owning cluster instead of the singleton
+// (CYB-3486).
+type clientOp func(context.Context, string, string) error
+
+func (h *Handler) workflowOperation(c *gin.Context, pick func(argo.WorkflowClient) clientOp) bool {
 	name := strings.TrimSpace(c.Param("name"))
 	if name == "" {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return false
 	}
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	if err := fn(c.Request.Context(), name, namespace); err != nil {
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
+	if err := pick(client)(c.Request.Context(), name, namespace); err != nil {
 		httpresp.Internal(c, err.Error())
 		return false
 	}
@@ -833,29 +871,6 @@ func (h *Handler) namespaceFor(c *gin.Context) string {
 	}
 	if namespace := strings.TrimSpace(c.Query("namespace")); namespace != "" {
 		return namespace
-	}
-	return h.namespace
-}
-
-func (h *Handler) namespaceForWorkflow(ctx context.Context, c *gin.Context, workflowName string) string {
-	if namespace := strings.TrimSpace(c.GetString("namespace")); namespace != "" {
-		return namespace
-	}
-	if namespace := strings.TrimSpace(c.Query("namespace")); namespace != "" {
-		return namespace
-	}
-	if run, _ := h.findPipelineRunByWorkflow(ctx, workflowName); run != nil {
-		if namespace := strings.TrimSpace(run.ArgoNamespace); namespace != "" {
-			return namespace
-		}
-		if run.ExecutionTarget != nil {
-			if namespace := strings.TrimSpace(run.ExecutionTarget.Namespace); namespace != "" {
-				return namespace
-			}
-		}
-		if namespace := strings.TrimSpace(targetString(run.TargetSnapshot, "namespace")); namespace != "" {
-			return namespace
-		}
 	}
 	return h.namespace
 }

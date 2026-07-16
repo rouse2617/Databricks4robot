@@ -285,9 +285,9 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
 
-	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	workflow, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow not found", nil)
 		return
@@ -314,7 +314,7 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	node, hasNode := workflow.Status.Nodes[nodeID]
 	opts.Follow = hasNode && !node.Fulfilled()
 
-	stream, err := h.wfClient.GetWorkflowLogStream(
+	stream, err := client.GetWorkflowLogStream(
 		c.Request.Context(),
 		name,
 		podName,
