@@ -63,6 +63,14 @@ type Usecase struct {
 	// single watcher goroutine touches it; resets on restart, which is fine —
 	// coverage is eventual, the webhook remains the primary signal.
 	watcherActiveCursor     int
+	// targetClusterCache memoizes execution_target_id → cluster_id so the
+	// watcher / status-refresh paths can resolve a run's cluster without an
+	// ExecutionTarget object populated on the run (ListSummaries doesn't load
+	// the nested target). CYB-3486 4d.5 fix: without this, non-default-cluster
+	// runs resolved to cluster-default and their status read back from the
+	// wrong argo endpoint. Bindings are effectively immutable (a target's
+	// cluster_id doesn't change in practice); a process restart clears it.
+	targetClusterCache      sync.Map
 	backfillRepo            repository.BackfillRepository
 	assetRepo               repository.AssetRepository
 	assetEventRepo          repository.AssetEventRepository
@@ -437,7 +445,7 @@ func (uc *Usecase) resolveArgoClient(ctx context.Context, target *models.Executi
 // active-run volume.
 func (uc *Usecase) resolveArgoClientForRun(ctx context.Context, run *models.PipelineRun) (argo.WorkflowClient, error) {
 	if uc.argoFactory != nil {
-		id := runClusterID(run)
+		id := uc.resolveRunClusterID(ctx, run)
 		c, err := uc.argoFactory.ForCluster(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: resolve argo client for run cluster %q: %v",
@@ -448,29 +456,62 @@ func (uc *Usecase) resolveArgoClientForRun(ctx context.Context, run *models.Pipe
 	return uc.wfClient, nil
 }
 
-// runClusterID pulls the cluster id off a run's ExecutionTarget snapshot, or
-// falls back to the default cluster row. PipelineRun does not carry a direct
-// ClusterID column today; the target snapshot is where the source-of-truth
-// lives during PR 4d.5. If that gets awkward at scale, we can promote it to
-// a first-class column later (schema-only change).
-func runClusterID(run *models.PipelineRun) string {
-	if run != nil && run.ExecutionTarget != nil {
+// resolveRunClusterID determines which cluster a run's workflow lives on.
+//
+// PipelineRun has no direct cluster_id column; the truth is
+// execution_targets.cluster_id, reachable two ways:
+//  1. run.ExecutionTarget populated (GetRun/Deploy paths) → read it directly.
+//  2. only run.ExecutionTargetID present (watcher's ListSummaries, the status
+//     webhook, reconcile) → look the target up by id (memoized).
+//
+// Case 2 is the CYB-3486 4d.5 fix: resolveArgoClientForRun used to depend on
+// callers pre-populating run.ExecutionTarget, but the watcher/webhook paths
+// don't, so every non-default-cluster run fell back to cluster-default and
+// its status was read from cyber-clust's argo-server (→ "workflow not found",
+// run stuck Running). Resolving via ExecutionTargetID here removes that
+// dependency on the caller.
+func (uc *Usecase) resolveRunClusterID(ctx context.Context, run *models.PipelineRun) string {
+	const fallback = "cluster-default"
+	if run == nil {
+		return fallback
+	}
+	if run.ExecutionTarget != nil {
 		if id := strings.TrimSpace(run.ExecutionTarget.ClusterID); id != "" {
 			return id
 		}
 	}
-	return "cluster-default"
+	tid := strings.TrimSpace(run.ExecutionTargetID)
+	if tid == "" || uc.targetRepo == nil {
+		return fallback
+	}
+	if cached, ok := uc.targetClusterCache.Load(tid); ok {
+		if cid, _ := cached.(string); cid != "" {
+			return cid
+		}
+	}
+	t, err := uc.targetRepo.FindByID(ctx, tid)
+	if err != nil || t == nil {
+		// Don't cache misses — a transient DB error shouldn't pin this run to
+		// cluster-default for the process lifetime.
+		return fallback
+	}
+	cid := strings.TrimSpace(t.ClusterID)
+	if cid == "" {
+		cid = fallback
+	}
+	uc.targetClusterCache.Store(tid, cid)
+	return cid
 }
 
-// groupRunIndicesByCluster partitions a list of run indices (into a shared
-// runs slice) by each run's cluster ID. Used by SyncActiveRunEvents to fan
-// out per-cluster goroutines (CYB-3486 4d.5.b). Extracted for unit testing:
-// the parent function has a lot of surrounding state that would need a full
-// fixture to reach.
-func groupRunIndicesByCluster(runs []models.PipelineRun, indices []int) map[string][]int {
+// groupRunIndicesByCluster partitions run indices by cluster id using the
+// provided resolver. Used by SyncActiveRunEvents to fan out per-cluster
+// goroutines (CYB-3486 4d.5.b). Takes clusterOf as a param so it stays a pure,
+// unit-testable function while still honoring the ExecutionTargetID lookup
+// that resolveRunClusterID does.
+func groupRunIndicesByCluster(runs []models.PipelineRun, indices []int, clusterOf func(*models.PipelineRun) string) map[string][]int {
 	out := map[string][]int{}
 	for _, i := range indices {
-		cid := runClusterID(&runs[i])
+		cid := clusterOf(&runs[i])
 		out[cid] = append(out[cid], i)
 	}
 	return out
@@ -2598,7 +2639,7 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
 	if resolveErr != nil || client == nil {
 		slog.Warn("reconcileMisclassifiedRunFromArgo: no argo client for run cluster",
-			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+			"runID", run.ID, "clusterID", uc.resolveRunClusterID(ctx, run), "err", resolveErr)
 		return
 	}
 	wf, err := client.GetWorkflow(ctx, run.WorkflowName, namespace)
@@ -2816,7 +2857,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
 	if resolveErr != nil {
 		slog.Warn("refreshRunStatus: resolve argo client failed",
-			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+			"runID", run.ID, "clusterID", uc.resolveRunClusterID(ctx, run), "err", resolveErr)
 		return
 	}
 	if client == nil {
@@ -2889,7 +2930,7 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
 	if resolveErr != nil {
 		slog.Warn("backfillRunStatus: resolve argo client failed",
-			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+			"runID", run.ID, "clusterID", uc.resolveRunClusterID(ctx, run), "err", resolveErr)
 		return
 	}
 	if client == nil {
@@ -3044,7 +3085,9 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		// cluster stay sequential — the same K8s API server would be hit
 		// anyway, and serializing keeps the client-go rate limiter (QPS=5
 		// default) from becoming a per-cluster stampede.
-		byCluster := groupRunIndicesByCluster(runs, picked)
+		byCluster := groupRunIndicesByCluster(runs, picked, func(r *models.PipelineRun) string {
+			return uc.resolveRunClusterID(ctx, r)
+		})
 		var wg sync.WaitGroup
 		for _, group := range byCluster {
 			wg.Add(1)

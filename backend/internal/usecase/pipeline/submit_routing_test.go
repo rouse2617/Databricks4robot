@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -266,7 +267,7 @@ func TestGroupRunIndicesByCluster(t *testing.T) {
 		{ID: "r4", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}},
 		{ID: "r5", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-default"}},
 	}
-	got := groupRunIndicesByCluster(runs, []int{0, 1, 2, 3, 4})
+	got := groupRunIndicesByCluster(runs, []int{0, 1, 2, 3, 4}, testClusterOf)
 	if want := 2; len(got) != want {
 		t.Fatalf("expected %d cluster groups, got %d: %v", want, len(got), got)
 	}
@@ -289,7 +290,7 @@ func TestGroupRunIndicesByCluster_RespectsProvidedIndices(t *testing.T) {
 		{ID: "r2", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-c"}},
 	}
 	// Only pick r0 and r2 — r1 (cluster-b) must NOT appear in output.
-	got := groupRunIndicesByCluster(runs, []int{0, 2})
+	got := groupRunIndicesByCluster(runs, []int{0, 2}, testClusterOf)
 	if _, has := got["cluster-b"]; has {
 		t.Errorf("cluster-b was not in the picked window; grouping must not include it: %v", got)
 	}
@@ -301,24 +302,73 @@ func TestGroupRunIndicesByCluster_RespectsProvidedIndices(t *testing.T) {
 	}
 }
 
-func TestRunClusterID(t *testing.T) {
-	cases := []struct {
-		name string
-		run  *models.PipelineRun
-		want string
-	}{
-		{"nil", nil, "cluster-default"},
-		{"nil-target", &models.PipelineRun{}, "cluster-default"},
-		{"blank", &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{}}, "cluster-default"},
-		{"whitespace", &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{ClusterID: "   "}}, "cluster-default"},
-		{"explicit", &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}}, "cluster-delivery"},
+// testClusterOf mirrors the pre-fix runClusterID pure logic (ExecutionTarget
+// object only) — used by groupRunIndicesByCluster tests where the resolver is
+// injected. The real production resolver is resolveRunClusterID, tested below.
+func testClusterOf(r *models.PipelineRun) string {
+	if r != nil && r.ExecutionTarget != nil {
+		if id := strings.TrimSpace(r.ExecutionTarget.ClusterID); id != "" {
+			return id
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := runClusterID(tc.run); got != tc.want {
-				t.Errorf("want %q, got %q", tc.want, got)
-			}
-		})
+	return "cluster-default"
+}
+
+// TestResolveRunClusterID_ObjectFirst: a populated ExecutionTarget wins and
+// no target lookup happens.
+func TestResolveRunClusterID_ObjectFirst(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{}}
+	uc := &Usecase{targetRepo: repo}
+	run := &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}}
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Errorf("want cluster-delivery, got %q", got)
+	}
+}
+
+// TestResolveRunClusterID_LookupByTargetID is the CYB-3486 4d.5 regression:
+// watcher/summary runs have only ExecutionTargetID (no nested object), and the
+// cluster must be resolved via the target lookup instead of falling back to
+// cluster-default.
+func TestResolveRunClusterID_LookupByTargetID(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"delivery-clust-dev": {ID: "delivery-clust-dev", ClusterID: "cluster-delivery"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	run := &models.PipelineRun{ExecutionTargetID: "delivery-clust-dev"} // no ExecutionTarget object
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Fatalf("REGRESSION: want cluster-delivery via target lookup, got %q", got)
+	}
+	// Second call must hit the cache (delete the repo row; still resolves).
+	delete(repo.byID, "delivery-clust-dev")
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Errorf("cache miss: want cluster-delivery from cache, got %q", got)
+	}
+}
+
+// TestResolveRunClusterID_Fallbacks: nil run, no target id, and target-not-found
+// all resolve to cluster-default (and a not-found is NOT cached).
+func TestResolveRunClusterID_Fallbacks(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	if got := uc.resolveRunClusterID(ctx, nil); got != "cluster-default" {
+		t.Errorf("nil run: want cluster-default, got %q", got)
+	}
+	if got := uc.resolveRunClusterID(ctx, &models.PipelineRun{}); got != "cluster-default" {
+		t.Errorf("no target id: want cluster-default, got %q", got)
+	}
+	// target id present but not in repo → default, and not cached
+	run := &models.PipelineRun{ExecutionTargetID: "ghost"}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-default" {
+		t.Errorf("missing target: want cluster-default, got %q", got)
+	}
+	if _, cached := uc.targetClusterCache.Load("ghost"); cached {
+		t.Errorf("a not-found target must not be cached (transient errors would pin it)")
+	}
+	// now add it → resolves (proves the miss wasn't cached)
+	repo.byID["ghost"] = &models.ExecutionTarget{ID: "ghost", ClusterID: "cluster-x"}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-x" {
+		t.Errorf("after adding target: want cluster-x, got %q", got)
 	}
 }
 
