@@ -23,8 +23,14 @@ K8S_CONFIGMAP_NAME="${K8S_CONFIGMAP_NAME:-cyber-databrew-config}"
 K8S_SECRET_NAME="${K8S_SECRET_NAME:-cyber-databrew-secrets}"
 ENV_FILE="${ENV_FILE:-}"
 
-CPU="${CPU:-1}"
-MEMORY="${MEMORY:-2Gi}"
+# CPU/MEM raised from 1/2Gi (cyb-3491): the dev backend runs the batch
+# submitter, the run-status projector, AND every exit-hook webhook on one
+# service. Under load-test throughput the single vCPU was the bottleneck —
+# dispatch stalled at ~236/min (of a possible ~512) because the submitter's
+# per-cycle submits, the watcher, and hundreds of ~2.5s webhooks all contended
+# for one core. 4 vCPU / 4Gi gives them room. Still env-overridable.
+CPU="${CPU:-4}"
+MEMORY="${MEMORY:-4Gi}"
 # Keep one instance always warm. The batch submitter and the run-status
 # projector are in-process background loops (15s / 30s tickers), not
 # request-driven. With min-instances=0 Cloud Run scales to zero when idle and
