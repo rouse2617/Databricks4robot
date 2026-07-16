@@ -596,21 +596,23 @@ export default function PoolManager() {
 						) : null}
 						{Object.entries(podLabels).map(([k, v]) => (
 							<Tag color="magenta" key={`pl-${k}`} style={{ fontSize: 11 }}>
-								{k}={v}
+								label: {k}={v}
 							</Tag>
 						))}
 						{tols.map((t) => (
 							<Tag
+								color="geekblue"
 								key={`tol-${t.key}-${t.value ?? ""}-${t.effect}`}
 								style={{ fontSize: 11 }}
 							>
-								{t.key}
+								tol: {t.key}
 								{t.operator === "Equal" && t.value ? `=${t.value}` : ""}
+								{t.effect ? ` (${t.effect})` : ""}
 							</Tag>
 						))}
 						{Object.entries(sel).map(([k, v]) => (
 							<Tag color="cyan" key={`sel-${k}`} style={{ fontSize: 11 }}>
-								{k}={v}
+								sel: {k}={v}
 							</Tag>
 						))}
 					</Space>

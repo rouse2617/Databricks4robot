@@ -202,8 +202,42 @@ describe("PoolManager — templateTolerations editor", () => {
 	it("renders existing tolerations as tags in the scheduling column", async () => {
 		renderPoolManager();
 		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
-		expect(await screen.findByText("compute-tier=med")).toBeDefined();
-		expect(screen.getByText("durability=spot")).toBeDefined();
+		expect(await screen.findByText(/tol: compute-tier=med/)).toBeDefined();
+		expect(screen.getByText(/tol: durability=spot/)).toBeDefined();
+	});
+
+	it("distinguishes toleration vs nodeSelector in the scheduling column (CYB-3486)", async () => {
+		// Regression: the list column flattened tolerations and nodeSelector into
+		// identical key=value capsules, so the SAME key (durability) looked the
+		// same whether it was a soft toleration or a hard node pin. Prefixes must
+		// split them — tol: vs sel:.
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "mixed-1",
+				name: "mixed-pool",
+				cluster: "default",
+				namespace: "video-proc-prod",
+				argoServerConfigured: true,
+				status: "available",
+				isDefault: false,
+				resourceDefaults: {
+					templateTolerations: [
+						{
+							key: "durability",
+							operator: "Equal",
+							value: "spot",
+							effect: "NoSchedule",
+						},
+					],
+					templateNodeSelector: { durability: "standard" },
+				},
+			},
+			defaultTarget,
+		]);
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+		expect(await screen.findByText(/tol: durability=spot/)).toBeDefined();
+		expect(screen.getByText(/sel: durability=standard/)).toBeDefined();
 	});
 
 	it("prefills tolerations when opening edit modal", async () => {
