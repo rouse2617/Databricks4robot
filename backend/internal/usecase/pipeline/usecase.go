@@ -1062,7 +1062,15 @@ func (uc *Usecase) UpdateExecutionTarget(ctx context.Context, t *models.Executio
 	if err != nil {
 		return err
 	}
-	return uc.targetRepo.Save(ctx, t)
+	if err := uc.targetRepo.Save(ctx, t); err != nil {
+		return err
+	}
+	// The target's cluster_id may have just changed; drop the memoized
+	// execution_target_id → cluster_id entry so resolveRunClusterID re-reads it.
+	// A stale entry would keep routing this target's runs (status reads, stop /
+	// retry, log fetch) to the OLD cluster for the process lifetime.
+	uc.targetClusterCache.Delete(strings.TrimSpace(t.ID))
+	return nil
 }
 
 func (uc *Usecase) DeleteExecutionTarget(ctx context.Context, id string) error {
@@ -1070,7 +1078,11 @@ func (uc *Usecase) DeleteExecutionTarget(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return uc.targetRepo.Delete(ctx, id)
+	if err := uc.targetRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	uc.targetClusterCache.Delete(strings.TrimSpace(id))
+	return nil
 }
 
 func (uc *Usecase) StopBatchRuns(ctx context.Context, batchJobID, owner string) (stopped, failed int, _ error) {

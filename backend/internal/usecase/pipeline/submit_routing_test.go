@@ -372,6 +372,54 @@ func TestResolveRunClusterID_Fallbacks(t *testing.T) {
 	}
 }
 
+// TestUpdateExecutionTarget_InvalidatesClusterCache: editing a pool to a
+// different cluster must drop the memoized execution_target_id → cluster_id
+// entry, or resolveRunClusterID keeps routing that target's runs (status reads,
+// stop / retry, logs) to the OLD cluster for the process lifetime.
+func TestUpdateExecutionTarget_InvalidatesClusterCache(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"t1": {ID: "t1", ClusterID: "cluster-a"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	run := &models.PipelineRun{ExecutionTargetID: "t1"}
+
+	// Prime the cache → cluster-a.
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-a" {
+		t.Fatalf("prime: want cluster-a, got %q", got)
+	}
+	// Move the pool to another cluster.
+	if err := uc.UpdateExecutionTarget(ctx, &models.ExecutionTarget{
+		ID: "t1", ClusterID: "cluster-b",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-b" {
+		t.Errorf("stale cache after cluster change: want cluster-b, got %q", got)
+	}
+}
+
+// TestDeleteExecutionTarget_InvalidatesClusterCache: deleting a pool drops its
+// cached cluster so a re-created target id can't inherit the old mapping.
+func TestDeleteExecutionTarget_InvalidatesClusterCache(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"t1": {ID: "t1", ClusterID: "cluster-a"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	run := &models.PipelineRun{ExecutionTargetID: "t1"}
+
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-a" {
+		t.Fatalf("prime: want cluster-a, got %q", got)
+	}
+	if err := uc.DeleteExecutionTarget(ctx, "t1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, cached := uc.targetClusterCache.Load("t1"); cached {
+		t.Errorf("cache entry must be dropped after delete")
+	}
+}
+
 func TestGetWorkflowWithUID_UsesProvidedClient(t *testing.T) {
 	var providedCalled bool
 	provided := &mockWorkflowClient{
