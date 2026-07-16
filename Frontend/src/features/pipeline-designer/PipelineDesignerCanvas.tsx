@@ -46,7 +46,12 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
 import { BATCH_ASSET_THRESHOLD } from "../../api/deployPipelineRun";
-import { type ExecutionTarget, savePipeline } from "../../api/pipelineApi";
+import {
+	type ElasticQuota,
+	type ExecutionTarget,
+	listElasticQuotas,
+	savePipeline,
+} from "../../api/pipelineApi";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import AssetPicker, {
 	type AssetPickerHandle,
@@ -54,6 +59,10 @@ import AssetPicker, {
 import { ComponentPalette } from "../../components/pipeline/ComponentPalette";
 import { NodeConfigPanel } from "../../components/pipeline/NodeConfigPanel";
 import { PipelineEmptyState } from "../../components/pipeline/PipelineEmptyState";
+import {
+	matchPoolEq,
+	poolUsageSummary,
+} from "../../components/pipeline/poolUsage";
 import type {
 	Pipeline,
 	PipelineNodeData,
@@ -457,6 +466,28 @@ function PipelineDesignerCanvasInner({
 			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
 		[executionTargets, selectedTargetId],
 	);
+	// CYB-3486: fetch each target cluster's ElasticQuotas so the pool picker can
+	// show live usage. The designer's deploy dropdown previously showed only
+	// "name · namespace" — no signal on which pool actually has room.
+	const [poolEqs, setPoolEqs] = useState<Record<string, ElasticQuota[]>>({});
+	useEffect(() => {
+		const clusterKeys = Array.from(
+			new Set(executionTargets.map((t) => t.clusterId ?? "")),
+		);
+		let cancelled = false;
+		Promise.all(
+			clusterKeys.map((k) =>
+				listElasticQuotas(k)
+					.then((eqs) => [k, eqs] as const)
+					.catch(() => [k, [] as ElasticQuota[]] as const),
+			),
+		).then((pairs) => {
+			if (!cancelled) setPoolEqs(Object.fromEntries(pairs));
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [executionTargets]);
 	const hasDataEdges = useMemo(
 		() => edges.some((edge) => !isDependencyEdge(edge)),
 		[edges],
@@ -1690,7 +1721,7 @@ function PipelineDesignerCanvasInner({
 								type="secondary"
 								style={{ fontSize: 12, marginBottom: 16 }}
 							>
-								选择存储池和资产后，将流水线转换为 Argo Workflow 并提交到
+								选择资源池和资产后，将流水线转换为 Argo Workflow 并提交到
 								Kubernetes
 								集群。选择多个资产时，会为每个资产各下发一条执行记录。
 							</Typography.Paragraph>
@@ -1769,7 +1800,7 @@ function PipelineDesignerCanvasInner({
 										color: "#64748b",
 									}}
 								>
-									存储池
+									资源池
 									<Select
 										id="pp-execution-target"
 										value={selectedTargetId}
@@ -1793,11 +1824,15 @@ function PipelineDesignerCanvasInner({
 														argoServerConfigured: false,
 													} satisfies ExecutionTarget,
 												]
-										).map((target) => ({
-											value: target.id,
-											label: `${target.isDefault ? "默认目标" : target.name} · ${target.namespace}`,
-											disabled: target.status !== "available",
-										}))}
+										).map((target) => {
+											const eq = matchPoolEq(target, poolEqs);
+											const usage = eq ? ` · ${poolUsageSummary(eq)}` : "";
+											return {
+												value: target.id,
+												label: `${target.isDefault ? "默认目标" : target.name} · ${target.namespace}${usage}`,
+												disabled: target.status !== "available",
+											};
+										})}
 									/>
 								</label>
 								<div
@@ -1921,7 +1956,7 @@ function PipelineDesignerCanvasInner({
 									</div>
 									{selectedExecutionTarget ? (
 										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-											存储池：{selectedExecutionTarget.name}
+											资源池：{selectedExecutionTarget.name}
 										</Typography.Text>
 									) : null}
 									<Collapse

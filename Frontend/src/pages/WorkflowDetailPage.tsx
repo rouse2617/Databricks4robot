@@ -2027,7 +2027,7 @@ function WorkflowRunMetadataPanel({
 						{ label: "Namespace", val: runtime?.namespace, mono: true },
 						{ label: "UID", val: runtime?.uid, mono: true },
 						{ label: "状态", val: runtime?.status },
-						{ label: "存储池", val: runtime?.executionTargetId, mono: true },
+						{ label: "资源池", val: runtime?.executionTargetId, mono: true },
 					]
 						.filter((kv) => kv.val)
 						.map((kv) => (
