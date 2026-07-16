@@ -61,7 +61,9 @@ import { NodeConfigPanel } from "../../components/pipeline/NodeConfigPanel";
 import { PipelineEmptyState } from "../../components/pipeline/PipelineEmptyState";
 import {
 	matchPoolEq,
-	poolUsageSummary,
+	poolAvailability,
+	poolAvailabilityLabel,
+	poolFreeSummary,
 } from "../../components/pipeline/poolUsage";
 import type {
 	Pipeline,
@@ -1826,7 +1828,9 @@ function PipelineDesignerCanvasInner({
 												]
 										).map((target) => {
 											const eq = matchPoolEq(target, poolEqs);
-											const usage = eq ? ` · ${poolUsageSummary(eq)}` : "";
+											const usage = eq
+												? ` · ${poolAvailabilityLabel(poolAvailability(eq))} · ${poolFreeSummary(eq)}`
+												: "";
 											return {
 												value: target.id,
 												label: `${target.isDefault ? "默认目标" : target.name} · ${target.namespace}${usage}`,

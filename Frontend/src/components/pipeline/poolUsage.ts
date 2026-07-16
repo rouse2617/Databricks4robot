@@ -56,3 +56,98 @@ export function distinctClusterKeys(targets: ExecutionTarget[]): string[] {
 	for (const t of targets) keys.add(clusterKey(t));
 	return Array.from(keys);
 }
+
+// --- Pool availability (CYB-3486) ------------------------------------------
+// A bare utilization % can't answer "will my task fit?". These turn an EQ's raw
+// used/min/max into a schedulability signal + absolute headroom. Koord semantics:
+//   used ≤ min       → 充足: inside the guaranteed floor, always schedulable
+//   min < used < max → 紧张: borrowing past the floor (needs slack elsewhere)
+//   used ≥ max       → 满: at the ceiling, can't take more
+
+// parseCpuMillis parses a k8s CPU quantity ("1", "500m", "2") to millicores.
+export function parseCpuMillis(q: string): number {
+	const s = (q ?? "").trim();
+	if (s === "") return 0;
+	if (s.endsWith("m")) return parseFloat(s.slice(0, -1)) || 0;
+	return (parseFloat(s) || 0) * 1000;
+}
+
+// parseMemMi parses a k8s memory quantity ("2Gi", "64Mi", "512Ki") to Mebibytes.
+// A bare number is treated as bytes.
+export function parseMemMi(q: string): number {
+	const m = (q ?? "").trim().match(/^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti)?$/);
+	if (!m) return 0;
+	const v = parseFloat(m[1]) || 0;
+	switch (m[2]) {
+		case "Ki":
+			return v / 1024;
+		case "Mi":
+			return v;
+		case "Gi":
+			return v * 1024;
+		case "Ti":
+			return v * 1024 * 1024;
+		default:
+			return v / (1024 * 1024);
+	}
+}
+
+export type PoolAvailability = "ample" | "tight" | "full";
+
+function dimLevel(used: number, min: number, max: number): 0 | 1 | 2 {
+	if (max > 0 && used >= max) return 2;
+	if (used > min) return 1;
+	return 0;
+}
+
+// poolAvailability collapses CPU + memory into the worse of the two dimensions.
+export function poolAvailability(eq: ElasticQuota): PoolAvailability {
+	const level = Math.max(
+		dimLevel(
+			parseCpuMillis(eq.used.cpu),
+			parseCpuMillis(eq.min.cpu),
+			parseCpuMillis(eq.max.cpu),
+		),
+		dimLevel(
+			parseMemMi(eq.used.memory),
+			parseMemMi(eq.min.memory),
+			parseMemMi(eq.max.memory),
+		),
+	);
+	return level === 2 ? "full" : level === 1 ? "tight" : "ample";
+}
+
+// poolAvailabilityLabel is the short zh label for a PoolAvailability.
+export function poolAvailabilityLabel(a: PoolAvailability): string {
+	return a === "full" ? "满" : a === "tight" ? "紧张" : "充足";
+}
+
+function fmtCpuMillis(m: number): string {
+	if (m >= 1000) {
+		const c = m / 1000;
+		return `${Number.isInteger(c) ? c : c.toFixed(1)}c`;
+	}
+	return `${Math.round(m)}m`;
+}
+
+function fmtMemMi(mi: number): string {
+	if (mi >= 1024) {
+		const g = mi / 1024;
+		return `${Number.isInteger(g) ? g : g.toFixed(1)}Gi`;
+	}
+	return `${Math.round(mi)}Mi`;
+}
+
+// poolFreeSummary is the "空闲 4c / 16Gi" absolute headroom to max, so a deployer
+// can tell whether a task fits without mentally computing max − used.
+export function poolFreeSummary(eq: ElasticQuota): string {
+	const cpuFree = Math.max(
+		0,
+		parseCpuMillis(eq.max.cpu) - parseCpuMillis(eq.used.cpu),
+	);
+	const memFree = Math.max(
+		0,
+		parseMemMi(eq.max.memory) - parseMemMi(eq.used.memory),
+	);
+	return `空闲 ${fmtCpuMillis(cpuFree)} / ${fmtMemMi(memFree)}`;
+}

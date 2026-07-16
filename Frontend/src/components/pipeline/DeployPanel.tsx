@@ -72,8 +72,10 @@ import { PoolUsageBar } from "./PoolUsageBar";
 import {
 	distinctClusterKeys,
 	matchPoolEq,
+	poolAvailability,
+	poolAvailabilityLabel,
 	poolEqName,
-	poolUsageSummary,
+	poolFreeSummary,
 } from "./poolUsage";
 import type { Pipeline } from "./types";
 import { VersionHistoryDrawer } from "./VersionHistoryDrawer";
@@ -1709,7 +1711,7 @@ export function DeployPanel({
 							let usage = "";
 							let title = "";
 							if (eq) {
-								usage = ` · ${poolUsageSummary(eq)}`;
+								usage = ` · ${poolAvailabilityLabel(poolAvailability(eq))} · ${poolFreeSummary(eq)}`;
 								title = `弹性配额 ${eq.name} — CPU ${eq.used.cpu}/${eq.min.cpu}/${eq.max.cpu} · Mem ${eq.used.memory}/${eq.min.memory}/${eq.max.memory}（used/min/max）`;
 							} else if (nsq) {
 								usage = ` · ⚡${nsq.cpu.used}/${nsq.cpu.hard}C`;

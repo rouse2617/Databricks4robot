@@ -5,7 +5,12 @@ import {
 	distinctClusterKeys,
 	KOORD_EQ_LABEL_KEY,
 	matchPoolEq,
+	parseCpuMillis,
+	parseMemMi,
+	poolAvailability,
+	poolAvailabilityLabel,
 	poolEqName,
+	poolFreeSummary,
 	poolUsageSummary,
 } from "./poolUsage";
 
@@ -136,5 +141,64 @@ describe("poolUsage", () => {
 		it("returns just the default key for an empty pool list", () => {
 			expect(distinctClusterKeys([])).toEqual([""]);
 		});
+	});
+});
+
+describe("poolUsage — availability & headroom (CYB-3486)", () => {
+	const eq = (over: Partial<ElasticQuota> = {}): ElasticQuota => ({
+		name: "q",
+		namespace: "ns",
+		min: { cpu: "2", memory: "4Gi" },
+		max: { cpu: "10", memory: "20Gi" },
+		used: { cpu: "0", memory: "0" },
+		utilizationPercent: { cpu: 0, memory: 0 },
+		...over,
+	});
+
+	it("parses cpu quantities to millicores", () => {
+		expect(parseCpuMillis("1")).toBe(1000);
+		expect(parseCpuMillis("500m")).toBe(500);
+		expect(parseCpuMillis("2")).toBe(2000);
+		expect(parseCpuMillis("")).toBe(0);
+	});
+
+	it("parses memory quantities to Mi", () => {
+		expect(parseMemMi("64Mi")).toBe(64);
+		expect(parseMemMi("2Gi")).toBe(2048);
+		expect(parseMemMi("1024Ki")).toBe(1);
+		expect(parseMemMi("")).toBe(0);
+	});
+
+	it("reports 充足 inside the guaranteed floor (used ≤ min)", () => {
+		const a = poolAvailability(eq({ used: { cpu: "1", memory: "2Gi" } }));
+		expect(a).toBe("ample");
+		expect(poolAvailabilityLabel(a)).toBe("充足");
+	});
+
+	it("reports 紧张 when borrowing past min", () => {
+		const a = poolAvailability(eq({ used: { cpu: "5", memory: "2Gi" } }));
+		expect(a).toBe("tight");
+		expect(poolAvailabilityLabel(a)).toBe("紧张");
+	});
+
+	it("reports 满 at the ceiling (used ≥ max on either dim)", () => {
+		const a = poolAvailability(eq({ used: { cpu: "10", memory: "2Gi" } }));
+		expect(a).toBe("full");
+		expect(poolAvailabilityLabel(a)).toBe("满");
+	});
+
+	it("takes the worse of cpu / memory", () => {
+		expect(poolAvailability(eq({ used: { cpu: "1", memory: "20Gi" } }))).toBe(
+			"full",
+		);
+	});
+
+	it("summarizes free headroom to max", () => {
+		expect(poolFreeSummary(eq({ used: { cpu: "4", memory: "4Gi" } }))).toBe(
+			"空闲 6c / 16Gi",
+		);
+		expect(poolFreeSummary(eq({ used: { cpu: "10", memory: "20Gi" } }))).toBe(
+			"空闲 0m / 0Mi",
+		);
 	});
 });
