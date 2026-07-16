@@ -34,6 +34,23 @@ var maxConcurrentBatchItems = func() int {
 	return 5
 }()
 
+// perJobSubmitBatch caps how many pending items one job dispatches per submit
+// cycle (submitterInterval, 15s). It is the per-job dispatch ceiling:
+// perJobSubmitBatch * (60/15) items/min. Raised from the original hard-coded 32
+// and made tunable (BACKFILL_SUBMIT_BATCH) because — once Argo parallelism was
+// lifted — DISPATCH, not execution, was the throughput bottleneck (CYB-3491
+// load test measured dispatch pinned at exactly 32*4 = 128/min). 128 feeds a
+// parallelism=200 pool comfortably; maxConcurrentBatchItems still bounds the
+// in-flight concurrency of each cycle's submits.
+var perJobSubmitBatch = func() int {
+	if v := os.Getenv("BACKFILL_SUBMIT_BATCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 128
+}()
+
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and

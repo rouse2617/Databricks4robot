@@ -38,7 +38,6 @@ import (
 const (
 	submitterInterval       = 15 * time.Second
 	submittableJobsPerCycle = 50
-	perJobSubmitBatch       = 32
 )
 
 // subtaskDeployer is the slice of the pipeline usecase the submitter needs.
