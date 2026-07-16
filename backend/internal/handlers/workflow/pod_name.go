@@ -6,6 +6,8 @@ import (
 	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 )
 
 const podNameCacheTTL = 2 * time.Minute
@@ -55,32 +57,10 @@ func InvalidatePodNameCache(workflowName string) {
 	}
 }
 
+// resolveWorkflowPodName delegates to argo.PodNameForNode, the single source of
+// truth for argo POD_NAMES=v2 pod naming shared with the argo CRD client.
 func resolveWorkflowPodName(wf *wfv1.Workflow, nodeID string) (string, bool) {
-	if wf == nil || strings.TrimSpace(nodeID) == "" {
-		return "", false
-	}
-	node, ok := wf.Status.Nodes[nodeID]
-	if !ok {
-		return "", false
-	}
-	if node.Type != wfv1.NodeTypePod {
-		return "", false
-	}
-
-	workflowName := strings.TrimSpace(wf.Name)
-	stepName := strings.TrimSpace(node.TemplateName)
-	if stepName == "" {
-		stepName = strings.TrimSpace(node.DisplayName)
-	}
-	if workflowName == "" || stepName == "" {
-		return node.ID, true
-	}
-
-	suffix := strings.TrimPrefix(node.ID, workflowName+"-")
-	if suffix == "" || suffix == node.ID {
-		return node.ID, true
-	}
-	return workflowName + "-" + sanitizePodNamePart(stepName) + "-" + suffix, true
+	return argo.PodNameForNode(wf, nodeID)
 }
 
 func resolveCachedWorkflowPodName(wf *wfv1.Workflow, nodeID string) (string, bool) {
@@ -96,23 +76,4 @@ func resolveCachedWorkflowPodName(wf *wfv1.Workflow, nodeID string) (string, boo
 		globalPodNameCache.set(key, podName)
 	}
 	return podName, ok
-}
-
-func sanitizePodNamePart(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var out strings.Builder
-	lastDash := false
-	for _, r := range value {
-		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if valid {
-			out.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			out.WriteByte('-')
-			lastDash = true
-		}
-	}
-	return strings.Trim(out.String(), "-")
 }

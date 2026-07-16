@@ -198,10 +198,14 @@ func (c *crdWorkflowClient) RetryWorkflow(ctx context.Context, name, namespace s
 		if node.Phase != wfv1.NodeFailed && node.Phase != wfv1.NodeError {
 			continue
 		}
-		if node.Type == wfv1.NodeTypePod && node.ID != "" {
-			// Argo pod naming: <workflow>-<template>-<hash>; the node.ID is
-			// the pod name for pod-type nodes in argo v3.
-			podsToDelete = append(podsToDelete, node.ID)
+		if node.Type == wfv1.NodeTypePod {
+			// The pod name is NOT node.ID: argo POD_NAMES=v2 (v3.4+ default)
+			// names pods "<workflow>-<template>-<suffix>". Deleting by node.ID
+			// would silently miss the pod (NotFound below), leaving the stale
+			// Failed pod that makes workflow-controller skip the retry.
+			if podName, ok := PodNameForNode(wf, id); ok && podName != "" {
+				podsToDelete = append(podsToDelete, podName)
+			}
 		}
 		node.Phase = wfv1.NodePending
 		node.Message = ""
@@ -336,7 +340,6 @@ func resubmitAnnotations(src map[string]string) map[string]string {
 	return out
 }
 
-
 // GetWorkflowLogs reads bounded logs for a workflow pod via the K8s pod log
 // API. When podName is empty the caller wants every pod in the workflow
 // interleaved by node startedAt (argo-server /log behavior); when podName is
@@ -431,11 +434,17 @@ func (c *crdWorkflowClient) podsForLogs(ctx context.Context, workflowName, podNa
 		return nil, err
 	}
 	entries := make([]podLogEntry, 0, len(wf.Status.Nodes))
-	for _, node := range wf.Status.Nodes {
-		if node.Type != wfv1.NodeTypePod || node.ID == "" {
+	for id, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod {
 			continue
 		}
-		entries = append(entries, podLogEntry{id: node.ID, start: node.StartedAt})
+		// Resolve the real pod name (POD_NAMES=v2), not node.ID — the K8s log
+		// API is keyed by pod name and would 404 on the raw node ID.
+		podName, ok := PodNameForNode(wf, id)
+		if !ok || podName == "" {
+			continue
+		}
+		entries = append(entries, podLogEntry{id: podName, start: node.StartedAt})
 	}
 	if len(entries) > 1 {
 		sortPodLogEntries(entries)

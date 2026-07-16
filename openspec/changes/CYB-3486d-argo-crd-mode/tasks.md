@@ -162,3 +162,18 @@ truth.
       (all sit on `feat/cyb-3486d-remaining`, PR #426 draft awaiting user review)
 - [ ] Dev smoke green
 - [x] Backend `go test ./...` all green through the series
+
+## PR 4d.6 · fix: CRD client pod naming (POD_NAMES=v2) — code-review follow-up
+
+Bug found in code review of the merged 4d series. See `decisions.md` D8.
+
+- [x] Extract v2 pod-naming into `argo.PodNameForNode` (single source of truth)
+- [x] `RetryWorkflow` deletes stale pods by resolved pod name, not `node.ID`
+- [x] `podsForLogs` (aggregate log fetch) enumerates by resolved pod name
+- [x] `handlers/workflow.resolveWorkflowPodName` delegates to `argo.PodNameForNode`
+      (removes the duplicated implementation; TTL-cache wrapper unchanged)
+- [x] Unit tests: `argo.PodNameForNode` (v2 vs node.ID, sanitize, displayName
+      fallback, root-node fallback, non-pod, missing inputs)
+- [x] Regression: CRD retry test uses realistic node IDs + a node-ID-named
+      decoy pod that must survive; verified tests fail against the old logic
+- [x] `go build ./...` + `go test ./...` green

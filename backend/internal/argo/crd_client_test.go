@@ -290,36 +290,52 @@ func TestCRDClient_LifecycleOps_NotFoundTranslated(t *testing.T) {
 func TestCRDClient_RetryWorkflow_ResetsFailedNodes(t *testing.T) {
 	seed := makeUnstructuredWorkflow("wf-1", "argo", "Failed", nil)
 	seed.Object["spec"] = map[string]any{"entrypoint": "main"}
+	// Node IDs and templateName mimic real argo: the pod for node "wf-1-2"
+	// (template "transcode") is named "wf-1-transcode-2" under POD_NAMES=v2 —
+	// NOT the node ID. This is the regression the fix targets.
 	seed.Object["status"] = map[string]any{
 		"phase":      "Failed",
 		"message":    "step X errored",
 		"finishedAt": "2026-07-16T00:00:00Z",
 		"nodes": map[string]any{
-			"n-ok": map[string]any{
-				"id":    "n-ok",
-				"type":  "Pod",
-				"phase": "Succeeded",
+			"wf-1-1": map[string]any{
+				"id":           "wf-1-1",
+				"templateName": "prepare",
+				"type":         "Pod",
+				"phase":        "Succeeded",
 			},
-			"n-fail": map[string]any{
-				"id":    "n-fail",
-				"type":  "Pod",
-				"phase": "Failed",
+			"wf-1-2": map[string]any{
+				"id":           "wf-1-2",
+				"templateName": "transcode",
+				"type":         "Pod",
+				"phase":        "Failed",
 			},
 		},
 	}
 	client, dyn := newFakeCRDClient(t, "argo", seed)
 
-	// Pre-create the failed pod so we can assert it's deleted after retry.
-	if err := seedPod(client, "n-fail", "argo"); err != nil {
+	// Pre-create the real v2 pod so we can assert it's deleted after retry.
+	const failPodName = "wf-1-transcode-2"
+	if err := seedPod(client, failPodName, "argo"); err != nil {
 		t.Fatalf("seed pod: %v", err)
+	}
+	// Decoy: a pod named after the raw node ID. Retry must NOT touch it —
+	// deleting by node.ID (the pre-fix bug) would wrongly remove this one and
+	// leave the real pod behind, silently defeating the retry.
+	if err := seedPod(client, "wf-1-2", "argo"); err != nil {
+		t.Fatalf("seed decoy pod: %v", err)
 	}
 	if err := client.RetryWorkflow(context.Background(), "wf-1", "argo"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 
-	// The failed pod must be gone.
-	if _, err := client.pods.CoreV1().Pods("argo").Get(context.Background(), "n-fail", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("failed pod should be deleted after retry; got err=%v", err)
+	// The real failed pod must be gone.
+	if _, err := client.pods.CoreV1().Pods("argo").Get(context.Background(), failPodName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("failed pod %q should be deleted after retry; got err=%v", failPodName, err)
+	}
+	// The node-ID-named decoy must survive (proves we delete by pod name, not node ID).
+	if _, err := client.pods.CoreV1().Pods("argo").Get(context.Background(), "wf-1-2", metav1.GetOptions{}); err != nil {
+		t.Errorf("decoy pod named after node ID must not be deleted; got err=%v", err)
 	}
 	// Succeeded node untouched, failed node reset.
 	got, _ := dyn.Resource(workflowGVR).Namespace("argo").Get(context.Background(), "wf-1", metav1.GetOptions{})
@@ -333,11 +349,11 @@ func TestCRDClient_RetryWorkflow_ResetsFailedNodes(t *testing.T) {
 		t.Errorf("workflow message must clear on retry, got %v", msg)
 	}
 	nodes := status["nodes"].(map[string]any)
-	if nodes["n-ok"].(map[string]any)["phase"] != "Succeeded" {
-		t.Errorf("succeeded node must not be reset; phase=%v", nodes["n-ok"].(map[string]any)["phase"])
+	if nodes["wf-1-1"].(map[string]any)["phase"] != "Succeeded" {
+		t.Errorf("succeeded node must not be reset; phase=%v", nodes["wf-1-1"].(map[string]any)["phase"])
 	}
-	if nodes["n-fail"].(map[string]any)["phase"] != "Pending" {
-		t.Errorf("failed node must reset to Pending; got %v", nodes["n-fail"].(map[string]any)["phase"])
+	if nodes["wf-1-2"].(map[string]any)["phase"] != "Pending" {
+		t.Errorf("failed node must reset to Pending; got %v", nodes["wf-1-2"].(map[string]any)["phase"])
 	}
 }
 
@@ -360,9 +376,9 @@ func TestCRDClient_RetryWorkflow_NotFound(t *testing.T) {
 
 func TestCRDClient_Resubmit_ClonesSpecCleansMetadata(t *testing.T) {
 	seed := makeUnstructuredWorkflow("wf-1-abcd1", "argo", "Failed", map[string]string{
-		"pipeline":                             "p1",
-		"workflows.argoproj.io/completed":      "true",
-		"workflows.argoproj.io/phase":          "Failed",
+		"pipeline":                        "p1",
+		"workflows.argoproj.io/completed": "true",
+		"workflows.argoproj.io/phase":     "Failed",
 	})
 	seed.Object["spec"] = map[string]any{
 		"entrypoint": "main",
@@ -466,33 +482,37 @@ func TestCRDClient_GetWorkflowLogs_LimitBytesTruncates(t *testing.T) {
 // falls back to enumerating workflow.status.nodes.
 func TestCRDClient_GetWorkflowLogs_EmptyPodEnumeratesFromNodes(t *testing.T) {
 	seed := makeUnstructuredWorkflow("wf-1", "argo", "Succeeded", nil)
+	// Real v2 pod names ("wf-1-<template>-<suffix>") differ from node IDs; the
+	// log fetch must resolve them, not read logs by raw node ID.
 	seed.Object["status"] = map[string]any{
 		"phase": "Succeeded",
 		"nodes": map[string]any{
-			"n-a": map[string]any{
-				"id":        "n-a",
-				"type":      "Pod",
-				"phase":     "Succeeded",
-				"startedAt": "2026-07-16T10:00:00Z",
+			"wf-1-1": map[string]any{
+				"id":           "wf-1-1",
+				"templateName": "prepare",
+				"type":         "Pod",
+				"phase":        "Succeeded",
+				"startedAt":    "2026-07-16T10:00:00Z",
 			},
-			"n-b": map[string]any{
-				"id":        "n-b",
-				"type":      "Pod",
-				"phase":     "Succeeded",
-				"startedAt": "2026-07-16T10:00:05Z",
+			"wf-1-2": map[string]any{
+				"id":           "wf-1-2",
+				"templateName": "transcode",
+				"type":         "Pod",
+				"phase":        "Succeeded",
+				"startedAt":    "2026-07-16T10:00:05Z",
 			},
-			"n-nonpod": map[string]any{
-				"id":    "n-nonpod",
+			"wf-1-0": map[string]any{
+				"id":    "wf-1-0",
 				"type":  "DAG",
 				"phase": "Succeeded",
 			},
 		},
 	}
 	client, _ := newFakeCRDClient(t, "argo", seed)
-	if err := seedPod(client, "n-a", "argo"); err != nil {
+	if err := seedPod(client, "wf-1-prepare-1", "argo"); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedPod(client, "n-b", "argo"); err != nil {
+	if err := seedPod(client, "wf-1-transcode-2", "argo"); err != nil {
 		t.Fatal(err)
 	}
 	result, err := client.GetWorkflowLogs(context.Background(), "wf-1", "", "argo", WorkflowLogOptions{})
