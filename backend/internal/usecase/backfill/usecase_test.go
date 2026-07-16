@@ -413,6 +413,98 @@ func TestGetBatchNodeSummary_UsesLogicalBatchTotalForCoverage(t *testing.T) {
 	}
 }
 
+// CYB-3491: in-flight runs usually have NO projected asset-node rows yet
+// (node projection is only near-real-time). Such unprojected in-flight runs
+// must be counted as the frontier node's Running so the node overview agrees
+// with the subtask "运行中" count — not dumped into Pending (the old behaviour
+// that produced "节点运行中=0 / 节点排队=N" while N subtasks showed running).
+func TestGetBatchNodeSummary_AttributesInFlightRunsToFrontierRunning(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{
+			ID:         "job-1",
+			TemplateID: "tpl-1",
+			TotalCount: 100,
+			Status:     "running",
+		},
+		items: make([]models.BackfillItem, 100),
+		aggregates: []repository.BatchNodeStatusAggregate{
+			{PipelineNodeID: "step-1", DisplayName: "step-1", Status: "Succeeded", Count: 60},
+		},
+		runsWithNodeRows: 60,
+	}
+	for i := range repo.items {
+		status := "completed" // first 60 have projected Succeeded node rows
+		if i >= 60 {
+			status = "submitted" // 40 in-flight, no node rows yet
+		}
+		repo.items[i] = models.BackfillItem{
+			ID:      fmt.Sprintf("item-%03d", i),
+			JobID:   "job-1",
+			AssetID: fmt.Sprintf("asset-%03d", i),
+			Status:  status,
+		}
+	}
+	uc := New(repo, nil)
+
+	summary, err := uc.GetBatchNodeSummary(context.Background(), "job-1")
+	if err != nil {
+		t.Fatalf("GetBatchNodeSummary: %v", err)
+	}
+	if summary.Subtasks.Running != 40 || summary.Subtasks.Completed != 60 {
+		t.Fatalf("unexpected subtask counts: %+v", summary.Subtasks)
+	}
+	if len(summary.Nodes) != 1 {
+		t.Fatalf("expected one node, got %d", len(summary.Nodes))
+	}
+	node := summary.Nodes[0]
+	if node.Counts["Succeeded"] != 60 || node.Counts["Running"] != 40 || node.Counts["Pending"] != 0 {
+		t.Fatalf("want Succeeded=60 Running=40 Pending=0 (in-flight → frontier running), got %+v", node.Counts)
+	}
+}
+
+// CYB-3491: the unprojected fill must split by subtask truth — never-started
+// items ('pending') are queued; in-flight items are running.
+func TestGetBatchNodeSummary_SplitsUnprojectedFillBySubtaskStatus(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{
+			ID:         "job-1",
+			TemplateID: "tpl-1",
+			TotalCount: 100,
+			Status:     "running",
+		},
+		items: make([]models.BackfillItem, 100),
+		aggregates: []repository.BatchNodeStatusAggregate{
+			{PipelineNodeID: "step-1", DisplayName: "step-1", Status: "Succeeded", Count: 20},
+		},
+		runsWithNodeRows: 20,
+	}
+	for i := range repo.items {
+		status := "pending" // 50 never started
+		switch {
+		case i < 20:
+			status = "completed"
+		case i < 50:
+			status = "submitted" // 30 in-flight
+		}
+		repo.items[i] = models.BackfillItem{
+			ID:      fmt.Sprintf("item-%03d", i),
+			JobID:   "job-1",
+			AssetID: fmt.Sprintf("asset-%03d", i),
+			Status:  status,
+		}
+	}
+	uc := New(repo, nil)
+
+	summary, err := uc.GetBatchNodeSummary(context.Background(), "job-1")
+	if err != nil {
+		t.Fatalf("GetBatchNodeSummary: %v", err)
+	}
+	node := summary.Nodes[0]
+	if node.Counts["Succeeded"] != 20 || node.Counts["Running"] != 30 || node.Counts["Pending"] != 50 {
+		t.Fatalf("want Succeeded=20 Running=30 Pending=50, got %+v", node.Counts)
+	}
+}
+
 func TestBatchNodeOrderFromPipeline_NormalizesStepIDs(t *testing.T) {
 	order := batchNodeOrderFromPipeline(map[string]interface{}{
 		"nodes": []interface{}{
@@ -691,12 +783,14 @@ func (r *trackingBackfillRepo) SummarizeItemStatuses(_ context.Context, _ string
 	defer r.mu.Unlock()
 	var summary repository.BackfillItemStatusSummary
 	for _, item := range r.items {
+		// Mirror the production SQL (SummarizeItemStatuses): 'submitted' and
+		// 'awaiting_result' are in-flight and count as Running, not Pending.
 		switch item.Status {
 		case "completed":
 			summary.Completed++
 		case "failed", "cancelled":
 			summary.Failed++
-		case "running":
+		case "running", "awaiting_result", "submitted":
 			summary.Running++
 		default:
 			summary.Pending++

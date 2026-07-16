@@ -844,6 +844,14 @@ export default function BatchJobDetailPage() {
 	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
 	const batchTerminal =
 		actualStatus === "completed" || actualStatus === "failed";
+	// CYB-3491: while node data is still syncing (runsWithNodeRows < runsTotal),
+	// the 运行中/排队 split is an estimate the backend derives from subtask
+	// status, not authoritative per-node phase — so those two cells are marked
+	// provisional (dimmed + tooltip) instead of read as final. 成功/失败 come
+	// only from real node rows and stay authoritative. Skipped once terminal,
+	// where a coverage gap means "never produced node rows", not "syncing".
+	const nodeCoverageProvisional =
+		!!nodeSummary && !batchTerminal && !nodeSummary.dataCoverage.complete;
 
 	if (loading && !job) {
 		return <Skeleton active paragraph={{ rows: 8 }} />;
@@ -1323,22 +1331,31 @@ export default function BatchJobDetailPage() {
 							},
 							{
 								// CYB-3491: 口径是 "节点(step) phase",不是 "batch item"。
-								// 一个 item 的 run 处于 Running 时,当前 step 可能仍是 Pending
-								// (workflow 已接纳、pod 尚未启动)。所以本列的数字与顶部
-								// "运行中" (item 计数) 不必然相等 — 前缀 "节点" 消除歧义。
+								// 节点级只做 workflow 级近实时投影,在飞 run 常常还没有 asset-node
+								// 行;后端把这些"在飞未投影"的 run 计入执行前沿(第一个有缺口的
+								// 节点)的 Running,而非一律塞 Pending。故本列通常与顶部 "运行中"
+								// (item 计数) 对齐,不再自相矛盾。
 								title: "节点运行中",
 								render: (_, record) => {
 									const running = record.counts.Running ?? 0;
-									return running > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "running")}
-										>
-											{running}
-										</Button>
+									const cell =
+										running > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "running")}
+											>
+												{running}
+											</Button>
+										) : (
+											0
+										);
+									return nodeCoverageProvisional ? (
+										<Tooltip title="节点数据同步中，此数字为临时估计，同步完成后可能微调">
+											<span style={{ opacity: 0.45 }}>{cell}</span>
+										</Tooltip>
 									) : (
-										0
+										cell
 									);
 								},
 							},
@@ -1348,16 +1365,24 @@ export default function BatchJobDetailPage() {
 								title: "节点排队",
 								render: (_, record) => {
 									const pending = record.counts.Pending ?? 0;
-									return pending > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "pending")}
-										>
-											{pending}
-										</Button>
+									const cell =
+										pending > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "pending")}
+											>
+												{pending}
+											</Button>
+										) : (
+											0
+										);
+									return nodeCoverageProvisional ? (
+										<Tooltip title="节点数据同步中，此数字为临时估计，同步完成后可能微调">
+											<span style={{ opacity: 0.45 }}>{cell}</span>
+										</Tooltip>
 									) : (
-										0
+										cell
 									);
 								},
 							},

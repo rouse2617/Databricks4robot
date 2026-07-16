@@ -2058,13 +2058,52 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 			},
 		})
 	}
-	// CYB-3490: workflow-level progress is the continuous projection —
-	// one column per run, straight from Argo's status.progress ("done/total").
-	if p := strings.TrimSpace(string(wf.Status.Progress)); p != "" {
+	// CYB-3490/CYB-3491: workflow-level progress is the continuous projection —
+	// one column per run. Recomputed from the step pods rather than copied from
+	// Argo's status.progress, because Argo counts the injected databrew-exit-notify
+	// onExit hook (CYB-3058) as a pod: a single-step pipeline would otherwise
+	// report "1/2" (step done, hook still running) or "2/2" instead of the
+	// truthful "1/1". Fall back to Argo's raw value only before any step pod is
+	// observed.
+	if p := workflowStepProgress(wf); p != "" {
+		run.Progress = p
+	} else if p := strings.TrimSpace(string(wf.Status.Progress)); p != "" {
 		run.Progress = p
 	}
 	uc.persistRunObservation(ctx, run)
 	uc.projectRunNodes(ctx, run, wf, nodeMode, prevStatus)
+}
+
+// workflowStepProgress recomputes the "done/total" progress string from the
+// workflow's step pods, counting only real pipeline steps. Argo's own
+// status.progress counts the injected databrew-exit-notify onExit hook
+// (CYB-3058) as a pod, which inflates the denominator — a single-step pipeline
+// reports "1/2" (step done, hook running) or "2/2" instead of the truthful
+// "1/1". DAG/Steps container nodes are not pods and are already excluded.
+// Returns "" when no step pod has been observed yet so the caller can fall
+// back to Argo's raw value during the brief pre-pod window.
+func workflowStepProgress(wf *wfv1.Workflow) string {
+	if wf == nil {
+		return ""
+	}
+	total, done := 0, 0
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod {
+			continue
+		}
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		total++
+		switch node.Phase {
+		case wfv1.NodeSucceeded, wfv1.NodeSkipped, wfv1.NodeOmitted:
+			done++
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", done, total)
 }
 
 // nodeProjectionMode controls whether an Argo observation projects per-node

@@ -932,13 +932,6 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	}
 	nodes := make([]models.BatchNodeSummaryNode, 0, len(nodesByID))
 	for _, node := range nodesByID {
-		if missing := job.TotalCount - node.Attempted; missing > 0 {
-			node.Counts["Pending"] += missing
-		}
-		failures := node.Counts["Failed"] + node.Counts["Error"]
-		if node.Attempted > 0 {
-			node.FailureRate = float64(failures) / float64(node.Attempted)
-		}
 		nodes = append(nodes, *node)
 	}
 	sort.Slice(nodes, func(i, j int) bool {
@@ -947,6 +940,42 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 		}
 		return nodes[i].DagOrder < nodes[j].DagOrder
 	})
+	// Fill the runs that have no projected asset-node row yet for a node.
+	// CYB-3491: node-level phase is only near-real-time (workflow-level
+	// projection), so an in-flight run usually has NO asset-node rows at all.
+	// Attributing every such run to Pending made the node overview report
+	// "节点运行中=0 / 节点排队=N" while the subtask list showed N running — a
+	// self-contradiction the moment a batch was mid-flight. Split the fill by
+	// subtask truth instead: runs that never started (item 'pending') are
+	// queued; the unprojected in-flight runs are running, and their execution
+	// frontier is the first (lowest DagOrder) node with a gap — attribute them
+	// there so the node overview and the subtask "运行中" count agree.
+	notStarted := summary.Pending
+	inFlightRemaining := summary.Running
+	frontierTaken := false
+	for i := range nodes {
+		if missing := job.TotalCount - nodes[i].Attempted; missing > 0 {
+			pendingFill := missing
+			if !frontierTaken {
+				runningFill := missing - notStarted
+				if runningFill < 0 {
+					runningFill = 0
+				}
+				if runningFill > inFlightRemaining {
+					runningFill = inFlightRemaining
+				}
+				nodes[i].Counts["Running"] += runningFill
+				inFlightRemaining -= runningFill
+				pendingFill = missing - runningFill
+				frontierTaken = true
+			}
+			nodes[i].Counts["Pending"] += pendingFill
+		}
+		failures := nodes[i].Counts["Failed"] + nodes[i].Counts["Error"]
+		if nodes[i].Attempted > 0 {
+			nodes[i].FailureRate = float64(failures) / float64(nodes[i].Attempted)
+		}
+	}
 	return &models.BatchNodeSummary{
 		BatchJobID:      job.ID,
 		TemplateID:      job.TemplateID,
