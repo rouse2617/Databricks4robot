@@ -7,13 +7,35 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
+// K8sFactory is the subset of k8s.ClientFactory the argo package uses to reach
+// the CRD path. Declared here (rather than importing internal/k8s directly) to
+// keep the argo → k8s edge out of the DAG — k8s already imports usecase/pipeline
+// which imports back into argo. Callers pass their k8s.ClientFactory unchanged;
+// it structurally satisfies this interface.
+type K8sFactory interface {
+	ForCluster(ctx context.Context, clusterID string) (kubernetes.Interface, error)
+	DynamicForCluster(ctx context.Context, clusterID string) (dynamic.Interface, error)
+}
+
 // ErrClusterNotFound is returned by ClientFactory when the given clusterID
 // does not exist in the clusters table (or has been soft-deleted).
 var ErrClusterNotFound = errors.New("cluster not found")
+
+// ErrClusterMisconfigured is returned when a cluster row can't be resolved to
+// any concrete WorkflowClient — e.g. no argo-server URL and no k8s.ClientFactory
+// wired for the CRD path. Distinct from ErrClusterNotFound (the row exists).
+var ErrClusterMisconfigured = errors.New("cluster misconfigured for argo client")
+
+// defaultArgoNamespace is the ns crdWorkflowClient falls back to when the
+// cluster row leaves argo_namespace blank. Argo's own charts default here.
+const defaultArgoNamespace = "argo"
 
 // ClientFactory abstracts "which Argo Workflow client for this cluster" so
 // consumers (Deploy usecase, run_watcher, log streamer) can call ForTarget
@@ -41,11 +63,12 @@ type cachedArgoEntry struct {
 
 // dbClientFactory builds argo.Client per cluster row, with TTL cache.
 type dbClientFactory struct {
-	repo    repository.ClusterRepository
-	envCfg  *Config // fallback for the default cluster (empty ArgoServerURL)
-	ttl     time.Duration
-	mu      sync.RWMutex
-	entries map[string]*cachedArgoEntry
+	repo       repository.ClusterRepository
+	envCfg     *Config    // fallback URL/token for the default cluster (empty ArgoServerURL)
+	k8sFactory K8sFactory // required for CRD mode (empty resolved URL); nil disables CRD mode
+	ttl        time.Duration
+	mu         sync.RWMutex
+	entries    map[string]*cachedArgoEntry
 }
 
 // FactoryOption customizes dbClientFactory behavior.
@@ -61,6 +84,15 @@ func WithTTL(ttl time.Duration) FactoryOption {
 // wire the existing env-based startup config as fallback.
 func WithEnvFallback(cfg *Config) FactoryOption {
 	return func(f *dbClientFactory) { f.envCfg = cfg }
+}
+
+// WithK8sFactory injects the per-cluster K8s client factory used by the CRD
+// mode (crdWorkflowClient). Pass the same instance that Deploy usecase and
+// handlers already share; without it, a cluster row that resolves to an empty
+// argo-server URL will fail with ErrClusterMisconfigured instead of returning
+// an unusable HTTP client with no server URL. See design doc D1/D7.
+func WithK8sFactory(k8sFactory K8sFactory) FactoryOption {
+	return func(f *dbClientFactory) { f.k8sFactory = k8sFactory }
 }
 
 // NewClientFactory wires a ClientFactory backed by the given cluster repo.
@@ -93,14 +125,45 @@ func (f *dbClientFactory) ForCluster(ctx context.Context, clusterID string) (Wor
 		return nil, fmt.Errorf("%w: %s", ErrClusterNotFound, clusterID)
 	}
 
-	cfg := f.configForCluster(cluster)
-	client := NewClientFromConfig(cfg)
+	client, err := f.buildClient(ctx, cluster)
+	if err != nil {
+		return nil, err
+	}
 
 	e := &cachedArgoEntry{client: client, fetchedAt: time.Now()}
 	f.mu.Lock()
 	f.entries[clusterID] = e
 	f.mu.Unlock()
 	return client, nil
+}
+
+// buildClient picks between HTTP (argo-server) and CRD (dynamic client) mode
+// based on the resolved Argo config. Any non-empty server URL — whether from
+// the cluster row itself or from the env fallback for the default cluster —
+// keeps the historic HTTP path byte-identical. Empty resolved URL routes
+// through the K8s Workflow CRD via the injected k8s.ClientFactory.
+func (f *dbClientFactory) buildClient(ctx context.Context, cluster *models.Cluster) (WorkflowClient, error) {
+	cfg := f.configForCluster(cluster)
+	if cfg.ServerURL != "" {
+		return NewClientFromConfig(cfg), nil
+	}
+	if f.k8sFactory == nil {
+		return nil, fmt.Errorf("%w: cluster %q has no argo-server URL and no k8s factory wired",
+			ErrClusterMisconfigured, cluster.Name)
+	}
+	dyn, err := f.k8sFactory.DynamicForCluster(ctx, cluster.ID)
+	if err != nil {
+		return nil, fmt.Errorf("argo.ClientFactory: dynamic client for %q: %w", cluster.Name, err)
+	}
+	typed, err := f.k8sFactory.ForCluster(ctx, cluster.ID)
+	if err != nil {
+		return nil, fmt.Errorf("argo.ClientFactory: typed client for %q: %w", cluster.Name, err)
+	}
+	ns := cluster.ArgoNamespace
+	if ns == "" {
+		ns = defaultArgoNamespace
+	}
+	return newCRDWorkflowClient(dyn, typed, ns), nil
 }
 
 func (f *dbClientFactory) ForTarget(ctx context.Context, t *models.ExecutionTarget) (WorkflowClient, error) {
