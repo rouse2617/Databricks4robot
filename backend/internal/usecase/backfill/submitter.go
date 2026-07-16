@@ -25,15 +25,16 @@ import (
 //     progress never depends on a single boot-time goroutine surviving —
 //     this is what permanently fixes the deploy-mid-dispatch hangs (D).
 //   - idempotent: workflow names are deterministic and job-scoped; a crash
-//     between the Argo submit and the DB commit rolls the item back to
-//     pending, and the re-submission heals via ErrAlreadyExists + UID
-//     backfill instead of creating a duplicate workflow.
+//     mid-submit leaves the item pending, and the re-submission heals via
+//     ErrAlreadyExists + UID backfill instead of creating a duplicate.
 //   - forward-only: a successful submit moves the item pending → submitted.
 //     No lease, no reclaim, no running→pending regression.
-//   - cross-instance safe: candidates are read lock-free, then each item is
-//     re-checked and row-locked (FOR UPDATE SKIP LOCKED) inside its own
-//     single-item transaction; the Argo call and all DB writes ride that
-//     transaction. No two workers ever work the same item concurrently.
+//   - cross-instance safe WITHOUT a held lock: candidates are read lock-free
+//     and submitted with NO surrounding transaction (see submitOneCandidate —
+//     holding a tx across the Argo call starved the connection pool). Two
+//     instances racing the same item mint the same deterministic workflow and
+//     converge via AlreadyExists; the item advances to submitted only once
+//     the UID is persisted.
 const (
 	submitterInterval       = 15 * time.Second
 	submittableJobsPerCycle = 50
@@ -183,39 +184,43 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob) 
 	return attempts
 }
 
-// submitOneCandidate re-checks, locks, and submits a single item inside one
-// transaction. The FOR UPDATE SKIP LOCKED re-check is the concurrency guard:
-// if another worker (this instance or another Cloud Run instance) holds the
-// row, LockPendingItem returns nil and we skip. A transaction rollback (infra
-// error mid-submit) leaves the item pending for the next cycle; the workflow
-// that may already exist in Argo is healed by ErrAlreadyExists on retry.
+// submitOneCandidate re-checks and submits a single pending item.
+//
+// CYB-3491 (perf, critical): this deliberately does NOT wrap the submit in a
+// transaction. submitItem calls Argo (DeployByTemplateID / GetRun), and those
+// internally open their own short transactions. Wrapping them in an outer tx
+// held a pgx pool connection across the Argo HTTP round-trip AND forced a
+// nested pool.Begin (a second connection) — under the 5-way submitter
+// concurrency that starved the pool and left transactions "idle in
+// transaction" for tens of seconds, stalling every request on the service.
+//
+// Correctness does not need the lock: submission idempotency is guaranteed by
+// the deterministic job-scoped workflow name + AlreadyExists backfill, so even
+// if two instances race the same pending item they mint the same workflow and
+// converge. Every write below is individually idempotent, and the item only
+// advances to `submitted` after the UID is persisted — a crash mid-submit
+// leaves it `pending` for the next cycle, exactly as before.
 func (uc *Usecase) submitOneCandidate(ctx context.Context, job *models.BackfillJob, itemID string, templateVersion int) {
 	itemCtx, cancel := context.WithTimeout(ctx, deployTimeout)
 	defer cancel()
-	err := uc.submitQueue.WithTx(itemCtx, func(txCtx context.Context) error {
-		item, err := uc.submitQueue.LockPendingItem(txCtx, itemID)
-		if err != nil {
-			return err
-		}
-		if item == nil {
-			return nil // taken by another worker, or no longer pending
-		}
-		if uc.isJobPaused(txCtx, job.ID) {
-			return nil // leave pending; resume re-kicks the submitter
-		}
-		return uc.submitLockedItem(txCtx, job, *item, templateVersion)
-	})
-	if err != nil {
-		slog.Warn("submitter: item submission rolled back, will retry",
+	item, err := uc.repo.FindItemByID(itemCtx, itemID)
+	if err != nil || item == nil || item.Status != "pending" {
+		return // gone, already advanced, or read error — next cycle re-lists
+	}
+	if uc.isJobPaused(itemCtx, job.ID) {
+		return // leave pending; resume re-kicks the submitter
+	}
+	if err := uc.submitItem(itemCtx, job, *item, templateVersion); err != nil {
+		slog.Warn("submitter: item submission failed, will retry next cycle",
 			"jobID", job.ID, "itemID", itemID, "err", err)
 	}
 }
 
-// submitLockedItem performs the actual submission for a row-locked pending
+// submitItem performs the actual submission for a row-locked pending
 // item. Every DB write here rides the caller's transaction. Terminal
 // decisions (submitted / failed) COMMIT; only infra errors return non-nil
 // (→ rollback → still pending).
-func (uc *Usecase) submitLockedItem(ctx context.Context, job *models.BackfillJob, item models.BackfillItem, templateVersion int) error {
+func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item models.BackfillItem, templateVersion int) error {
 	runID := ""
 	if item.PipelineRunID != nil {
 		runID = strings.TrimSpace(*item.PipelineRunID)

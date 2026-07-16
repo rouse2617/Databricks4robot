@@ -235,23 +235,26 @@ func TestSubmitter_DeterministicFailureSurfaces(t *testing.T) {
 	}
 }
 
-// SKIP LOCKED: a row concurrently locked by another worker is skipped —
-// no deploy, no state change, no error.
-func TestSubmitter_SkipsConcurrentlyLockedItem(t *testing.T) {
+// CYB-3491 (perf): the submit path holds NO transaction (holding one across
+// the Argo call starved the pool). Concurrency safety comes from the
+// deterministic workflow name, not a row lock. The only per-item guard is a
+// plain pending re-check: an item that already left `pending` between listing
+// and submission (another worker / a webhook advanced it) is skipped without
+// a deploy.
+func TestSubmitter_SkipsItemNoLongerPending(t *testing.T) {
 	ctx := context.Background()
 	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
-	uc, repo, q, d := newSubmitterFixture(job, []models.BackfillItem{
-		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "submitted"},
 	})
-	q.lockedNow["item-1"] = true
 
-	uc.runSubmitterCycle(ctx)
+	uc.submitOneCandidate(ctx, job, "item-1", 1)
 
-	if got := itemStatus(repo, "item-1"); got != "pending" {
-		t.Fatalf("item status = %q, want pending (untouched)", got)
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (untouched)", got)
 	}
 	if len(d.deploys) != 0 {
-		t.Fatalf("deploys = %v, want none for a locked row", d.deploys)
+		t.Fatalf("deploys = %v, want none for an item that is no longer pending", d.deploys)
 	}
 }
 
@@ -338,28 +341,25 @@ func TestSubmitter_AlreadyLiveRunSkipsDeploy(t *testing.T) {
 	}
 }
 
-// Infra error mid-submit rolls the transaction back: the item stays pending
-// for the next cycle, and nothing is marked failed.
-func TestSubmitter_InfraErrorRollsBackToPending(t *testing.T) {
+// Infra error mid-submit (no transaction anymore): the item stays pending for
+// the next cycle, and nothing is marked failed. An infra failure must not be
+// mistaken for a genuine (deterministic) submission failure.
+func TestSubmitter_InfraErrorLeavesItemPending(t *testing.T) {
 	ctx := context.Background()
 	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
-	uc, repo, q, d := newSubmitterFixture(job, []models.BackfillItem{
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
 		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
 	})
-	// UpsertBatchSubtaskRun failing is an infra-class error → rollback path.
-	failing := &upsertFailingDeployer{fakeDeployer: d}
-	uc.deployer = failing
+	// UpsertBatchSubtaskRun failing is an infra-class error.
+	uc.deployer = &upsertFailingDeployer{fakeDeployer: d}
 
 	uc.runSubmitterCycle(ctx)
 
 	if got := itemStatus(repo, "item-1"); got != "pending" {
-		t.Fatalf("item status = %q, want pending (rolled back, retried next cycle)", got)
-	}
-	if q.rollbackedByTx == 0 {
-		t.Fatal("expected the item transaction to roll back")
+		t.Fatalf("item status = %q, want pending (retried next cycle)", got)
 	}
 	if len(d.failures) != 0 {
-		t.Fatalf("failures = %v, want none for an infra error", d.failures)
+		t.Fatalf("failures = %v, want none for an infra error (not a deterministic failure)", d.failures)
 	}
 }
 

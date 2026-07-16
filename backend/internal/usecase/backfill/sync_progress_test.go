@@ -80,7 +80,13 @@ func (r *pausedSyncRepo) FindItemsByJobID(_ context.Context, jobID string) ([]mo
 	}
 	return out, nil
 }
-func (r *pausedSyncRepo) FindItemByID(context.Context, string) (*models.BackfillItem, error) {
+func (r *pausedSyncRepo) FindItemByID(_ context.Context, id string) (*models.BackfillItem, error) {
+	for i := range r.items {
+		if r.items[i].ID == id {
+			cp := r.items[i]
+			return &cp, nil
+		}
+	}
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
