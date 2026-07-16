@@ -535,6 +535,15 @@ if [[ "${remove_es_password_secret}" == "true" && ${#secret_mappings[@]} -eq 0 ]
   deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
 fi
 
+# CYB-3486d1c: when set, the new revision is created idle. Traffic must be
+# routed explicitly (e.g. by the deploy-dev.yml migrate step after Atlas
+# migrations run). Without this, `gcloud run deploy` defaults to 100%-traffic
+# on the new revision, which races the migration step — new code queries
+# columns the old schema doesn't have yet, until traffic-switch completes.
+if [[ "${DEPLOY_NO_TRAFFIC:-false}" == "true" ]]; then
+  deploy_args+=(--no-traffic)
+fi
+
 if [[ "${ALLOW_UNAUTHENTICATED}" == "true" ]]; then
   deploy_args+=(--allow-unauthenticated)
 else
