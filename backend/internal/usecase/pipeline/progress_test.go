@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"testing"
+	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 )
@@ -73,6 +75,52 @@ func TestWorkflowStepProgress_ExcludesExitNotifyHook(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := workflowStepProgress(tc.wf); got != tc.want {
 				t.Fatalf("workflowStepProgress = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// CYB-3491: a run must finalize as Succeeded once its business steps succeed,
+// even while wf.Status.Phase is still "Running" because the injected
+// exit-notify hook (which fires the status webhook) has not finished — the lag
+// that left batch completed-counts trailing Argo by ~1h under load.
+func TestAllBusinessPodsSucceeded(t *testing.T) {
+	fin := metav1.Time{Time: time.Unix(1_700_000_000, 0).UTC()}
+	pod := func(tmpl string, phase wfv1.NodePhase) wfv1.NodeStatus {
+		return wfv1.NodeStatus{Type: wfv1.NodeTypePod, TemplateName: tmpl, Phase: phase, FinishedAt: fin}
+	}
+	dag := wfv1.NodeStatus{Type: wfv1.NodeTypeDAG, TemplateName: "dag", Phase: wfv1.NodeSucceeded}
+	hook := func(phase wfv1.NodePhase) wfv1.NodeStatus {
+		return pod(transpiler.ExitNotifyTemplateName, phase)
+	}
+	wf := func(nodes ...wfv1.NodeStatus) *wfv1.Workflow {
+		m := map[string]wfv1.NodeStatus{}
+		for i, n := range nodes {
+			m[string(rune('a'+i))] = n
+		}
+		return &wfv1.Workflow{Status: wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning, Nodes: m}}
+	}
+	cases := []struct {
+		name string
+		wf   *wfv1.Workflow
+		want bool
+	}{
+		{"step done, hook still running -> succeeded", wf(dag, pod("step-1", wfv1.NodeSucceeded), hook(wfv1.NodeRunning)), true},
+		{"step done, hook done -> succeeded", wf(dag, pod("step-1", wfv1.NodeSucceeded), hook(wfv1.NodeSucceeded)), true},
+		{"step still running -> not yet", wf(dag, pod("step-1", wfv1.NodeRunning)), false},
+		{"multi-step, one still running -> not yet", wf(dag, pod("step-1", wfv1.NodeSucceeded), pod("step-2", wfv1.NodeRunning)), false},
+		{"business pod failed -> not derived (leave to failure path)", wf(dag, pod("step-1", wfv1.NodeFailed), hook(wfv1.NodeSucceeded)), false},
+		{"multi-step all succeeded -> succeeded", wf(dag, pod("step-1", wfv1.NodeSucceeded), pod("step-2", wfv1.NodeSucceeded), hook(wfv1.NodeRunning)), true},
+		{"only hook, no business pod -> false", wf(dag, hook(wfv1.NodeRunning)), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fa, ok := allBusinessPodsSucceeded(tc.wf)
+			if ok != tc.want {
+				t.Fatalf("allBusinessPodsSucceeded ok=%v, want %v", ok, tc.want)
+			}
+			if ok && fa == nil {
+				t.Fatalf("expected a non-nil business finish time when succeeded")
 			}
 		})
 	}

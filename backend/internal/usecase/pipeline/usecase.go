@@ -2014,6 +2014,25 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		message = ""
 		finishedAt = nil
 	}
+	// CYB-3491: finalize a run the moment its business steps succeed, without
+	// waiting for the injected exit-notify hook (CYB-3058). That hook fires the
+	// status webhook FROM INSIDE the workflow, so at poke time wf.Status.Phase
+	// is still "Running" (the hook is part of the workflow). Relying on the
+	// phase left runs stuck "Running" until the slow watcher re-observed them
+	// after the hook finished — ~1h of projection lag under load, where the
+	// batch completed-count trailed Argo reality by hundreds. The hook is infra
+	// (already excluded from progress + the node list); exclude it from terminal
+	// derivation too. Conservative: only SUCCEEDED is derived — any non-succeeded
+	// business pod yields false, so failure/retry paths are untouched.
+	if isActiveDeploymentStatus(status) {
+		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok {
+			status = string(wfv1.WorkflowSucceeded)
+			message = ""
+			if businessFinishedAt != nil {
+				finishedAt = businessFinishedAt
+			}
+		}
+	}
 	run.Status = status
 	if startedAt := argoTimeOrZero(wf.Status.StartedAt.Time); startedAt != nil {
 		run.StartedAt = startedAt
@@ -2202,6 +2221,39 @@ func isWorkflowShutdownMessage(message string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(message))
 	return strings.Contains(normalized, "workflow shutdown with strategy:") ||
 		strings.Contains(normalized, "stopped with strategy")
+}
+
+// allBusinessPodsSucceeded reports whether every real step pod in the workflow
+// has finished successfully, ignoring the injected databrew-exit-notify hook
+// (CYB-3058) and non-pod DAG/Steps containers. It returns the latest business
+// finish time. Used to finalize a run as Succeeded while the workflow phase is
+// still "Running" only because the exit hook (which itself fires the status
+// webhook) has not completed yet — see the caller in applyWorkflowToRun.
+// Conservative by design: a single non-succeeded business pod (running, pending,
+// failed, or errored) returns false, leaving failure and retry handling to the
+// existing phase/derivation logic. Returns false when no business pod exists.
+func allBusinessPodsSucceeded(wf *wfv1.Workflow) (*time.Time, bool) {
+	if wf == nil {
+		return nil, false
+	}
+	sawBusinessPod := false
+	var latestFinishedAt *time.Time
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod || node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		sawBusinessPod = true
+		switch node.Phase {
+		case wfv1.NodeSucceeded, wfv1.NodeSkipped, wfv1.NodeOmitted:
+			if fa := argoTimeOrZero(node.FinishedAt.Time); fa != nil &&
+				(latestFinishedAt == nil || fa.After(*latestFinishedAt)) {
+				latestFinishedAt = fa
+			}
+		default:
+			return nil, false
+		}
+	}
+	return latestFinishedAt, sawBusinessPod
 }
 
 func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {
