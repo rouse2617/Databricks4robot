@@ -5795,12 +5795,6 @@ const (
 // naturally clears.
 const staleActiveRunMaxAge = 48 * time.Hour
 
-// stalledObservationThreshold is the read-side threshold for surfacing a
-// stall hint: an active run that has not been updated in this long shows a
-// "stalled" blocking reason in the UI. Distinct from staleActiveRunMaxAge
-// (age since creation): this one measures freshness (since UpdatedAt).
-const stalledObservationThreshold = 30 * time.Minute
-
 // workflowCreateVisibilityGracePeriod avoids marking brand-new runs as expired
 // while Argo is still creating the workflow CR.
 const workflowCreateVisibilityGracePeriod = 5 * time.Minute
