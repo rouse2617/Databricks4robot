@@ -833,6 +833,51 @@ func TestTranspileOmitsPodPriorityClassNameWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestTranspileSetsSchedulerName verifies pool (CYB-3486) injects the pool's
+// scheduler onto the workflow spec. Data-driven: transpiler sets whatever
+// string it's given, no hardcoded scheduler.
+func TestTranspileSetsSchedulerName(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:          "wf-sched",
+		Namespace:     "default",
+		SchedulerName: "koord-scheduler",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.SchedulerName != "koord-scheduler" {
+		t.Errorf("SchedulerName: want koord-scheduler, got %q", wf.Spec.SchedulerName)
+	}
+}
+
+// TestTranspileOmitsSchedulerNameWhenEmpty: scheduler-agnostic pool leaves the
+// field unset so the cluster default scheduler runs the pods.
+func TestTranspileOmitsSchedulerNameWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nosched", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.SchedulerName != "" {
+		t.Errorf("empty option must leave SchedulerName unset, got %q", wf.Spec.SchedulerName)
+	}
+}
+
+// TestTranspileSetsPodAnnotations verifies pool pod annotations reach
+// Spec.PodMetadata.Annotations.
+func TestTranspileSetsPodAnnotations(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:           "wf-anno",
+		Namespace:      "default",
+		PodAnnotations: map[string]string{"scheduling.koordinator.sh/tier": "batch"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodMetadata == nil || wf.Spec.PodMetadata.Annotations["scheduling.koordinator.sh/tier"] != "batch" {
+		t.Errorf("pod annotation not injected: %+v", wf.Spec.PodMetadata)
+	}
+}
+
 func TestTranspileNoExitHookWhenURLEmpty(t *testing.T) {
 	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nohook", Namespace: "default"})
 	if err != nil {

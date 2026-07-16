@@ -174,28 +174,23 @@ type resolvedNodeRuntimeConfig struct {
 
 const runConfigInputsPipelineJSONKey = "_run_config_inputs"
 
-// elasticQuotaPodLabelKey is the pod label koord-scheduler reads to bind a
-// pod to a specific Koordinator ElasticQuota. CYB-3486 pool.1 uses it when
-// an ExecutionTarget has ElasticQuotaName set. Empty label = "route via
-// namespace default EQ" which is the pre-pool.1 behavior.
-const elasticQuotaPodLabelKey = "quota.scheduling.koordinator.sh/name"
-
-// applyElasticQuotaPodLabel returns a labels map with the target's
-// ElasticQuotaName injected under elasticQuotaPodLabelKey. Empty name is a
-// no-op and returns labels unchanged (may be nil). CYB-3486 pool.1.
-func applyElasticQuotaPodLabel(labels map[string]string, target *models.ExecutionTarget) map[string]string {
-	if target == nil {
-		return labels
+// mergePoolPodLabels overlays the pool's scheduling podLabels (data-driven,
+// from resource_defaults.scheduling) onto a base label set (e.g. cost-tracking
+// labels). Pool labels win on conflict. CYB-3486 pool.3: no hardcoded label
+// key — the pool config supplies whatever labels it wants (a Koordinator pool
+// carries its own EQ label key/value).
+func mergePoolPodLabels(base map[string]string, target *models.ExecutionTarget) map[string]string {
+	poolLabels := executionTargetPodLabels(target)
+	if len(poolLabels) == 0 {
+		return base
 	}
-	eq := strings.TrimSpace(target.ElasticQuotaName)
-	if eq == "" {
-		return labels
+	if base == nil {
+		base = map[string]string{}
 	}
-	if labels == nil {
-		labels = map[string]string{}
+	for k, v := range poolLabels {
+		base[k] = v
 	}
-	labels[elasticQuotaPodLabelKey] = eq
-	return labels
+	return base
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -3740,16 +3735,17 @@ func (uc *Usecase) Deploy(
 
 		PodLabels: buildCostTrackingLabels(costOwner, depID, costAssetID),
 	}
-	// CYB-3486 pool.1: pin every pod in this workflow to the target's
-	// ElasticQuota when the target has one configured, so koord-scheduler
-	// counts against that specific EQ (rather than the namespace default).
-	// Empty value = no injection (backward compat with pre-pool.1 rows).
-	wfOpts.PodLabels = applyElasticQuotaPodLabel(wfOpts.PodLabels, target)
-	// CYB-3486 pool.2: PriorityClass sets dispatch order / preemption within
-	// the pool. Empty = K8s global default.
-	if pc := strings.TrimSpace(target.PriorityClassName); pc != "" {
-		wfOpts.PodPriorityClassName = pc
-	}
+	// CYB-3486 pool: inject the pool's scheduling config onto every workflow
+	// pod. Fully data-driven from the target's resource_defaults.scheduling
+	// (JSONB) — the backend injects verbatim and hardcodes nothing about koord
+	// / ElasticQuota / any scheduler. A Koordinator pool works because its
+	// config declares schedulerName="koord-scheduler" + the EQ podLabel; a
+	// plain namespace pool declares none and stays scheduler-agnostic.
+	// Empty values are no-ops (transpiler leaves the field unset).
+	wfOpts.PodLabels = mergePoolPodLabels(wfOpts.PodLabels, target)
+	wfOpts.PodAnnotations = executionTargetPodAnnotations(target)
+	wfOpts.PodPriorityClassName = executionTargetPriorityClassName(target)
+	wfOpts.SchedulerName = executionTargetSchedulerName(target)
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
