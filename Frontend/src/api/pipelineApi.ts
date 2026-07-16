@@ -229,6 +229,12 @@ export interface ExecutionTarget {
 	resourceDefaults?: TargetResourceDefaults;
 	quotaPolicy?: Record<string, unknown>;
 	labels?: Record<string, string>;
+	// CYB-3486 pool.1: pins the target to a specific Koordinator ElasticQuota.
+	// Empty / omitted = fall back to the namespace-default EQ.
+	elasticQuotaName?: string;
+	// CYB-3486 pool.2: PriorityClass applied to every pod dispatched from
+	// this target. Empty / omitted = K8s global default.
+	priorityClassName?: string;
 	createdAt?: string;
 	updatedAt?: string;
 }

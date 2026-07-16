@@ -166,6 +166,30 @@ type resolvedNodeRuntimeConfig struct {
 
 const runConfigInputsPipelineJSONKey = "_run_config_inputs"
 
+// elasticQuotaPodLabelKey is the pod label koord-scheduler reads to bind a
+// pod to a specific Koordinator ElasticQuota. CYB-3486 pool.1 uses it when
+// an ExecutionTarget has ElasticQuotaName set. Empty label = "route via
+// namespace default EQ" which is the pre-pool.1 behavior.
+const elasticQuotaPodLabelKey = "quota.scheduling.koordinator.sh/name"
+
+// applyElasticQuotaPodLabel returns a labels map with the target's
+// ElasticQuotaName injected under elasticQuotaPodLabelKey. Empty name is a
+// no-op and returns labels unchanged (may be nil). CYB-3486 pool.1.
+func applyElasticQuotaPodLabel(labels map[string]string, target *models.ExecutionTarget) map[string]string {
+	if target == nil {
+		return labels
+	}
+	eq := strings.TrimSpace(target.ElasticQuotaName)
+	if eq == "" {
+		return labels
+	}
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[elasticQuotaPodLabelKey] = eq
+	return labels
+}
+
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
 func (uc *Usecase) SetAssetEventRepo(r repository.AssetEventRepository) {
 	uc.assetEventRepo = r
@@ -397,6 +421,59 @@ func (uc *Usecase) resolveArgoClient(ctx context.Context, target *models.Executi
 		return c, nil
 	}
 	return uc.wfClient, nil
+}
+
+// resolveArgoClientForRun is the run-facing sibling of resolveArgoClient:
+// the run watcher and per-run lifecycle ops (Stop/Retry/Suspend/Resume/
+// Terminate/Delete) already carry the resolved cluster on the run row, so
+// they don't need to re-derive it from an ExecutionTarget. Factory-first,
+// singleton fallback, same semantics as resolveArgoClient — CYB-3486 PR 4d.5.
+//
+// This is the correctness half of "per-cluster watcher": before this
+// refactor, active runs on delivery-clust were being polled through the
+// cyber-clust singleton (they simply didn't exist there, so the watcher
+// silently no-op'd). Goroutine-level parallelism per cluster (the scaling
+// half) is deferred until we have >1 non-default cluster with meaningful
+// active-run volume.
+func (uc *Usecase) resolveArgoClientForRun(ctx context.Context, run *models.PipelineRun) (argo.WorkflowClient, error) {
+	if uc.argoFactory != nil {
+		id := runClusterID(run)
+		c, err := uc.argoFactory.ForCluster(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve argo client for run cluster %q: %v",
+				ErrWorkflowUnavailable, id, err)
+		}
+		return c, nil
+	}
+	return uc.wfClient, nil
+}
+
+// runClusterID pulls the cluster id off a run's ExecutionTarget snapshot, or
+// falls back to the default cluster row. PipelineRun does not carry a direct
+// ClusterID column today; the target snapshot is where the source-of-truth
+// lives during PR 4d.5. If that gets awkward at scale, we can promote it to
+// a first-class column later (schema-only change).
+func runClusterID(run *models.PipelineRun) string {
+	if run != nil && run.ExecutionTarget != nil {
+		if id := strings.TrimSpace(run.ExecutionTarget.ClusterID); id != "" {
+			return id
+		}
+	}
+	return "cluster-default"
+}
+
+// groupRunIndicesByCluster partitions a list of run indices (into a shared
+// runs slice) by each run's cluster ID. Used by SyncActiveRunEvents to fan
+// out per-cluster goroutines (CYB-3486 4d.5.b). Extracted for unit testing:
+// the parent function has a lot of surrounding state that would need a full
+// fixture to reach.
+func groupRunIndicesByCluster(runs []models.PipelineRun, indices []int) map[string][]int {
+	out := map[string][]int{}
+	for _, i := range indices {
+		cid := runClusterID(&runs[i])
+		out[cid] = append(out[cid], i)
+	}
+	return out
 }
 
 func (uc *Usecase) getWorkflowWithUID(ctx context.Context, client argo.WorkflowClient, name, namespace string) (*wfv1.Workflow, error) {
@@ -2518,7 +2595,13 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	if namespace == "" {
 		namespace = uc.namespace
 	}
-	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
+	if resolveErr != nil || client == nil {
+		slog.Warn("reconcileMisclassifiedRunFromArgo: no argo client for run cluster",
+			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+		return
+	}
+	wf, err := client.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil || wf == nil {
 		slog.Warn("reconcileMisclassifiedRunFromArgo GetWorkflow failed",
 			"runID", run.ID,
@@ -2717,7 +2800,7 @@ func inferTerminalRunFromAssetNodes(nodes []models.PipelineRunAssetNode) (string
 }
 
 func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun, nodeMode nodeProjectionMode) {
-	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
+	if run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
 	}
 	if strings.TrimSpace(run.WorkflowName) == "" {
@@ -2727,7 +2810,19 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if namespace == "" {
 		namespace = uc.namespace
 	}
-	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	// CYB-3486d5: resolve client from run.ClusterID so runs on non-default
+	// clusters (delivery-clust) hit the right K8s API. Factory-less test
+	// deployments still fall back to uc.wfClient (may itself be nil).
+	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
+	if resolveErr != nil {
+		slog.Warn("refreshRunStatus: resolve argo client failed",
+			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+		return
+	}
+	if client == nil {
+		return
+	}
+	wf, err := client.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
 		// Argo TTL-cleans finished workflows, so refresh sees plain 404 on
 		// most runs after a while. That's normal — mark run as done or wait,
@@ -2782,14 +2877,25 @@ func (uc *Usecase) refreshPipelineRunStatusLive(ctx context.Context, run *models
 // Unlike refreshRunStatus, this does NOT skip completed runs — it's used by the
 // watcher backfill to sync events for runs that completed before the watcher scanned them.
 func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRun) {
-	if uc.wfClient == nil || run == nil {
+	if run == nil {
 		return
 	}
 	namespace := run.ArgoNamespace
 	if namespace == "" {
 		namespace = uc.namespace
 	}
-	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	// CYB-3486d5: resolve per-run cluster so backfill on non-default cluster
+	// runs polls the right K8s API.
+	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
+	if resolveErr != nil {
+		slog.Warn("backfillRunStatus: resolve argo client failed",
+			"runID", run.ID, "clusterID", runClusterID(run), "err", resolveErr)
+		return
+	}
+	if client == nil {
+		return
+	}
+	wf, err := client.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrUnexpectedNotFound) {
 			slog.Warn("backfillRunStatus: unexpected 404 (config error) -- skip ledger update",
@@ -2821,7 +2927,7 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 // forged/replayed call cannot inject false status. Returns (nil, nil) when no
 // run matches the workflow name (handler maps to 404).
 func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowName, workflowUID string) (*models.PipelineRun, error) {
-	if uc.runRepo == nil || uc.wfClient == nil {
+	if uc.runRepo == nil {
 		return nil, nil
 	}
 	workflowName = strings.TrimSpace(workflowName)
@@ -2849,7 +2955,16 @@ func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowNam
 	if namespace == "" {
 		namespace = uc.namespace
 	}
-	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	// CYB-3486d5: resolve per-run cluster so the run-status push webhook
+	// routes to the right K8s API for non-default cluster runs.
+	client, resolveErr := uc.resolveArgoClientForRun(ctx, run)
+	if resolveErr != nil {
+		return run, resolveErr
+	}
+	if client == nil {
+		return run, nil
+	}
+	wf, err := client.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) || errors.Is(err, argo.ErrUnexpectedNotFound) {
 			slog.Warn("RefreshRunFromWorkflowByName: GetWorkflow not found, skipping",
@@ -2917,11 +3032,31 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 	synced := 0
 	if n := len(activeIdx); n > 0 {
 		start := uc.watcherActiveCursor % n
-		for k := 0; k < n && synced < limit; k++ {
-			i := activeIdx[(start+k)%n]
-			uc.refreshPipelineRunStatus(ctx, &runs[i])
-			synced++
+		// Pick the round-robin window FIRST — cursor semantics unchanged from
+		// the pre-4d.5.b sequential loop; fairness across active runs is still
+		// managed by uc.watcherActiveCursor.
+		picked := make([]int, 0, limit)
+		for k := 0; k < n && len(picked) < limit; k++ {
+			picked = append(picked, activeIdx[(start+k)%n])
 		}
+		// CYB-3486 4d.5.b: fan out by cluster so one slow cluster's K8s API
+		// doesn't stall refreshes for other clusters. Runs within the SAME
+		// cluster stay sequential — the same K8s API server would be hit
+		// anyway, and serializing keeps the client-go rate limiter (QPS=5
+		// default) from becoming a per-cluster stampede.
+		byCluster := groupRunIndicesByCluster(runs, picked)
+		var wg sync.WaitGroup
+		for _, group := range byCluster {
+			wg.Add(1)
+			go func(g []int) {
+				defer wg.Done()
+				for _, i := range g {
+					uc.refreshPipelineRunStatus(ctx, &runs[i])
+				}
+			}(group)
+		}
+		wg.Wait()
+		synced = len(picked)
 		uc.watcherActiveCursor = (start + synced) % n
 	}
 	anomalyLimit := watcherAnomalyReconcileLimit(limit)
@@ -3561,6 +3696,16 @@ func (uc *Usecase) Deploy(
 		ExitHookImage:           uc.argoRunWebhookImage,
 
 		PodLabels: buildCostTrackingLabels(costOwner, depID, costAssetID),
+	}
+	// CYB-3486 pool.1: pin every pod in this workflow to the target's
+	// ElasticQuota when the target has one configured, so koord-scheduler
+	// counts against that specific EQ (rather than the namespace default).
+	// Empty value = no injection (backward compat with pre-pool.1 rows).
+	wfOpts.PodLabels = applyElasticQuotaPodLabel(wfOpts.PodLabels, target)
+	// CYB-3486 pool.2: PriorityClass sets dispatch order / preemption within
+	// the pool. Empty = K8s global default.
+	if pc := strings.TrimSpace(target.PriorityClassName); pc != "" {
+		wfOpts.PodPriorityClassName = pc
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
@@ -4278,12 +4423,14 @@ func (uc *Usecase) DeleteRun(ctx context.Context, id string) error {
 		Message:        "pipeline run delete requested",
 		IdempotencyKey: fmt.Sprintf("run_delete_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
-	if uc.wfClient != nil {
+	// CYB-3486d5: delete via the run's cluster client. Nil client → skip
+	// (test-only path with neither factory nor singleton wired).
+	if client, resolveErr := uc.resolveArgoClientForRun(ctx, run); resolveErr == nil && client != nil {
 		namespace := run.ArgoNamespace
 		if namespace == "" {
 			namespace = uc.namespace
 		}
-		if err := uc.wfClient.DeleteWorkflow(ctx, run.WorkflowName, namespace); err != nil {
+		if err := client.DeleteWorkflow(ctx, run.WorkflowName, namespace); err != nil {
 			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 				EventType:      runEventDeleteFailed,
 				SubjectType:    "run",
@@ -5316,55 +5463,79 @@ func (uc *Usecase) runtimeRefForRun(run *models.PipelineRun) runtimeadapter.Runt
 	}
 }
 
+// retryRuntimeRun / stopRuntimeRun / suspendRuntimeRun / resumeRuntimeRun /
+// terminateRuntimeRun all resolve the argo client for the run's cluster
+// (CYB-3486 PR 4d.5). runtimeAdapter still wins when set — used by tests.
+
 func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
 	if uc.runtimeAdapter != nil {
 		_, err := uc.runtimeAdapter.Retry(ctx, uc.runtimeRefForRun(run), runtimeadapter.RetryOptions{})
 		return err
 	}
-	if uc.wfClient == nil {
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return ErrWorkflowUnavailable
 	}
-	return uc.wfClient.RetryWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+	return client.RetryWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
 }
 
 func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
 	if uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Stop(ctx, uc.runtimeRefForRun(run))
 	}
-	if uc.wfClient == nil {
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return ErrWorkflowUnavailable
 	}
-	return uc.wfClient.StopWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+	return client.StopWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
 }
 
 func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
 	if uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Suspend(ctx, uc.runtimeRefForRun(run))
 	}
-	if uc.wfClient == nil {
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return ErrWorkflowUnavailable
 	}
-	return uc.wfClient.SuspendWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+	return client.SuspendWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
 }
 
 func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
 	if uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Resume(ctx, uc.runtimeRefForRun(run))
 	}
-	if uc.wfClient == nil {
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return ErrWorkflowUnavailable
 	}
-	return uc.wfClient.ResumeWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+	return client.ResumeWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
 }
 
 func (uc *Usecase) terminateRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
 	if uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Terminate(ctx, uc.runtimeRefForRun(run))
 	}
-	if uc.wfClient == nil {
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return ErrWorkflowUnavailable
 	}
-	return uc.wfClient.TerminateWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+	return client.TerminateWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
 }
 
 func collectRunInputsFromPipelineJSON(runID string, pipeline map[string]interface{}, items *[]models.RunInput) {

@@ -804,6 +804,35 @@ func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
 	}
 }
 
+// TestTranspileSetsPodPriorityClassName verifies pool.2 (CYB-3486) injects
+// the target's PriorityClass onto the workflow spec so every pod inherits it.
+func TestTranspileSetsPodPriorityClassName(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:                 "wf-prio",
+		Namespace:            "default",
+		PodPriorityClassName: "cyber-databrew-batch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodPriorityClassName != "cyber-databrew-batch" {
+		t.Errorf("PodPriorityClassName: want %q, got %q", "cyber-databrew-batch", wf.Spec.PodPriorityClassName)
+	}
+}
+
+// TestTranspileOmitsPodPriorityClassNameWhenEmpty guards the byte-identical
+// backward-compat: empty option leaves the field unset so K8s default
+// scheduling behavior is preserved for pre-pool.2 rows.
+func TestTranspileOmitsPodPriorityClassNameWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noprio", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodPriorityClassName != "" {
+		t.Errorf("empty option must leave PodPriorityClassName empty, got %q", wf.Spec.PodPriorityClassName)
+	}
+}
+
 func TestTranspileNoExitHookWhenURLEmpty(t *testing.T) {
 	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nohook", Namespace: "default"})
 	if err != nil {

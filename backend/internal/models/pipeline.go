@@ -82,6 +82,19 @@ type ExecutionTarget struct {
 	ResourceDefaults     map[string]interface{} `json:"resourceDefaults,omitempty"`
 	QuotaPolicy          map[string]interface{} `json:"quotaPolicy,omitempty"`
 	Labels               map[string]interface{} `json:"labels,omitempty"`
+	// ElasticQuotaName pins this target to a specific Koordinator ElasticQuota
+	// (CYB-3486 pool.1, resurrecting the deferred CYB-3422 P3.1b column).
+	// Empty = fall back to the namespace's default EQ (koord-scheduler picks
+	// the parent quota for the ns). Non-empty = transpiler injects
+	// "quota.scheduling.koordinator.sh/name=<value>" onto every workflow pod
+	// so koord-scheduler counts them against that specific EQ.
+	ElasticQuotaName     string                 `json:"elasticQuotaName,omitempty"`
+	// PriorityClassName sets the K8s PriorityClass applied to every pod in
+	// workflows dispatched to this target (CYB-3486 pool.2). Empty = K8s
+	// global default. Combines orthogonally with ElasticQuotaName: EQ decides
+	// which pool a pod counts against, PriorityClass decides its dispatch
+	// ordering / preemption within the pool.
+	PriorityClassName    string                 `json:"priorityClassName,omitempty"`
 	CreatedAt            time.Time              `json:"createdAt,omitempty"`
 	UpdatedAt            time.Time              `json:"updatedAt,omitempty"`
 }

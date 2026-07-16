@@ -138,6 +138,40 @@ func TestFactory_ForCluster_ExplicitEndpointWithAudience_Success(t *testing.T) {
 	}
 }
 
+// TestFactory_ForCluster_AuthTypeGKEWIFExplicit verifies explicit auth_type
+// "gke_wif" behaves identically to the empty-string default.
+func TestFactory_ForCluster_AuthTypeGKEWIFExplicit(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{
+		ID:             "cluster-delivery",
+		Name:           "delivery-clust",
+		K8sAPIEndpoint: "https://34.44.27.160",
+		K8sAudience:    "test-audience",
+		AuthType:       "gke_wif",
+	})
+	f := NewClientFactory(repo)
+	if _, err := f.ForCluster(context.Background(), "cluster-delivery"); err != nil {
+		t.Fatalf("gke_wif auth_type should build, got %v", err)
+	}
+}
+
+// TestFactory_ForCluster_UnsupportedAuthType guards the auth-dispatch switch:
+// unknown auth_type values must fail with ErrClusterMisconfigured, not build
+// a broken config.
+func TestFactory_ForCluster_UnsupportedAuthType(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{
+		ID:             "cluster-ack",
+		Name:           "aliyun-ack-prod",
+		K8sAPIEndpoint: "https://kubernetes.ack.aliyuncs.com",
+		K8sAudience:    "sts.aliyuncs.com",
+		AuthType:       "ack_wif",
+	})
+	f := NewClientFactory(repo)
+	_, err := f.ForCluster(context.Background(), "cluster-ack")
+	if !errors.Is(err, ErrClusterMisconfigured) {
+		t.Fatalf("unsupported auth_type must return ErrClusterMisconfigured, got %v", err)
+	}
+}
+
 func TestFactory_CacheHit(t *testing.T) {
 	defaultTestEnv(t)
 	repo := newStubRepo(&models.Cluster{ID: "cluster-default", Name: "d"})

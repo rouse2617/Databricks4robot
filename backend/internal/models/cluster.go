@@ -21,6 +21,15 @@ type Cluster struct {
 	K8sAPIEndpoint string     `json:"k8sApiEndpoint,omitempty"`
 	K8sAudience    string     `json:"k8sAudience,omitempty"`
 	K8sCAData      string     `json:"k8sCaData,omitempty"`
+	// AuthType selects how to authenticate to the cluster's K8s API.
+	// CYB-3486 auth.1: default "gke_wif" keeps every existing row on the
+	// current GKE metadata-token path. Reserved future values (not yet
+	// consumed by the factory): "bearer" (static token from Secret Manager),
+	// "ack_wif" / "eks_wif" (equivalent WIF paths on Alibaba / AWS).
+	AuthType       string     `json:"authType,omitempty"`
+	// AuthSecretRef is the Secret Manager / external secret reference for
+	// non-WIF auth. Empty for the default "gke_wif" path.
+	AuthSecretRef  string     `json:"authSecretRef,omitempty"`
 	ArgoServerURL  string     `json:"argoServerUrl,omitempty"`
 	ArgoNamespace  string     `json:"argoNamespace,omitempty"`
 	KoordInstalled bool       `json:"koordInstalled"`

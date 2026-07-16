@@ -54,6 +54,11 @@ interface FormValues {
 	description?: string;
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: NodeSelectorEntry[];
+	// CYB-3486 pool.1/pool.2: pool granularity + dispatch ordering.
+	// Both optional; empty preserves the pre-pool.1/2 defaults (ns-level EQ,
+	// K8s global default PriorityClass).
+	elasticQuotaName?: string;
+	priorityClassName?: string;
 }
 
 const TOLERATION_EFFECTS = [
@@ -169,6 +174,8 @@ export default function PoolManager() {
 			templateNodeSelector: nodeSelectorMapToEntries(
 				target.resourceDefaults?.templateNodeSelector,
 			),
+			elasticQuotaName: target.elasticQuotaName ?? "",
+			priorityClassName: target.priorityClassName ?? "",
 		});
 		setModalOpen(true);
 	};
@@ -217,6 +224,11 @@ export default function PoolManager() {
 			description: values.description?.trim(),
 			status: "available",
 			resourceDefaults: preservedDefaults,
+			// CYB-3486 pool.1/pool.2: empty string is fine — backend column
+			// defaults to '' and treats blank as "unset" (namespace-default EQ,
+			// K8s global default PriorityClass).
+			elasticQuotaName: (values.elasticQuotaName ?? "").trim(),
+			priorityClassName: (values.priorityClassName ?? "").trim(),
 		};
 
 		setSaving(true);
@@ -285,7 +297,14 @@ export default function PoolManager() {
 			),
 		},
 		{
-			title: "集群",
+			// CYB-3486 ux.1: 集群列淡化为二级信息。 用户看资源池时的心智
+			// 应该是"池的容量 / 池的调度",cluster 是管理员维度的实现细节。
+			// 保留列不删,但字号 / 颜色降到与"默认"标签同层次的辅助信息。
+			title: (
+				<Text type="secondary" style={{ fontSize: 11, fontWeight: "normal" }}>
+					集群
+				</Text>
+			),
 			key: "cluster",
 			width: 140,
 			render: (_: unknown, r: ExecutionTarget) => {
@@ -295,7 +314,7 @@ export default function PoolManager() {
 				);
 				const label = cluster?.displayName || cluster?.name || r.cluster;
 				return (
-					<Text style={{ fontSize: 12 }}>
+					<Text type="secondary" style={{ fontSize: 11 }}>
 						{label}
 						{cluster?.koordInstalled ? (
 							<Tag color="green" style={{ marginLeft: 6, fontSize: 10 }}>
@@ -587,6 +606,28 @@ export default function PoolManager() {
 							}))}
 						/>
 					</Form.Item>
+					<Form.Item
+						name="elasticQuotaName"
+						label={
+							<span>
+								ElasticQuota <Text type="secondary" style={{ fontSize: 11 }}>(选填)</Text>
+							</span>
+						}
+						extra="留空 → 走命名空间默认 EQ。填写后,该池的每个 workflow pod 会带上 quota.scheduling.koordinator.sh/name label,koord-scheduler 把用量记到这个 EQ 上。"
+					>
+						<Input placeholder="例如: cyberorigin-delivery-high" />
+					</Form.Item>
+					<Form.Item
+						name="priorityClassName"
+						label={
+							<span>
+								PriorityClass <Text type="secondary" style={{ fontSize: 11 }}>(选填)</Text>
+							</span>
+						}
+						extra="留空 → K8s 全局默认。填写的 PriorityClass 必须提前存在于目标集群。 常用:cyber-databrew-prod / cyber-databrew-batch。"
+					>
+						<Input placeholder="例如: cyber-databrew-batch" />
+					</Form.Item>
 					<Form.Item name="description" label="描述">
 						<Input.TextArea rows={2} placeholder="可选,一句话说明用途" />
 					</Form.Item>
@@ -792,22 +833,23 @@ function ElasticQuotaPanel({
 		setRefetchLoading(false);
 	}, []);
 
+	// CYB-3486 ux.1: "池" 面板按池组织 — 每一行是一个池,池主字段是名字,
+	// 命名空间降为二级标签(mono/secondary),不再单独占列。 这样表格阅读
+	// 顺序变成"池是谁 → 它多满 → 谁在用",跟用户的心智直接对齐。
 	const columns = [
 		{
-			title: "名称",
-			dataIndex: "name",
-			key: "name",
-			render: (name: string) => <Text strong>{name}</Text>,
-		},
-		{
-			title: "命名空间",
-			dataIndex: "namespace",
-			key: "namespace",
-			width: 200,
-			render: (ns: string) => (
-				<Text style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-					{ns}
-				</Text>
+			title: "池",
+			key: "pool",
+			render: (_: unknown, r: ElasticQuota) => (
+				<Space direction="vertical" size={0}>
+					<Text strong>{r.name}</Text>
+					<Text
+						type="secondary"
+						style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
+					>
+						ns: {r.namespace}
+					</Text>
+				</Space>
 			),
 		},
 		{
@@ -838,6 +880,13 @@ function ElasticQuotaPanel({
 		},
 	];
 
+	// Sort quotas by namespace so pools sharing a namespace visually cluster
+	// together — cheap "grouping" without giving up the flat table.
+	const sortedQuotas = [...quotas].sort((a, b) => {
+		if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
+		return a.name.localeCompare(b.name);
+	});
+
 	const showPicker = clusters.length > 1;
 
 	return (
@@ -866,7 +915,7 @@ function ElasticQuotaPanel({
 			<Table
 				size="small"
 				rowKey={(r) => `${r.namespace}/${r.name}`}
-				dataSource={quotas}
+				dataSource={sortedQuotas}
 				columns={columns}
 				loading={loading || refetchLoading}
 				pagination={false}

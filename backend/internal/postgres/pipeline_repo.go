@@ -532,7 +532,9 @@ func (r *ExecutionTargetRepo) Delete(ctx context.Context, id string) error {
 
 const executionTargetSelectCols = `id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
-  enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at`
+  enabled, status, is_default, resource_defaults, quota_policy, labels,
+  elastic_quota_name, priority_class_name,
+  created_at, updated_at`
 
 func mapFromJSON(raw []byte) map[string]interface{} {
 	if len(raw) == 0 {
@@ -570,6 +572,7 @@ func scanExecutionTarget(rs rowScanner) (*models.ExecutionTarget, error) {
 		&t.ID, &t.Name, &t.Description, &t.Cluster, &t.ClusterID, &t.Namespace, &t.ServiceAccount,
 		&t.ArgoServerURL, &t.ArgoAuthSecretRef, &t.ArgoInsecureSkipTLS, &t.ArgoCACertRef,
 		&t.Enabled, &t.Status, &t.IsDefault, &resourceDefaults, &quotaPolicy, &labels,
+		&t.ElasticQuotaName, &t.PriorityClassName,
 		&t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -620,11 +623,15 @@ func (r *ExecutionTargetRepo) Save(ctx context.Context, t *models.ExecutionTarge
 INSERT INTO execution_targets (
   id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
-  enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at
+  enabled, status, is_default, resource_defaults, quota_policy, labels,
+  elastic_quota_name, priority_class_name,
+  created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7,
   $8, $9, $10, $11,
-  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19
+  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb,
+  $18, $19,
+  $20, $21
 )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
@@ -643,6 +650,8 @@ ON CONFLICT (id) DO UPDATE SET
   resource_defaults = EXCLUDED.resource_defaults,
   quota_policy = EXCLUDED.quota_policy,
   labels = EXCLUDED.labels,
+  elastic_quota_name = EXCLUDED.elastic_quota_name,
+  priority_class_name = EXCLUDED.priority_class_name,
   updated_at = EXCLUDED.updated_at`
 
 	db := dbFromCtx(ctx, r.c.db)
@@ -650,6 +659,7 @@ ON CONFLICT (id) DO UPDATE SET
 		t.ID, t.Name, t.Description, t.Cluster, clusterID, t.Namespace, t.ServiceAccount,
 		t.ArgoServerURL, t.ArgoAuthSecretRef, t.ArgoInsecureSkipTLS, t.ArgoCACertRef,
 		t.Enabled, t.Status, t.IsDefault, resourceDefaults, quotaPolicy, labels,
+		t.ElasticQuotaName, t.PriorityClassName,
 		t.CreatedAt, t.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("postgres ExecutionTargetRepo.Save: %w", err)

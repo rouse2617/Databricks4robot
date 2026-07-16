@@ -112,3 +112,62 @@ func (f *dbClientFactory) buildClient(c *models.Cluster) (WorkflowClient, error)
 | Argo v3 CRD schema 未来变更 | 我们用 typed `wfv1.Workflow` 反序列化 dynamic 结果,GKE 会随 argo 一起升级 | 锁定 argo v3.5 helm chart(已锁) |
 | Retry/Resubmit 复刻不完整,某些 flag 缺失 | 4d.3 只覆盖高频用法,详见 D3 简化范围 | 用户可以 kubectl retry / argo CLI 手工做,或走前端 Deploy 重新起 |
 | Logs stream 多 pod 排序抖动 | 用 pod.startedAt sort;和 argo-server 同一策略 | 单 pod workflow(默认)无差异 |
+
+## 实际实现与计划的差异 (post-hoc addendum)
+
+### D3 补充 —— 不引入 `argo-workflows/v3/workflow/util`
+
+原本设想复用官方 `wfutil.FormulateRetryWorkflow` / `FormulateResubmitWorkflow` 拿"官方语义"。
+真上手时发现:该 file 传递依赖 HDFS / Kerberos / OpenTelemetry / cron —— 拉进来 backend
+镜像 +几十 MB 依赖树,违背 [[feedback_prefer_minimal_infra]] 的最小依赖原则。 D3 里
+预留的"简化范围"正好允许 hand-roll,所以走了 hand-roll:
+
+- Retry: workflow 必须是 Failed/Error/Succeeded;失败节点 phase→Pending + 删对应 pod;
+  workflow status.phase→Running,清 finishedAt/message;Update。
+- Resubmit: deep-copy spec + non-argo labels/annotations;新 generateName(源名 strip
+  argo hash suffix);清 metadata;Create。
+
+不含:`--restart-successful`、`--memoized`、partial retry via node-field selectors,
+参数覆盖。 需要这些的用户走 argo CLI / kubectl。
+
+### D8(新增)—— 破解 `argo → k8s → pipeline → argo` import cycle
+
+计划里 D1 说 factory 内部依赖 `k8s.ClientFactory` 拿 dynamic/typed client。 实操时
+发现 `internal/k8s/runtime_config.go` import 了 `usecase/pipeline`(为了拿
+RuntimeConfigProjection 类型),而 `usecase/pipeline/usecase.go` import `argo`,
+成环。
+
+解决:`internal/argo/factory.go` 里声明局部 `K8sFactory` interface 只包含用到的两个
+方法(`ForCluster` + `DynamicForCluster`)。`k8s.ClientFactory` 结构性满足这个接口,
+`infra.go` 里 `argo.WithK8sFactory(k8sFactory)` 直接传就行。 argo package 不再
+import `internal/k8s`,cycle 解开。
+
+### 4d.5 拆成两个 commit
+
+原本 4d.5 一个 commit 做完 per-cluster goroutine + reconcile 循环。 实际发现:
+"每 run 走对客户端"(correctness,delivery-clust runs 不再被误发到 cyber-clust)和
+"per-cluster goroutine 并行"(scaling,一 cluster 卡不会拖住别的 cluster)是两个
+独立价值。 拆:
+
+- **4d.5** = correctness half. `resolveArgoClientForRun(ctx, run)` + 7 个 caller
+  重构。 单独可 revert,单独可 merge,已经解掉了核心 bug。
+- **4d.5.b** = scaling half. `SyncActiveRunEvents` 按 cluster 分组 fan-out 一 goroutine
+  per cluster。 correctness 已通,这一步是性能优化。
+
+原始 "reconcile 循环(新集群出现 → spawn goroutine,idle > N min → drain)" 没做 ——
+现在集群数很少(2 个),goroutine 每次 SyncActiveRunEvents 都 fresh 起,自然对齐
+新集群加减。 长期主动的 goroutine 池等真正接客户扩到 10+ cluster 再做。
+
+### 4d 之外顺路做的 (branch scope 扩展)
+
+用户 review 后一次性把这些也塞进了 `feat/cyb-3486d-remaining`:
+
+- **auth.1** — `clusters.auth_type` + `auth_secret_ref` schema + factory dispatch。
+  只加 `gke_wif` 一个 case,其他 case 返 `ErrClusterMisconfigured`,给未来接 ACK/EKS
+  留 seam。
+- **pool.1** — `execution_targets.elastic_quota_name`;transpiler 注入
+  `quota.scheduling.koordinator.sh/name` label。 pool 概念的细粒度控制(EQ 层)。
+- **pool.2** — `execution_targets.priority_class_name`;transpiler 设
+  `wf.Spec.PodPriorityClassName`。 池内调度顺序。
+- **ux.1** — PoolManager 集群列 muted;EQ 面板收成"池"单列。
+- **ux.2** — Target modal 加 EQ + PriorityClass 两个 Input。

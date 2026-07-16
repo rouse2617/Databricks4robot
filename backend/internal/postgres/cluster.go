@@ -24,6 +24,7 @@ var _ repository.ClusterRepository = (*ClusterRepo)(nil)
 
 const clusterCols = `id, name, display_name, description, is_default, status,
 	k8s_api_endpoint, k8s_audience, k8s_ca_data,
+	auth_type, auth_secret_ref,
 	argo_server_url, argo_namespace,
 	koord_installed,
 	created_at, updated_at, deleted_at`
@@ -33,6 +34,7 @@ func scanCluster(s rowScanner) (*models.Cluster, error) {
 	if err := s.Scan(
 		&c.ID, &c.Name, &c.DisplayName, &c.Description, &c.IsDefault, &c.Status,
 		&c.K8sAPIEndpoint, &c.K8sAudience, &c.K8sCAData,
+		&c.AuthType, &c.AuthSecretRef,
 		&c.ArgoServerURL, &c.ArgoNamespace,
 		&c.KoordInstalled,
 		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
@@ -92,15 +94,21 @@ func (r *ClusterRepo) Create(ctx context.Context, c *models.Cluster) (*models.Cl
 	if c.ID == "" {
 		c.ID = uuid.New().String()
 	}
+	authType := c.AuthType
+	if authType == "" {
+		authType = "gke_wif"
+	}
 	const q = `INSERT INTO clusters (
 		id, name, display_name, description, is_default, status,
 		k8s_api_endpoint, k8s_audience, k8s_ca_data,
+		auth_type, auth_secret_ref,
 		argo_server_url, argo_namespace, koord_installed
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 	RETURNING ` + clusterCols
 	row := r.c.db.QueryRow(ctx, q,
 		c.ID, c.Name, c.DisplayName, c.Description, c.IsDefault, c.Status,
 		c.K8sAPIEndpoint, c.K8sAudience, c.K8sCAData,
+		authType, c.AuthSecretRef,
 		c.ArgoServerURL, c.ArgoNamespace, c.KoordInstalled,
 	)
 	out, err := scanCluster(row)
@@ -115,16 +123,22 @@ func (r *ClusterRepo) Create(ctx context.Context, c *models.Cluster) (*models.Cl
 }
 
 func (r *ClusterRepo) Update(ctx context.Context, c *models.Cluster) (*models.Cluster, error) {
+	authType := c.AuthType
+	if authType == "" {
+		authType = "gke_wif"
+	}
 	const q = `UPDATE clusters SET
 		name = $2, display_name = $3, description = $4, is_default = $5, status = $6,
 		k8s_api_endpoint = $7, k8s_audience = $8, k8s_ca_data = $9,
-		argo_server_url = $10, argo_namespace = $11, koord_installed = $12,
+		auth_type = $10, auth_secret_ref = $11,
+		argo_server_url = $12, argo_namespace = $13, koord_installed = $14,
 		updated_at = now()
 	WHERE id = $1 AND deleted_at IS NULL
 	RETURNING ` + clusterCols
 	row := r.c.db.QueryRow(ctx, q,
 		c.ID, c.Name, c.DisplayName, c.Description, c.IsDefault, c.Status,
 		c.K8sAPIEndpoint, c.K8sAudience, c.K8sCAData,
+		authType, c.AuthSecretRef,
 		c.ArgoServerURL, c.ArgoNamespace, c.KoordInstalled,
 	)
 	out, err := scanCluster(row)
