@@ -30,6 +30,7 @@ import {
 	listClusters,
 	listElasticQuotas,
 	listExecutionTargets,
+	type TargetScheduling,
 	type TargetToleration,
 	updateExecutionTarget,
 } from "../../api/pipelineApi";
@@ -42,7 +43,9 @@ interface QuotaInfo {
 	memory: { used: string; hard: string };
 }
 
-interface NodeSelectorEntry {
+// A key/value row in a Form.List-backed map editor (nodeSelector, pod labels,
+// pod annotations all share this shape).
+interface KVEntry {
 	key: string;
 	value: string;
 }
@@ -53,12 +56,15 @@ interface FormValues {
 	clusterId?: string;
 	description?: string;
 	templateTolerations?: TargetToleration[];
-	templateNodeSelector?: NodeSelectorEntry[];
-	// CYB-3486 pool.1/pool.2: pool granularity + dispatch ordering.
-	// Both optional; empty preserves the pre-pool.1/2 defaults (ns-level EQ,
-	// K8s global default PriorityClass).
-	elasticQuotaName?: string;
+	templateNodeSelector?: KVEntry[];
+	// CYB-3486 pool.3: pool scheduling config. All optional; written to
+	// resourceDefaults.scheduling. Empty = cluster / K8s defaults (any scheduler).
+	// The frontend hardcodes no koord / ElasticQuota semantics — the admin types
+	// the scheduler name and the pod-label key/value themselves.
+	schedulerName?: string;
 	priorityClassName?: string;
+	podLabels?: KVEntry[];
+	podAnnotations?: KVEntry[];
 }
 
 const TOLERATION_EFFECTS = [
@@ -69,21 +75,19 @@ const TOLERATION_EFFECTS = [
 
 const TOLERATION_OPERATORS = [{ value: "Equal" }, { value: "Exists" }] as const;
 
-function nodeSelectorMapToEntries(
-	m: Record<string, string> | undefined,
-): NodeSelectorEntry[] {
+function kvMapToEntries(m: Record<string, string> | undefined): KVEntry[] {
 	if (!m) return [];
 	return Object.entries(m).map(([key, value]) => ({ key, value }));
 }
 
-function nodeSelectorEntriesToMap(
-	entries: NodeSelectorEntry[] | undefined,
+function kvEntriesToMap(
+	entries: KVEntry[] | undefined,
 ): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const e of entries ?? []) {
 		const k = e.key?.trim();
 		if (!k) continue;
-		out[k] = e.value ?? "";
+		out[k] = (e.value ?? "").trim();
 	}
 	return out;
 }
@@ -165,17 +169,20 @@ export default function PoolManager() {
 			target.clusterId ??
 			clusters.find((c) => c.name === target.cluster)?.id ??
 			clusters.find((c) => c.isDefault)?.id;
+		const scheduling = target.resourceDefaults?.scheduling ?? {};
 		form.setFieldsValue({
 			name: target.name,
 			namespace: target.namespace,
 			clusterId,
 			description: target.description,
 			templateTolerations: target.resourceDefaults?.templateTolerations ?? [],
-			templateNodeSelector: nodeSelectorMapToEntries(
+			templateNodeSelector: kvMapToEntries(
 				target.resourceDefaults?.templateNodeSelector,
 			),
-			elasticQuotaName: target.elasticQuotaName ?? "",
-			priorityClassName: target.priorityClassName ?? "",
+			schedulerName: scheduling.schedulerName ?? "",
+			priorityClassName: scheduling.priorityClassName ?? "",
+			podLabels: kvMapToEntries(scheduling.podLabels),
+			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
 		});
 		setModalOpen(true);
 	};
@@ -198,7 +205,31 @@ export default function PoolManager() {
 				effect: t.effect ?? "NoSchedule",
 			}))
 			.filter((t) => t.key.length > 0);
-		const nodeSelector = nodeSelectorEntriesToMap(values.templateNodeSelector);
+		const nodeSelector = kvEntriesToMap(values.templateNodeSelector);
+		const podLabels = kvEntriesToMap(values.podLabels);
+		const podAnnotations = kvEntriesToMap(values.podAnnotations);
+		const schedulerName = (values.schedulerName ?? "").trim();
+		const priorityClassName = (values.priorityClassName ?? "").trim();
+
+		// Assemble the scheduling sub-object (CYB-3486 pool.3). Start from
+		// whatever the server already had under `.scheduling` so keys this editor
+		// doesn't manage (a future scheduling knob, or nodeSelector/tolerations if
+		// a target stored them nested) survive the PUT. A blank input deletes its
+		// key so clearing a field genuinely unsets it rather than writing "".
+		const scheduling: TargetScheduling = {
+			...(editTarget?.resourceDefaults?.scheduling ?? {}),
+		};
+		if (schedulerName) scheduling.schedulerName = schedulerName;
+		else delete scheduling.schedulerName;
+		if (priorityClassName) scheduling.priorityClassName = priorityClassName;
+		else delete scheduling.priorityClassName;
+		if (Object.keys(podLabels).length > 0) scheduling.podLabels = podLabels;
+		else delete scheduling.podLabels;
+		if (Object.keys(podAnnotations).length > 0) {
+			scheduling.podAnnotations = podAnnotations;
+		} else {
+			delete scheduling.podAnnotations;
+		}
 
 		// Preserve every field the server sent us (terminal config, computeTier,
 		// custom keys, etc.) so a PUT only touches what the user edited.
@@ -207,9 +238,13 @@ export default function PoolManager() {
 			templateTolerations: tolerations,
 			templateNodeSelector:
 				Object.keys(nodeSelector).length > 0 ? nodeSelector : undefined,
+			scheduling: Object.keys(scheduling).length > 0 ? scheduling : undefined,
 		};
 		if (preservedDefaults.templateNodeSelector === undefined) {
 			delete preservedDefaults.templateNodeSelector;
+		}
+		if (preservedDefaults.scheduling === undefined) {
+			delete preservedDefaults.scheduling;
 		}
 
 		// Backend still requires the legacy `cluster` string field; look it up
@@ -224,11 +259,6 @@ export default function PoolManager() {
 			description: values.description?.trim(),
 			status: "available",
 			resourceDefaults: preservedDefaults,
-			// CYB-3486 pool.1/pool.2: empty string is fine — backend column
-			// defaults to '' and treats blank as "unset" (namespace-default EQ,
-			// K8s global default PriorityClass).
-			elasticQuotaName: (values.elasticQuotaName ?? "").trim(),
-			priorityClassName: (values.priorityClassName ?? "").trim(),
 		};
 
 		setSaving(true);
@@ -427,17 +457,43 @@ export default function PoolManager() {
 			},
 		},
 		{
-			title: "调度约束",
+			title: "调度配置",
 			key: "scheduling",
 			width: 260,
 			render: (_: unknown, r: ExecutionTarget) => {
-				const tols = r.resourceDefaults?.templateTolerations ?? [];
-				const sel = r.resourceDefaults?.templateNodeSelector ?? {};
-				if (tols.length === 0 && Object.keys(sel).length === 0) {
+				const rd = r.resourceDefaults;
+				const sched = rd?.scheduling ?? {};
+				const tols = rd?.templateTolerations ?? [];
+				const sel = rd?.templateNodeSelector ?? {};
+				const podLabels = sched.podLabels ?? {};
+				const schedulerName = sched.schedulerName?.trim();
+				const priorityClassName = sched.priorityClassName?.trim();
+				if (
+					tols.length === 0 &&
+					Object.keys(sel).length === 0 &&
+					Object.keys(podLabels).length === 0 &&
+					!schedulerName &&
+					!priorityClassName
+				) {
 					return <Text type="secondary">—</Text>;
 				}
 				return (
 					<Space size={2} wrap>
+						{schedulerName ? (
+							<Tag color="purple" style={{ fontSize: 11 }}>
+								sched: {schedulerName}
+							</Tag>
+						) : null}
+						{priorityClassName ? (
+							<Tag color="gold" style={{ fontSize: 11 }}>
+								prio: {priorityClassName}
+							</Tag>
+						) : null}
+						{Object.entries(podLabels).map(([k, v]) => (
+							<Tag color="magenta" key={`pl-${k}`} style={{ fontSize: 11 }}>
+								{k}={v}
+							</Tag>
+						))}
 						{tols.map((t) => (
 							<Tag
 								key={`tol-${t.key}-${t.value ?? ""}-${t.effect}`}
@@ -606,35 +662,59 @@ export default function PoolManager() {
 							}))}
 						/>
 					</Form.Item>
-					<Form.Item
-						name="elasticQuotaName"
-						label={
-							<span>
-								ElasticQuota <Text type="secondary" style={{ fontSize: 11 }}>(选填)</Text>
-							</span>
-						}
-						extra="留空 → 走命名空间默认 EQ。填写后,该池的每个 workflow pod 会带上 quota.scheduling.koordinator.sh/name label,koord-scheduler 把用量记到这个 EQ 上。"
-					>
-						<Input placeholder="例如: cyberorigin-delivery-high" />
-					</Form.Item>
-					<Form.Item
-						name="priorityClassName"
-						label={
-							<span>
-								PriorityClass <Text type="secondary" style={{ fontSize: 11 }}>(选填)</Text>
-							</span>
-						}
-						extra="留空 → K8s 全局默认。填写的 PriorityClass 必须提前存在于目标集群。 常用:cyber-databrew-prod / cyber-databrew-batch。"
-					>
-						<Input placeholder="例如: cyber-databrew-batch" />
-					</Form.Item>
 					<Form.Item name="description" label="描述">
 						<Input.TextArea rows={2} placeholder="可选,一句话说明用途" />
 					</Form.Item>
 
 					<Divider style={{ margin: "12px 0" }} orientation="left" plain>
 						<Text type="secondary" style={{ fontSize: 12 }}>
-							调度约束(可选)—— 与集群节点污点匹配才能调度
+							调度配置(可选)
+						</Text>
+					</Divider>
+
+					<Typography.Paragraph
+						type="secondary"
+						style={{ fontSize: 12, marginBottom: 12 }}
+					>
+						全部留空 → 使用集群默认调度器(适配任意调度器,不接入弹性配额)。
+						如需接入 Koordinator 弹性配额池:调度器填{" "}
+						<Text code>koord-scheduler</Text>,并在 Pod labels 加一条
+						ElasticQuota label(key 通常是{" "}
+						<Text code>quota.scheduling.koordinator.sh/name</Text>,value
+						为配额名)。 key / value 均由管理员按目标集群填写,页面不写死。
+					</Typography.Paragraph>
+
+					<Form.Item name="schedulerName" label="Scheduler 名称">
+						<Input placeholder="留空 = 集群默认调度器;例如 koord-scheduler" />
+					</Form.Item>
+					<Form.Item name="priorityClassName" label="PriorityClass">
+						<Input placeholder="留空 = K8s 全局默认;例如 cyber-databrew-prod" />
+					</Form.Item>
+					<Form.Item
+						label="Pod labels"
+						extra="随每个 workflow pod 下发;接入弹性配额时在此填 EQ label。"
+					>
+						<KeyValueListEditor
+							name="podLabels"
+							keyPlaceholder="label key,如 quota.scheduling.koordinator.sh/name"
+							valuePlaceholder="label value,如 cyberorigin-delivery-low"
+							addLabel="添加 pod label"
+							ariaPrefix="podlabel"
+						/>
+					</Form.Item>
+					<Form.Item label="Pod annotations">
+						<KeyValueListEditor
+							name="podAnnotations"
+							keyPlaceholder="annotation key"
+							valuePlaceholder="annotation value"
+							addLabel="添加 pod annotation"
+							ariaPrefix="podannotation"
+						/>
+					</Form.Item>
+
+					<Divider style={{ margin: "12px 0" }} orientation="left" plain>
+						<Text type="secondary" style={{ fontSize: 12 }}>
+							节点约束(可选)—— 与集群节点污点匹配才能调度
 						</Text>
 					</Divider>
 
@@ -726,58 +806,14 @@ export default function PoolManager() {
 					</Form.Item>
 
 					<Form.Item label="Node Selector(节点选择)">
-						<Form.List name="templateNodeSelector">
-							{(fields, { add, remove }) => (
-								<>
-									{fields.map((field) => (
-										<Space
-											key={field.key}
-											align="baseline"
-											style={{ display: "flex", marginBottom: 4 }}
-										>
-											<Form.Item
-												name={[field.name, "key"]}
-												rules={[
-													{
-														required: true,
-														message: "key 必填",
-														whitespace: true,
-													},
-												]}
-												style={{ marginBottom: 0, width: 220 }}
-											>
-												<Input placeholder="label key" />
-											</Form.Item>
-											<Form.Item
-												name={[field.name, "value"]}
-												rules={[
-													{
-														required: true,
-														message: "value 必填",
-														whitespace: true,
-													},
-												]}
-												style={{ marginBottom: 0, width: 220 }}
-											>
-												<Input placeholder="label value" />
-											</Form.Item>
-											<MinusCircleOutlined
-												onClick={() => remove(field.name)}
-												aria-label={`remove-nodeselector-${field.name}`}
-											/>
-										</Space>
-									))}
-									<Button
-										type="dashed"
-										size="small"
-										onClick={() => add({ key: "", value: "" })}
-										icon={<PlusOutlined />}
-									>
-										添加 nodeSelector
-									</Button>
-								</>
-							)}
-						</Form.List>
+						<KeyValueListEditor
+							name="templateNodeSelector"
+							keyPlaceholder="label key"
+							valuePlaceholder="label value"
+							addLabel="添加 nodeSelector"
+							ariaPrefix="nodeselector"
+							requireValue
+						/>
 					</Form.Item>
 				</Form>
 			</Modal>
@@ -788,7 +824,83 @@ export default function PoolManager() {
 type TargetResourceDefaultsPatch = Record<string, unknown> & {
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: Record<string, string>;
+	scheduling?: TargetScheduling;
 };
+
+interface KeyValueListEditorProps {
+	// Form.List field name in the enclosing Form (e.g. "podLabels").
+	name: string;
+	keyPlaceholder: string;
+	valuePlaceholder: string;
+	addLabel: string;
+	// aria-label prefix for the remove icon → `remove-${ariaPrefix}-${index}`.
+	ariaPrefix: string;
+	// When true, both key and value are required (matches the nodeSelector
+	// editor). When false (pod labels / annotations), blank rows are simply
+	// dropped on save by kvEntriesToMap, so no hard validation is imposed.
+	requireValue?: boolean;
+}
+
+// KeyValueListEditor is the shared key/value map editor used by nodeSelector,
+// pod labels and pod annotations — a Form.List of {key, value} rows plus an
+// "add" button. The parent converts entries to a map with kvEntriesToMap.
+function KeyValueListEditor({
+	name,
+	keyPlaceholder,
+	valuePlaceholder,
+	addLabel,
+	ariaPrefix,
+	requireValue = false,
+}: KeyValueListEditorProps) {
+	const keyRules = requireValue
+		? [{ required: true, message: "key 必填", whitespace: true }]
+		: undefined;
+	const valueRules = requireValue
+		? [{ required: true, message: "value 必填", whitespace: true }]
+		: undefined;
+	return (
+		<Form.List name={name}>
+			{(fields, { add, remove }) => (
+				<>
+					{fields.map((field) => (
+						<Space
+							key={field.key}
+							align="baseline"
+							style={{ display: "flex", marginBottom: 4 }}
+						>
+							<Form.Item
+								name={[field.name, "key"]}
+								rules={keyRules}
+								style={{ marginBottom: 0, width: 220 }}
+							>
+								<Input placeholder={keyPlaceholder} />
+							</Form.Item>
+							<Form.Item
+								name={[field.name, "value"]}
+								rules={valueRules}
+								style={{ marginBottom: 0, width: 220 }}
+							>
+								<Input placeholder={valuePlaceholder} />
+							</Form.Item>
+							<MinusCircleOutlined
+								onClick={() => remove(field.name)}
+								aria-label={`remove-${ariaPrefix}-${field.name}`}
+							/>
+						</Space>
+					))}
+					<Button
+						type="dashed"
+						size="small"
+						onClick={() => add({ key: "", value: "" })}
+						icon={<PlusOutlined />}
+					>
+						{addLabel}
+					</Button>
+				</>
+			)}
+		</Form.List>
+	);
+}
 
 interface ElasticQuotaPanelProps {
 	// initialQuotas is the panel's first render (whatever PoolManager pre-fetched
@@ -883,7 +995,8 @@ function ElasticQuotaPanel({
 	// Sort quotas by namespace so pools sharing a namespace visually cluster
 	// together — cheap "grouping" without giving up the flat table.
 	const sortedQuotas = [...quotas].sort((a, b) => {
-		if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
+		if (a.namespace !== b.namespace)
+			return a.namespace.localeCompare(b.namespace);
 		return a.name.localeCompare(b.name);
 	});
 
