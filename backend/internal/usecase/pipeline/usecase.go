@@ -2898,7 +2898,13 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	if uc.runRepo == nil {
 		return nil, nil
 	}
-	return uc.runRepo.FindAllSummaries(ctx)
+	// CYB-3491: ListSummaries 现在强制分页,unbounded 扫描被禁 (dev 30k+
+	// 行时该扫描 39s,连锁把 submitter 事务打成 deadline exceeded)。
+	// watcher 只需要 "最近的一批 run summaries" 参与轮转 —— 上限 500 (repo
+	// 硬上限);默认按 created_at DESC,天然拿到最新一段,active runs 都
+	// 在这里,历史行不再参与。
+	items, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
+	return items, err
 }
 
 func computeLedgerHealth(runs []models.PipelineRun, lastBackfill *time.Time) models.LedgerHealth {
@@ -5605,7 +5611,11 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 
 func (uc *Usecase) listDeployments(ctx context.Context, refreshActive bool) ([]models.PipelineDeployment, error) {
 	if uc.runRepo != nil {
-		runs, _, err := uc.ListRunSummaries(ctx)
+		// CYB-3491(紧急):ListRunSummaries(ctx) 无 filter 走 FindAllSummaries,
+		// 全表扫。dev 30k+ 行时 39s + 撑爆连接。这个 endpoint 是
+		// /api/v1/pipelines 的支线("最近的部署")——最近 500 条已够,
+		// legacy deployments 走独立 FindAll(不受影响)。
+		runs, _, err := uc.ListRunSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
 		if err != nil {
 			return nil, err
 		}

@@ -1066,38 +1066,26 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 ` + where + `
 ` + orderBy
 
-	if filter.Page > 0 || filter.PageSize > 0 {
-		page := filter.Page
-		if page < 1 {
-			page = 1
-		}
-		pageSize := filter.PageSize
-		if pageSize < 1 {
-			pageSize = 20
-		}
-		if pageSize > 200 {
-			pageSize = 200
-		}
-		offset := (page - 1) * pageSize
-		limitClause := fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
-		listArgs := append(append([]any{}, args...), pageSize, offset)
-		rows, err := db.Query(ctx, listQ+limitClause, listArgs...)
-		if err != nil {
-			return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
-		}
-		defer rows.Close()
-		var out []models.PipelineRun
-		for rows.Next() {
-			run, err := scanPipelineRunSummary(rows)
-			if err != nil {
-				return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries scan: %w", err)
-			}
-			out = append(out, *run)
-		}
-		return out, total, nil
+	// CYB-3491(紧急):以前 filter.Page/PageSize 都为 0 时走无 LIMIT 分支,
+	// 直接 SELECT 全表。dev 30k+ 行时该查询 39s,并占用 pg 连接把 submitter
+	// 事务连锁超时 (context deadline exceeded)。ListDeployments 就是这样
+	// 意外触发无界扫的调用方。现在:总是分页,pageSize 缺省 200,上限 500 —
+	// 需要更多行的调用方(测试/CSV 导出)必须显式分页遍历。
+	page := filter.Page
+	if page < 1 {
+		page = 1
 	}
-
-	rows, err := db.Query(ctx, listQ, args...)
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 200
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	offset := (page - 1) * pageSize
+	limitClause := fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
+	listArgs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := db.Query(ctx, listQ+limitClause, listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
 	}
