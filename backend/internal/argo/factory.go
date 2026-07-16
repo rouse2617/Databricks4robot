@@ -137,11 +137,16 @@ func (f *dbClientFactory) ForCluster(ctx context.Context, clusterID string) (Wor
 	return client, nil
 }
 
-// buildClient picks between HTTP (argo-server) and CRD (dynamic client) mode
-// based on the resolved Argo config. Any non-empty server URL — whether from
-// the cluster row itself or from the env fallback for the default cluster —
-// keeps the historic HTTP path byte-identical. Empty resolved URL routes
-// through the K8s Workflow CRD via the injected k8s.ClientFactory.
+// buildClient picks between HTTP (argo-server) and CRD (dynamic client) mode.
+//
+// Mode is decided by the cluster's OWN argo_server_url plus the env fallback,
+// where the env fallback applies ONLY to the default cluster. This is the
+// crux of CYB-3486d1d: a non-default cluster (delivery-clust) with an empty
+// argo_server_url deliberately means "use CRD mode", and must NOT inherit the
+// env ARGO_SERVER_URL (which points at cyber-clust's argo-server). Before the
+// fix, configForCluster's env fallback fired for every empty-URL cluster, so
+// clearing delivery-clust's URL silently routed its workflows to cyber-clust's
+// argo-server — producing "namespaces cyber-delivery-dev not found".
 func (f *dbClientFactory) buildClient(ctx context.Context, cluster *models.Cluster) (WorkflowClient, error) {
 	cfg := f.configForCluster(cluster)
 	if cfg.ServerURL != "" {
@@ -183,24 +188,25 @@ func (f *dbClientFactory) Invalidate(clusterID string) {
 	delete(f.entries, clusterID)
 }
 
-// configForCluster resolves the Argo Config to use for the cluster. When
-// ArgoServerURL is empty the factory falls back to the env-derived Config
-// captured at startup (default-cluster compat). Non-empty URL overrides;
-// token / TLS come from the cluster row when populated, otherwise env.
+// configForCluster resolves the Argo Config to use for the cluster.
+//
+// Empty ArgoServerURL is resolved differently by cluster kind:
+//   - default cluster → fall back to the env-derived Config (byte-identical
+//     to the pre-3486 singleton startup). This keeps cyber-clust on HTTP.
+//   - non-default cluster → return an empty Config so buildClient routes to
+//     CRD mode. Critically we do NOT leak the env's argo-server URL here, or
+//     the cluster would wrongly talk HTTP to cyber-clust's argo-server
+//     (CYB-3486d1d regression).
+//
+// Non-empty ArgoServerURL always means HTTP with that URL (token / TLS still
+// come from env because per-cluster secret storage is out of scope for now).
 func (f *dbClientFactory) configForCluster(c *models.Cluster) *Config {
 	if c.ArgoServerURL == "" {
-		// Default cluster path: reuse the env config passed via
-		// WithEnvFallback so backend behavior is byte-identical to the
-		// pre-3486 singleton startup.
-		if f.envCfg != nil {
+		if isDefaultCluster(c) && f.envCfg != nil {
 			return f.envCfg
 		}
 		return &Config{}
 	}
-	// Non-default cluster: use its ArgoServerURL; token/TLS still come from
-	// env because per-cluster secret storage is intentionally out of scope
-	// for PR 4a (defense against key sprawl; add per-cluster fields when
-	// there's a real need).
 	cfg := &Config{ServerURL: c.ArgoServerURL}
 	if f.envCfg != nil {
 		cfg.Token = f.envCfg.Token
@@ -208,4 +214,12 @@ func (f *dbClientFactory) configForCluster(c *models.Cluster) *Config {
 		cfg.CACertBase64 = f.envCfg.CACertBase64
 	}
 	return cfg
+}
+
+// isDefaultCluster reports whether the cluster is the legacy single-cluster
+// row that inherits env-derived Argo/K8s config. Matches on the explicit
+// IsDefault flag or the seed id, so either a correctly-flagged row or the
+// pre-flag "cluster-default" seed is recognized.
+func isDefaultCluster(c *models.Cluster) bool {
+	return c.IsDefault || c.ID == "cluster-default"
 }

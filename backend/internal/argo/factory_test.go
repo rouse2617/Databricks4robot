@@ -143,9 +143,10 @@ func TestArgoFactory_ExplicitClusterOverridesURL(t *testing.T) {
 }
 
 func TestArgoFactory_CacheHit(t *testing.T) {
-	repo := newStubRepo(&models.Cluster{ID: "c1", Name: "c1"})
-	f := NewClientFactory(repo, WithTTL(time.Hour),
-		WithEnvFallback(&Config{ServerURL: "http://argo.default.svc:2746"}))
+	// c1 carries its own argo URL so it's unambiguously an HTTP cluster — this
+	// test exercises cache behavior, not mode selection.
+	repo := newStubRepo(&models.Cluster{ID: "c1", Name: "c1", ArgoServerURL: "http://argo.c1.svc:2746"})
+	f := NewClientFactory(repo, WithTTL(time.Hour))
 	ctx := context.Background()
 	if _, err := f.ForCluster(ctx, "c1"); err != nil {
 		t.Fatal(err)
@@ -159,9 +160,8 @@ func TestArgoFactory_CacheHit(t *testing.T) {
 }
 
 func TestArgoFactory_Invalidate(t *testing.T) {
-	repo := newStubRepo(&models.Cluster{ID: "c1", Name: "c1"})
-	f := NewClientFactory(repo, WithTTL(time.Hour),
-		WithEnvFallback(&Config{ServerURL: "http://argo.default.svc:2746"}))
+	repo := newStubRepo(&models.Cluster{ID: "c1", Name: "c1", ArgoServerURL: "http://argo.c1.svc:2746"})
+	f := NewClientFactory(repo, WithTTL(time.Hour))
 	ctx := context.Background()
 	_, _ = f.ForCluster(ctx, "c1")
 	f.Invalidate("c1")
@@ -256,6 +256,66 @@ func TestArgoFactory_CRDMode_URLEmpty(t *testing.T) {
 	}
 	if stub.dynCalls != 1 || stub.typedCalls != 1 {
 		t.Errorf("k8s factory should be called once each (dyn=%d typed=%d)", stub.dynCalls, stub.typedCalls)
+	}
+}
+
+// TestArgoFactory_CRDMode_NonDefaultIgnoresEnvURL is the direct regression for
+// CYB-3486d1d: a NON-default cluster with an empty argo_server_url must route
+// to CRD mode even when the env fallback carries a (cyber-clust) argo-server
+// URL. Before the fix, configForCluster's env fallback fired for every
+// empty-URL cluster, so clearing delivery-clust's URL silently sent its
+// workflows to cyber-clust's argo-server → "namespaces cyber-delivery-dev
+// not found".
+func TestArgoFactory_CRDMode_NonDefaultIgnoresEnvURL(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{
+		ID:            "cluster-delivery",
+		Name:          "delivery-clust",
+		IsDefault:     false,
+		ArgoServerURL: "",
+		ArgoNamespace: "cyber-delivery-dev",
+	})
+	stub := newStubK8sFactory()
+	f := NewClientFactory(repo,
+		// env fallback DOES have a URL — the pre-fix bug would have used it.
+		WithEnvFallback(&Config{ServerURL: "http://argo.cyber-clust.svc:2746", Token: "env-tok"}),
+		WithK8sFactory(stub))
+	client, err := f.ForCluster(context.Background(), "cluster-delivery")
+	if err != nil {
+		t.Fatalf("non-default empty-URL cluster should build CRD client: %v", err)
+	}
+	if _, isHTTP := client.(*Client); isHTTP {
+		t.Fatal("REGRESSION: non-default empty-URL cluster fell back to env HTTP client instead of CRD")
+	}
+	crd, ok := client.(*crdWorkflowClient)
+	if !ok {
+		t.Fatalf("expected *crdWorkflowClient, got %T", client)
+	}
+	if crd.defaultNS != "cyber-delivery-dev" {
+		t.Errorf("defaultNS should come from cluster row, got %q", crd.defaultNS)
+	}
+	if stub.dynCalls != 1 || stub.typedCalls != 1 {
+		t.Errorf("k8s factory should be used for CRD (dyn=%d typed=%d)", stub.dynCalls, stub.typedCalls)
+	}
+}
+
+// TestArgoFactory_DefaultClusterByIsDefaultFlag verifies a row flagged
+// IsDefault (not just the "cluster-default" seed id) still gets the env
+// fallback → HTTP path.
+func TestArgoFactory_DefaultClusterByIsDefaultFlag(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{ID: "some-other-id", Name: "primary", IsDefault: true, ArgoServerURL: ""})
+	stub := newStubK8sFactory()
+	f := NewClientFactory(repo,
+		WithEnvFallback(&Config{ServerURL: "http://argo.env.svc:2746"}),
+		WithK8sFactory(stub))
+	client, err := f.ForCluster(context.Background(), "some-other-id")
+	if err != nil {
+		t.Fatalf("IsDefault cluster should build via env HTTP: %v", err)
+	}
+	if _, isHTTP := client.(*Client); !isHTTP {
+		t.Errorf("IsDefault + empty URL + envCfg should be HTTP, got %T", client)
+	}
+	if stub.dynCalls != 0 {
+		t.Errorf("k8s factory must not be used for default cluster HTTP path")
 	}
 }
 
