@@ -3465,6 +3465,13 @@ func (uc *Usecase) Deploy(
 		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
 		{Name: "REQUEST_ID", Value: depID},
 	}
+	// assetRegistered records which input assets actually exist in the assets
+	// table (filled from the Get below, no extra query). Used to skip the
+	// pipeline_processing asset_events append for unregistered/external assets:
+	// asset_events.asset_id has an FK to assets, so those inserts fail with
+	// 23503 and — at batch scale, with AllowUnknownAssets — spammed thousands
+	// of WARN "pipeline side effect failed" logs (cyb-3491).
+	assetRegistered := make(map[string]bool, len(assetIDs))
 	if len(assetIDs) > 0 {
 		wfParams = append(wfParams, transpiler.Param{
 			Name:  "asset_ids",
@@ -3486,6 +3493,7 @@ func (uc *Usecase) Deploy(
 			if uc.assetRepo != nil {
 				a, err := uc.assetRepo.Get(ctx, aid)
 				if err == nil && a != nil {
+					assetRegistered[aid] = true
 					if a.StorageURI != "" {
 						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "STORAGE_URI", Value: a.StorageURI})
 					}
@@ -3713,6 +3721,14 @@ func (uc *Usecase) Deploy(
 			"workflow_name": wfName,
 		})
 		for _, aid := range assetIDs {
+			// Skip unregistered/external assets: asset_events.asset_id FKs to
+			// assets, so appending lineage for an asset that isn't in the table
+			// fails with 23503. There is no assets row to attach lineage to, so
+			// the event is meaningless anyway. Only filter when we could check
+			// (assetRepo present); otherwise preserve the prior best-effort.
+			if uc.assetRepo != nil && !assetRegistered[aid] {
+				continue
+			}
 			logPipelineSideEffect("append pipeline_processing event", uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
 				EventType:     "pipeline_processing",
 				AggregateType: "asset",

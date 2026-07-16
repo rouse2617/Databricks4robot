@@ -701,6 +701,43 @@ func TestDeploymentCRUD(t *testing.T) {
 	})
 }
 
+// CYB-3491: input assets not registered in the assets table (external /
+// AllowUnknownAssets batches) must NOT get a pipeline_processing asset_event —
+// the asset_events -> assets FK would fail (23503) and spammed WARN logs at
+// batch scale. Registered assets still get their lineage event.
+func TestDeploy_SkipsPipelineProcessingEventForUnregisteredAsset(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockAssetRepo()
+	repo.assets["reg-1"] = &models.Asset{AssetID: "reg-1", AssetType: "dataset"}
+	// "ext-2" is intentionally NOT registered.
+	eventRepo := &mockEventRepo{}
+	uc := newUsecase(repo)
+	uc.assetEventRepo = eventRepo
+
+	pipe := map[string]interface{}{
+		"name": "skip-unreg",
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "step-1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+		},
+		"edges": []interface{}{},
+	}
+	// AllowUnknownAssets mirrors the batch-subtask path where external assets
+	// that aren't in the assets table are legal.
+	if _, err := uc.Deploy(ctx, pipe, "", []string{"reg-1", "ext-2"}, DeployOptions{AllowUnknownAssets: true}); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	var proc []string
+	for _, ev := range eventRepo.appended {
+		if ev.EventType == "pipeline_processing" {
+			proc = append(proc, ev.AssetID)
+		}
+	}
+	if len(proc) != 1 || proc[0] != "reg-1" {
+		t.Fatalf("pipeline_processing events = %v, want [reg-1] only (unregistered ext-2 must be skipped)", proc)
+	}
+}
+
 // ── RegisterOutput ────────────────────────────────────────────────────────
 
 func TestRegisterOutput(t *testing.T) {
