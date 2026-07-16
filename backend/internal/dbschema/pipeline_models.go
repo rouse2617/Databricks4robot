@@ -104,6 +104,7 @@ type PipelineRun struct {
 	ArgoNamespace      string     `gorm:"column:argo_namespace;type:text;not null" json:"argo_namespace"`
 	ArgoWorkflowUID    string     `gorm:"column:argo_workflow_uid;type:text;not null;default:''" json:"argo_workflow_uid"`
 	Message            string     `gorm:"column:message;type:text;not null;default:''" json:"message"`
+	Progress           string     `gorm:"column:progress;type:text;not null;default:''" json:"progress,omitempty"` // CYB-3490
 	Scope              string     `gorm:"column:scope;type:text;default:'dev';not null" json:"scope"` // 052
 	Owner              string     `gorm:"column:owner;type:text;default:'';not null" json:"owner"`     // 052
 	LedgerState        string     `gorm:"column:ledger_state;type:text;not null;default:'pending'" json:"ledger_state"` // 050

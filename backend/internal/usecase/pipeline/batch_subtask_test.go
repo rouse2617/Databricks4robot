@@ -54,8 +54,8 @@ func TestUpsertBatchSubtaskRunReusesExistingRunForBatchAsset(t *testing.T) {
 	if runID != existingID {
 		t.Fatalf("runID = %q, want existing %q", runID, existingID)
 	}
-	if workflowName != "3-batch-23324" {
-		t.Fatalf("workflowName = %q", workflowName)
+	if workflowName != "3-batch-job-1-23324" {
+		t.Fatalf("workflowName = %q, want job-scoped 3-batch-job-1-23324", workflowName)
 	}
 	if saved := runRepo.byID[existingID]; saved == nil || saved.Status != "Pending" {
 		t.Fatalf("saved status = %q, want Pending", saved.Status)

@@ -119,6 +119,9 @@ func setupCore(inf *infra) *coreHandlers {
 	if inf.workflowClient != nil {
 		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
 	}
+	// CYB-3486 PR 4c: wire per-cluster argo factory so pipeline submits route
+	// by target.cluster_id. Nil-safe (no PG → nil factory → legacy adapter path).
+	puc.SetArgoFactory(inf.argoFactory)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	puc.SetArgoRunWebhook(
 		inf.cfg.ArgoRunWebhookURL,
@@ -192,14 +195,19 @@ func setupCore(inf *infra) *coreHandlers {
 		feishu.NewClient(feishu.Config{WebhookURL: inf.cfg.BackfillNotifyFeishuWebhookURL}),
 		inf.cfg.FrontendBaseURL,
 	)
-	backfillUC.StartReaper()
+	// CYB-3491 (P2): the submitter replaced the claim/reaper/worker-pool
+	// execution queue. It is periodic AND kicked by materialize/resume/rerun,
+	// so dispatch survives redeploys by construction — the reaper, the
+	// boot-time ResumeIncompleteBatches, and the P0 pool-recovery stopgap are
+	// all gone. Argo owns queueing/parallelism/execution from here.
+	backfillUC.SetSubmitQueue(backfillRepo)
+	backfillUC.StartSubmitter()
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
 	backfillUC.StartJobReconciler(
 		time.Duration(inf.cfg.BackfillReconcileIntervalSec)*time.Second,
 		int(inf.cfg.BackfillReconcileScanLimit),
 	)
-	backfillUC.ResumeIncompleteBatches(context.Background())
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
@@ -220,6 +228,10 @@ func setupCore(inf *infra) *coreHandlers {
 	workflowHandler.SetPodClient(inf.podClient)
 	workflowHandler.SetExecClient(inf.execClient)
 	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo, pipelineRunNodeRepo)
+	// CYB-3486 PR 4b: elastic_quota / resource_quota now route by cluster_id
+	// through the factory. Nil-safe: if inf.k8sFactory is nil (no PG), the
+	// handlers fall back to the pre-3486 env singleton.
+	workflowHandler.SetK8sFactory(inf.k8sFactory)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler

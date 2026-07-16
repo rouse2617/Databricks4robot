@@ -67,3 +67,40 @@ func TestDerive_EmptyRowsPending(t *testing.T) {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
+
+// CYB-3491: a terminally-failed run must NEVER present as 进行中, regardless
+// of what the (stale) node snapshot says. The unschedulable class leaves node
+// rows stuck at "Pending" — pods never started.
+func TestDeriveWithMessage_TerminalFailureOverridesStaleNodes(t *testing.T) {
+	msg := "Kubernetes 调度失败:step-nw-delivery Unschedulable"
+
+	// Node row stuck Pending (pod never scheduled) + run Error → Error focus
+	// carrying the run message, not 进行中.
+	got := DeriveWithMessage([]models.PipelineRunAssetNode{
+		{PipelineNodeID: "step-nw-delivery", DisplayName: "step-nw-delivery", Status: "Pending"},
+	}, "Error", msg)
+	if got == nil || got.FocusStatus != "Error" {
+		t.Fatalf("pending-node terminal run = %+v, want Error focus", got)
+	}
+	if got.FocusNodeName != "step-nw-delivery" || got.Message != msg {
+		t.Fatalf("focus/message = %+v, want node blamed with run message", got)
+	}
+
+	// Every node row already terminal-succeeded but the run failed (DAG-level
+	// failure): generic 异常 label with the run message — still never 进行中.
+	got = DeriveWithMessage([]models.PipelineRunAssetNode{
+		{PipelineNodeID: "step-1", Status: "Succeeded"},
+	}, "Failed", "dag template failed")
+	if got == nil || got.FocusStatus != "Error" || got.Label != "异常" {
+		t.Fatalf("dag-level failure = %+v, want 异常 label", got)
+	}
+
+	// Regression guard: a genuinely ACTIVE run with pending nodes keeps the
+	// in-progress presentation.
+	got = DeriveWithMessage([]models.PipelineRunAssetNode{
+		{PipelineNodeID: "step-1", Status: "Pending"},
+	}, "Running", "")
+	if got == nil || got.Label != "进行中" {
+		t.Fatalf("active run = %+v, want 进行中", got)
+	}
+}

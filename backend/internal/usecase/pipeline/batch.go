@@ -125,8 +125,14 @@ const deployTimeout = 60 * time.Second
 // processBatchJob submits all items to Argo using a parallel worker pool and
 // lets the controller manage concurrency via parallelism config. Errors are
 // per-item — one failure does not cancel the batch.
-// Items are claimed from the database using ClaimNextItem so processing
-// survives service restarts.
+//
+// CYB-3491: this legacy (pipeline-level) batch path now feeds its worker pool
+// from the materialized item list instead of ClaimNextItem (deleted with the
+// backfill execution queue). Behaviour parity: this path never had restart
+// resume (its jobs run under status "processing", which the old resume never
+// selected); the claim call only de-duplicated within this one pool, which a
+// channel feed does just as well. Items are re-checked against the ledger
+// right before submission so an item cancelled/failed elsewhere is skipped.
 func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string, submitWorkers int, batchName string) {
 	if submitWorkers <= 0 {
 		submitWorkers = defaultSubmitWorkers
@@ -139,28 +145,30 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		return
 	}
 
+	feed := make(chan models.BackfillItem)
+	go func() {
+		defer close(feed)
+		for i := range items {
+			select {
+			case <-ctx.Done():
+				return
+			case feed <- items[i]:
+			}
+		}
+	}()
+
 	var wg sync.WaitGroup
 	for w := 0; w < submitWorkers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
+			for item := range feed {
 				if ctx.Err() != nil {
 					return
 				}
-				item, err := uc.backfillRepo.ClaimNextItem(ctx, jobID)
-				if err != nil {
-					slog.Warn("batch job: claim next item failed", "batchID", jobID, "err", err)
-					time.Sleep(time.Second)
+				// Re-check the ledger: only still-pending items are submitted.
+				if fresh, err := uc.backfillRepo.FindItemByID(ctx, item.ID); err != nil || fresh == nil || fresh.Status != "pending" {
 					continue
-				}
-				if item == nil {
-					return
 				}
 				opts := []DeployOptions{{
 					TargetID:           targetID,
@@ -181,13 +189,9 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 					_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "failed", "", errMsg)
 					_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
 				} else {
-					// Submission only queues the workflow in Argo (the run starts
-					// Pending); it has NOT finished. Mark the item "running" and
-					// persist the workflow name so the backfill status sync can
-					// reconcile real completion from Argo. Previously this marked
-					// "completed" on submit, which made batches report 100% success
-					// while every workflow was still Pending and never executed.
-					_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, "running")
+					// Submission only queues the workflow in Argo; it has NOT
+					// finished. CYB-3491: the in-flight item state is "submitted".
+					_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, "submitted")
 				}
 			}
 		}()

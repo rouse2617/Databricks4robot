@@ -572,10 +572,6 @@ func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) 
 	return "", nil
 }
 
-func (m *mockBatchSubtaskReconciler) SyncBatchView(context.Context, string, []models.PipelineRun) error {
-	m.syncCalls++
-	return nil
-}
 
 func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
 	m.syncJobCalls++

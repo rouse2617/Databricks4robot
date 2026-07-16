@@ -32,6 +32,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       mcap: ${{ steps.filter.outputs.mcap }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      schema: ${{ steps.filter.outputs.schema }}
     steps:
       # fetch-depth: 2 lets dorny/paths-filter compute a real
       # `git diff <before>...<after>` for push events. The default
@@ -60,6 +61,15 @@ jobs:
               - 'Frontend/**'
               - 'wrangler.jsonc'
               - '.github/workflows/deploy-dev.yml'
+            # Rebuild the migrate image only when Atlas migrations or its
+            # Dockerfile / hcl actually change. The migrate Job's execute step
+            # + traffic route still run on every backend deploy (idempotent no-op
+            # when no pending migrations, and traffic-route is mandatory to
+            # promote the new Cloud Run revision from 0% to 100%).
+            schema:
+              - 'backend/migrations/**'
+              - 'backend/atlas/**'
+              - 'deploy/cloudrun/create-migrate-jobs.sh'
 
   # ─── Backend ────────────────────────────────────────────────────────────────
   deploy-backend:
@@ -196,7 +206,14 @@ jobs:
           chmod 600 ~/.ssh/vm_key
           ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
+      # Only rebuild the migrate image when Atlas migrations / hcl / Dockerfile
+      # actually changed. When they didn't, reuse the already-pushed
+      # cloudrun-dev-latest tag — saves ~60s per pure-backend deploy. The
+      # migrate Job execute step + traffic-route below still run every deploy:
+      # `atlas migrate apply` is a fast no-op with zero pending migrations, and
+      # update-traffic is mandatory to promote the new Cloud Run revision.
       - name: Build & push migrate image on VM
+        if: needs.changes.outputs.schema == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -224,7 +241,13 @@ jobs:
           echo "    pushed: ${{ env.MIGRATE_IMAGE }}"
           ENDSSH
 
+      - name: Skip migrate image rebuild (no schema changes)
+        if: needs.changes.outputs.schema != 'true'
+        run: |
+          echo "No changes under backend/migrations/** or backend/atlas/** — reusing existing ${{ env.MIGRATE_IMAGE }}"
+
       - name: Update Job image reference
+        if: needs.changes.outputs.schema == 'true'
         run: |
           # NOTE: gcloud run jobs update wipes plain --set-env-vars (but keeps
           # --set-secrets). We re-assert the DB_* env vars on every update so

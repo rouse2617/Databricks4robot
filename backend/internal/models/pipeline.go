@@ -107,6 +107,11 @@ type PipelineRun struct {
 	ArgoNamespace      string                   `json:"argoNamespace"`
 	ArgoWorkflowUID    string                   `json:"argoWorkflowUid,omitempty"`
 	Message            string                   `json:"message,omitempty"`
+	// Progress mirrors Argo's workflow-level status.progress ("done/total"
+	// steps, e.g. "37/100"). CYB-3490: this is the continuous, near-realtime
+	// projection for batch list views; per-node rows are only archived at
+	// terminal and lazily fetched on drill-in.
+	Progress           string                   `json:"progress,omitempty"`
 	FailureReason      string                   `json:"failureReason,omitempty"`
 	BlockingReason     string                   `json:"blockingReason,omitempty"`
 	BlockingMessage    string                   `json:"blockingMessage,omitempty"`

@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
@@ -26,13 +27,27 @@ var elasticQuotaGVR = schema.GroupVersionResource{
 }
 
 // listElasticQuotas is overridable in tests. Production wires it to a live
-// dynamic client via k8s.NewDynamicClient.
-var listElasticQuotas = func(ctx context.Context) (*unstructured.UnstructuredList, error) {
-	dc, err := k8s.NewDynamicClient("")
+// dynamic client via the per-cluster factory (CYB-3486 PR 4b); when factory
+// is nil (tests without wired infra) it falls back to the pre-3486 env
+// singleton so existing behavior is byte-identical.
+var listElasticQuotas = func(ctx context.Context, factory k8s.ClientFactory, clusterID string) (*unstructured.UnstructuredList, error) {
+	dc, err := resolveDynamicClient(ctx, factory, clusterID)
 	if err != nil {
 		return nil, err
 	}
 	return dc.Resource(elasticQuotaGVR).List(ctx, metav1.ListOptions{})
+}
+
+// resolveDynamicClient picks the dynamic client for the target cluster: the
+// factory path when configured, otherwise the env-based singleton.
+func resolveDynamicClient(ctx context.Context, factory k8s.ClientFactory, clusterID string) (dynamic.Interface, error) {
+	if factory == nil {
+		return k8s.NewDynamicClient("")
+	}
+	if clusterID == "" {
+		clusterID = "cluster-default"
+	}
+	return factory.DynamicForCluster(ctx, clusterID)
 }
 
 type elasticQuotaResources struct {
@@ -57,9 +72,11 @@ type ElasticQuotaEntry struct {
 
 // ListElasticQuotas handles GET /api/v1/elastic-quotas.
 // Returns live Koordinator ElasticQuota data across all namespaces.
+// Accepts `?clusterId=` (default `cluster-default`) — CYB-3486 PR 4b.
 // If the CRD is not installed (未装 Koordinator), returns 200 + empty list.
 func (h *Handler) ListElasticQuotas(c *gin.Context) {
-	list, err := listElasticQuotas(c.Request.Context())
+	clusterID := c.Query("clusterId")
+	list, err := listElasticQuotas(c.Request.Context(), h.k8sFactory, clusterID)
 	if err != nil {
 		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
 			c.JSON(http.StatusOK, gin.H{"items": []ElasticQuotaEntry{}})

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
@@ -74,8 +75,23 @@ func IsCancelledStatus(status string) bool {
 	return NormalizeRunStatus(status) == StatusCancelled
 }
 
+// stalledObservationThreshold — read-side hint threshold. An active run that
+// has not been updated in this long is annotated BlockingReason=stalled so
+// the UI surfaces "任务长时间未更新" without the writer touching the status.
+// Kept in-package (not env-configurable yet) to keep the change small; can be
+// promoted to config when we see real load with different SLAs.
+const stalledObservationThreshold = 30 * time.Minute
+
+// nowUTC is a package-level clock so tests can inject a deterministic time.
+var nowUTC = func() time.Time { return time.Now().UTC() }
+
 // AnnotateRunDiagnostics attaches normalized failure/blocking fields to a Run
 // without changing its persisted status or raw runtime message.
+//
+// CYB-3491: additionally surfaces a "stalled" hint on active runs that have
+// gone quiet for stalledObservationThreshold. This is display-only — no
+// database write, no status flip — so a webhook / poll that later delivers
+// progress naturally clears it (updates UpdatedAt → freshness returns).
 func AnnotateRunDiagnostics(run *models.PipelineRun) {
 	if run == nil {
 		return
@@ -84,16 +100,28 @@ func AnnotateRunDiagnostics(run *models.PipelineRun) {
 	run.BlockingReason = ""
 	run.BlockingMessage = ""
 	diag, ok := ClassifyRunDiagnostic(*run)
-	if !ok {
-		return
+	if ok {
+		status := NormalizeRunStatus(run.Status)
+		if IsFailureStatus(status) || IsCancelledStatus(status) {
+			run.FailureReason = diag.Reason
+			return
+		}
+		run.BlockingReason = diag.Reason
+		run.BlockingMessage = diag.Message
 	}
-	status := NormalizeRunStatus(run.Status)
-	if IsFailureStatus(status) || IsCancelledStatus(status) {
-		run.FailureReason = diag.Reason
-		return
+	// Stall hint: only for active runs whose classifier gave nothing more
+	// specific (unschedulable etc. already tell the user why it's slow — we
+	// don't want to overwrite those with a generic "stalled").
+	if run.BlockingReason == "" && IsActiveStatus(run.Status) {
+		ref := run.UpdatedAt
+		if ref.IsZero() {
+			return
+		}
+		if nowUTC().Sub(ref) >= stalledObservationThreshold {
+			run.BlockingReason = "stalled"
+			run.BlockingMessage = "任务长时间未收到状态更新（可能停滞或平台跟丢了状态)"
+		}
 	}
-	run.BlockingReason = diag.Reason
-	run.BlockingMessage = diag.Message
 }
 
 // ClassifyRunDiagnostic returns a stable reason code and representative

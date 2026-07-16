@@ -45,19 +45,8 @@ type BackfillRepository interface {
 	FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error)
 	FindItemByJobAndAssetID(ctx context.Context, jobID, assetID string) (*models.BackfillItem, error)
 
-	// ClaimNextItem atomically claims one pending item for processing.
-	// It selects an item with FOR UPDATE SKIP LOCKED, updates status to
-	// running and started_at to now, and returns the claimed item.
-	ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error)
 
-	// ResetStaleItems reclaims items stuck in running status beyond
-	// the lease timeout for jobs that are still active (not paused/cancelled).
-	// Returns the number of items reclaimed.
-	ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error)
 
-	// FindIncompleteJobs returns all backfill jobs that are still running
-	// and have at least one pending item. Used for startup recovery.
-	FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error)
 
 	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
 	// oldest first, regardless of whether items are still pending. Used by the
@@ -96,4 +85,29 @@ type BatchNodeFailureFilter struct {
 	Page           int
 	PageSize       int
 	Query          string
+}
+
+// SubmitQueue is the P2 submitter's persistence surface (CYB-3491): find jobs
+// with submittable work, list candidate items lock-free, and lock exactly one
+// pending item inside the caller's transaction. It is deliberately a separate
+// interface from BackfillRepository so existing test doubles do not need to
+// grow these methods; production wiring implements both on the same repo.
+type SubmitQueue interface {
+	// WithTx runs fn inside one transaction; repo calls made with fn's ctx
+	// ride that transaction (dbFromCtx). The submitter locks and commits one
+	// item per transaction.
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+	// FindSubmittableJobs returns running / pilot_running jobs that still
+	// have pending items, oldest first.
+	FindSubmittableJobs(ctx context.Context, limit int) ([]models.BackfillJob, error)
+	// ListSubmittableItemIDs returns candidate pending item ids for one job,
+	// oldest first, WITHOUT taking locks — candidates are re-checked and
+	// locked one by one via LockPendingItem.
+	ListSubmittableItemIDs(ctx context.Context, jobID string, limit int) ([]string, error)
+	// LockPendingItem locks the item row FOR UPDATE SKIP LOCKED iff it is
+	// still pending. Returns nil when the item is gone, no longer pending, or
+	// currently locked by another submitter (same instance or another one) —
+	// the caller simply skips it. This row lock is what guarantees no two
+	// workers attempt the same item concurrently.
+	LockPendingItem(ctx context.Context, itemID string) (*models.BackfillItem, error)
 }

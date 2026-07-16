@@ -703,7 +703,10 @@ export default function BatchJobDetailPage() {
 		}
 	};
 
-	const applySubtaskNodeFilter = (
+	// CYB-3491: 拆成两个 helper — 抽屉打开时想同时联动下方列表,但不能
+	// 让 applySubtaskNodeFilter 关闭抽屉;抽屉的 "在子任务列表筛选" 按钮
+	// 则希望关闭抽屉。将 "应用筛选" 与 "关闭抽屉" 解耦。
+	const setSubtaskNodeFilterForNode = (
 		node: BatchNodeSummaryNode,
 		filter: NodeDrawerFilter,
 	) => {
@@ -712,6 +715,13 @@ export default function BatchJobDetailPage() {
 			nodeStatus: nodeStatusForDrawerFilter(filter),
 			label: subtaskNodeFilterLabel(node, filter),
 		});
+	};
+
+	const applySubtaskNodeFilter = (
+		node: BatchNodeSummaryNode,
+		filter: NodeDrawerFilter,
+	) => {
+		setSubtaskNodeFilterForNode(node, filter);
 		setDrawerNode(null);
 	};
 
@@ -818,6 +828,11 @@ export default function BatchJobDetailPage() {
 		setDrawerNode(node);
 		setDrawerFilter(filter);
 		void loadNodeFailures(node, filter);
+		// CYB-3491: 同步应用到下方 "子任务执行记录" 列表,让点击 "3 失败"
+		// 不再是死链 —— 一次操作(点数字)得到两处联动:抽屉里的失败原因
+		// 摘要 + 下方任务列表按该节点+状态过滤。抽屉 "在子任务列表筛选"
+		// 按钮保留以便切换 filter 后重新应用(且会关闭抽屉)。
+		setSubtaskNodeFilterForNode(node, filter);
 	};
 
 	const selectedAssetIds = selectedRuns
@@ -829,6 +844,14 @@ export default function BatchJobDetailPage() {
 	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
 	const batchTerminal =
 		actualStatus === "completed" || actualStatus === "failed";
+	// CYB-3491: while node data is still syncing (runsWithNodeRows < runsTotal),
+	// the 运行中/排队 split is an estimate the backend derives from subtask
+	// status, not authoritative per-node phase — so those two cells are marked
+	// provisional (dimmed + tooltip) instead of read as final. 成功/失败 come
+	// only from real node rows and stay authoritative. Skipped once terminal,
+	// where a coverage gap means "never produced node rows", not "syncing".
+	const nodeCoverageProvisional =
+		!!nodeSummary && !batchTerminal && !nodeSummary.dataCoverage.complete;
 
 	if (loading && !job) {
 		return <Skeleton active paragraph={{ rows: 8 }} />;
@@ -956,7 +979,38 @@ export default function BatchJobDetailPage() {
 								],
 								onClick: async ({ key }) => {
 									if (!runTree) return;
-									const assetIds = extractAssetIds(runTree.items);
+									// CYB-3491: runTree 是分页的(pageSize=20 见 line 236),之前
+									// 直接用 runTree.items 会让 58 条批次只导出 20 条 —— 用户
+									// 每次都要人肉再来一次。导出前分页扫全 —— 后端
+									// pageSize 上限 100,所以按 100 一页循环直到集齐 total。
+									const total = runTree.total ?? runTree.items.length;
+									let items = runTree.items;
+									if (runTree.items.length < total) {
+										const hide = message.loading(
+											`正在拉取全部 ${total} 条子运行…`,
+											0,
+										);
+										try {
+											const pageSize = 100;
+											const pages = Math.ceil(total / pageSize);
+											const collected: typeof runTree.items = [];
+											for (let page = 1; page <= pages; page++) {
+												const part = await listRunChildren(job.id, {
+													page,
+													pageSize,
+												});
+												collected.push(...part.items);
+												if (part.items.length === 0) break;
+											}
+											items = collected;
+										} catch (err) {
+											hide();
+											message.error(`拉取完整资产列表失败:${String(err)}`);
+											return;
+										}
+										hide();
+									}
+									const assetIds = extractAssetIds(items);
 									if (assetIds.length === 0) {
 										message.info("没有可导出的资产 ID");
 										return;
@@ -1140,12 +1194,19 @@ export default function BatchJobDetailPage() {
 						<Space direction="vertical" size={12} style={{ width: "100%" }}>
 							<Space wrap>
 								{runTree.total > runTree.items.length ? (
-									<>
-										<Tag color="blue">预览</Tag>
-										<Text type="secondary">
-											已加载 {runTree.items.length} / {runTree.total}
-										</Text>
-									</>
+									// CYB-3491: 分页局部预览时不显示 aggregate summary
+									// (那只反映当前页,会给出 "84/121 对不上 total" 的
+									// 假象)。tag 明写 "分页预览" + tooltip 说明,避免
+									// 被误读为 "已完成 84 / 共 121"。
+									<Tooltip title="子运行接口按页返回；此时仅拿到前几页,不足以做全批次汇总。全批次的 完成/失败/总数 请看页面顶部 job 头部字段。">
+										<Space size={6} wrap>
+											<Tag color="blue">分页预览</Tag>
+											<Text type="secondary">
+												已抓取 {runTree.items.length} / 共 {runTree.total}{" "}
+												条子运行
+											</Text>
+										</Space>
+									</Tooltip>
 								) : (
 									<>
 										<Tag
@@ -1269,36 +1330,59 @@ export default function BatchJobDetailPage() {
 								},
 							},
 							{
-								title: "运行中",
+								// CYB-3491: 口径是 "节点(step) phase",不是 "batch item"。
+								// 节点级只做 workflow 级近实时投影,在飞 run 常常还没有 asset-node
+								// 行;后端把这些"在飞未投影"的 run 计入执行前沿(第一个有缺口的
+								// 节点)的 Running,而非一律塞 Pending。故本列通常与顶部 "运行中"
+								// (item 计数) 对齐,不再自相矛盾。
+								title: "节点运行中",
 								render: (_, record) => {
 									const running = record.counts.Running ?? 0;
-									return running > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "running")}
-										>
-											{running}
-										</Button>
+									const cell =
+										running > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "running")}
+											>
+												{running}
+											</Button>
+										) : (
+											0
+										);
+									return nodeCoverageProvisional ? (
+										<Tooltip title="节点数据同步中，此数字为临时估计，同步完成后可能微调">
+											<span style={{ opacity: 0.45 }}>{cell}</span>
+										</Tooltip>
 									) : (
-										0
+										cell
 									);
 								},
 							},
 							{
-								title: "未开始",
+								// CYB-3491: 这里的 Pending 是 step phase (节点未启动),
+								// 不是 item 的 "未提交"。见上一列的说明。
+								title: "节点排队",
 								render: (_, record) => {
 									const pending = record.counts.Pending ?? 0;
-									return pending > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "pending")}
-										>
-											{pending}
-										</Button>
+									const cell =
+										pending > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "pending")}
+											>
+												{pending}
+											</Button>
+										) : (
+											0
+										);
+									return nodeCoverageProvisional ? (
+										<Tooltip title="节点数据同步中，此数字为临时估计，同步完成后可能微调">
+											<span style={{ opacity: 0.45 }}>{cell}</span>
+										</Tooltip>
 									) : (
-										0
+										cell
 									);
 								},
 							},

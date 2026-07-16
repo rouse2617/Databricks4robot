@@ -730,12 +730,12 @@ var _ repository.PipelineRunRepository = (*PipelineRunRepo)(nil)
 const pipelineRunSelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
   manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at`
+  created_at, updated_at, started_at, finished_at, progress`
 
 const pipelineRunSummarySelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at`
+  created_at, updated_at, started_at, finished_at, progress`
 
 func qualifyPipelineRunCols(cols, alias string) string {
 	parts := strings.Split(cols, ",")
@@ -751,6 +751,7 @@ const batchItemRunStatusExpr = `CASE bi.status
       WHEN 'cancelled' THEN 'Error'
       WHEN 'running' THEN 'Running'
       WHEN 'pending' THEN 'Pending'
+      WHEN 'submitted' THEN COALESCE(NULLIF(pr.status, ''), 'Pending')
       ELSE pr.status
     END`
 
@@ -788,6 +789,7 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
   COALESCE(pr.updated_at, bi.created_at) AS updated_at,
   COALESCE(pr.started_at, bi.started_at) AS started_at,
   COALESCE(pr.finished_at, bi.finished_at) AS finished_at,
+  COALESCE(pr.progress, '') AS progress,
   COALESCE(pt.name, '') AS template_name,
   (
     SELECT SUM(n.estimated_cost_usd)
@@ -814,6 +816,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Progress,
 		&r.TemplateName, &totalCost,
 	); err != nil {
 		return nil, err
@@ -842,7 +845,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
-		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt, &r.Progress,
 	); err != nil {
 		return nil, err
 	}
@@ -859,7 +862,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at, template_name, total_estimated_cost`
+  created_at, updated_at, started_at, finished_at, progress, template_name, total_estimated_cost`
 
 // Save inserts or updates a pipeline run.
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
@@ -907,12 +910,12 @@ INSERT INTO pipeline_runs (
   id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
   manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at
+  created_at, updated_at, started_at, finished_at, progress
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7::jsonb, $8, $9, $10::text[], $11, $12,
   $13, $14::jsonb, $15, $16, $17, $18, $19, $20,
-  $21, $22, $23, $24
+  $21, $22, $23, $24, $25
 )
 ON CONFLICT (id) DO UPDATE SET
   template_id = EXCLUDED.template_id,
@@ -936,7 +939,8 @@ ON CONFLICT (id) DO UPDATE SET
   batch_job_id = EXCLUDED.batch_job_id,
   updated_at = EXCLUDED.updated_at,
   started_at = EXCLUDED.started_at,
-  finished_at = EXCLUDED.finished_at`
+  finished_at = EXCLUDED.finished_at,
+  progress = EXCLUDED.progress`
 
 	db := dbFromCtx(ctx, r.c.db)
 	assetIDs := pgtype.FlatArray[string](run.AssetIDs)
@@ -944,7 +948,7 @@ ON CONFLICT (id) DO UPDATE SET
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
 		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
 		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner, run.BatchJobID,
-		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt,
+		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.Progress,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineRunRepo.Save: %w", err)
 	}
@@ -1062,38 +1066,26 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 ` + where + `
 ` + orderBy
 
-	if filter.Page > 0 || filter.PageSize > 0 {
-		page := filter.Page
-		if page < 1 {
-			page = 1
-		}
-		pageSize := filter.PageSize
-		if pageSize < 1 {
-			pageSize = 20
-		}
-		if pageSize > 200 {
-			pageSize = 200
-		}
-		offset := (page - 1) * pageSize
-		limitClause := fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
-		listArgs := append(append([]any{}, args...), pageSize, offset)
-		rows, err := db.Query(ctx, listQ+limitClause, listArgs...)
-		if err != nil {
-			return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
-		}
-		defer rows.Close()
-		var out []models.PipelineRun
-		for rows.Next() {
-			run, err := scanPipelineRunSummary(rows)
-			if err != nil {
-				return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries scan: %w", err)
-			}
-			out = append(out, *run)
-		}
-		return out, total, nil
+	// CYB-3491(紧急):以前 filter.Page/PageSize 都为 0 时走无 LIMIT 分支,
+	// 直接 SELECT 全表。dev 30k+ 行时该查询 39s,并占用 pg 连接把 submitter
+	// 事务连锁超时 (context deadline exceeded)。ListDeployments 就是这样
+	// 意外触发无界扫的调用方。现在:总是分页,pageSize 缺省 200,上限 500 —
+	// 需要更多行的调用方(测试/CSV 导出)必须显式分页遍历。
+	page := filter.Page
+	if page < 1 {
+		page = 1
 	}
-
-	rows, err := db.Query(ctx, listQ, args...)
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 200
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	offset := (page - 1) * pageSize
+	limitClause := fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
+	listArgs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := db.Query(ctx, listQ+limitClause, listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
 	}
@@ -1369,6 +1361,12 @@ INSERT INTO pipeline_run_nodes (
 )`
 	return r.c.WithTx(ctx, func(txCtx context.Context) error {
 		db := dbFromCtx(txCtx, r.c.db)
+		// CYB-3491: serialize concurrent replaces for the same run to avoid
+		// duplicate-key on the unique index when two writers interleave
+		// DELETE-then-INSERT. pg_advisory_xact_lock releases on commit/rollback.
+		if err := db.Exec(txCtx, `SELECT pg_advisory_xact_lock(hashtext('pipeline_run_nodes'), hashtext($1))`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID lock: %w", err)
+		}
 		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_nodes WHERE run_id = $1`, runID); err != nil {
 			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID delete: %w", err)
 		}
@@ -1909,6 +1907,11 @@ INSERT INTO pipeline_run_asset_nodes (
 )`
 	return r.c.WithTx(ctx, func(txCtx context.Context) error {
 		db := dbFromCtx(txCtx, r.c.db)
+		// CYB-3491: serialize concurrent replaces for the same run — see note
+		// on PipelineRunNodeRepo.ReplaceByRunID.
+		if err := db.Exec(txCtx, `SELECT pg_advisory_xact_lock(hashtext('pipeline_run_asset_nodes'), hashtext($1))`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID lock: %w", err)
+		}
 		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_asset_nodes WHERE run_id = $1`, runID); err != nil {
 			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID delete: %w", err)
 		}

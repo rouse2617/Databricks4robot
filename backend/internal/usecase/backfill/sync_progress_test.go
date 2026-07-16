@@ -80,7 +80,13 @@ func (r *pausedSyncRepo) FindItemsByJobID(_ context.Context, jobID string) ([]mo
 	}
 	return out, nil
 }
-func (r *pausedSyncRepo) FindItemByID(context.Context, string) (*models.BackfillItem, error) {
+func (r *pausedSyncRepo) FindItemByID(_ context.Context, id string) (*models.BackfillItem, error) {
+	for i := range r.items {
+		if r.items[i].ID == id {
+			cp := r.items[i]
+			return &cp, nil
+		}
+	}
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
@@ -145,8 +151,14 @@ func (r *pausedSyncRepo) UpdateJobProgress(_ context.Context, id string, complet
 	}
 	return nil
 }
-func (r *pausedSyncRepo) CountItemsByStatus(context.Context, string, string) (int, error) {
-	return 0, nil
+func (r *pausedSyncRepo) CountItemsByStatus(_ context.Context, jobID, status string) (int, error) {
+	n := 0
+	for i := range r.items {
+		if r.items[i].JobID == jobID && r.items[i].Status == status {
+			n++
+		}
+	}
+	return n, nil
 }
 func (r *pausedSyncRepo) SummarizeItemStatuses(_ context.Context, jobID string) (repository.BackfillItemStatusSummary, error) {
 	var summary repository.BackfillItemStatusSummary
@@ -292,14 +304,24 @@ func (syncTestWorkflowClient) SuspendWorkflow(context.Context, string, string) e
 func (syncTestWorkflowClient) ResumeWorkflow(context.Context, string, string) error    { return nil }
 func (syncTestWorkflowClient) TerminateWorkflow(context.Context, string, string) error { return nil }
 
-func TestMapRunStatusToItem_QueuedMapsToRunning(t *testing.T) {
-	// Argo "Pending" means the workflow is submitted and queued (in-flight), which
-	// must map to the backfill item's "running" — NOT "pending", which means
-	// "unsubmitted / free to be re-claimed". Mapping a queued workflow to "pending"
-	// let ClaimNextItem re-select it and executeItem submit a duplicate workflow,
-	// orphaning the original (the tens-of-thousands-of-stuck-workflows bug).
-	if got := mapRunStatusToItem("Pending"); got != "running" {
-		t.Fatalf("Pending mapped to %q, want running", got)
+func TestMapRunStatusToItem_SubmittedSemantics(t *testing.T) {
+	// CYB-3491: any in-flight run WITH a persisted Argo UID projects the item
+	// to "submitted"; a uid-less run is an unsubmitted placeholder and yields
+	// NO transition (empty) — never "failed", never in-flight (invariant ②).
+	if got := mapRunStatusToItem("Pending", "uid-1"); got != "submitted" {
+		t.Fatalf("Pending+uid mapped to %q, want submitted", got)
+	}
+	if got := mapRunStatusToItem("Running", "uid-1"); got != "submitted" {
+		t.Fatalf("Running+uid mapped to %q, want submitted", got)
+	}
+	if got := mapRunStatusToItem("Pending", ""); got != "" {
+		t.Fatalf("placeholder Pending mapped to %q, want no transition", got)
+	}
+	if got := mapRunStatusToItem("Succeeded", ""); got != "completed" {
+		t.Fatalf("Succeeded mapped to %q, want completed (uid irrelevant at terminal)", got)
+	}
+	if got := mapRunStatusToItem("Failed", "uid-1"); got != "failed" {
+		t.Fatalf("Failed mapped to %q, want failed", got)
 	}
 }
 
@@ -371,53 +393,9 @@ func TestSyncJobProgress_PausedStillUpdatesCounts(t *testing.T) {
 	}
 }
 
-func TestGetBatchNodeSummary_SyncsActiveRunsBeforeAggregating(t *testing.T) {
-	ctx := context.Background()
-	jobID := "job-1"
-	runID := "run-1"
-	repo := &pausedSyncRepo{
-		job: &models.BackfillJob{
-			ID:         jobID,
-			Status:     "running",
-			TotalCount: 1,
-		},
-		items: []models.BackfillItem{
-			{
-				ID:            "item-1",
-				JobID:         jobID,
-				AssetID:       "asset-1",
-				Status:        "running",
-				PipelineRunID: &runID,
-			},
-		},
-	}
-	runRepo := &syncTestRunRepo{
-		byID: map[string]*models.PipelineRun{
-			runID: {
-				ID:              runID,
-				WorkflowName:    "wf-1",
-				Status:          "Running",
-				ArgoWorkflowUID: "uid-1",
-			},
-		},
-	}
-	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
-	pipeline.SetRunRepositories(nil, runRepo, nil)
-	uc := New(repo, pipeline)
-
-	summary, err := uc.GetBatchNodeSummary(ctx, jobID)
-	if err != nil {
-		t.Fatalf("GetBatchNodeSummary: %v", err)
-	}
-	if summary.Subtasks.Completed != 1 || summary.Subtasks.Running != 0 {
-		t.Fatalf("expected refreshed completed summary, got %+v", summary.Subtasks)
-	}
-	if repo.job.Status != "completed" {
-		t.Fatalf("expected job completed after summary sync, got %q", repo.job.Status)
-	}
-}
-
-func TestGetJob_ForcesProgressSyncDespiteRecentThrottle(t *testing.T) {
+// CYB-3490: node-summary is a pure ledger read — it must NOT reconcile or
+// sync on the request path, even when the run ledger is ahead of the item.
+func TestGetBatchNodeSummary_PureRead_NoSyncSideEffects(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-1"
 	runID := "run-1"
@@ -450,24 +428,28 @@ func TestGetJob_ForcesProgressSyncDespiteRecentThrottle(t *testing.T) {
 	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
 	pipeline.SetRunRepositories(nil, runRepo, nil)
 	uc := New(repo, pipeline)
-	uc.lastSync = map[string]time.Time{jobID: time.Now()}
 
-	job, err := uc.GetJob(ctx, jobID)
+	summary, err := uc.GetBatchNodeSummary(ctx, jobID)
 	if err != nil {
-		t.Fatalf("GetJob: %v", err)
+		t.Fatalf("GetBatchNodeSummary: %v", err)
 	}
-	if job == nil {
-		t.Fatal("expected job")
+	// The ledger says running — a pure read reports exactly that, without
+	// flipping the item/job as a side effect.
+	if summary.Subtasks.Running != 1 || summary.Subtasks.Completed != 0 {
+		t.Fatalf("expected as-is ledger summary (running=1), got %+v", summary.Subtasks)
 	}
-	if job.Status != "completed" {
-		t.Fatalf("expected job completed despite throttle, got %q", job.Status)
+	if repo.job.Status != "running" {
+		t.Fatalf("expected job untouched by read, got %q", repo.job.Status)
 	}
-	if job.CompletedCount != 1 {
-		t.Fatalf("expected completedCount=1, got %d", job.CompletedCount)
+	if runRepo.lastListFilter != nil {
+		t.Fatalf("expected no batch run listing on read path, got %+v", runRepo.lastListFilter)
 	}
 }
 
-func TestSyncJobProgress_RefreshesBatchScopedActiveRunSummaries(t *testing.T) {
+// CYB-3490: GetJob is a pure ledger read; convergence is owned by the
+// background job reconciler. Same fixture, two phases: the read must not
+// mutate anything, then one reconciler pass converges it.
+func TestGetJob_PureRead_ReconcilerOwnsConvergence(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-1"
 	runID := "run-1"
@@ -492,7 +474,7 @@ func TestSyncJobProgress_RefreshesBatchScopedActiveRunSummaries(t *testing.T) {
 			runID: {
 				ID:              runID,
 				WorkflowName:    "wf-1",
-				Status:          "Running",
+				Status:          "Succeeded",
 				ArgoWorkflowUID: "uid-1",
 			},
 		},
@@ -500,7 +482,75 @@ func TestSyncJobProgress_RefreshesBatchScopedActiveRunSummaries(t *testing.T) {
 			{
 				ID:              runID,
 				WorkflowName:    "wf-1",
-				Status:          "Running",
+				Status:          "Succeeded",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+	}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+
+	// Phase 1: pure read — run ledger is already Succeeded, but the read
+	// reports the item ledger as-is and performs no sync.
+	job, err := uc.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job")
+	}
+	if job.Status != "running" || job.CompletedCount != 0 {
+		t.Fatalf("expected untouched ledger view, got status=%q completed=%d", job.Status, job.CompletedCount)
+	}
+
+	// Phase 2: one background reconciler pass converges the same fixture.
+	uc.reconcileActiveJobs(ctx, 10)
+	if repo.job.Status != "completed" {
+		t.Fatalf("expected job completed after reconciler pass, got %q", repo.job.Status)
+	}
+	if repo.job.CompletedCount != 1 {
+		t.Fatalf("expected completedCount=1 after reconciler pass, got %d", repo.job.CompletedCount)
+	}
+}
+
+// CYB-3490: the background sync maps items from persisted (already
+// watcher-projected) run summaries in one batch-scoped query — it does not
+// request an Argo refresh from the list layer.
+func TestSyncJobProgress_MapsFromPersistedBatchSummaries(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-1"
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{
+			ID:         jobID,
+			Status:     "running",
+			TotalCount: 1,
+		},
+		items: []models.BackfillItem{
+			{
+				ID:            "item-1",
+				JobID:         jobID,
+				AssetID:       "asset-1",
+				Status:        "running",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	runRepo := &syncTestRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Succeeded",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+		summaries: []models.PipelineRun{
+			{
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Succeeded",
 				ArgoWorkflowUID: "uid-1",
 			},
 		},
@@ -512,8 +562,13 @@ func TestSyncJobProgress_RefreshesBatchScopedActiveRunSummaries(t *testing.T) {
 	if err := uc.syncJobProgressForce(ctx, jobID); err != nil {
 		t.Fatalf("syncJobProgressForce: %v", err)
 	}
-	if runRepo.lastListFilter == nil || !runRepo.lastListFilter.RefreshActive {
-		t.Fatalf("expected batch sync to request active refresh, got %+v", runRepo.lastListFilter)
+	// CYB-3490: the sync maps from persisted run summaries (batch-scoped
+	// single query) — it does not ask the list layer to refresh from Argo.
+	if runRepo.lastListFilter == nil || runRepo.lastListFilter.BatchJobID != jobID {
+		t.Fatalf("expected batch-scoped summary listing, got %+v", runRepo.lastListFilter)
+	}
+	if runRepo.lastListFilter.RefreshActive {
+		t.Fatalf("expected no refresh-active request from sync, got %+v", runRepo.lastListFilter)
 	}
 	if repo.items[0].Status != "completed" {
 		t.Fatalf("expected item completed, got %q", repo.items[0].Status)

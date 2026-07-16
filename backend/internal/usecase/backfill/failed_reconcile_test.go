@@ -86,7 +86,7 @@ func TestSyncJobProgress_PreservesGenuineFailedItem(t *testing.T) {
 
 // A `failed` item whose workflow is actually still Running must move back to
 // `running` so it re-enters the normal working set.
-func TestSyncJobProgress_MovesFailedItemBackToRunningWhenWorkflowRunning(t *testing.T) {
+func TestSyncJobProgress_HealsFailedItemToSubmittedWhenWorkflowRunning(t *testing.T) {
 	ctx := context.Background()
 	jobID, runID := "job-1", "run-1"
 	repo := &pausedSyncRepo{
@@ -101,8 +101,10 @@ func TestSyncJobProgress_MovesFailedItemBackToRunningWhenWorkflowRunning(t *test
 	if err := uc.syncJobProgressForce(ctx, jobID); err != nil {
 		t.Fatalf("syncJobProgressForce: %v", err)
 	}
-	if repo.items[0].Status != "running" {
-		t.Fatalf("failed item with running workflow should become running, got %q", repo.items[0].Status)
+	// CYB-3491: the healed in-flight state is "submitted" (forward-only
+	// machine pending → submitted → terminal; "running" is legacy).
+	if repo.items[0].Status != "submitted" {
+		t.Fatalf("failed item with running workflow should heal to submitted, got %q", repo.items[0].Status)
 	}
 }
 

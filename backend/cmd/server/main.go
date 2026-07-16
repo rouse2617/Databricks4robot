@@ -52,6 +52,12 @@ type infra struct {
 	workflowClient argo.WorkflowClient
 	podClient      k8s.PodClient
 	execClient     k8s.ExecClient
+
+	// CYB-3486 multi-cluster: shared repo + per-cluster factories.
+	// nil when inf.pg is nil (tests without a DB).
+	clusterRepo repository.ClusterRepository
+	k8sFactory  k8s.ClientFactory
+	argoFactory argo.ClientFactory
 }
 
 func (inf *infra) close() {

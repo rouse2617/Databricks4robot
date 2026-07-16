@@ -209,7 +209,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	workflowName := strings.TrimSpace(in.WorkflowName)
 	if workflowName == "" {
-		workflowName = batchSubtaskWorkflowName(t.Name, assetID, runID, in.ForceNewAttempt)
+		workflowName = batchSubtaskWorkflowName(t.Name, batchJobID, assetID, runID, in.ForceNewAttempt)
 	}
 
 	target, err := uc.resolveExecutionTarget(ctx, in.TargetID)
@@ -366,7 +366,7 @@ func (uc *Usecase) CommitBatchSubtaskDeploy(ctx context.Context, runID string, d
 	if err := uc.runRepo.Save(ctx, existing); err != nil {
 		return err
 	}
-	uc.refreshRunStatus(ctx, existing)
+	uc.refreshRunStatus(ctx, existing, nodeProjectTerminalArchive)
 	return nil
 }
 
@@ -417,7 +417,24 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func batchSubtaskWorkflowName(pipelineName, assetID, runID string, unique bool) string {
+// batchSubtaskWorkflowName builds the deterministic Argo workflow name for a
+// batch subtask. CYB-3491: the name is scoped by JOB — the pre-P2 key was
+// (pipeline, asset), while dedup was keyed (job, asset), so two jobs running
+// the same pipeline on the same asset minted the SAME name and collided on
+// the pipeline_runs.workflow_name UNIQUE constraint. The name keeps the
+// "-batch-" token because placeholder heuristics
+// (isBatchSubtaskPlaceholderWorkflowName) match on it.
+//
+// Determinism is the submitter's idempotency key: an automatic re-submission
+// after a crash reuses the SAME name, so Argo answers AlreadyExists and the
+// UID is backfilled instead of a duplicate workflow being created. Only a
+// manual retry with ForceNewAttempt (a NEW run row) appends the new run's
+// id, minting a fresh name for a fresh attempt.
+func batchSubtaskWorkflowName(pipelineName, batchJobID, assetID, runID string, unique bool) string {
+	jobScope := strings.TrimSpace(batchJobID)
+	if len(jobScope) > 8 {
+		jobScope = jobScope[:8]
+	}
 	suffix := strings.TrimSpace(assetID)
 	if len(suffix) > 12 {
 		suffix = suffix[len(suffix)-12:]
@@ -425,16 +442,20 @@ func batchSubtaskWorkflowName(pipelineName, assetID, runID string, unique bool) 
 	if suffix == "" {
 		suffix = runID[:6]
 	}
+	base := fmt.Sprintf("%s-batch-%s", pipelineName, suffix)
+	if jobScope != "" {
+		base = fmt.Sprintf("%s-batch-%s-%s", pipelineName, jobScope, suffix)
+	}
 	if unique {
 		runSuffix := strings.TrimSpace(runID)
 		if len(runSuffix) > 8 {
 			runSuffix = runSuffix[:8]
 		}
 		if runSuffix != "" {
-			return fmt.Sprintf("%s-batch-%s-%s", pipelineName, suffix, runSuffix)
+			return base + "-" + runSuffix
 		}
 	}
-	return fmt.Sprintf("%s-batch-%s", pipelineName, suffix)
+	return base
 }
 
 func isTerminalBatchSubtaskStatus(status string) bool {

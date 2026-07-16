@@ -58,6 +58,11 @@ type Usecase struct {
 	assetNodeRepo           repository.PipelineRunAssetNodeRepository
 	notifyRepo              repository.PipelineRunNotificationRepository
 	watcherRepo             repository.PipelineRunWatcherStateRepository
+	// watcherActiveCursor rotates the active-run refresh window across watcher
+	// cycles so runs beyond the per-cycle cap don't starve (CYB-3490). Only the
+	// single watcher goroutine touches it; resets on restart, which is fine —
+	// coverage is eventual, the webhook remains the primary signal.
+	watcherActiveCursor     int
 	backfillRepo            repository.BackfillRepository
 	assetRepo               repository.AssetRepository
 	assetEventRepo          repository.AssetEventRepository
@@ -66,6 +71,11 @@ type Usecase struct {
 	pipelineConfigRepo      repository.PipelineConfigRepository
 	runtimeConfigStore      RuntimeConfigStore
 	wfClient                argo.WorkflowClient
+	// CYB-3486 PR 4c: per-cluster Argo client factory. When set, Deploy
+	// resolves argo client via argoFactory.ForTarget(target) instead of the
+	// wfClient singleton so multi-cluster submit routing works. Nil is
+	// tolerated — falls through to the existing adapter/singleton path.
+	argoFactory             argo.ClientFactory
 	runtimeAdapter          runtimeadapter.RuntimeAdapter
 	namespace               string
 	pricing                 *PricingConfig
@@ -185,6 +195,13 @@ func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
 // workflow-client operations remain available for compatibility and tests.
 func (uc *Usecase) SetRuntimeAdapter(adapter runtimeadapter.RuntimeAdapter) {
 	uc.runtimeAdapter = adapter
+}
+
+// SetArgoFactory wires the per-cluster Argo client factory (CYB-3486 PR 4c).
+// When set, submit paths route by ExecutionTarget.ClusterID via
+// factory.ForTarget instead of the wfClient singleton.
+func (uc *Usecase) SetArgoFactory(f argo.ClientFactory) {
+	uc.argoFactory = f
 }
 
 // SetRunRepositories wires first-class pipeline run persistence. The legacy
@@ -360,13 +377,35 @@ func logPipelineSideEffect(op string, err error) {
 	}
 }
 
-func (uc *Usecase) getWorkflowWithUID(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
-	if uc.wfClient == nil {
+// resolveArgoClient returns the argo client for the target's cluster.
+// CYB-3486 PR 4c.1: factory-first, singleton fallback, no adapter awareness.
+//   - argoFactory wired → factory.ForTarget(target) — the cluster-routed path
+//   - factory nil → uc.wfClient (may itself be nil — that's fine, caller must
+//     handle nil for the adapter-only test path where SetRuntimeAdapter was
+//     used without a wfClient)
+//
+// A nil return value means "no direct client available; caller should fall
+// through to the runtime adapter or fail". A non-nil error means "resolution
+// was attempted (factory) and failed" (misconfigured cluster row, etc.).
+func (uc *Usecase) resolveArgoClient(ctx context.Context, target *models.ExecutionTarget) (argo.WorkflowClient, error) {
+	if uc.argoFactory != nil {
+		c, err := uc.argoFactory.ForTarget(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve argo client for cluster %q: %v",
+				ErrWorkflowUnavailable, targetClusterID(target), err)
+		}
+		return c, nil
+	}
+	return uc.wfClient, nil
+}
+
+func (uc *Usecase) getWorkflowWithUID(ctx context.Context, client argo.WorkflowClient, name, namespace string) (*wfv1.Workflow, error) {
+	if client == nil {
 		return nil, ErrWorkflowUnavailable
 	}
 	var lastErr error
 	for attempt := 0; attempt < 6; attempt++ {
-		wf, err := uc.wfClient.GetWorkflow(ctx, name, namespace)
+		wf, err := client.GetWorkflow(ctx, name, namespace)
 		if err == nil && wf != nil && wf.UID != "" {
 			return wf, nil
 		}
@@ -1940,10 +1979,11 @@ func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
 	return false
 }
 
-func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow, nodeMode nodeProjectionMode) {
 	if uc.runRepo == nil || run == nil || wf == nil {
 		return
 	}
+	prevStatus := run.Status
 	uc.appendWorkflowEvents(ctx, run, wf)
 	status := run.Status
 	if wf.Status.Phase != "" {
@@ -1963,15 +2003,35 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		message = derivedMessage
 		finishedAt = derivedFinishedAt
 		derivedFailureReason = "image_startup"
-	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveUnschedulableRunFromWorkflow(run, wf); ok {
-		status = derivedStatus
-		message = derivedMessage
-		finishedAt = derivedFinishedAt
-		derivedFailureReason = "unschedulable"
 	} else if derivedStatus, ok := deriveActiveRunFromWorkflowNodes(wf); ok {
+		// CYB-3491(语义): scheduling starvation is WAITING, not failure. A pod
+		// that cannot schedule today can schedule when capacity frees — the
+		// run stays in its Argo-truth active phase, and the read side
+		// classifies the scheduler message as BlockingReason "unschedulable"
+		// (runtimeos state machine). Only the workload's own errors (or
+		// deterministic config errors like a bad image) are terminal.
 		status = derivedStatus
 		message = ""
 		finishedAt = nil
+	}
+	// CYB-3491: finalize a run the moment its business steps succeed, without
+	// waiting for the injected exit-notify hook (CYB-3058). That hook fires the
+	// status webhook FROM INSIDE the workflow, so at poke time wf.Status.Phase
+	// is still "Running" (the hook is part of the workflow). Relying on the
+	// phase left runs stuck "Running" until the slow watcher re-observed them
+	// after the hook finished — ~1h of projection lag under load, where the
+	// batch completed-count trailed Argo reality by hundreds. The hook is infra
+	// (already excluded from progress + the node list); exclude it from terminal
+	// derivation too. Conservative: only SUCCEEDED is derived — any non-succeeded
+	// business pod yields false, so failure/retry paths are untouched.
+	if isActiveDeploymentStatus(status) {
+		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok {
+			status = string(wfv1.WorkflowSucceeded)
+			message = ""
+			if businessFinishedAt != nil {
+				finishedAt = businessFinishedAt
+			}
+		}
 	}
 	run.Status = status
 	if startedAt := argoTimeOrZero(wf.Status.StartedAt.Time); startedAt != nil {
@@ -2017,7 +2077,94 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 			},
 		})
 	}
+	// CYB-3490/CYB-3491: workflow-level progress is the continuous projection —
+	// one column per run. Recomputed from the step pods rather than copied from
+	// Argo's status.progress, because Argo counts the injected databrew-exit-notify
+	// onExit hook (CYB-3058) as a pod: a single-step pipeline would otherwise
+	// report "1/2" (step done, hook still running) or "2/2" instead of the
+	// truthful "1/1". Fall back to Argo's raw value only before any step pod is
+	// observed.
+	if p := workflowStepProgress(wf); p != "" {
+		run.Progress = p
+	} else if p := strings.TrimSpace(string(wf.Status.Progress)); p != "" {
+		run.Progress = p
+	}
 	uc.persistRunObservation(ctx, run)
+	uc.projectRunNodes(ctx, run, wf, nodeMode, prevStatus)
+}
+
+// workflowStepProgress recomputes the "done/total" progress string from the
+// workflow's step pods, counting only real pipeline steps. Argo's own
+// status.progress counts the injected databrew-exit-notify onExit hook
+// (CYB-3058) as a pod, which inflates the denominator — a single-step pipeline
+// reports "1/2" (step done, hook running) or "2/2" instead of the truthful
+// "1/1". DAG/Steps container nodes are not pods and are already excluded.
+// Returns "" when no step pod has been observed yet so the caller can fall
+// back to Argo's raw value during the brief pre-pod window.
+func workflowStepProgress(wf *wfv1.Workflow) string {
+	if wf == nil {
+		return ""
+	}
+	total, done := 0, 0
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod {
+			continue
+		}
+		if node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		total++
+		switch node.Phase {
+		case wfv1.NodeSucceeded, wfv1.NodeSkipped, wfv1.NodeOmitted:
+			done++
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", done, total)
+}
+
+// nodeProjectionMode controls whether an Argo observation projects per-node
+// rows (CYB-3490). Continuous observation is workflow-level only; the full
+// node snapshot is archived exactly once when the workflow reaches terminal.
+type nodeProjectionMode int
+
+const (
+	// nodeProjectTerminalArchive skips node writes while the workflow is
+	// active and archives the final snapshot once at terminal. Default for
+	// the watcher, webhook, and reconcile paths — at 1000 workflows x 100
+	// steps the per-cycle delete+insert of node rows was the write amplifier.
+	nodeProjectTerminalArchive nodeProjectionMode = iota
+	// nodeProjectLive always projects nodes while the workflow is active —
+	// reserved for bounded single-run drill-in (GetRun), where the user is
+	// looking at one workflow's step detail.
+	nodeProjectLive
+)
+
+// projectRunNodes applies the node-projection policy for one observation.
+// prevStatus is the run's status BEFORE this observation was applied, so the
+// active->terminal transition archives exactly once; re-observations of an
+// already-terminal run only backfill a missing archive (lost webhook, or a
+// restart between the status persist and the archive write).
+func (uc *Usecase) projectRunNodes(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow, mode nodeProjectionMode, prevStatus string) {
+	if isActiveDeploymentStatus(run.Status) {
+		if mode == nodeProjectLive {
+			uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+		}
+		return
+	}
+	if isActiveDeploymentStatus(prevStatus) {
+		uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+		return
+	}
+	if uc.runNodeRepo == nil {
+		return
+	}
+	rows, err := uc.runNodeRepo.FindByRunID(ctx, run.ID)
+	if err != nil || len(rows) > 0 {
+		return
+	}
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 }
 
@@ -2074,6 +2221,39 @@ func isWorkflowShutdownMessage(message string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(message))
 	return strings.Contains(normalized, "workflow shutdown with strategy:") ||
 		strings.Contains(normalized, "stopped with strategy")
+}
+
+// allBusinessPodsSucceeded reports whether every real step pod in the workflow
+// has finished successfully, ignoring the injected databrew-exit-notify hook
+// (CYB-3058) and non-pod DAG/Steps containers. It returns the latest business
+// finish time. Used to finalize a run as Succeeded while the workflow phase is
+// still "Running" only because the exit hook (which itself fires the status
+// webhook) has not completed yet — see the caller in applyWorkflowToRun.
+// Conservative by design: a single non-succeeded business pod (running, pending,
+// failed, or errored) returns false, leaving failure and retry handling to the
+// existing phase/derivation logic. Returns false when no business pod exists.
+func allBusinessPodsSucceeded(wf *wfv1.Workflow) (*time.Time, bool) {
+	if wf == nil {
+		return nil, false
+	}
+	sawBusinessPod := false
+	var latestFinishedAt *time.Time
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod || node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		sawBusinessPod = true
+		switch node.Phase {
+		case wfv1.NodeSucceeded, wfv1.NodeSkipped, wfv1.NodeOmitted:
+			if fa := argoTimeOrZero(node.FinishedAt.Time); fa != nil &&
+				(latestFinishedAt == nil || fa.After(*latestFinishedAt)) {
+				latestFinishedAt = fa
+			}
+		default:
+			return nil, false
+		}
+	}
+	return latestFinishedAt, sawBusinessPod
 }
 
 func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {
@@ -2144,6 +2324,12 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		}
 	}
 	existing.Message = run.Message
+	// CYB-3490: carry the workflow-level progress onto the persisted row —
+	// only when the observation actually saw one, so a poll that raced an
+	// empty status.progress does not wipe a previously stored value.
+	if p := strings.TrimSpace(run.Progress); p != "" {
+		existing.Progress = p
+	}
 	if uid := strings.TrimSpace(run.ArgoWorkflowUID); uid != "" {
 		existing.ArgoWorkflowUID = uid
 	}
@@ -2176,6 +2362,13 @@ func (uc *Usecase) syncBackfillItemStatusFromRun(ctx context.Context, run *model
 		return
 	}
 	nextStatus := mapRunStatusToBackfillItem(run.Status)
+	// CYB-3491: an in-flight projection is only legitimate when the run has a
+	// persisted Argo UID. A uid-less run is an unsubmitted placeholder — the
+	// item must stay "pending" for the submitter (invariant ②: unsubmitted is
+	// never failed, never in-flight).
+	if nextStatus == "submitted" && strings.TrimSpace(run.ArgoWorkflowUID) == "" {
+		return
+	}
 	if nextStatus == "" || strings.EqualFold(strings.TrimSpace(item.Status), nextStatus) {
 		return
 	}
@@ -2187,16 +2380,17 @@ func (uc *Usecase) syncBackfillItemStatusFromRun(ctx context.Context, run *model
 		uc.backfillRepo.UpdateItemStatus(ctx, item.ID, nextStatus, run.WorkflowName, errMsg))
 }
 
+// mapRunStatusToBackfillItem projects a run status onto its backfill item.
+// CYB-3491: in-flight (queued or executing) maps to "submitted" — the item
+// state machine is pending → submitted → completed|failed, forward-only.
 func mapRunStatusToBackfillItem(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "succeeded", "success":
 		return "completed"
 	case "failed", "error", "expired":
 		return "failed"
-	case "pending":
-		return "pending"
-	case "running", "unknown":
-		return "running"
+	case "pending", "running", "unknown":
+		return "submitted"
 	default:
 		return ""
 	}
@@ -2303,7 +2497,7 @@ func runAgeWithinStaleLimit(run *models.PipelineRun, now time.Time) bool {
 	return now.Sub(ref) < staleActiveRunMaxAge
 }
 
-func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun) {
+func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun, nodeMode nodeProjectionMode) {
 	if uc.wfClient == nil || run == nil {
 		return
 	}
@@ -2354,7 +2548,7 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 		}
 		return
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
 }
 
 // RefreshRunForList performs a bounded status refresh for batch list views.
@@ -2368,9 +2562,9 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 		return
 	}
 	if isActiveDeploymentStatus(run.Status) {
-		uc.refreshRunStatus(ctx, run)
+		uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
 	}
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectTerminalArchive)
 	if isActiveDeploymentStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
 		if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 			*run = *fresh
@@ -2406,37 +2600,6 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 		return true
 	}
 	return needsMisclassifiedReconcile(run)
-}
-
-func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
-	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
-		return
-	}
-	refreshed := 0
-	// Pass 1: fix misclassified Failed/Error/Expired runs first.
-	// These are the ones users see as inaccurate — a run marked Failed
-	// in the DB while its Argo workflow is still Running.
-	for i := range items {
-		if refreshed >= maxActiveDeploymentStatusRefresh {
-			break
-		}
-		if !needsMisclassifiedReconcile(&items[i]) {
-			continue
-		}
-		refreshed++
-		uc.RefreshRunForList(ctx, &items[i])
-	}
-	// Pass 2: refresh active runs (Running/Pending).
-	for i := range items {
-		if refreshed >= maxActiveDeploymentStatusRefresh {
-			break
-		}
-		if !isActiveDeploymentStatus(items[i].Status) {
-			continue
-		}
-		refreshed++
-		uc.RefreshRunForList(ctx, &items[i])
-	}
 }
 
 func needsLedgerReconcile(run *models.PipelineRun) bool {
@@ -2553,7 +2716,7 @@ func inferTerminalRunFromAssetNodes(nodes []models.PipelineRunAssetNode) (string
 	return string(wfv1.WorkflowSucceeded), "", true
 }
 
-func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
+func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun, nodeMode nodeProjectionMode) {
 	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
 	}
@@ -2594,37 +2757,25 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if wf == nil {
 		return
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
-	uc.maybeMarkStaleRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
 }
 
-func (uc *Usecase) maybeMarkStaleRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
-	if uc.runRepo == nil || run == nil || wf == nil || !isActiveDeploymentStatus(run.Status) {
-		return
-	}
-	ref := run.CreatedAt
-	if run.StartedAt != nil && !run.StartedAt.IsZero() {
-		ref = *run.StartedAt
-	}
-	if ref.IsZero() || time.Since(ref) < staleActiveRunMaxAge {
-		return
-	}
-	phase := wf.Status.Phase
-	if phase != wfv1.WorkflowRunning && phase != wfv1.WorkflowPending && phase != wfv1.WorkflowPhase("Suspended") {
-		return
-	}
-	now := time.Now().UTC()
-	run.Status = string(wfv1.WorkflowFailed)
-	run.FinishedAt = &now
-	run.Message = fmt.Sprintf("stale run: exceeded maximum active duration (%s)", staleActiveRunMaxAge.Truncate(time.Hour))
-	uc.persistRunObservation(ctx, run)
-}
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.runRepo == nil {
 		return
 	}
-	uc.refreshRunStatus(ctx, run)
+	uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
+}
+
+// refreshPipelineRunStatusLive is the single-run drill-in variant: it also
+// projects live per-node rows so the run detail view shows fresh step state
+// while the workflow is running (bounded: one workflow per call).
+func (uc *Usecase) refreshPipelineRunStatusLive(ctx context.Context, run *models.PipelineRun) {
+	if uc.runRepo == nil {
+		return
+	}
+	uc.refreshRunStatus(ctx, run, nodeProjectLive)
 }
 
 // backfillRunStatus refreshes a run from Argo regardless of its current status.
@@ -2710,7 +2861,7 @@ func (uc *Usecase) RefreshRunFromWorkflowByName(ctx context.Context, workflowNam
 	if wf == nil {
 		return run, nil
 	}
-	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.applyWorkflowToRun(ctx, run, wf, nodeProjectTerminalArchive)
 	return run, nil
 }
 
@@ -2752,16 +2903,26 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		}
 		return 0, err
 	}
-	synced := 0
+	// CYB-3490: rotate the refresh window over ALL active runs instead of
+	// always taking the first `limit` — with more actives than the cap, the
+	// tail would otherwise never be refreshed (starvation). The cursor makes
+	// coverage round-robin: every active run is visited within
+	// ceil(actives/limit) cycles. This rotation is the drift sweep.
+	activeIdx := make([]int, 0, len(runs))
 	for i := range runs {
-		if synced >= limit {
-			break
+		if isActiveDeploymentStatus(runs[i].Status) {
+			activeIdx = append(activeIdx, i)
 		}
-		if !isActiveDeploymentStatus(runs[i].Status) {
-			continue
+	}
+	synced := 0
+	if n := len(activeIdx); n > 0 {
+		start := uc.watcherActiveCursor % n
+		for k := 0; k < n && synced < limit; k++ {
+			i := activeIdx[(start+k)%n]
+			uc.refreshPipelineRunStatus(ctx, &runs[i])
+			synced++
 		}
-		uc.refreshPipelineRunStatus(ctx, &runs[i])
-		synced++
+		uc.watcherActiveCursor = (start + synced) % n
 	}
 	anomalyLimit := watcherAnomalyReconcileLimit(limit)
 	anomalyReconciled := 0
@@ -2828,7 +2989,13 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	if uc.runRepo == nil {
 		return nil, nil
 	}
-	return uc.runRepo.FindAllSummaries(ctx)
+	// CYB-3491: ListSummaries 现在强制分页,unbounded 扫描被禁 (dev 30k+
+	// 行时该扫描 39s,连锁把 submitter 事务打成 deadline exceeded)。
+	// watcher 只需要 "最近的一批 run summaries" 参与轮转 —— 上限 500 (repo
+	// 硬上限);默认按 created_at DESC,天然拿到最新一段,active runs 都
+	// 在这里,历史行不再参与。
+	items, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
+	return items, err
 }
 
 func computeLedgerHealth(runs []models.PipelineRun, lastBackfill *time.Time) models.LedgerHealth {
@@ -3298,6 +3465,13 @@ func (uc *Usecase) Deploy(
 		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
 		{Name: "REQUEST_ID", Value: depID},
 	}
+	// assetRegistered records which input assets actually exist in the assets
+	// table (filled from the Get below, no extra query). Used to skip the
+	// pipeline_processing asset_events append for unregistered/external assets:
+	// asset_events.asset_id has an FK to assets, so those inserts fail with
+	// 23503 and — at batch scale, with AllowUnknownAssets — spammed thousands
+	// of WARN "pipeline side effect failed" logs (cyb-3491).
+	assetRegistered := make(map[string]bool, len(assetIDs))
 	if len(assetIDs) > 0 {
 		wfParams = append(wfParams, transpiler.Param{
 			Name:  "asset_ids",
@@ -3319,6 +3493,7 @@ func (uc *Usecase) Deploy(
 			if uc.assetRepo != nil {
 				a, err := uc.assetRepo.Get(ctx, aid)
 				if err == nil && a != nil {
+					assetRegistered[aid] = true
 					if a.StorageURI != "" {
 						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "STORAGE_URI", Value: a.StorageURI})
 					}
@@ -3440,8 +3615,16 @@ func (uc *Usecase) Deploy(
 	if runtimeConfigProjection != nil && uc.wfClient == nil {
 		return nil, fmt.Errorf("%w: runtime config owner lookup requires workflow client", ErrWorkflowUnavailable)
 	}
+	// CYB-3486 PR 4c.1: resolve the target's argo client ONCE and use it for
+	// every subsequent workflow op in this Deploy call. Previously each op
+	// hit uc.wfClient (the process-global singleton), so a delivery-clust
+	// submit would silently read/delete against cyber-clust.
+	client, err := uc.resolveArgoClient(ctx, target)
+	if err != nil {
+		return nil, err
+	}
 	status := "Pending"
-	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, depID, pipeName, wf, targetNamespace)
+	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, client, depID, pipeName, wf, targetNamespace)
 	if err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {
 			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
@@ -3457,9 +3640,12 @@ func (uc *Usecase) Deploy(
 	}
 	wfDetail := workflowFromRuntimeJob(runtimeJob)
 	if runtimeConfigProjection != nil {
-		wfDetail, err = uc.getWorkflowWithUID(ctx, wfName, targetNamespace)
+		if client == nil {
+			return nil, fmt.Errorf("%w: runtime config projection requires an argo client", ErrWorkflowUnavailable)
+		}
+		wfDetail, err = uc.getWorkflowWithUID(ctx, client, wfName, targetNamespace)
 		if err != nil {
-			logPipelineSideEffect("delete workflow after runtime config owner lookup failed", uc.wfClient.DeleteWorkflow(ctx, wfName, targetNamespace))
+			logPipelineSideEffect("delete workflow after runtime config owner lookup failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
 			return nil, fmt.Errorf("resolve runtime config owner workflow: %w", err)
 		}
 		owner := &RuntimeConfigOwnerReference{
@@ -3469,16 +3655,16 @@ func (uc *Usecase) Deploy(
 			UID:        string(wfDetail.UID),
 		}
 		if _, err := uc.runtimeConfigStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, owner); err != nil {
-			logPipelineSideEffect("delete workflow after runtime config projection failed", uc.wfClient.DeleteWorkflow(ctx, wfName, targetNamespace))
+			logPipelineSideEffect("delete workflow after runtime config projection failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
 			return nil, fmt.Errorf("create runtime config projection: %w", err)
 		}
 	}
-	if uc.wfClient != nil && (wfDetail == nil || wfUID == "" || status == "Pending") {
-		phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, targetNamespace)
+	if client != nil && (wfDetail == nil || wfUID == "" || status == "Pending") {
+		phase, err := client.GetWorkflowStatus(ctx, wfName, targetNamespace)
 		if err == nil && phase != "" {
 			status = string(phase)
 		}
-		if detail, err := uc.wfClient.GetWorkflow(ctx, wfName, targetNamespace); err == nil && detail != nil {
+		if detail, err := client.GetWorkflow(ctx, wfName, targetNamespace); err == nil && detail != nil {
 			wfDetail = detail
 		}
 	}
@@ -3535,6 +3721,14 @@ func (uc *Usecase) Deploy(
 			"workflow_name": wfName,
 		})
 		for _, aid := range assetIDs {
+			// Skip unregistered/external assets: asset_events.asset_id FKs to
+			// assets, so appending lineage for an asset that isn't in the table
+			// fails with 23503. There is no assets row to attach lineage to, so
+			// the event is meaningless anyway. Only filter when we could check
+			// (assetRepo present); otherwise preserve the prior best-effort.
+			if uc.assetRepo != nil && !assetRegistered[aid] {
+				continue
+			}
 			logPipelineSideEffect("append pipeline_processing event", uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
 				EventType:     "pipeline_processing",
 				AggregateType: "asset",
@@ -3552,8 +3746,21 @@ func (uc *Usecase) runtimeSubmitConfigured() bool {
 	return uc.runtimeAdapter != nil || uc.wfClient != nil
 }
 
-func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName string, wf *wfv1.Workflow, namespace string) (*runtimeadapter.RuntimeJob, error) {
-	if uc.runtimeAdapter != nil {
+// submitRuntimeWorkflow uses the client resolved by the caller (see
+// resolveArgoClient) for the actual CreateWorkflow call, then falls back to
+// the runtime adapter when no direct client is available. Prior to PR 4c.1
+// this function did its own factory lookup — that logic has moved up to
+// Deploy so the SAME client can be reused for post-submit reads/deletes,
+// preventing multi-cluster misroutes on the downstream ops.
+//
+// Preference order:
+//  1. When factory is not wired but a runtime adapter IS wired, prefer the
+//     adapter. Preserves the pre-3486 unit-test intent where SetRuntimeAdapter
+//     was the primary wiring.
+//  2. Otherwise, submit through the caller-provided client.
+//  3. Nothing wired → ErrWorkflowUnavailable.
+func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, client argo.WorkflowClient, runID, runName string, wf *wfv1.Workflow, namespace string) (*runtimeadapter.RuntimeJob, error) {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Submit(ctx,
 			runtimeadapter.RunRef{ID: runID, Name: runName},
 			runtimeadapter.RuntimeSpec{
@@ -3563,21 +3770,30 @@ func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName str
 			},
 		)
 	}
-	if uc.wfClient == nil {
-		return nil, ErrWorkflowUnavailable
+	if client != nil {
+		if err := client.CreateWorkflow(ctx, wf, namespace); err != nil {
+			return nil, err
+		}
+		return &runtimeadapter.RuntimeJob{
+			Ref: runtimeadapter.RuntimeRef{
+				RuntimeType: "argo",
+				Name:        strings.TrimSpace(wf.Name),
+				Namespace:   firstNonEmpty(namespace, wf.Namespace),
+				UID:         string(wf.UID),
+			},
+			Raw: wf,
+		}, nil
 	}
-	if err := uc.wfClient.CreateWorkflow(ctx, wf, namespace); err != nil {
-		return nil, err
+	return nil, ErrWorkflowUnavailable
+}
+
+// targetClusterID returns a short label of the target's cluster for logging.
+// Empty target or empty ClusterID → "cluster-default".
+func targetClusterID(t *models.ExecutionTarget) string {
+	if t == nil || strings.TrimSpace(t.ClusterID) == "" {
+		return "cluster-default"
 	}
-	return &runtimeadapter.RuntimeJob{
-		Ref: runtimeadapter.RuntimeRef{
-			RuntimeType: "argo",
-			Name:        strings.TrimSpace(wf.Name),
-			Namespace:   firstNonEmpty(namespace, wf.Namespace),
-			UID:         string(wf.UID),
-		},
-		Raw: wf,
-	}, nil
+	return t.ClusterID
 }
 
 func workflowFromRuntimeJob(job *runtimeadapter.RuntimeJob) *wfv1.Workflow {
@@ -3836,12 +4052,9 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if err != nil {
 			return nil, 0, err
 		}
-		// Refresh misclassified runs so the list view shows live Argo
-		// status instead of stale DB records. Active runs are refreshed
-		// asynchronously by the background watcher.
-		if filter[0].RefreshActive {
-			uc.refreshRunSummariesForList(ctx, items)
-		}
+		// CYB-3490: list reads are pure — no Argo refresh on the request
+		// path (RefreshActive is accepted but ignored). The background
+		// watcher owns active-run refresh and misclassified-run healing.
 		normalizeActiveRunRuntimeFields(items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
@@ -3863,7 +4076,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 	if err != nil {
 		return nil, 0, err
 	}
-	uc.refreshRunSummariesForList(ctx, items)
+	// CYB-3490: pure read — the background watcher owns refresh/healing.
 	normalizeActiveRunRuntimeFields(items)
 	annotateRunDiagnostics(items)
 	uc.attachVideoDurations(ctx, items)
@@ -3909,6 +4122,16 @@ func (uc *Usecase) attachBatchNodeProgress(ctx context.Context, items []models.P
 	progressByRun := batchprogress.ByRunID(rows, items)
 	for i := range items {
 		items[i].NodeProgress = progressByRun[items[i].ID]
+		// CYB-3490: while a workflow runs, per-node rows are no longer
+		// continuously projected — surface the workflow-level progress
+		// ("done/total" from Argo status.progress) as the compact label so
+		// batch lists stay near-realtime without per-node writes.
+		if items[i].NodeProgress == nil && items[i].Progress != "" && isActiveDeploymentStatus(items[i].Status) {
+			items[i].NodeProgress = &models.PipelineRunNodeProgress{
+				FocusStatus: "Running",
+				Label:       items[i].Progress,
+			}
+		}
 	}
 }
 
@@ -3921,9 +4144,8 @@ func (uc *Usecase) ListBatchAssetRuns(ctx context.Context, batchJobID, assetID s
 	if err != nil {
 		return nil, err
 	}
-	for i := range runs {
-		uc.RefreshRunForList(ctx, &runs[i])
-	}
+	// CYB-3490: pure read — per-run live refresh happens on single-run
+	// drill-in (GetRun) and in the background watcher, not on list reads.
 	return runs, nil
 }
 
@@ -3987,9 +4209,11 @@ func (uc *Usecase) GetRunByWorkflowName(ctx context.Context, workflowName string
 	if run == nil {
 		return nil, nil
 	}
-	uc.refreshPipelineRunStatus(ctx, run)
+	// CYB-3490: single-run drill-in is the sanctioned live path — it also
+	// projects fresh node rows while the workflow runs (bounded: one wf).
+	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
 	uc.enrichRun(ctx, run)
 	return run, nil
 }
@@ -4018,9 +4242,11 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	}
 	initialStatus := run.Status
 	initialMessage := run.Message
-	uc.refreshPipelineRunStatus(ctx, run)
+	// CYB-3490: single-run drill-in is the sanctioned live path — it also
+	// projects fresh node rows while the workflow runs (bounded: one wf).
+	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
-	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
 	uc.enrichRun(ctx, run)
 	if run.Status != initialStatus || run.Message != initialMessage {
 		slog.Warn("GetRun status changed",
@@ -4355,7 +4581,7 @@ func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.Pi
 	}
 	if uc.runCostSnapshotMissing(run) {
 		if isActiveDeploymentStatus(run.Status) {
-			uc.refreshRunStatus(ctx, run)
+			uc.refreshRunStatus(ctx, run, nodeProjectTerminalArchive)
 		} else {
 			uc.backfillRunStatus(ctx, run)
 		}
@@ -4610,12 +4836,8 @@ func (uc *Usecase) listDurableRunChildren(ctx context.Context, parentRunID strin
 		if child == nil {
 			continue
 		}
-		if needsRunListRefresh(child) {
-			if fresh, refreshErr := uc.GetRun(ctx, child.ID); refreshErr == nil && fresh != nil {
-				stripRunHeavyFields(fresh)
-				child = fresh
-			}
-		}
+		// CYB-3490: pure list read — no per-child GetRun/Argo refresh here;
+		// the webhook + background watcher keep children fresh.
 		if relation.Source == "" {
 			relation.Source = "run_relations"
 		}
@@ -4656,25 +4878,15 @@ func normalizeRunChildrenFilter(filters ...models.PipelineRunListFilter) models.
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string, filter models.PipelineRunListFilter) (*models.RunChildList, error) {
 	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID:    batchJobID,
-		Page:          filter.Page,
-		PageSize:      filter.PageSize,
-		RefreshActive: true,
+		BatchJobID: batchJobID,
+		Page:       filter.Page,
+		PageSize:   filter.PageSize,
 	})
 	if err != nil {
 		return nil, err
 	}
-	for i := range items {
-		if !needsRunListRefresh(&items[i]) {
-			continue
-		}
-		fresh, refreshErr := uc.GetRun(ctx, items[i].ID)
-		if refreshErr != nil || fresh == nil {
-			continue
-		}
-		stripRunHeavyFields(fresh)
-		items[i] = *fresh
-	}
+	// CYB-3490: pure list read — no per-child GetRun/Argo refresh on the
+	// request path; the webhook + background watcher keep children fresh.
 	if parentRunID == "" {
 		parentRunID = batchJobID
 	}
@@ -5351,9 +5563,22 @@ const (
 	messageWorkflowUnavailable     = "Argo workflow 在集群中不可访问（可能已 TTL 清理）"
 )
 
-// staleActiveRunMaxAge is the maximum duration a run may stay in an active
-// Argo phase before the watcher marks it failed as a zombie run.
+// staleActiveRunMaxAge caps how long a legitimate active run can be — beyond
+// this, staleness is a display-side blocking hint (runstate.AnnotateRunDiagnostics
+// stamps BlockingReason=stale_running), NOT a status flip.
+//
+// CYB-3491 rationale (from #417): tasks may wait. The old writer path used
+// this threshold to hard-fail runs whose Argo workflow was still queued —
+// violating the "waiting is not failure" invariant. The workflow is untouched
+// in Argo; if a webhook or poll later brings an update, the diagnostic hint
+// naturally clears.
 const staleActiveRunMaxAge = 48 * time.Hour
+
+// stalledObservationThreshold is the read-side threshold for surfacing a
+// stall hint: an active run that has not been updated in this long shows a
+// "stalled" blocking reason in the UI. Distinct from staleActiveRunMaxAge
+// (age since creation): this one measures freshness (since UpdatedAt).
+const stalledObservationThreshold = 30 * time.Minute
 
 // workflowCreateVisibilityGracePeriod avoids marking brand-new runs as expired
 // while Argo is still creating the workflow CR.
@@ -5405,7 +5630,24 @@ func isDefinitiveTerminalFailure(run *models.PipelineRun) bool {
 		return false
 	}
 	msg := strings.TrimSpace(run.Message)
-	return msg != "" && !isStaleWorkflowUnavailableMessage(msg)
+	if msg == "" || isStaleWorkflowUnavailableMessage(msg) {
+		return false
+	}
+	// Legacy verdicts from the (removed) unschedulable guard are NOT
+	// definitive: the workflow was never stopped in Argo — it kept queueing.
+	// Leaving these revivable lets the misclassified-reconcile path restore
+	// them to their true active phase (CYB-3491: waiting is not failure).
+	if isUnschedulableGuardVerdict(msg) {
+		return false
+	}
+	return true
+}
+
+// isUnschedulableGuardVerdict matches the message minted by the pre-CYB-3491
+// unschedulable guard ("Kubernetes 调度失败:…"), which mass-failed runs whose
+// pods were merely waiting for capacity.
+func isUnschedulableGuardVerdict(message string) bool {
+	return strings.HasPrefix(strings.TrimSpace(message), "Kubernetes 调度失败")
 }
 
 func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {
@@ -5476,7 +5718,11 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 
 func (uc *Usecase) listDeployments(ctx context.Context, refreshActive bool) ([]models.PipelineDeployment, error) {
 	if uc.runRepo != nil {
-		runs, _, err := uc.ListRunSummaries(ctx)
+		// CYB-3491(紧急):ListRunSummaries(ctx) 无 filter 走 FindAllSummaries,
+		// 全表扫。dev 30k+ 行时 39s + 撑爆连接。这个 endpoint 是
+		// /api/v1/pipelines 的支线("最近的部署")——最近 500 条已够,
+		// legacy deployments 走独立 FindAll(不受影响)。
+		runs, _, err := uc.ListRunSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
 		if err != nil {
 			return nil, err
 		}

@@ -171,9 +171,12 @@ func (r *BackfillRepo) FindJobByID(ctx context.Context, id string) (*models.Back
 // UpdateJobStatus sets the status for a backfill job.
 // finished_at is stamped when the status is a terminal state (completed/failed).
 func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) error {
+	// CYB-3491(状态机):非终态时清空 finished_at。此前 ELSE finished_at 会保留
+	// 从 completed/failed 回到 running 时的旧终点时间,导致 UI 显示 "运行中 +
+	// 完成时间" 的矛盾;下游读到脏数据会展示错误的完成时间。
 	const q = `UPDATE backfill_jobs
 	  SET status = $2, updated_at = NOW(),
-	      finished_at = CASE WHEN $2 IN ('completed','failed') THEN NOW() ELSE finished_at END
+	      finished_at = CASE WHEN $2 IN ('completed','failed') THEN NOW() ELSE NULL END
 	  WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status); err != nil {
@@ -183,8 +186,9 @@ func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) e
 }
 
 func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error {
+	// CYB-3491(状态机):非终态时清空 finished_at(同 UpdateJobStatus)。
 	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW(),
-	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+	  finished_at = CASE WHEN $2 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE NULL END
 	WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status, pilotPhase); err != nil {
@@ -446,7 +450,7 @@ SELECT
   COUNT(*) FILTER (WHERE status = 'completed'),
   COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')),
   COUNT(*) FILTER (WHERE status = 'pending'),
-  COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result'))
+  COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result', 'submitted'))
 FROM current_items`
 	db := dbFromCtx(ctx, r.c.db)
 	var summary repository.BackfillItemStatusSummary
@@ -555,10 +559,19 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 
 // UpdateJobProgress updates aggregate counters and job status.
 func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
+	// CYB-3491(数据新鲜度):
+	//   1. no-op guard: 只在 completed_count / failed_count / status 真变化时
+	//      UPDATE。此前每个 sync 轮次(30s)都刷 updated_at,UI "更新时间" 永远
+	//      在跳,给出批次还活着的假象——但底下的 44 个 running item 心跳已
+	//      冻结 10+ 分钟。
+	//   2. 状态机:非终态清 finished_at(同 UpdateJobStatus)。
 	const q = `UPDATE backfill_jobs SET
 	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW(),
-	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
-	WHERE id = $1`
+	  finished_at = CASE WHEN $4 IN ('completed','failed') THEN COALESCE(finished_at, NOW()) ELSE NULL END
+	WHERE id = $1
+	  AND (completed_count IS DISTINCT FROM $2
+	    OR failed_count IS DISTINCT FROM $3
+	    OR status IS DISTINCT FROM $4)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, completed, failed, status); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobProgress: %w", err)
@@ -970,133 +983,6 @@ FROM (
 		return nil, fmt.Errorf("postgres BackfillRepo.FindItemByJobAndAssetID: %w", err)
 	}
 	return item, nil
-}
-
-// ClaimNextItem atomically claims one pending item using FOR UPDATE SKIP LOCKED.
-func (r *BackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
-	// Besides 'pending' items, also reclaim "half-committed orphans": items stuck
-	// 'running' whose pipeline run was never submitted to Argo (no argo_workflow_uid,
-	// still a `<pipeline>-batch-<suffix>` placeholder name) and was created long
-	// enough ago that it cannot be a normal in-flight deploy. These arise when the
-	// materialize worker pool exits before claiming items written late in the loop;
-	// they otherwise oscillate running<->pending (reaper clears -> syncJobProgress
-	// maps Argo-Pending back to running) and never get re-claimed. We key the
-	// staleness on pipeline_runs.created_at (stable) rather than backfill_items.
-	// started_at (which the oscillation keeps refreshing). FOR UPDATE SKIP LOCKED
-	// still guarantees a single claimer, and once deployed the run gains a UID and
-	// no longer matches, so there is no duplicate submission.
-	const q = `
-	UPDATE backfill_items
-	SET status = 'running',
-	    started_at = NOW(),
-	    attempts = attempts + 1
-	WHERE id = (
-		SELECT bi.id FROM backfill_items bi
-		WHERE bi.job_id = $1 AND (
-			bi.status = 'pending'
-			OR (
-				bi.status = 'running'
-				AND EXISTS (
-					SELECT 1 FROM pipeline_runs pr
-					WHERE pr.id = bi.pipeline_run_id
-					  AND pr.argo_workflow_uid = ''
-					  AND pr.workflow_name LIKE '%-batch-%'
-					  AND pr.created_at < NOW() - INTERVAL '5 minutes'
-				)
-			)
-		)
-		ORDER BY (bi.status = 'pending') DESC, bi.created_at ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED
-	)
-	RETURNING id, job_id, asset_id, status,
-	  pipeline_run_id, workflow_name, error_message, attempts, started_at, finished_at,
-	  created_at`
-	db := dbFromCtx(ctx, r.c.db)
-	item, err := scanBackfillItem(db.QueryRow(ctx, q, jobID))
-	if err != nil {
-		if errors.Is(err, errNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("postgres BackfillRepo.ClaimNextItem: %w", err)
-	}
-	return item, nil
-}
-
-// ResetStaleItems reclaims items stuck in running status beyond lease timeout.
-func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
-	const q = `
-	WITH reclaimed AS (
-		UPDATE backfill_items bi
-		SET status = CASE WHEN bi.attempts >= $2 THEN 'failed' ELSE 'pending' END,
-		    started_at = NULL,
-		    error_message = CASE WHEN bi.attempts >= $2
-			  THEN 'max attempts exceeded after lease timeout'
-			  ELSE 'reclaimed: lease expired'
-		    END
-		FROM backfill_jobs bj
-		WHERE bi.job_id = bj.id
-		  AND bi.status = 'running'
-		  AND bi.started_at < NOW() - ($1::bigint * interval '1 second')
-		  AND bj.status = 'running'
-		RETURNING bi.id
-	)
-	SELECT COUNT(*) FROM reclaimed`
-	db := dbFromCtx(ctx, r.c.db)
-	var count int
-	if err := db.QueryRow(ctx, q, leaseTimeoutSec, maxAttempts).Scan(&count); err != nil {
-		return 0, fmt.Errorf("postgres BackfillRepo.ResetStaleItems: %w", err)
-	}
-	return count, nil
-}
-
-// FindIncompleteJobs returns running backfill jobs with at least one pending item.
-func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	// Also treat a job as incomplete when it has half-committed orphans (items
-	// stuck 'running' on an unsubmitted placeholder run — see ClaimNextItem), so
-	// startup recovery re-spawns a worker pool that ClaimNextItem can drain.
-	const q = `
-	SELECT DISTINCT bj.id, bj.template_id, bj.name, bj.status,
-	  bj.completed_count, bj.failed_count, bj.total_count,
-	  bj.pilot_phase, bj.pilot_count,
-	  bj.filter_json, bj.created_at, bj.updated_at
-	FROM backfill_jobs bj
-	JOIN backfill_items bi ON bi.job_id = bj.id
-	WHERE bj.status = 'running'
-	  AND (
-	    bi.status = 'pending'
-	    OR (
-	      bi.status = 'running'
-	      AND EXISTS (
-	        SELECT 1 FROM pipeline_runs pr
-	        WHERE pr.id = bi.pipeline_run_id
-	          AND pr.argo_workflow_uid = ''
-	          AND pr.workflow_name LIKE '%-batch-%'
-	          AND pr.created_at < NOW() - INTERVAL '5 minutes'
-	      )
-	    )
-	  )
-	ORDER BY bj.created_at ASC`
-	db := dbFromCtx(ctx, r.c.db)
-	rows, err := db.Query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("postgres BackfillRepo.FindIncompleteJobs: %w", err)
-	}
-	defer rows.Close()
-	var jobs []models.BackfillJob
-	for rows.Next() {
-		var j models.BackfillJob
-		if err := rows.Scan(
-			&j.ID, &j.TemplateID, &j.Name, &j.Status,
-			&j.CompletedCount, &j.FailedCount, &j.TotalCount,
-			&j.PilotPhase, &j.PilotCount,
-			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("postgres BackfillRepo.FindIncompleteJobs scan: %w", err)
-		}
-		jobs = append(jobs, j)
-	}
-	return jobs, nil
 }
 
 // FindActiveJobs returns non-terminal, non-paused batch jobs (running, pending,

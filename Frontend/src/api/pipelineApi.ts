@@ -667,8 +667,15 @@ export interface ElasticQuota {
 	utilizationPercent: { cpu: number; memory: number };
 }
 
-export function listElasticQuotas(): Promise<ElasticQuota[]> {
-	return request<{ items: ElasticQuota[] }>("GET", "/elastic-quotas").then(
+// listElasticQuotas fetches the Koordinator ElasticQuota pools on the given
+// cluster. Empty clusterId falls back to the default cluster on the backend
+// (CYB-3486). Callers that want the traditional single-cluster view can omit.
+export function listElasticQuotas(clusterId?: string): Promise<ElasticQuota[]> {
+	const trimmed = (clusterId ?? "").trim();
+	const path = trimmed
+		? `/elastic-quotas?clusterId=${encodeURIComponent(trimmed)}`
+		: "/elastic-quotas";
+	return request<{ items: ElasticQuota[] }>("GET", path).then(
 		(r) => r.items ?? [],
 	);
 }

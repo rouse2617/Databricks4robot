@@ -57,10 +57,13 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 
 	// CYB-3425 Phase B PR 1: cluster registry. Reads exposed to any authed
 	// user so the frontend can render cluster names; writes gated by admin.
+	//
+	// CYB-3486 PR 4a wired per-cluster k8s + argo factories on infra so admin
+	// CRUD can invalidate the per-cluster cache. PR 4b flipped elastic_quota
+	// / resource_quota consumers over — the factories now do real routing.
 	var clusterHandler *adminH.ClusterHandler
-	if inf.pg != nil {
-		clusterRepo := postgres.NewClusterRepo(inf.pg)
-		clusterHandler = adminH.NewClusterHandler(clusterRepo)
+	if inf.clusterRepo != nil {
+		clusterHandler = adminH.NewClusterHandler(inf.clusterRepo, inf.k8sFactory, inf.argoFactory)
 	}
 
 	routes.RegisterAll(
