@@ -971,7 +971,38 @@ export default function BatchJobDetailPage() {
 								],
 								onClick: async ({ key }) => {
 									if (!runTree) return;
-									const assetIds = extractAssetIds(runTree.items);
+									// CYB-3491: runTree 是分页的(pageSize=20 见 line 236),之前
+									// 直接用 runTree.items 会让 58 条批次只导出 20 条 —— 用户
+									// 每次都要人肉再来一次。导出前分页扫全 —— 后端
+									// pageSize 上限 100,所以按 100 一页循环直到集齐 total。
+									const total = runTree.total ?? runTree.items.length;
+									let items = runTree.items;
+									if (runTree.items.length < total) {
+										const hide = message.loading(
+											`正在拉取全部 ${total} 条子运行…`,
+											0,
+										);
+										try {
+											const pageSize = 100;
+											const pages = Math.ceil(total / pageSize);
+											const collected: typeof runTree.items = [];
+											for (let page = 1; page <= pages; page++) {
+												const part = await listRunChildren(job.id, {
+													page,
+													pageSize,
+												});
+												collected.push(...part.items);
+												if (part.items.length === 0) break;
+											}
+											items = collected;
+										} catch (err) {
+											hide();
+											message.error(`拉取完整资产列表失败:${String(err)}`);
+											return;
+										}
+										hide();
+									}
+									const assetIds = extractAssetIds(items);
 									if (assetIds.length === 0) {
 										message.info("没有可导出的资产 ID");
 										return;
