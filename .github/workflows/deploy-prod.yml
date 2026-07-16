@@ -134,7 +134,28 @@ jobs:
           # would REPLACE the entire set (gcloud docs: "All existing environment
           # variables will be removed first"), which would wipe JWT_SECRET,
           # DATABREW_TOKEN, DB_HOST, and every other prod env var on first run.
-          # --set-secrets loads the named Secret Manager secrets as environment variables.
+          #
+          # --set-secrets is REPLACE-ALL for secret-backed env vars — every
+          # secret this service needs at runtime must be listed here or it
+          # disappears on the next tag deploy. See the block below.
+          #
+          # Runtime secrets currently required (2026-07-16):
+          #   DATABREW_TOKEN                    → SDK / API bearer for backend
+          #   DB_PASSWORD                       → CloudSQL postgres auth
+          #   K8S_CA_DATA / K8S_CA_B64          → GKE control-plane CA for the
+          #                                       backend's Kubernetes client
+          #                                       (pod exec + runtime config
+          #                                       projection ConfigMap writes)
+          #   COMPONENT_RELEASE_INGEST_TOKEN    → shared secret the
+          #                                       automated-processing-gcloud
+          #                                       Cloud Build presents on
+          #                                       POST /api/v1/pipeline-component-releases/sync
+          #   BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL → batch-job Feishu completion
+          #                                       notifications. Sourced from
+          #                                       the dev-owned secret today
+          #                                       (cross-env by intent; both
+          #                                       envs point at the same
+          #                                       webhook until we split them).
           gcloud run deploy cyber-databrew-backend-prod \
             --image="${{ env.IMAGE }}" \
             --region=${{ env.REGION }} \
@@ -142,7 +163,7 @@ jobs:
             --platform=managed \
             --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }} \
-            --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest
+            --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest,K8S_CA_DATA=cyber-databrew-k8s-ca-cert:latest,K8S_CA_B64=cyber-databrew-k8s-ca-cert:latest,COMPONENT_RELEASE_INGEST_TOKEN=cyber-databrew-prod-component-release-ingest-token:latest,BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL=cyber-databrew-dev-backfill-feishu-webhook:latest
 
   # ─── Atlas migrations (Cloud Run Job) ───────────────────────────────────────
   # Runs BEFORE deploy-backend so the new image deploys against an already-
