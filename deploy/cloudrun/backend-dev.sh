@@ -25,7 +25,14 @@ ENV_FILE="${ENV_FILE:-}"
 
 CPU="${CPU:-1}"
 MEMORY="${MEMORY:-2Gi}"
-MIN_INSTANCES="${MIN_INSTANCES:-0}"
+# Keep one instance always warm. The batch submitter and the run-status
+# projector are in-process background loops (15s / 30s tickers), not
+# request-driven. With min-instances=0 Cloud Run scales to zero when idle and
+# those loops STOP: batch dispatch and status projection freeze until the next
+# HTTP request happens to wake an instance. That is exactly what stalled the
+# CYB-3489 executor on dev — a batch would only advance while someone kept the
+# page open. min-instances=1 makes the loops run continuously. (cyb-3491)
+MIN_INSTANCES="${MIN_INSTANCES:-1}"
 MAX_INSTANCES="${MAX_INSTANCES:-5}"
 TIMEOUT="${TIMEOUT:-60}"
 CPU_THROTTLING="${CPU_THROTTLING:-false}"
