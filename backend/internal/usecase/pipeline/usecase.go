@@ -47,22 +47,22 @@ var (
 
 // Usecase orchestrates pipeline template management and deployment.
 type Usecase struct {
-	templateRepo            repository.PipelineTemplateRepository
-	deploymentRepo          repository.PipelineDeploymentRepository
-	targetRepo              repository.ExecutionTargetRepository
-	runRepo                 repository.PipelineRunRepository
-	runNodeRepo             repository.PipelineRunNodeRepository
-	runEventRepo            repository.PipelineRunEventRepository
-	runRelationRepo         repository.RunRelationRepository
-	runInputRepo            repository.RunInputRepository
-	assetNodeRepo           repository.PipelineRunAssetNodeRepository
-	notifyRepo              repository.PipelineRunNotificationRepository
-	watcherRepo             repository.PipelineRunWatcherStateRepository
+	templateRepo    repository.PipelineTemplateRepository
+	deploymentRepo  repository.PipelineDeploymentRepository
+	targetRepo      repository.ExecutionTargetRepository
+	runRepo         repository.PipelineRunRepository
+	runNodeRepo     repository.PipelineRunNodeRepository
+	runEventRepo    repository.PipelineRunEventRepository
+	runRelationRepo repository.RunRelationRepository
+	runInputRepo    repository.RunInputRepository
+	assetNodeRepo   repository.PipelineRunAssetNodeRepository
+	notifyRepo      repository.PipelineRunNotificationRepository
+	watcherRepo     repository.PipelineRunWatcherStateRepository
 	// watcherActiveCursor rotates the active-run refresh window across watcher
 	// cycles so runs beyond the per-cycle cap don't starve (CYB-3490). Only the
 	// single watcher goroutine touches it; resets on restart, which is fine —
 	// coverage is eventual, the webhook remains the primary signal.
-	watcherActiveCursor     int
+	watcherActiveCursor int
 	// targetClusterCache memoizes execution_target_id → cluster_id so the
 	// watcher / status-refresh paths can resolve a run's cluster without an
 	// ExecutionTarget object populated on the run (ListSummaries doesn't load
@@ -70,15 +70,15 @@ type Usecase struct {
 	// runs resolved to cluster-default and their status read back from the
 	// wrong argo endpoint. Bindings are effectively immutable (a target's
 	// cluster_id doesn't change in practice); a process restart clears it.
-	targetClusterCache      sync.Map
-	backfillRepo            repository.BackfillRepository
-	assetRepo               repository.AssetRepository
-	assetEventRepo          repository.AssetEventRepository
-	relationWriter          repository.AssetRelationWriter
-	logicalRepo             repository.LogicalAssetRepository
-	pipelineConfigRepo      repository.PipelineConfigRepository
-	runtimeConfigStore      RuntimeConfigStore
-	wfClient                argo.WorkflowClient
+	targetClusterCache sync.Map
+	backfillRepo       repository.BackfillRepository
+	assetRepo          repository.AssetRepository
+	assetEventRepo     repository.AssetEventRepository
+	relationWriter     repository.AssetRelationWriter
+	logicalRepo        repository.LogicalAssetRepository
+	pipelineConfigRepo repository.PipelineConfigRepository
+	runtimeConfigStore RuntimeConfigStore
+	wfClient           argo.WorkflowClient
 	// CYB-3486 PR 4c: per-cluster Argo client factory. When set, Deploy
 	// resolves argo client via argoFactory.ForTarget(target) instead of the
 	// wfClient singleton so multi-cluster submit routing works. Nil is
@@ -2890,7 +2890,6 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	}
 	uc.applyWorkflowToRun(ctx, run, wf, nodeMode)
 }
-
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.runRepo == nil {
@@ -5902,10 +5901,28 @@ func isMisclassifiedTerminalRunStatus(status string) bool {
 }
 
 func (uc *Usecase) refreshDeploymentStatus(ctx context.Context, d *models.PipelineDeployment) {
-	if uc.wfClient == nil || d == nil || !isActiveDeploymentStatus(d.Status) {
+	if d == nil || !isActiveDeploymentStatus(d.Status) {
 		return
 	}
-	phase, err := uc.wfClient.GetWorkflowStatus(ctx, d.WorkflowName, uc.namespace)
+	// CYB-3486d1: probe status on the deployment's own cluster. Deploy dual-writes
+	// a pipeline_runs row (same id / workflow_name) that carries the execution
+	// target, so recover the run and resolve its cluster client. Without this a
+	// non-default-cluster deployment is probed on the cyber-clust singleton,
+	// 404s, and gets wrongly marked Expired (#436/#437 class). A nil client (no
+	// factory + no singleton) means we skip the refresh, as before.
+	var run *models.PipelineRun
+	if uc.runRepo != nil {
+		run, _ = uc.runRepo.FindByWorkflowName(ctx, d.WorkflowName)
+	}
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil || client == nil {
+		return
+	}
+	namespace := uc.namespace
+	if run != nil && strings.TrimSpace(run.ArgoNamespace) != "" {
+		namespace = strings.TrimSpace(run.ArgoNamespace)
+	}
+	phase, err := client.GetWorkflowStatus(ctx, d.WorkflowName, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			d.Status = deploymentStatusExpired
@@ -6015,7 +6032,16 @@ func (uc *Usecase) enrichDeployment(d *models.PipelineDeployment) {
 	d.ExecutionTarget = &target
 }
 
-// DeleteDeployment removes a deployment record and optionally deletes the K8s workflow.
+// DeleteDeployment removes a deployment record and optionally deletes the K8s
+// workflow.
+//
+// CYB-3486d1: cluster routing lives in the runRepo path. In production runRepo
+// is always wired (cmd/server/core.go), so this delegates to DeleteRun, which
+// resolves the run's cluster via resolveArgoClientForRun and deletes on the
+// right cluster. The uc.wfClient branch below only runs in the legacy
+// runRepo==nil configuration, where the default-cluster singleton is the only
+// cluster — cluster-correct by construction (no non-default clusters exist
+// without the run store).
 func (uc *Usecase) DeleteDeployment(ctx context.Context, id string) error {
 	if uc.runRepo != nil {
 		return uc.DeleteRun(ctx, id)
@@ -6050,6 +6076,10 @@ func (uc *Usecase) RetryDeployment(ctx context.Context, id string) (*models.Pipe
 }
 
 // StopDeployment stops a running workflow by setting its Shutdown strategy.
+//
+// CYB-3486d1: same cluster-routing split as DeleteDeployment — production
+// (runRepo wired) delegates to the cluster-aware StopRun; the uc.wfClient
+// branch is the legacy runRepo==nil single-cluster path only.
 func (uc *Usecase) StopDeployment(ctx context.Context, id string) error {
 	if uc.runRepo != nil {
 		return uc.StopRun(ctx, id)
@@ -6295,21 +6325,37 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 		Pods:                 []PodResourceUsage{},
 	}
 
-	if uc.wfClient != nil && d.WorkflowName != "" {
-		namespace := uc.namespace
-		if d.ExecutionTarget != nil && strings.TrimSpace(d.ExecutionTarget.Namespace) != "" {
-			namespace = strings.TrimSpace(d.ExecutionTarget.Namespace)
+	if d.WorkflowName != "" {
+		// CYB-3486d1: the pipeline_deployments row carries no cluster, but Deploy
+		// dual-writes a pipeline_runs row (same id / workflow_name) that does.
+		// Resolve it so a non-default-cluster run is read through its own argo
+		// client instead of the cyber-clust singleton (#436/#437 misroute class).
+		var run *models.PipelineRun
+		if uc.runRepo != nil {
+			run, _ = uc.runRepo.FindByWorkflowName(ctx, d.WorkflowName)
 		}
-		wf, err := uc.wfClient.GetWorkflow(ctx, d.WorkflowName, namespace)
+		client, err := uc.resolveArgoClientForRun(ctx, run)
 		if err != nil {
-			return nil, fmt.Errorf("get workflow: %w", err)
+			return nil, err
 		}
-		if wf != nil {
-			if wf.Status.Phase != "" {
-				report.Status = string(wf.Status.Phase)
+		if client != nil {
+			namespace := uc.namespace
+			if run != nil && strings.TrimSpace(run.ArgoNamespace) != "" {
+				namespace = strings.TrimSpace(run.ArgoNamespace)
+			} else if d.ExecutionTarget != nil && strings.TrimSpace(d.ExecutionTarget.Namespace) != "" {
+				namespace = strings.TrimSpace(d.ExecutionTarget.Namespace)
 			}
-			report.Source.Workflow = "argo-live"
-			report.Pods = buildPodResourceUsageReport(wf, d.Manifest, report.ObservedAt, "")
+			wf, err := client.GetWorkflow(ctx, d.WorkflowName, namespace)
+			if err != nil {
+				return nil, fmt.Errorf("get workflow: %w", err)
+			}
+			if wf != nil {
+				if wf.Status.Phase != "" {
+					report.Status = string(wf.Status.Phase)
+				}
+				report.Source.Workflow = "argo-live"
+				report.Pods = buildPodResourceUsageReport(wf, d.Manifest, report.ObservedAt, "")
+			}
 		}
 	}
 
@@ -6330,22 +6376,26 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 	if strings.TrimSpace(workflowName) == "" {
 		return nil, ErrInvalidArgument
 	}
-	if uc.wfClient == nil {
-		return nil, ErrWorkflowUnavailable
-	}
 
 	var manifest *string
 	var deploymentID string
 	namespace := uc.namespace
+	// CYB-3486d1: keep the resolved run so the workflow read below goes through
+	// the run's own cluster client. This path is live (WorkflowNodeDetailPanel →
+	// GET /workflows/:name/nodes/:id/resources); a run on a non-default cluster
+	// must not be read through the cyber-clust singleton or GetWorkflow 404s
+	// (the #436/#437 cross-cluster misroute class).
+	var run *models.PipelineRun
 	// Prefer the first-class pipeline_runs table (workflow_name UNIQUE) so we
 	// avoid a full table scan over pipeline_deployments. Fall back to the
 	// legacy compatibility read only when the run repo has no matching row.
 	if uc.runRepo != nil {
-		if run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName); err == nil && run != nil {
-			manifest = run.Manifest
-			deploymentID = run.ID
-			if strings.TrimSpace(run.ArgoNamespace) != "" {
-				namespace = strings.TrimSpace(run.ArgoNamespace)
+		if r, err := uc.runRepo.FindByWorkflowName(ctx, workflowName); err == nil && r != nil {
+			run = r
+			manifest = r.Manifest
+			deploymentID = r.ID
+			if strings.TrimSpace(r.ArgoNamespace) != "" {
+				namespace = strings.TrimSpace(r.ArgoNamespace)
 			}
 		}
 	}
@@ -6364,7 +6414,18 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 		}
 	}
 
-	wf, err := uc.wfClient.GetWorkflow(ctx, workflowName, namespace)
+	// run is nil for legacy deployment-only rows; resolveArgoClientForRun then
+	// routes to cluster-default (the singleton), correct for pre-multi-cluster
+	// rows. A nil client (no factory + no singleton) means workflow unavailable.
+	client, err := uc.resolveArgoClientForRun(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, ErrWorkflowUnavailable
+	}
+
+	wf, err := client.GetWorkflow(ctx, workflowName, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("get workflow: %w", err)
 	}

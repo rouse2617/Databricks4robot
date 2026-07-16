@@ -306,6 +306,8 @@ K8S_CA_DATA  → Secret: cyber-databrew-dev-k8s-ca-data
 
 ### Execution targets (Argo namespaces)
 
+> Adding a namespace/target to an **already-onboarded** cluster is below. Onboarding a **brand-new cluster** (new K8s API + `clusters` row) → [`cluster-onboarding.md`](cluster-onboarding.md).
+
 DataBrew pipeline runs dispatch to K8s namespaces via execution targets. Current targets:
 
 | Target ID | Namespace | Argo Controller |
