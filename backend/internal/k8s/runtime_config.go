@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +21,32 @@ type RuntimeConfigStore struct {
 
 func NewRuntimeConfigStore(clientset kubernetes.Interface) *RuntimeConfigStore {
 	return &RuntimeConfigStore{clientset: clientset}
+}
+
+// RuntimeConfigStoreFactory resolves a per-cluster RuntimeConfigStore from a
+// ClientFactory, so the runtime-config ConfigMap is created on the target's own
+// cluster rather than the default-cluster singleton (CYB-3486). Implements
+// pipelineUC.RuntimeConfigStoreFactory.
+type RuntimeConfigStoreFactory struct {
+	clients ClientFactory
+}
+
+// NewRuntimeConfigStoreFactory wires a per-cluster runtime-config store factory
+// over the shared K8s ClientFactory.
+func NewRuntimeConfigStoreFactory(clients ClientFactory) *RuntimeConfigStoreFactory {
+	return &RuntimeConfigStoreFactory{clients: clients}
+}
+
+// ForTarget returns a RuntimeConfigStore bound to the target's cluster clientset.
+func (f *RuntimeConfigStoreFactory) ForTarget(ctx context.Context, target *models.ExecutionTarget) (pipelineUC.RuntimeConfigStore, error) {
+	if f == nil || f.clients == nil {
+		return nil, fmt.Errorf("%w: runtime config store factory is not configured", ErrUnavailable)
+	}
+	clientset, err := f.clients.ForTarget(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return NewRuntimeConfigStore(clientset), nil
 }
 
 var invalidConfigMapNameChars = regexp.MustCompile(`[^a-z0-9-]+`)

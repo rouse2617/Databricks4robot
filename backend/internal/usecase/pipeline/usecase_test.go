@@ -526,7 +526,54 @@ func (m *mockRuntimeConfigStore) Create(_ context.Context, namespace, deployment
 	return m.volumeName, nil
 }
 
+type mockRuntimeConfigStoreFactory struct {
+	store      RuntimeConfigStore
+	lastTarget *models.ExecutionTarget
+	err        error
+}
+
+func (f *mockRuntimeConfigStoreFactory) ForTarget(_ context.Context, target *models.ExecutionTarget) (RuntimeConfigStore, error) {
+	f.lastTarget = target
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.store, nil
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
+
+// CYB-3486: the runtime-config ConfigMap must be created on the TARGET's
+// cluster. When a per-cluster factory is wired, resolveRuntimeConfigStore must
+// route through it (threading the target) instead of the default-cluster
+// singleton; with no factory it falls back to the singleton (no-PG/test path).
+func TestResolveRuntimeConfigStore_FactoryFirstElseSingleton(t *testing.T) {
+	ctx := context.Background()
+	target := &models.ExecutionTarget{ID: "delivery-mid", ClusterID: "c-delivery"}
+	perTarget := &mockRuntimeConfigStore{volumeName: "per-target"}
+	singleton := &mockRuntimeConfigStore{volumeName: "singleton"}
+
+	factory := &mockRuntimeConfigStoreFactory{store: perTarget}
+	uc := &Usecase{runtimeConfigStore: singleton, runtimeConfigStoreFactory: factory}
+	got, err := uc.resolveRuntimeConfigStore(ctx, target)
+	if err != nil {
+		t.Fatalf("factory path: unexpected err: %v", err)
+	}
+	if got != perTarget {
+		t.Fatalf("factory path: expected per-target store, got %#v", got)
+	}
+	if factory.lastTarget != target {
+		t.Fatalf("factory path: target was not threaded to ForTarget")
+	}
+
+	ucNoFactory := &Usecase{runtimeConfigStore: singleton}
+	got2, err := ucNoFactory.resolveRuntimeConfigStore(ctx, target)
+	if err != nil {
+		t.Fatalf("singleton path: unexpected err: %v", err)
+	}
+	if got2 != singleton {
+		t.Fatalf("singleton path: expected singleton fallback, got %#v", got2)
+	}
+}
 
 func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 	ctx := context.Background()

@@ -153,6 +153,14 @@ func setupCore(inf *infra) *coreHandlers {
 		// Price pipeline step costs by the node's real machine type (CYB-3073).
 		puc.SetNodeInstanceResolver(k8s.NewNodeInstanceResolver(clientset))
 	}
+	// CYB-3486: route the runtime-config ConfigMap to the TARGET's cluster.
+	// Without this, a delivery-clust run creates its ConfigMap through the
+	// default (cyber-clust) clientset and fails with `namespaces
+	// "cyber-delivery-prod" not found`. Nil-safe (no PG → nil factory → the
+	// default-cluster singleton set above stays in effect).
+	if inf.k8sFactory != nil {
+		puc.SetRuntimeConfigStoreFactory(k8s.NewRuntimeConfigStoreFactory(inf.k8sFactory))
+	}
 	if inf.cfg.PricingConfigPath != "" {
 		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
 		if err != nil {

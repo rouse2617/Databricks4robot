@@ -78,7 +78,12 @@ type Usecase struct {
 	logicalRepo        repository.LogicalAssetRepository
 	pipelineConfigRepo repository.PipelineConfigRepository
 	runtimeConfigStore RuntimeConfigStore
-	wfClient           argo.WorkflowClient
+	// CYB-3486: per-cluster runtime-config store factory. When set, Deploy
+	// resolves the store via ForTarget(target) so the runtime-config ConfigMap
+	// is created on the TARGET's cluster, not the default-cluster singleton.
+	// Nil is tolerated — falls back to runtimeConfigStore (default cluster).
+	runtimeConfigStoreFactory RuntimeConfigStoreFactory
+	wfClient                  argo.WorkflowClient
 	// CYB-3486 PR 4c: per-cluster Argo client factory. When set, Deploy
 	// resolves argo client via argoFactory.ForTarget(target) instead of the
 	// wfClient singleton so multi-cluster submit routing works. Nil is
@@ -167,6 +172,16 @@ type RuntimeConfigStore interface {
 	Create(ctx context.Context, namespace, deploymentID string, config RuntimeConfigProjection, owner *RuntimeConfigOwnerReference) (string, error)
 }
 
+// RuntimeConfigStoreFactory resolves a RuntimeConfigStore bound to the target's
+// own cluster. The default-cluster singleton (runtimeConfigStore) writes the
+// runtime-config ConfigMap through one clientset; for a run dispatched to a
+// non-default cluster that lands on the wrong cluster (the target namespace
+// doesn't exist there → "namespaces ... not found"). This mirrors the
+// argo.ClientFactory seam (CYB-3486).
+type RuntimeConfigStoreFactory interface {
+	ForTarget(ctx context.Context, target *models.ExecutionTarget) (RuntimeConfigStore, error)
+}
+
 type resolvedNodeRuntimeConfig struct {
 	NodeID string
 	Config *resolvedRuntimeConfig
@@ -216,6 +231,26 @@ func (uc *Usecase) SetPipelineConfigRepo(r repository.PipelineConfigRepository) 
 
 func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
 	uc.runtimeConfigStore = store
+}
+
+// SetRuntimeConfigStoreFactory wires the per-cluster runtime-config store
+// factory (CYB-3486). When set, Deploy creates the runtime-config ConfigMap on
+// the target's own cluster instead of the default-cluster singleton.
+func (uc *Usecase) SetRuntimeConfigStoreFactory(f RuntimeConfigStoreFactory) {
+	uc.runtimeConfigStoreFactory = f
+}
+
+// resolveRuntimeConfigStore returns the store to use for a Deploy: the
+// per-target store when a factory is wired, otherwise the default-cluster
+// singleton. Keeping the singleton fallback preserves the no-PG/test path.
+func (uc *Usecase) resolveRuntimeConfigStore(
+	ctx context.Context,
+	target *models.ExecutionTarget,
+) (RuntimeConfigStore, error) {
+	if uc.runtimeConfigStoreFactory != nil {
+		return uc.runtimeConfigStoreFactory.ForTarget(ctx, target)
+	}
+	return uc.runtimeConfigStore, nil
 }
 
 // SetRuntimeAdapter wires the Run Kernel runtime boundary. When unset, legacy
@@ -3811,7 +3846,7 @@ func (uc *Usecase) Deploy(
 	if !uc.runtimeSubmitConfigured() {
 		return nil, ErrWorkflowUnavailable
 	}
-	if runtimeConfigProjection != nil && uc.runtimeConfigStore == nil {
+	if runtimeConfigProjection != nil && uc.runtimeConfigStore == nil && uc.runtimeConfigStoreFactory == nil {
 		return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
 	}
 	if runtimeConfigProjection != nil && uc.wfClient == nil {
@@ -3856,7 +3891,15 @@ func (uc *Usecase) Deploy(
 			Name:       wfName,
 			UID:        string(wfDetail.UID),
 		}
-		if _, err := uc.runtimeConfigStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, owner); err != nil {
+		// CYB-3486: resolve the store for THIS target's cluster. Without this the
+		// ConfigMap is created via the default-cluster clientset, so a delivery
+		// run fails with `namespaces "cyber-delivery-prod" not found`.
+		configStore, err := uc.resolveRuntimeConfigStore(ctx, target)
+		if err != nil {
+			logPipelineSideEffect("delete workflow after runtime config store resolve failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
+			return nil, fmt.Errorf("resolve runtime config store: %w", err)
+		}
+		if _, err := configStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, owner); err != nil {
 			logPipelineSideEffect("delete workflow after runtime config projection failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
 			return nil, fmt.Errorf("create runtime config projection: %w", err)
 		}
