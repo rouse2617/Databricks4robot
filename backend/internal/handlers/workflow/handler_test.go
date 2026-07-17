@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1186,6 +1187,132 @@ func TestStreamWorkflowLogs_DoesNotFollowFinishedNode(t *testing.T) {
 	}
 	if client.lastStreamOpts.Follow {
 		t.Fatalf("finished node must NOT be followed (Follow=true hangs until request timeout)")
+	}
+}
+
+// When a node has no live logs to stream — workflow TTL'd/GC'd, pod recycled, or
+// pod not yet created — the SSE handler must end gracefully with an "end" event
+// (200, text/event-stream) rather than a 4xx/5xx. A non-2xx fires
+// EventSource.onerror → exponential-backoff reconnect storm; an "end" event
+// closes the client cleanly. Mirrors the non-stream GetWorkflowLogs graceful
+// branches for the SSE variant (CYB-3579).
+func TestStreamWorkflowLogs_GracefulEndForMissingLogs(t *testing.T) {
+	notFound := fmt.Errorf("%w: pods not found", argo.ErrNotFound)
+
+	tests := []struct {
+		name       string
+		wfName     string
+		getFn      func(context.Context, string, string) (*wfv1.Workflow, error)
+		streamFn   func(context.Context, string, string, string, argo.WorkflowLogOptions) (io.ReadCloser, error)
+		wantReason string
+	}{
+		{
+			name:   "pod recycled: stream returns ErrNotFound",
+			wfName: "wf-recycled",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return makeWorkflow("wf-recycled", "Running", 1), nil
+			},
+			streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+				return nil, notFound
+			},
+			wantReason: "pod-recycled",
+		},
+		{
+			name:   "workflow gone: get returns ErrNotFound",
+			wfName: "wf-gone",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return nil, notFound
+			},
+			wantReason: "workflow-gone",
+		},
+		{
+			name:   "pending workflow: no pod yet",
+			wfName: "wf-pending",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return makeWorkflow("wf-pending", "Pending", 0), nil
+			},
+			wantReason: "pod-not-created",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockWorkflowClient{getFn: tt.getFn, streamFn: tt.streamFn}
+			h := New(client, "default")
+			server := httptest.NewServer(setupRouter(h))
+			defer server.Close()
+
+			resp, err := http.Get(server.URL + "/workflows/" + tt.wfName + "/logs/stream?nodeId=a")
+			if err != nil {
+				t.Fatalf("stream request: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 graceful end, got %d", resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+				t.Fatalf("expected event-stream content type, got %q", ct)
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			body := string(raw)
+			if !strings.Contains(body, "event: end") {
+				t.Fatalf("expected terminal end event, got %q", body)
+			}
+			if !strings.Contains(body, `"reason":"`+tt.wantReason+`"`) {
+				t.Fatalf("expected end reason %q, got %q", tt.wantReason, body)
+			}
+			// The stream never opened, so no heartbeat/log frames must be emitted.
+			if strings.Contains(body, "event: heartbeat") || strings.Contains(body, "event: log") {
+				t.Fatalf("graceful end must not emit stream frames, got %q", body)
+			}
+		})
+	}
+}
+
+// A genuinely unknown node id on a live (non-pending) workflow is a real client
+// error and still 400s — the graceful-end path must not swallow it.
+func TestStreamWorkflowLogs_UnknownNodeStill400(t *testing.T) {
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("wf-unknown", "Running", 1), nil // only node "a" exists
+		},
+	}
+	h := New(client, "default")
+	server := httptest.NewServer(setupRouter(h))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/wf-unknown/logs/stream?nodeId=zzz")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown node on live workflow, got %d", resp.StatusCode)
+	}
+}
+
+// A genuine (non-not-found) stream fault still surfaces as 500 so the client
+// retries transient argo/RBAC failures and #462 logs them server-side.
+func TestStreamWorkflowLogs_GenuineFaultStill500(t *testing.T) {
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("wf-fault", "Running", 1), nil
+		},
+		streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+			return nil, fmt.Errorf("argo-server connection refused")
+		},
+	}
+	h := New(client, "default")
+	server := httptest.NewServer(setupRouter(h))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/wf-fault/logs/stream?nodeId=a")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for genuine fault, got %d", resp.StatusCode)
 	}
 }
 
