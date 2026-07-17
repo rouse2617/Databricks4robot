@@ -1997,9 +1997,6 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
-func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
-	return m.FindAll(context.Background())
-}
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())

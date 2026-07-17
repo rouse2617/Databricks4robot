@@ -96,8 +96,6 @@ type ExecutionTargetRepository interface {
 type PipelineRunRepository interface {
 	Save(ctx context.Context, r *models.PipelineRun) error
 	FindAll(ctx context.Context) ([]models.PipelineRun, error)
-	// FindAllSummaries returns list rows without manifest/pipeline_json/target_snapshot.
-	FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error)
 	// ListSummaries returns filtered/paginated summary rows for batch job UIs.
 	ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)

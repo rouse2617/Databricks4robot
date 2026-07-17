@@ -968,12 +968,6 @@ func (r *PipelineRunRepo) FindAll(ctx context.Context) ([]models.PipelineRun, er
 	return r.findAllPipelineRuns(ctx, pipelineRunSelectCols, scanPipelineRun, "FindAll")
 }
 
-// FindAllSummaries returns lightweight pipeline runs for list endpoints.
-func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error) {
-	items, _, err := r.ListSummaries(ctx, models.PipelineRunListFilter{})
-	return items, err
-}
-
 // ListSummaries returns filtered/paginated summary rows.
 func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	var (

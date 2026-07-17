@@ -227,9 +227,6 @@ func (m *syncTestRunRepo) Save(context.Context, *models.PipelineRun) error { ret
 func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
-func (m *syncTestRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
-	return nil, nil
-}
 func (m *syncTestRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.lastListFilter = &filter
 	if m.summaries == nil {

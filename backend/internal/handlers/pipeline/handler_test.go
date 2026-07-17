@@ -181,7 +181,10 @@ func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, 
 	}
 	return out, nil
 }
-func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
+// summaries is a private test helper (formerly the FindAllSummaries interface
+// method, dropped as dead production code) — it returns lightweight copies the
+// mock's ListSummaries then filters.
+func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 	out := make([]models.PipelineRun, 0, len(m.byID))
 	for _, r := range m.byID {
 		copy := *r
@@ -192,13 +195,10 @@ func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.Pipe
 		copy.ExecutionTarget = nil
 		out = append(out, copy)
 	}
-	return out, nil
+	return out
 }
 func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
-	items, err := m.FindAllSummaries(context.Background())
-	if err != nil {
-		return nil, 0, err
-	}
+	items := m.summaries()
 	filtered := make([]models.PipelineRun, 0, len(items))
 	for _, item := range items {
 		if filter.BatchJobID != "" {
