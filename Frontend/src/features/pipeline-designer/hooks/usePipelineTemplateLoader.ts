@@ -11,7 +11,7 @@ interface UsePipelineTemplateLoaderOptions {
 	templateId: string | null;
 	dispatch: Dispatch<DesignerAction>;
 	messageApi: MessageApi;
-	loadPipelineToCanvas: (pipeline: Pipeline) => void;
+	loadPipelineToCanvas: (pipeline: Pipeline, displayName?: string) => void;
 	loadPipelineFromSessionStorage: () => void;
 }
 
@@ -41,8 +41,10 @@ export function usePipelineTemplateLoader({
 		Promise.all([getPipeline(templateId), listPipelineVersions(templateId)])
 			.then(([template, versions]) => {
 				if (cancelled) return;
-				loadPipelineToCanvasRef.current(template.pipeline);
-				dispatch({ type: "canvas/setPipelineName", name: template.name });
+				// 展示名随基线一起在 loadPipelineToCanvas 内落定(传 template.name);
+				// 不要在 clean 之后再 setPipelineName,否则基线 name 与当前 name 不符 →
+				// "未保存"误报(CYB-3486)。
+				loadPipelineToCanvasRef.current(template.pipeline, template.name);
 				dispatch({
 					type: "template/setVersions",
 					versions,

@@ -642,14 +642,18 @@ function PipelineDesignerCanvasInner({
 	);
 
 	const loadPipelineToCanvas = useCallback(
-		(pipeline: Pipeline) => {
+		(pipeline: Pipeline, displayName?: string) => {
 			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
 			setNodes(n);
 			setEdges(e);
 			dispatch({ type: "canvas/setEditingNodeId", nodeId: null });
-			const nextName = pipeline.name || pipelineName;
-			if (pipeline.name) {
-				dispatch({ type: "canvas/setPipelineName", name: pipeline.name });
+			// CYB-3486: 基线快照的名字必须和最终落到 state 的名字一致。模板的展示名
+			// (template.name)常与内嵌 pipeline.name 不同(后者甚至为空),若在 clean
+			// 之后再单独 setPipelineName,基线 name 与当前 name 不符 → "未保存"误报。
+			// 因此把权威展示名显式传进来,让 setPipelineName 与 markCanvasClean 用同一个值。
+			const nextName = displayName || pipeline.name || pipelineName;
+			if (nextName) {
+				dispatch({ type: "canvas/setPipelineName", name: nextName });
 			}
 			dispatch({ type: "canvas/selectNode", nodeId: null });
 			engine.deselectAll();
@@ -687,8 +691,8 @@ function PipelineDesignerCanvasInner({
 				if (!confirmed) return;
 			}
 			dispatch({ type: "template/setSelectedVersionId", versionId });
-			loadPipelineToCanvas(version.pipeline);
-			dispatch({ type: "canvas/setPipelineName", name: version.name });
+			// 展示名随基线一起在 loadPipelineToCanvas 内落定,避免二次 setPipelineName。
+			loadPipelineToCanvas(version.pipeline, version.name);
 			navigate(
 				`/pipeline?templateId=${encodeURIComponent(versionId)}&tab=design`,
 				{
