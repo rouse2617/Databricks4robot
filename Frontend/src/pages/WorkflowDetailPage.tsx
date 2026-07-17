@@ -2921,6 +2921,7 @@ export default function WorkflowDetailPage({
 				node={displaySelectedNode}
 				workflow={displayWorkflow}
 				pipelineNode={displaySelectedPipelineNode}
+				argoNamespace={runEventState.run?.argoNamespace}
 				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
 				canRetryWorkflow={canRetryFailedNode}

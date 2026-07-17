@@ -56,6 +56,7 @@ import {
 	terminateTerminalSession,
 } from "../../api/workflowApi";
 import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
+import { gkePodConsoleUrl } from "../../lib/gkePodConsole";
 import {
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
@@ -629,7 +630,21 @@ function PodTab({
 				</Descriptions.Item>
 				<Descriptions.Item label="Pod">
 					{displayPodName ? (
-						<CopyableEllipsisText text={displayPodName} />
+						<Space direction="vertical" size={2} style={{ width: "100%" }}>
+							<CopyableEllipsisText text={displayPodName} />
+							{(() => {
+								const consoleUrl = gkePodConsoleUrl(namespace, displayPodName);
+								return consoleUrl ? (
+									<Typography.Link
+										href={consoleUrl}
+										target="_blank"
+										rel="noreferrer noopener"
+									>
+										在 GCP Console 查看 Pod ↗
+									</Typography.Link>
+								) : null;
+							})()}
+						</Space>
 					) : (
 						"—"
 					)}
@@ -1624,10 +1639,13 @@ export function WorkflowNodeDetailPanel({
 	activeTab = "summary",
 	onActiveTabChange,
 	pipelineNode,
+	argoNamespace,
 }: {
 	node: WorkflowNodeStatus | null;
 	workflow: WorkflowDetail | null;
 	pipelineNode?: PipelineNodeDef | null;
+	/** The run's argo namespace — used to build the GKE console pod deep link. */
+	argoNamespace?: string;
 	open: boolean;
 	onClose: () => void;
 	onRetryWorkflow?: () => void;
@@ -1653,6 +1671,26 @@ export function WorkflowNodeDetailPanel({
 		drawerExtra.unshift(
 			<Button key="retry" icon={<ReloadOutlined />} onClick={onRetryWorkflow}>
 				{nodeFailed ? "重试失败节点" : "重试工作流"}
+			</Button>,
+		);
+	}
+	// CYB-3570: one-click deep link to this step's pod in the GKE console.
+	// Shown in the drawer header (above every tab, incl. 概览). Rendered only
+	// when the namespace maps to a known cluster (see gkePodConsoleUrl).
+	const podConsoleUrl = gkePodConsoleUrl(
+		argoNamespace,
+		getWorkflowNodePodName(node),
+	);
+	if (podConsoleUrl) {
+		drawerExtra.unshift(
+			<Button
+				key="gke-console"
+				icon={<CloudServerOutlined />}
+				href={podConsoleUrl}
+				target="_blank"
+				rel="noreferrer noopener"
+			>
+				GCP 查看 Pod
 			</Button>,
 		);
 	}
