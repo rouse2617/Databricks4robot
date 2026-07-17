@@ -39,7 +39,9 @@ MEMORY="${MEMORY:-4Gi}"
 # CYB-3489 executor on dev — a batch would only advance while someone kept the
 # page open. min-instances=1 makes the loops run continuously. (cyb-3491)
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
-MAX_INSTANCES="${MAX_INSTANCES:-5}"
+# Raised 5 → 30 to give the dev backend more headroom under batch-dispatch load
+# (user request 2026-07-17). Still overridable via the MAX_INSTANCES env.
+MAX_INSTANCES="${MAX_INSTANCES:-30}"
 TIMEOUT="${TIMEOUT:-60}"
 CPU_THROTTLING="${CPU_THROTTLING:-false}"
 CPU_BOOST="${CPU_BOOST:-true}"
