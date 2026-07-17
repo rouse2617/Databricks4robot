@@ -34,6 +34,7 @@ import {
 	type WorkflowLogResponse,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
+import { useVisibleInterval } from "../hooks/useVisibleInterval";
 
 export type WorkflowLogFollowStatus =
 	| "idle"
@@ -696,12 +697,11 @@ export function useWorkflowDetail(
 		runEventState.run != null &&
 		ACTIVE_WORKFLOW_STATUSES.has(runEventState.run.status);
 
-	useEffect(() => {
-		if (!runtimeWorkflowName || !shouldPollWorkflow) {
-			return;
-		}
-
-		const timer = window.setInterval(() => {
+	// CYB-3486: poll the live workflow only while the tab is visible — a
+	// backgrounded run-detail tab used to keep hitting the API every 8s.
+	useVisibleInterval(
+		() => {
+			if (!runtimeWorkflowName) return;
 			getWorkflow(runtimeWorkflowName)
 				.then((detail) => {
 					workflowRef.current = detail;
@@ -714,23 +714,19 @@ export function useWorkflowDetail(
 						console.error(err);
 					}
 				});
-		}, WORKFLOW_POLL_INTERVAL_MS);
+		},
+		WORKFLOW_POLL_INTERVAL_MS,
+		Boolean(runtimeWorkflowName) && shouldPollWorkflow,
+	);
 
-		return () => window.clearInterval(timer);
-	}, [refreshDetailData, runtimeWorkflowName, shouldPollWorkflow]);
-
-	useEffect(() => {
-		if (!name || !shouldPollLedgerOnly) {
-			return;
-		}
-
-		const timer = window.setInterval(() => {
+	useVisibleInterval(
+		() => {
 			loadWorkflow();
 			loadRunEvents();
-		}, WORKFLOW_POLL_INTERVAL_MS);
-
-		return () => window.clearInterval(timer);
-	}, [loadRunEvents, loadWorkflow, name, shouldPollLedgerOnly]);
+		},
+		WORKFLOW_POLL_INTERVAL_MS,
+		Boolean(name) && shouldPollLedgerOnly,
+	);
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string, nodePhase?: string) => {

@@ -54,6 +54,7 @@ import {
 	type RunChildSummary,
 } from "../api/runApi";
 import type { WorkflowSummary } from "../api/workflowApi";
+import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
@@ -648,15 +649,15 @@ export default function BatchJobDetailPage() {
 
 	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
-	useEffect(() => {
-		if (pollIntervalMs === null) {
-			return;
-		}
-		const timer = window.setInterval(() => {
+	// CYB-3486: pause polling while the tab is hidden (resumes + refreshes on
+	// return). pollIntervalMs is null when the job is in a terminal state.
+	useVisibleInterval(
+		() => {
 			void refresh({ silent: true });
-		}, pollIntervalMs);
-		return () => window.clearInterval(timer);
-	}, [pollIntervalMs, refresh]);
+		},
+		pollIntervalMs ?? 0,
+		pollIntervalMs !== null,
+	);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);
