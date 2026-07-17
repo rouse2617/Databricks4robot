@@ -56,7 +56,10 @@ import {
 	terminateTerminalSession,
 } from "../../api/workflowApi";
 import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
-import { gkePodConsoleUrl } from "../../lib/gkePodConsole";
+import {
+	gkeConsoleCoordsForNamespace,
+	gkePodConsoleUrl,
+} from "../../lib/gkePodConsole";
 import {
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
@@ -1654,6 +1657,35 @@ export function WorkflowNodeDetailPanel({
 	activeTab?: WorkflowNodeDetailTabKey;
 	onActiveTabChange?: (key: WorkflowNodeDetailTabKey) => void;
 }) {
+	// CYB-3573: the accurate (v2) pod name only comes from the per-node pod
+	// diagnostics resolver — node.podName may carry the dotted argo node id,
+	// which is NOT a real pod name. Fetch it here so the header deep link is
+	// correct. Gated on the namespace mapping to a known cluster (no fetch when
+	// no GKE link is possible). Hooks must run before the early return below.
+	const workflowName = workflow?.name;
+	const nodeId = node?.id;
+	const [headerPodName, setHeaderPodName] = useState<string | null>(null);
+	useEffect(() => {
+		setHeaderPodName(null);
+		if (
+			!workflowName ||
+			!nodeId ||
+			!gkeConsoleCoordsForNamespace(argoNamespace)
+		)
+			return undefined;
+		let cancelled = false;
+		getNodePodDiagnostics(workflowName, nodeId)
+			.then((d) => {
+				if (!cancelled) setHeaderPodName(d?.podName ?? null);
+			})
+			.catch(() => {
+				if (!cancelled) setHeaderPodName(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowName, nodeId, argoNamespace]);
+
 	if (!node || !workflow) return null;
 
 	const drawerExtra = [
@@ -1674,13 +1706,12 @@ export function WorkflowNodeDetailPanel({
 			</Button>,
 		);
 	}
-	// CYB-3570: one-click deep link to this step's pod in the GKE console.
-	// Shown in the drawer header (above every tab, incl. 概览). Rendered only
-	// when the namespace maps to a known cluster (see gkePodConsoleUrl).
-	const podConsoleUrl = gkePodConsoleUrl(
-		argoNamespace,
-		getWorkflowNodePodName(node),
-	);
+	// CYB-3570 / CYB-3573: one-click deep link to this step's pod in the GKE
+	// console, shown in the drawer header (above every tab, incl. 概览).
+	// Uses the resolved v2 pod name from diagnostics (headerPodName); the URL
+	// builder rejects a non-pod name (e.g. a dotted node id) so a broken link
+	// is never rendered. Absent until the fetch resolves → no button.
+	const podConsoleUrl = gkePodConsoleUrl(argoNamespace, headerPodName);
 	if (podConsoleUrl) {
 		drawerExtra.unshift(
 			<Button

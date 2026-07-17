@@ -46,6 +46,13 @@ const NAMESPACE_PREFIX_COORDS: ReadonlyArray<
 	},
 ];
 
+// A k8s pod name is a DNS-1123 label: lowercase alphanumerics and hyphens
+// only (no dots). This rejects the argo node id (`<workflow>.<node>`) that can
+// leak into the podName slot.
+export function isLikelyPodName(value: string): boolean {
+	return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value);
+}
+
 export function gkeConsoleCoordsForNamespace(
 	namespace?: string | null,
 ): GkeConsoleCoords | null {
@@ -68,6 +75,11 @@ export function gkePodConsoleUrl(
 	const ns = (namespace ?? "").trim();
 	const pod = (podName ?? "").trim();
 	if (!ns || !pod) return null;
+	// A real k8s pod name never contains a dot. The argo *node id* does
+	// (`<workflow>.<nodeName>`), and some stored fields carry that node id in
+	// the podName slot — deep-linking it would 404 in the console. Reject it so
+	// callers render no link rather than a broken one (CYB-3573).
+	if (!isLikelyPodName(pod)) return null;
 	const coords = gkeConsoleCoordsForNamespace(ns);
 	if (!coords) return null;
 	return (
