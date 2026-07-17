@@ -929,6 +929,8 @@ func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
 	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
 	pipeline.SetRunRepositories(nil, runRepo, nil)
 	uc := New(repo, pipeline)
+	// Run the async stop-cleanup inline so its effects are deterministic here.
+	uc.spawn = func(f func()) { f() }
 
 	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{StopRunning: true})
 	if err != nil {
@@ -940,6 +942,50 @@ func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
 	if repo.items[0].Status != "pending" {
 		t.Fatalf("stopped item status = %q, want pending (so resume re-runs it)", repo.items[0].Status)
 	}
+}
+
+// CYB-3572: pausing with StopRunning must NOT stop the runs inline — that
+// serialized N per-run Stop calls in the request and hit the 60s gateway
+// timeout (504). The job is marked paused and the count is reported
+// immediately; the actual stops run in the background.
+func TestPauseJob_StopRunning_DefersStopsToBackground(t *testing.T) {
+	runID := "run-1"
+	repo := &mockBackfillRepo{
+		jobs: map[string]*models.BackfillJob{
+			"job-1": {ID: "job-1", Status: "running", TotalCount: 1},
+		},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "a1", Status: "running", PipelineRunID: &runID},
+		},
+	}
+	runRepo := &syncTestRunRepo{byID: map[string]*models.PipelineRun{
+		runID: {ID: runID, WorkflowName: "wf-1", Status: "Running", ArgoNamespace: "default"},
+	}}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+	// Capture the background job instead of running it — proves PauseJob returns
+	// without doing the stop work inline.
+	var deferred func()
+	uc.spawn = func(f func()) { deferred = f }
+
+	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{StopRunning: true})
+	if err != nil {
+		t.Fatalf("PauseJob: %v", err)
+	}
+	if result.Status != "paused" {
+		t.Fatalf("status = %q, want paused", result.Status)
+	}
+	if result.StoppedCount != 1 {
+		t.Fatalf("StoppedCount = %d, want 1 (reported immediately)", result.StoppedCount)
+	}
+	// The per-run stop work was scheduled to the background rather than run
+	// inline — that is the fix for the 60s-gateway-timeout 504. Running the
+	// captured job then performs the reset without error.
+	if deferred == nil {
+		t.Fatal("expected the stop-cleanup to be scheduled to the background, not run inline")
+	}
+	deferred()
 }
 
 // CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery

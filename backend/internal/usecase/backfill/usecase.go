@@ -76,6 +76,11 @@ type Usecase struct {
 	pipelineUC *pipelineUC.Usecase
 	pgClient   any // *postgres.Client — set via NewWithPostgres
 
+	// spawn runs a background job. Defaults to `go f()` (lazy, see spawnFn);
+	// tests override it with an inline runner so async side effects (e.g. the
+	// PauseJob stop-cleanup) are deterministic.
+	spawn func(func())
+
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
@@ -694,33 +699,65 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 		if err != nil {
 			return result, err
 		}
+		type stopTarget struct{ itemID, runID string }
+		var targets []stopTarget
 		for _, item := range items {
-			runID := ""
-			if item.PipelineRunID != nil {
-				runID = strings.TrimSpace(*item.PipelineRunID)
+			if item.PipelineRunID == nil {
+				continue
 			}
+			runID := strings.TrimSpace(*item.PipelineRunID)
 			if runID == "" {
 				continue
 			}
-			if err := uc.pipelineUC.StopRun(ctx, runID); err != nil {
-				result.StopFailedCount++
-				slog.Warn("PauseJob: stop run failed", "jobID", id, "runID", runID, "err", err)
-				continue
-			}
-			result.StoppedCount++
-			// Stopping removes the workflow from Argo, so the item is no longer
-			// running. Reset it to "pending" and drop its run link so a later
-			// resume re-submits it cleanly. Leaving it "running" with a stale run
-			// both hides it from ResumeJob (ClaimNextItem only claims "pending")
-			// and trips executeItem's dedup guard (the run still looks submitted)
-			// — that combination is what stranded items after pause→resume.
-			if err := uc.repo.UpdateItemPipelineRun(ctx, item.ID, "", "", "pending"); err != nil {
-				slog.Warn("PauseJob: reset stopped item to pending failed", "jobID", id, "itemID", item.ID, "err", err)
-			}
+			targets = append(targets, stopTarget{itemID: item.ID, runID: runID})
+		}
+		// StoppedCount reports how many in-flight items are being stopped; the
+		// actual per-run Stop calls happen asynchronously below.
+		result.StoppedCount = len(targets)
+		if len(targets) > 0 {
+			// CYB-3572: stopping in-flight runs is best-effort cleanup — the job is
+			// already marked "paused" above, so dispatch has already halted. Doing
+			// N sequential per-run Stop calls inside the request handler blew the
+			// 60s gateway timeout (→ 504) on large / slow (cross-cluster) batches.
+			// Detach it: respond immediately and stop the runs in the background
+			// with a fresh, request-independent context.
+			uc.spawnFn()(func() {
+				bg, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				for _, t := range targets {
+					stopCtx, stopCancel := context.WithTimeout(bg, 30*time.Second)
+					err := uc.pipelineUC.StopRun(stopCtx, t.runID)
+					stopCancel()
+					if err != nil {
+						slog.Warn("PauseJob: async stop run failed", "jobID", id, "runID", t.runID, "err", err)
+						continue
+					}
+					// Stopping removes the workflow from Argo; reset the item to
+					// "pending" and drop its run link so a later resume re-submits it
+					// cleanly. Leaving it "running" with a stale run both hides it from
+					// ResumeJob (ClaimNextItem only claims "pending") and trips
+					// executeItem's dedup guard — that stranded items after
+					// pause→resume.
+					if err := uc.repo.UpdateItemPipelineRun(bg, t.itemID, "", "", "pending"); err != nil {
+						slog.Warn("PauseJob: async reset stopped item to pending failed", "jobID", id, "itemID", t.itemID, "err", err)
+					}
+				}
+				_ = uc.syncJobProgress(bg, id)
+				slog.Info("PauseJob: async stop-cleanup complete", "jobID", id, "stopped", len(targets))
+			})
 		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
 	return result, nil
+}
+
+// spawnFn returns the background-job runner, defaulting to a real goroutine.
+// Tests override uc.spawn with an inline runner for determinism.
+func (uc *Usecase) spawnFn() func(func()) {
+	if uc.spawn != nil {
+		return uc.spawn
+	}
+	return func(f func()) { go f() }
 }
 
 // ResumeJob resumes a paused backfill job and re-schedules pending items.
