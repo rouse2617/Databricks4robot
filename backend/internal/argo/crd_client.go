@@ -67,8 +67,23 @@ func (c *crdWorkflowClient) CreateWorkflow(ctx context.Context, wf *wfv1.Workflo
 	if err != nil {
 		return err
 	}
-	if _, err := c.dyn.Resource(workflowGVR).Namespace(ns).Create(ctx, u, metav1.CreateOptions{}); err != nil {
+	created, err := c.dyn.Resource(workflowGVR).Namespace(ns).Create(ctx, u, metav1.CreateOptions{})
+	if err != nil {
 		return translateK8sErr(err)
+	}
+	// Backfill the server-assigned identity onto the caller's workflow. k8s
+	// returns the created object with UID/resourceVersion/name populated;
+	// dropping it (the old `_,`) forced every caller to re-read via GetWorkflow
+	// just to learn the UID — and that GET, under a batch's request storm, gets
+	// client-side throttled and silently fails, leaving the run persisted with
+	// an empty uid (the phantom-Pending batch bug: run stuck Pending, item
+	// stuck submitted, never re-submitted). Copying it here means a successful
+	// submit already carries the UID, so no fragile post-submit re-read is
+	// needed on the happy path.
+	wf.UID = created.GetUID()
+	wf.ResourceVersion = created.GetResourceVersion()
+	if nm := created.GetName(); nm != "" {
+		wf.Name = nm
 	}
 	return nil
 }

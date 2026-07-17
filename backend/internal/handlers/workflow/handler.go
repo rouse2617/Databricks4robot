@@ -635,6 +635,36 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 			})
 			return
 		}
+		// A "previous" fetch fails when the container has no prior terminated
+		// instance (it never restarted); k8s rejects it with a non-NotFound
+		// StatusError ("the server rejected our request for an unknown reason").
+		// That is a normal condition, not a server fault — return an empty window
+		// so the viewer's "上一次" toggle shows "无上一次日志" instead of a 500
+		// (CYB-3611). The primary (non-previous) path still 500s on genuine faults.
+		if opts.Previous {
+			c.JSON(200, gin.H{
+				"workflowName": name,
+				"nodeId":       nodeId,
+				"podName":      podName,
+				"container":    opts.Container,
+				"source":       "no-previous",
+				"logs":         "",
+				"lineCount":    0,
+				"truncated":    false,
+				"truncation": gin.H{
+					"bounded": true,
+				},
+				"pagination": gin.H{
+					"available": false,
+					"reason":    "no previous container instance",
+				},
+				"window": gin.H{
+					"mode":  "unavailable",
+					"scope": "no-previous-instance",
+				},
+			})
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}

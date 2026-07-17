@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -286,12 +287,34 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			// Our own prior submission survived a crash/rollback: backfill
 			// the UID from Argo truth (same path the webhook uses) and mark
 			// the item submitted. NOT a failure, and attempts is untouched.
-			if _, refreshErr := uc.deployer.RefreshRunFromWorkflowByName(ctx, workflowName, ""); refreshErr != nil {
+			refreshed, refreshErr := uc.deployer.RefreshRunFromWorkflowByName(ctx, workflowName, "")
+			if refreshErr != nil {
 				slog.Warn("submitter: already-exists uid backfill failed, will retry",
 					"jobID", job.ID, "itemID", item.ID, "workflow", workflowName, "err", refreshErr)
 				return refreshErr
 			}
+			// AlreadyExists but the CR isn't actually readable in Argo (name
+			// reuse, or the CR was GC'd right after create) → the run still has
+			// no uid. Advancing to "submitted" here would strand the item
+			// forever (invariant ②: only pending items get re-listed). Leave it
+			// pending so the next cycle re-submits.
+			if refreshed == nil || !runAlreadySubmitted(refreshed) {
+				slog.Warn("submitter: already-exists but run still has no uid, leaving pending",
+					"jobID", job.ID, "itemID", item.ID, "workflow", workflowName)
+				return fmt.Errorf("%w: already-exists without a readable workflow", pipelineUC.ErrWorkflowSubmitIncomplete)
+			}
 			return uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "submitted")
+		}
+		// Retryable incomplete submit: the runtime accepted the workflow but no
+		// Argo uid materialized (typically a rate-limited post-submit re-read).
+		// The CR is very likely live, so DON'T fail the run — leave the item
+		// pending and let the next cycle re-submit (deterministic name →
+		// AlreadyExists → uid backfill). Distinct from the deterministic failure
+		// below (bad template/asset), which does fail the item.
+		if errors.Is(err, pipelineUC.ErrWorkflowSubmitIncomplete) {
+			slog.Warn("submitter: submit incomplete (no uid yet), leaving pending for retry",
+				"jobID", job.ID, "itemID", item.ID, "err", err)
+			return err
 		}
 		// Deterministic submission failure (bad template/asset/transpile):
 		// surface it — parity with the legacy executeItem behaviour.

@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // newFakeCRDClient builds a crdWorkflowClient backed by a fake dynamic client
@@ -76,6 +77,33 @@ func TestCRDClient_CreateWorkflow_Success(t *testing.T) {
 	}
 	if got.GetAPIVersion() != "argoproj.io/v1alpha1" || got.GetKind() != "Workflow" {
 		t.Errorf("gvk not normalized: apiVersion=%s kind=%s", got.GetAPIVersion(), got.GetKind())
+	}
+}
+
+// CreateWorkflow must copy the server-assigned identity (UID/resourceVersion)
+// from the create response back onto the caller's workflow. Dropping it forced
+// callers to re-read via GetWorkflow just to learn the UID — a GET that gets
+// client-side throttled under a batch storm and silently fails, stranding the
+// run with an empty uid (the phantom-Pending batch bug). CYB-3491 follow-up.
+func TestCRDClient_CreateWorkflow_BackfillsUID(t *testing.T) {
+	client, dyn := newFakeCRDClient(t, "argo")
+	// The fake tracker doesn't assign a UID on its own; simulate the API server
+	// stamping identity on create.
+	dyn.PrependReactor("create", "workflows", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		obj := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured)
+		obj.SetUID("srv-uid-123")
+		obj.SetResourceVersion("rv-7")
+		return true, obj, nil
+	})
+	wf := &wfv1.Workflow{ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "argo"}}
+	if err := client.CreateWorkflow(context.Background(), wf, "argo"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if string(wf.UID) != "srv-uid-123" {
+		t.Fatalf("wf.UID = %q, want srv-uid-123 (backfilled from create response)", wf.UID)
+	}
+	if wf.ResourceVersion != "rv-7" {
+		t.Fatalf("wf.ResourceVersion = %q, want rv-7 (backfilled)", wf.ResourceVersion)
 	}
 }
 

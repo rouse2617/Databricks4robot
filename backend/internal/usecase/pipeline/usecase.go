@@ -43,6 +43,15 @@ var (
 	ErrInvalidArgument         = errors.New("invalid argument")
 	ErrExecutionTargetNotFound = errors.New("execution target not found")
 	ErrWorkflowUnavailable     = errors.New("workflow service unavailable: argo server not configured")
+	// ErrWorkflowSubmitIncomplete means the runtime accepted the submit call but
+	// no Argo UID ever materialized (e.g. a client rate-limited "phantom
+	// success"): the workflow CR isn't actually live. It is a RETRYABLE submit
+	// failure — the batch submitter leaves the item pending and re-submits next
+	// cycle — as opposed to a deterministic failure (bad template/asset) that
+	// fails the item. Guards invariant ②: a uid-less run must never be surfaced
+	// as submitted, or the submitter (which only re-lists pending items) strands
+	// it forever. CYB-3491 follow-up.
+	ErrWorkflowSubmitIncomplete = errors.New("workflow submitted without an argo uid")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -3918,6 +3927,19 @@ func (uc *Usecase) Deploy(
 		if wfDetail.Status.Phase != "" {
 			status = string(wfDetail.Status.Phase)
 		}
+	}
+
+	// The submit call returned no error, yet no Argo UID ever materialized — the
+	// best-effort GetWorkflow above was rate-limited (or the CR isn't readable
+	// yet). CRITICAL: the CR was almost certainly really created (CRD
+	// CreateWorkflow only returns nil on a k8s 201), so we must NOT delete it —
+	// that would tear down a live workflow. But persisting the run now would
+	// leave a uid-less Pending row the batch submitter can never advance
+	// (invariant ②), silently stranding the item. Return a RETRYABLE error so
+	// the caller leaves the item pending and re-submits next cycle; the
+	// deterministic workflow name makes that submit AlreadyExists → uid backfill.
+	if strings.TrimSpace(wfUID) == "" {
+		return nil, fmt.Errorf("%w: workflow %q", ErrWorkflowSubmitIncomplete, wfName)
 	}
 
 	runScope := "dev"

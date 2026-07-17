@@ -81,6 +81,7 @@ type fakeDeployer struct {
 
 	deployErrByAsset map[string]error // nil entry → success
 	runsByID         map[string]*models.PipelineRun
+	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
 
 	upserts   []string
 	deploys   []string
@@ -133,7 +134,11 @@ func (d *fakeDeployer) RefreshRunFromWorkflowByName(_ context.Context, workflowN
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.refreshes = append(d.refreshes, workflowName)
-	return &models.PipelineRun{WorkflowName: workflowName, ArgoWorkflowUID: "uid-backfilled"}, nil
+	uid := "uid-backfilled"
+	if d.refreshNoUID {
+		uid = ""
+	}
+	return &models.PipelineRun{WorkflowName: workflowName, ArgoWorkflowUID: uid}, nil
 }
 
 func newSubmitterFixture(job *models.BackfillJob, items []models.BackfillItem) (*Usecase, *pausedSyncRepo, *fakeSubmitQueue, *fakeDeployer) {
@@ -232,6 +237,55 @@ func TestSubmitter_DeterministicFailureSurfaces(t *testing.T) {
 	}
 	if len(d.failures) != 1 {
 		t.Fatalf("failures = %v, want one recorded subtask failure", d.failures)
+	}
+}
+
+// A retryable incomplete submit (runtime accepted the workflow but no Argo uid
+// materialized — typically a rate-limited post-submit re-read) leaves the item
+// PENDING, not failed: the CR is very likely live, so the next cycle re-submits
+// (deterministic name → AlreadyExists → uid backfill). Failing it would strand a
+// run that may be running. This is the phantom-Pending batch bug's fix.
+func TestSubmitter_IncompleteSubmitLeavesItemPending(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.deployErrByAsset["asset-1"] = fmt.Errorf("deploy: %w", pipelineUC.ErrWorkflowSubmitIncomplete)
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending (retryable, not failed)", got)
+	}
+	if len(d.failures) != 0 {
+		t.Fatalf("failures = %v, want none (incomplete submit is retryable)", d.failures)
+	}
+}
+
+// AlreadyExists but the workflow isn't readable in Argo (e.g. GC'd right after
+// create) → the refreshed run still has no uid. The item must stay PENDING;
+// marking it submitted would strand it forever (invariant ②: only pending items
+// are re-listed by the submitter).
+func TestSubmitter_AlreadyExistsWithoutUIDLeavesItemPending(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.deployErrByAsset["asset-1"] = fmt.Errorf("submit: %w", errAlreadyExistsForTest)
+	d.refreshNoUID = true
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending (uid-less run must not be surfaced submitted)", got)
+	}
+	if len(d.refreshes) != 1 {
+		t.Fatalf("refreshes = %v, want exactly one attempt", d.refreshes)
+	}
+	if len(d.failures) != 0 {
+		t.Fatalf("failures = %v, want none", d.failures)
 	}
 }
 
