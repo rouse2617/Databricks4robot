@@ -478,6 +478,7 @@ const RUN_TREE_REASON_LABELS: Record<string, string> = {
 	runtime_missing: "Runtime 不可用",
 	stale_running: "超时",
 	runtime_config_projection_failed: "运行配置投影失败",
+	workflow_rbac_forbidden: "工作流权限不足",
 	cancelled: "已取消",
 	run_failed: "运行失败",
 };

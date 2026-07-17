@@ -396,6 +396,36 @@ describe("PoolManager — ElasticQuota panel", () => {
 			screen.queryByText("Koordinator 弹性配额池 (ElasticQuota)"),
 		).toBeNull();
 	});
+
+	// CYB-3486: with more than one cluster, same-named EQs across clusters are
+	// easy to misread. The panel labels the picker ("查看集群") and folds the
+	// currently-viewed cluster into every row so a row is self-describing.
+	it("labels each quota row with the viewed cluster when >1 cluster exists", async () => {
+		mockListClusters.mockResolvedValue([
+			defaultCluster,
+			{
+				id: "cluster-delivery",
+				name: "delivery-clust",
+				displayName: "交付集群",
+				isDefault: false,
+				status: "active",
+				koordInstalled: true,
+			},
+		]);
+		mockListElasticQuotas.mockResolvedValue(quotas);
+		renderPoolManager();
+
+		const title = await screen.findByText(
+			"Koordinator 弹性配额池 (ElasticQuota)",
+		);
+		const card = title.closest(".ant-card");
+		// The picker is labeled so the user knows they are choosing which
+		// cluster's quotas to view.
+		expect(card?.textContent).toContain("查看集群");
+		// Rows carry the selected cluster (default is selected initially): the
+		// "<cluster> · ns:" prefix is only present in the >1-cluster view.
+		expect(card?.textContent).toContain("Default cluster · ns:");
+	});
 });
 
 describe("PoolManager — create", () => {

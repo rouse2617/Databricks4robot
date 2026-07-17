@@ -3845,6 +3845,38 @@ func TestListRunSummaries_NormalizesActiveStaleTerminalFields(t *testing.T) {
 	}
 }
 
+// CYB-3491: an unfiltered ListRunSummaries must never full-scan pipeline_runs.
+// It now routes through the bounded paginated path (ListSummaries with a
+// default page size) instead of the old unbounded FindAllSummaries.
+func TestListRunSummaries_UnfilteredIsBounded(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Succeeded",
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	if _, _, err := uc.ListRunSummaries(ctx); err != nil {
+		t.Fatalf("ListRunSummaries (no filter): %v", err)
+	}
+
+	// The unfiltered call must go through ListSummaries (bounded), not the old
+	// FindAllSummaries full-scan.
+	if len(runRepo.listFilters) != 1 {
+		t.Fatalf("expected exactly one bounded ListSummaries call, got %d", len(runRepo.listFilters))
+	}
+	if got := runRepo.listFilters[0].PageSize; got != defaultUnfilteredRunSummaryPageSize {
+		t.Fatalf("unfiltered list PageSize = %d, want %d (bounded default)", got, defaultUnfilteredRunSummaryPageSize)
+	}
+}
+
 // CYB-3490: list reads are pure — RefreshActive is accepted but ignored,
 // and no Argo call happens on the request path.
 func TestListRunSummaries_PureRead_IgnoresRefreshActive(t *testing.T) {

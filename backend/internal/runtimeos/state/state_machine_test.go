@@ -286,6 +286,28 @@ func TestAnnotateRunDiagnosticsRuntimeConfigProjectionFailed(t *testing.T) {
 	}
 }
 
+// CYB-3486: a workflow pod SA lacking argo RBAC (wait sidecar exit 64,
+// "workflowtaskresults ... is forbidden") is a workflow-execution permission
+// problem, not the runtime-config projection. It used to be mislabeled
+// runtime_config_projection_failed because the classifier lumped every
+// "forbidden" into that bucket. Regression case built from run f542bf35.
+func TestAnnotateRunDiagnosticsWorkflowRbacForbidden(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{
+		ID:     "run-rbac",
+		Status: "Error",
+		Message: `wait: Error (exit code 64): workflowtaskresults.argoproj.io is ` +
+			`forbidden: User "system:serviceaccount:cyber-delivery-prod:default" ` +
+			`cannot create resource "workflowtaskresults" in API group ` +
+			`"argoproj.io" in the namespace "cyber-delivery-prod"`,
+	}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "workflow_rbac_forbidden" {
+		t.Fatalf("failure reason = %q, want workflow_rbac_forbidden", run.FailureReason)
+	}
+}
+
 func TestAnnotateRunDiagnosticsGenericFailureWithoutMessage(t *testing.T) {
 	t.Parallel()
 

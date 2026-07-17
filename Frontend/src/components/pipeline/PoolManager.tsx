@@ -1119,6 +1119,14 @@ function ElasticQuotaPanel({
 		setRefetchLoading(false);
 	}, []);
 
+	// CYB-3486: 注册多个集群时,同名 EQ 跨集群极易误读(default 与 delivery 常有
+	// 同名池)。把"当前查看的集群"折进每行副标题(集群 · ns),让每行自解释,不必
+	// 回头盯上方的集群选择器。单集群时不加,保持清爽。
+	const selectedCluster = clusters.find((c) => c.id === selectedClusterId);
+	const selectedClusterLabel =
+		selectedCluster?.displayName || selectedCluster?.name || selectedClusterId;
+	const showPicker = clusters.length > 1;
+
 	// CYB-3486 ux.1: "池" 面板按池组织 — 每一行是一个池,池主字段是名字,
 	// 命名空间降为二级标签(mono/secondary),不再单独占列。 这样表格阅读
 	// 顺序变成"池是谁 → 它多满 → 谁在用",跟用户的心智直接对齐。
@@ -1133,7 +1141,7 @@ function ElasticQuotaPanel({
 						type="secondary"
 						style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
 					>
-						ns: {r.namespace}
+						{showPicker ? `${selectedClusterLabel} · ` : ""}ns: {r.namespace}
 					</Text>
 				</Space>
 			),
@@ -1174,8 +1182,6 @@ function ElasticQuotaPanel({
 		return a.name.localeCompare(b.name);
 	});
 
-	const showPicker = clusters.length > 1;
-
 	return (
 		<Card
 			size="small"
@@ -1184,17 +1190,22 @@ function ElasticQuotaPanel({
 				<Space size="middle" wrap>
 					<span>Koordinator 弹性配额池 (ElasticQuota)</span>
 					{showPicker ? (
-						<Select
-							size="small"
-							value={selectedClusterId}
-							onChange={handleClusterChange}
-							loading={refetchLoading}
-							style={{ minWidth: 220 }}
-							options={clusters.map((c) => ({
-								value: c.id,
-								label: c.displayName || c.name,
-							}))}
-						/>
+						<Space size={4}>
+							<Text type="secondary" style={{ fontSize: 12 }}>
+								查看集群
+							</Text>
+							<Select
+								size="small"
+								value={selectedClusterId}
+								onChange={handleClusterChange}
+								loading={refetchLoading}
+								style={{ minWidth: 220 }}
+								options={clusters.map((c) => ({
+									value: c.id,
+									label: c.displayName || c.name,
+								}))}
+							/>
+						</Space>
 					) : null}
 				</Space>
 			}
@@ -1209,7 +1220,7 @@ function ElasticQuotaPanel({
 				locale={{
 					emptyText: refetchLoading
 						? "加载中…"
-						: "该集群未配置 ElasticQuota(或 Koordinator 未安装)",
+						: `集群「${selectedClusterLabel}」未配置 ElasticQuota(或 Koordinator 未安装)`,
 				}}
 			/>
 			<div style={{ marginTop: 12, color: "var(--gray-400)", fontSize: 12 }}>

@@ -1521,6 +1521,7 @@ function formatRunDiagnosticReason(reason: string) {
 		resource_incompatible: "资源不匹配",
 		image_startup: "镜像启动",
 		runtime_config_projection_failed: "运行配置投影失败",
+		workflow_rbac_forbidden: "工作流权限不足",
 		cancelled: "已取消",
 		run_failed: "运行失败",
 	};

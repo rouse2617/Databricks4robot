@@ -4229,6 +4229,12 @@ func (uc *Usecase) ListRuns(ctx context.Context, refreshActive bool) ([]models.P
 	return list, nil
 }
 
+// defaultUnfilteredRunSummaryPageSize bounds a ListRunSummaries call made
+// without an explicit filter. It matches the repo's own pageSize hard cap so
+// an unfiltered list can never degrade into a full pipeline_runs scan
+// (CYB-3491). Callers that need more must paginate.
+const defaultUnfilteredRunSummaryPageSize = 500
+
 // ListRunSummaries returns lightweight pipeline runs for list UIs. It skips
 // manifest/pipeline_json hydration and per-run node/asset enrichment.
 func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
@@ -4245,44 +4251,42 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		}
 		return out, len(out), nil
 	}
+	// CYB-3491: an unfiltered summary list must never full-scan pipeline_runs.
+	// The old no-filter branch called FindAllSummaries (no LIMIT); at 30k+ rows
+	// it once took ~39s and exhausted the connection pool. Default to a bounded
+	// page and route every call through the single paginated path instead.
+	// Callers that need more than the default must page explicitly.
+	f := models.PipelineRunListFilter{PageSize: defaultUnfilteredRunSummaryPageSize}
 	if len(filter) > 0 {
-		t0 := time.Now()
-		items, total, err := uc.runRepo.ListSummaries(ctx, filter[0])
-		if elapsed := time.Since(t0); elapsed > 300*time.Millisecond {
-			slog.Warn("ListSummaries slow query", "elapsed", elapsed.String(), "total", total)
-		}
-		if err != nil {
-			return nil, 0, err
-		}
-		// CYB-3490: list reads are pure — no Argo refresh on the request
-		// path (RefreshActive is accepted but ignored). The background
-		// watcher owns active-run refresh and misclassified-run healing.
-		normalizeActiveRunRuntimeFields(items)
-		if filter[0].BatchJobID != "" {
-			uc.attachBatchNodeProgress(ctx, items)
-			uc.attachVideoDurations(ctx, items)
-		}
-		annotateRunDiagnostics(items)
-		// The default list view keeps per-run nodes so callers can render the
-		// estimated cost; the summary view drops them for a lighter payload.
-		keepNodes := !filter[0].SummaryOnly
-		if keepNodes && uc.runNodeRepo != nil {
-			uc.attachRunNodesForList(ctx, items)
-		}
-		for i := range items {
-			stripRunListFields(&items[i], keepNodes)
-		}
-		return items, total, nil
+		f = filter[0]
 	}
-	items, err := uc.runRepo.FindAllSummaries(ctx)
+	t0 := time.Now()
+	items, total, err := uc.runRepo.ListSummaries(ctx, f)
+	if elapsed := time.Since(t0); elapsed > 300*time.Millisecond {
+		slog.Warn("ListSummaries slow query", "elapsed", elapsed.String(), "total", total)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
-	// CYB-3490: pure read — the background watcher owns refresh/healing.
+	// CYB-3490: list reads are pure — no Argo refresh on the request
+	// path (RefreshActive is accepted but ignored). The background
+	// watcher owns active-run refresh and misclassified-run healing.
 	normalizeActiveRunRuntimeFields(items)
+	if f.BatchJobID != "" {
+		uc.attachBatchNodeProgress(ctx, items)
+		uc.attachVideoDurations(ctx, items)
+	}
 	annotateRunDiagnostics(items)
-	uc.attachVideoDurations(ctx, items)
-	return items, len(items), nil
+	// The default list view keeps per-run nodes so callers can render the
+	// estimated cost; the summary view drops them for a lighter payload.
+	keepNodes := !f.SummaryOnly
+	if keepNodes && uc.runNodeRepo != nil {
+		uc.attachRunNodesForList(ctx, items)
+	}
+	for i := range items {
+		stripRunListFields(&items[i], keepNodes)
+	}
+	return items, total, nil
 }
 
 func normalizeActiveRunRuntimeFields(items []models.PipelineRun) {
