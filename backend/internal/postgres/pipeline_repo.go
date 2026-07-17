@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -806,16 +807,17 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
 
 func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	var (
-		r           models.PipelineRun
-		templateID  *string
-		templateVer *int
-		assetIDs    []string
-		batchJobID  *string
-		totalCost   *float64
+		r            models.PipelineRun
+		templateID   *string
+		templateVer  *int
+		assetIDs     []string
+		batchJobID   *string
+		totalCost    *float64
+		execTargetID sql.NullString // nullable since FK is ON DELETE SET NULL
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
-		&r.ExecutionTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
+		&execTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
@@ -824,6 +826,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	); err != nil {
 		return nil, err
 	}
+	r.ExecutionTargetID = execTargetID.String
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
@@ -842,16 +845,18 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		manifest       *string
 		pipelineJSON   []byte
 		batchJobID     *string
+		execTargetID   sql.NullString // nullable since FK is ON DELETE SET NULL
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
-		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
+		&execTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt, &r.Progress,
 	); err != nil {
 		return nil, err
 	}
+	r.ExecutionTargetID = execTargetID.String
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
