@@ -1076,7 +1076,7 @@ function KeyValueListEditor({
 	);
 }
 
-interface ElasticQuotaPanelProps {
+export interface ElasticQuotaPanelProps {
 	// initialQuotas is the panel's first render (whatever PoolManager pre-fetched
 	// on the default cluster). When the user switches cluster via the picker
 	// below, the panel takes over and refetches with the chosen clusterId.
@@ -1089,7 +1089,7 @@ interface ElasticQuotaPanelProps {
 // Shows a cluster picker when there is more than one cluster (CYB-3486) so
 // operators can inspect quotas on any registered cluster — the underlying API
 // routes by ?clusterId= (PR 4b).
-function ElasticQuotaPanel({
+export function ElasticQuotaPanel({
 	initialQuotas,
 	clusters,
 	loading,
