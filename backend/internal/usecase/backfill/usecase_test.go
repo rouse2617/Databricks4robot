@@ -110,6 +110,9 @@ func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, e
 	}
 	return nil
 }
+func (m *mockBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return m.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
+}
 func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -748,6 +751,9 @@ func (r *trackingBackfillRepo) UpdateItemStatus(_ context.Context, id, status, w
 		}
 	}
 	return nil
+}
+func (r *trackingBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return r.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
 }
 func (r *trackingBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
 	r.mu.Lock()

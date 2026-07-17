@@ -147,9 +147,63 @@ func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.
 // SyncJob force-syncs a batch job's progress from its child runs, flipping it to
 // a terminal status and sending the once-only completion notification if all
 // children have finished. Safe to call repeatedly (notification is claimed
-// atomically). Used by the run-status webhook cascade (CYB-3078, fast path).
+// atomically). Used by the reconcile backstop (StartJobReconciler) — NOT the
+// webhook hot path any more (see AdvanceItemForRun): a per-child O(batch)
+// aggregate on every terminal exit hook collapsed the DB connection pool under
+// even a 6k-item batch. Reconciler-only means it runs at most every 60s per
+// job, no matter how many child webhooks arrive between ticks.
 func (uc *Usecase) SyncJob(ctx context.Context, jobID string) error {
 	return uc.syncJobProgressForce(ctx, jobID)
+}
+
+// AdvanceItemForRun is the O(1) webhook hot path: given a run that just moved
+// to a terminal state, resolve its backfill item and advance it (and the job's
+// counters) in one atomic CTE. Zero full-batch aggregation, zero cross-item
+// scans — the webhook stays flat in the batch size, so tens or hundreds of
+// thousands of child terminations no longer swamp the DB.
+//
+// Idempotency is enforced by the SQL (see AdvanceItemAndCountAtomic): a repeat
+// delivery finds the item already terminal and updates nothing. Finalization
+// and completion notification are the reconciler's job (StartJobReconciler,
+// 60s), which reads the authoritative full summary and calls
+// notifyJobTerminalIfNeeded — that method already claims the notification slot
+// atomically, so the reconciler owning finalize does not race.
+//
+// Returns nil when the run isn't a batch child (no batch_job_id), isn't in a
+// terminal state yet, or has no linked backfill item — those cases are just
+// noise and shouldn't error.
+func (uc *Usecase) AdvanceItemForRun(ctx context.Context, run *models.PipelineRun) error {
+	if run == nil {
+		return nil
+	}
+	if run.BatchJobID == nil || strings.TrimSpace(*run.BatchJobID) == "" {
+		return nil
+	}
+	if !isTerminalRunStatus(run.Status) {
+		return nil
+	}
+	newItemStatus := mapRunStatusToItem(run.Status, run.ArgoWorkflowUID)
+	switch newItemStatus {
+	case "completed", "failed":
+		// only these two terminal transitions are ever produced by
+		// mapRunStatusToItem; cancelled comes from PauseJob elsewhere.
+	default:
+		return nil
+	}
+	item, err := uc.repo.FindItemByPipelineRunID(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if item == nil {
+		// Run isn't wired to a backfill item — e.g. a non-batch run, or the
+		// item link was stripped. Nothing to advance; not an error.
+		return nil
+	}
+	errMsg := ""
+	if newItemStatus == "failed" {
+		errMsg = strings.TrimSpace(run.Message)
+	}
+	return uc.repo.AdvanceItemAndCountAtomic(ctx, item.ID, newItemStatus, strings.TrimSpace(run.WorkflowName), errMsg)
 }
 
 // StartJobReconciler launches the reconcile backstop (CYB-3078): every interval

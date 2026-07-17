@@ -32,6 +32,9 @@ func (missingJobRepo) ClaimJobNotification(_ context.Context, _ string) (bool, e
 }
 func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
 func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
+func (missingJobRepo) AdvanceItemAndCountAtomic(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 func (missingJobRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
 	return nil
 }

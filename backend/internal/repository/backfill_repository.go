@@ -31,6 +31,18 @@ type BackfillRepository interface {
 	FindItemByPipelineRunID(ctx context.Context, pipelineRunID string) (*models.BackfillItem, error)
 	UpdateItemStatus(ctx context.Context, id, status, workflowName, errorMsg string) error
 	UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error
+	// AdvanceItemAndCountAtomic transitions a backfill item to a terminal
+	// status (completed / failed / cancelled) AND increments the corresponding
+	// job counter in one CTE. Idempotent by construction: the item is only
+	// advanced when currently non-terminal, so an at-least-once webhook
+	// redelivery finds the row already terminal, updates zero rows, and does
+	// NOT touch the counter — unlike the plain IncrementCompleted /
+	// IncrementFailed pair, which would double-count on retry.
+	//
+	// Replaces the O(N²) full-batch aggregate that ran on every child terminal
+	// (CYB-3078 fast path); reconciler still full-scans every 60s as the
+	// authoritative baseline, so drift and lost events converge.
+	AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errorMsg string) error
 	UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error
 	CountItemsByStatus(ctx context.Context, jobID, status string) (int, error)
 	SummarizeItemStatuses(ctx context.Context, jobID string) (BackfillItemStatusSummary, error)

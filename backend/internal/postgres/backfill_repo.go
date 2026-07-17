@@ -424,6 +424,54 @@ func (r *BackfillRepo) CountItemsByStatus(ctx context.Context, jobID, status str
 	return n, nil
 }
 
+// AdvanceItemAndCountAtomic atomically transitions a backfill item to a
+// terminal status AND increments the corresponding job counter, in one CTE.
+//
+// The idempotency contract lives in the WHERE clause: the item is only
+// advanced when it is currently NON-terminal. An at-least-once webhook
+// redelivery finds the row already completed/failed/cancelled, matches zero
+// rows, and the counter update runs against an empty IN () set — the counter
+// is not touched. The plain IncrementCompleted / IncrementFailed pair lacks
+// this guard and would double-count on retry.
+//
+// Status bucketing mirrors SummarizeItemStatuses / deriveJobStatus:
+// - 'completed'          → completed_count += 1
+// - 'failed', 'cancelled' → failed_count    += 1
+//
+// The counter is a fast-path convenience for the webhook (O(1) per event); the
+// reconciler (StartJobReconciler, 60s) still full-scans SummarizeItemStatuses
+// and overwrites both counters via UpdateJobProgress, so any drift from lost
+// events or race conditions converges within a reconcile cycle. That backstop
+// is what lets the webhook stay O(1) safely.
+func (r *BackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errorMsg string) error {
+	switch newStatus {
+	case "completed", "failed", "cancelled":
+	default:
+		return fmt.Errorf("postgres BackfillRepo.AdvanceItemAndCountAtomic: unsupported status %q (want completed/failed/cancelled)", newStatus)
+	}
+	const q = `
+WITH upd AS (
+  UPDATE backfill_items
+  SET status = $2,
+      workflow_name = COALESCE(NULLIF($3, ''), workflow_name),
+      error_message = CASE WHEN $2 = 'completed' THEN '' ELSE COALESCE(NULLIF($4, ''), error_message) END,
+      finished_at = NOW(),
+      started_at = COALESCE(started_at, NOW())
+  WHERE id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+  RETURNING job_id
+)
+UPDATE backfill_jobs
+SET completed_count = completed_count + (CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END),
+    failed_count    = failed_count    + (CASE WHEN $2 IN ('failed', 'cancelled') THEN 1 ELSE 0 END),
+    updated_at = NOW()
+WHERE id IN (SELECT job_id FROM upd)`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, itemID, newStatus, workflowName, errorMsg); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.AdvanceItemAndCountAtomic: %w", err)
+	}
+	return nil
+}
+
 // SummarizeItemStatuses returns aggregate counts per status bucket in one query.
 func (r *BackfillRepo) SummarizeItemStatuses(ctx context.Context, jobID string) (repository.BackfillItemStatusSummary, error) {
 	const q = `

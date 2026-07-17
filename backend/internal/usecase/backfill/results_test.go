@@ -131,6 +131,9 @@ func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ 
 	}
 	return nil
 }
+func (s *stubBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return s.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
+}
 func (s *stubBackfillRepo) UpdateItemPipelineRun(context.Context, string, string, string, string) error {
 	return nil
 }
