@@ -40,7 +40,12 @@ import {
 	type BackfillItemAttemptsResult,
 	getBatchItemAttempts,
 } from "../api/batchJobApi";
-import type { PipelineRun, PipelineRunNodeProgress } from "../api/pipelineApi";
+import type {
+	ExecutionTarget,
+	PipelineRun,
+	PipelineRunNodeProgress,
+} from "../api/pipelineApi";
+import { listExecutionTargets } from "../api/pipelineApi";
 import {
 	deleteRun,
 	listRuns,
@@ -107,6 +112,8 @@ type ExecutionRecord = WorkflowSummary & {
 	templateName?: string;
 	owner?: string;
 	argoNamespace?: string;
+	// CYB-3486: 资源池不再以命名空间示人 —— 列表用 executionTargetId 反查池名。
+	executionTargetId?: string;
 	videoDurationSec?: number;
 	// CYB-3392: propagate the parent batch id so the row can render a
 	// clickable "批次" badge that jumps to BatchJobList detail.
@@ -450,6 +457,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		blockingMessage: run.blockingMessage,
 		owner: run.owner,
 		argoNamespace: run.argoNamespace,
+		executionTargetId: run.executionTargetId,
 		videoDurationSec: run.videoDurationSec,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
@@ -519,6 +527,11 @@ export function WorkflowExecutionList({
 	messageApiRef.current = messageApi;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<ExecutionRecord[]>([]);
+	// CYB-3486: executionTargetId → 资源池,用于把"命名空间"列换成"资源池"列。
+	// 加载失败时保持空表,render 会优雅回退到命名空间显示(不回归)。
+	const [targetById, setTargetById] = useState<Map<string, ExecutionTarget>>(
+		() => new Map(),
+	);
 	const [runIdsByExecutionKey, setRunIdsByExecutionKey] = useState<
 		Record<string, string>
 	>({});
@@ -673,6 +686,23 @@ export function WorkflowExecutionList({
 		},
 		[],
 	);
+
+	// CYB-3486: 拉取资源池列表,把 executionTargetId 反解成池名。挂载时取一次;
+	// 失败时静默 —— map 保持空,列会优雅回退到命名空间显示,不阻塞主列表。
+	useEffect(() => {
+		let cancelled = false;
+		listExecutionTargets()
+			.then((targets) => {
+				if (cancelled) return;
+				setTargetById(new Map(targets.map((t) => [t.id, t])));
+			})
+			.catch(() => {
+				/* 资源池信息非关键路径,失败退回命名空间显示 */
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		if (batchJobId) return;
@@ -1147,6 +1177,12 @@ export function WorkflowExecutionList({
 	);
 
 	const columns = useMemo(() => {
+		// CYB-3486: executionTargetId → 资源池名(带回退),供"资源池"列排序/渲染共用。
+		const poolLabelFor = (record: ExecutionRecord): string => {
+			const id = record.executionTargetId ?? "";
+			const target = id ? targetById.get(id) : undefined;
+			return target?.name ?? record.argoNamespace ?? "";
+		};
 		const baseColumns = [
 			{
 				title: "名称",
@@ -1378,26 +1414,58 @@ export function WorkflowExecutionList({
 					),
 			},
 			{
-				title: "命名空间",
-				dataIndex: "argoNamespace",
-				key: "argoNamespace",
+				// CYB-3486: 产品上不再暴露"命名空间"概念,列表按"资源池"呈现。
+				title: "资源池",
+				dataIndex: "executionTargetId",
+				key: "executionTargetId",
 				width: 150,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-					((a as any).argoNamespace ?? "").localeCompare(
-						(b as any).argoNamespace ?? "",
+					poolLabelFor(a as ExecutionRecord).localeCompare(
+						poolLabelFor(b as ExecutionRecord),
 					),
-				render: (ns: string) => {
-					if (!ns) return <Typography.Text type="secondary">—</Typography.Text>;
+				render: (_: unknown, record: ExecutionRecord) => {
+					const targetId = record.executionTargetId ?? "";
+					const target = targetId ? targetById.get(targetId) : undefined;
+					// 资源池列表尚未加载/加载失败 —— 回退到命名空间显示,避免整列空白。
+					if (targetById.size === 0) {
+						const ns = record.argoNamespace;
+						if (!ns)
+							return <Typography.Text type="secondary">—</Typography.Text>;
+						const nsColor = ns.includes("prod")
+							? "red"
+							: ns.includes("dev")
+								? "blue"
+								: "purple";
+						return (
+							<Tooltip title={ns}>
+								<Tag color={nsColor} style={{ fontSize: 11 }}>
+									{ns.split("/").pop() || ns}
+								</Tag>
+							</Tooltip>
+						);
+					}
+					// 有 target id 但资源池已删除,或历史 run 未记录资源池。
+					if (!target) {
+						return (
+							<Tooltip title={targetId ? "资源池已删除" : "未指定资源池"}>
+								<Typography.Text type="secondary">—</Typography.Text>
+							</Tooltip>
+						);
+					}
+					const ns = target.namespace ?? "";
 					const color = ns.includes("prod")
 						? "red"
 						: ns.includes("dev")
 							? "blue"
 							: "purple";
-					const shortName = ns.split("/").pop() || ns;
 					return (
-						<Tooltip title={ns}>
+						<Tooltip
+							title={`${target.name}（${target.cluster || "默认集群"}${
+								ns ? ` / ${ns}` : ""
+							}）`}
+						>
 							<Tag color={color} style={{ fontSize: 11 }}>
-								{shortName}
+								{target.name}
 							</Tag>
 						</Tooltip>
 					);
@@ -1653,6 +1721,7 @@ export function WorkflowExecutionList({
 		scopeByExecutionKey,
 		templateIdsByExecutionKey,
 		templateVersionsByExecutionKey,
+		targetById,
 		messageApi,
 		navigate,
 	]);

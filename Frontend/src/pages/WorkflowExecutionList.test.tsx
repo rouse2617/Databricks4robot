@@ -29,6 +29,7 @@ const mockStopRun = vi.fn();
 const mockSuspendRun = vi.fn();
 const mockResumeRun = vi.fn();
 const mockTerminateRun = vi.fn();
+const mockListExecutionTargets = vi.fn();
 
 vi.mock("../api/workflowApi", () => ({
 	listWorkflows: (...args: unknown[]) => mockListWorkflows(...args),
@@ -51,6 +52,16 @@ vi.mock("../api/runApi", () => ({
 	resumeRun: (...args: unknown[]) => mockResumeRun(...args),
 	terminateRun: (...args: unknown[]) => mockTerminateRun(...args),
 }));
+
+vi.mock("../api/pipelineApi", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/pipelineApi")>();
+	return {
+		...actual,
+		// CYB-3486: 列表挂载时拉资源池做 executionTargetId→池名映射。
+		listExecutionTargets: (...args: unknown[]) =>
+			mockListExecutionTargets(...args),
+	};
+});
 
 vi.mock("antd", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
@@ -151,6 +162,7 @@ describe("WorkflowExecutionList", () => {
 		mockSuspendRun.mockResolvedValue({ message: "suspend submitted" });
 		mockResumeRun.mockResolvedValue({ message: "resume submitted" });
 		mockTerminateRun.mockResolvedValue({ message: "terminate submitted" });
+		mockListExecutionTargets.mockResolvedValue([]);
 		mockListRuns.mockResolvedValue({
 			items: [
 				{
@@ -436,5 +448,62 @@ describe("WorkflowExecutionList", () => {
 		});
 		expect(screen.queryByText("pipeline-aaa")).not.toBeInTheDocument();
 		expect(screen.getByText(/共 1 条/)).toBeInTheDocument();
+	});
+
+	// CYB-3486: 产品不再暴露"命名空间",列表列改为"资源池",按 executionTargetId
+	// 反查池名;池已删除时显示占位而非泄露命名空间。
+	it("renders a 资源池 column that resolves executionTargetId to the pool name", async () => {
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "tgt-low",
+				name: "交付集群-低配额池",
+				cluster: "delivery-clust",
+				namespace: "cyber-delivery-prod",
+				argoServerConfigured: false,
+				status: "available",
+				isDefault: false,
+			},
+		]);
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-pooled",
+					pipelineName: "pooled-run",
+					workflowName: "pooled-run",
+					status: "Succeeded",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					executionTargetId: "tgt-low",
+					argoNamespace: "cyber-delivery-prod",
+				},
+				{
+					id: "run-orphan",
+					pipelineName: "orphan-run",
+					workflowName: "orphan-run",
+					status: "Succeeded",
+					nodeCount: 1,
+					createdAt: "2026-06-02T02:00:00Z",
+					executionTargetId: "tgt-gone",
+					argoNamespace: "cyber-delivery-prod",
+				},
+			],
+			total: 2,
+		});
+
+		renderList();
+
+		// 列头改成"资源池",不再有"命名空间"。
+		await waitFor(() => {
+			expect(getColumnHeader("资源池")).toBeTruthy();
+		});
+		expect(screen.queryByText("命名空间")).not.toBeInTheDocument();
+
+		// 现存资源池 → 展示池名;两行都渲染出来。
+		await waitFor(() => {
+			expect(screen.getByText("交付集群-低配额池")).toBeInTheDocument();
+		});
+		expect(screen.getByText("orphan-run")).toBeInTheDocument();
+		// 池已加载(map 非空)时,不再把原始命名空间当作可见文本泄露出来。
+		expect(screen.queryByText("cyber-delivery-prod")).not.toBeInTheDocument();
 	});
 });
