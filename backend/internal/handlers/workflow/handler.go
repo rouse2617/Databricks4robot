@@ -565,6 +565,38 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 			})
 			return
 		}
+		// A Pending / not-yet-scheduled workflow has no pods yet (its argo
+		// Status.Nodes is still empty — the run carries a synthetic "static:" node),
+		// so no node has logs *yet*. Return an empty window instead of a 400 so the
+		// viewer shows "尚未开始" rather than a client error (CYB-3575). A known
+		// node whose pod simply hasn't materialized is treated the same. A
+		// genuinely unknown node id on a live workflow still 400s.
+		phase := string(workflow.Status.Phase)
+		_, nodeKnown := workflow.Status.Nodes[nodeId]
+		if phase == "" || phase == "Pending" || nodeKnown {
+			c.JSON(200, gin.H{
+				"workflowName": name,
+				"nodeId":       nodeId,
+				"podName":      "",
+				"container":    "",
+				"source":       "pending",
+				"logs":         "",
+				"lineCount":    0,
+				"truncated":    false,
+				"truncation": gin.H{
+					"bounded": true,
+				},
+				"pagination": gin.H{
+					"available": false,
+					"reason":    "pod not created yet",
+				},
+				"window": gin.H{
+					"mode":  "pending",
+					"scope": "pod-not-created",
+				},
+			})
+			return
+		}
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}

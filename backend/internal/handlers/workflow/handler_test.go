@@ -1896,3 +1896,53 @@ func TestGetWorkflowLogs_PodRecycledReturnsEmpty(t *testing.T) {
 		t.Fatalf("expected graceful empty logs (source=unavailable), got %v", resp)
 	}
 }
+
+// CYB-3575: a Pending / not-yet-scheduled workflow has no pods yet, so node
+// logs must return an empty window (200), not a 400 client error.
+func TestGetWorkflowLogs_PendingWorkflowReturnsEmpty(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: "wf-pending"},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowPending},
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-pending/logs?nodeId=step-not-started", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 empty logs for a pending workflow, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["source"] != "pending" || resp["logs"] != "" {
+		t.Fatalf("expected source=pending + empty logs, got %v", resp)
+	}
+}
+
+// A genuinely unknown node id on a live (Running) workflow is still a 400.
+func TestGetWorkflowLogs_UnknownNodeOnRunningWorkflowReturns400(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: "wf-running"},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-running/logs?nodeId=bogus-node-xyz", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unknown node on a running workflow, got %d: %s", w.Code, w.Body.String())
+	}
+}
