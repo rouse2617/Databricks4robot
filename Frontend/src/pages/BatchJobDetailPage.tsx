@@ -45,6 +45,7 @@ import {
 } from "../api/batchJobApi";
 import {
 	listPipelineVersions,
+	type PipelineRun,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
 import {
@@ -354,21 +355,17 @@ function exportFailuresCsv(
 	URL.revokeObjectURL(url);
 }
 
-function extractAssetIds(runs: RunChildSummary[]): string[] {
+// 入参是 run 树的子 run 行(PipelineRun),不是 RunChildSummary(那是聚合统计,
+// 之前的注解写反导致 tsc 恒红)。后端 run JSON 只有 assetIds,没有 labels 字段
+// (models.PipelineRun 无 Labels),原先的 labels.asset_id 回退是永不可达的死分支。
+function extractAssetIds(runs: PipelineRun[]): string[] {
 	const ids = new Set<string>();
 	for (const item of runs) {
-		// 优先从 assetIds 数组中获取
 		if (item.assetIds && item.assetIds.length > 0) {
 			for (const id of item.assetIds) {
 				const trimmed = id?.trim();
 				if (trimmed) ids.add(trimmed);
 			}
-		} else if (item.labels?.asset_id) {
-			const trimmed = item.labels.asset_id.trim();
-			if (trimmed) ids.add(trimmed);
-		} else if (item.labels?.assetId) {
-			const trimmed = item.labels.assetId.trim();
-			if (trimmed) ids.add(trimmed);
 		}
 	}
 	return Array.from(ids);

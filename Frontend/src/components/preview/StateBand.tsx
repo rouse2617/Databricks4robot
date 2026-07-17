@@ -92,7 +92,7 @@ export default function StateBand({
 				marginBottom: 2,
 			}}
 		>
-			{segments.map((seg, i) => {
+			{segments.map((seg) => {
 				const pct = ((seg.endSec - seg.startSec) / durationSec) * 100;
 				return (
 					<Tooltip
