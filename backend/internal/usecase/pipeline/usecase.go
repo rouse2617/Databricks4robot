@@ -1462,7 +1462,7 @@ func (uc *Usecase) persistRunRelation(ctx context.Context, relation *models.RunR
 	return uc.runRelationRepo.Upsert(ctx, relation)
 }
 
-func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
+func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun, refreshAssets bool) {
 	if run == nil {
 		return
 	}
@@ -1491,7 +1491,14 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 			run.Nodes = nodes
 		}
 	}
-	uc.refreshAssetNodes(ctx, run)
+	// asset_node projection is a WRITE (ReplaceByRunID = DELETE+INSERT). Keep it
+	// OFF the list read path: ListRuns fans enrichRun over every row, turning a
+	// read into an O(N) write storm + row-lock churn. The run-status write path
+	// already refreshes asset_nodes, so list reads don't need to. Single-run
+	// reads (GetRun / create) still pass true for the lazy refresh.
+	if refreshAssets {
+		uc.refreshAssetNodes(ctx, run)
+	}
 	runstate.AnnotateRunDiagnostics(run)
 }
 
@@ -4111,7 +4118,7 @@ func (uc *Usecase) CreateRun(
 	if run == nil {
 		return uc.deploymentToRun(dep), nil
 	}
-	uc.enrichRun(ctx, run)
+	uc.enrichRun(ctx, run, true)
 	return run, nil
 }
 
@@ -4131,7 +4138,7 @@ func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name s
 	if run == nil {
 		return uc.deploymentToRun(dep), nil
 	}
-	uc.enrichRun(ctx, run)
+	uc.enrichRun(ctx, run, true)
 	return run, nil
 }
 
@@ -4217,7 +4224,7 @@ func (uc *Usecase) ListRuns(ctx context.Context, refreshActive bool) ([]models.P
 		}
 	}
 	for i := range list {
-		uc.enrichRun(ctx, &list[i])
+		uc.enrichRun(ctx, &list[i], false)
 	}
 	return list, nil
 }
@@ -4409,7 +4416,7 @@ func (uc *Usecase) GetRunByWorkflowName(ctx context.Context, workflowName string
 	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
-	uc.enrichRun(ctx, run)
+	uc.enrichRun(ctx, run, true)
 	return run, nil
 }
 
@@ -4442,7 +4449,7 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
-	uc.enrichRun(ctx, run)
+	uc.enrichRun(ctx, run, true)
 	if run.Status != initialStatus || run.Message != initialMessage {
 		slog.Warn("GetRun status changed",
 			"runID", run.ID,
@@ -4782,7 +4789,7 @@ func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.Pi
 		} else {
 			uc.backfillRunStatus(ctx, run)
 		}
-		uc.enrichRun(ctx, run)
+		uc.enrichRun(ctx, run, true)
 	}
 	summary := &models.PipelineRunCostSummary{
 		RunID:              id,
