@@ -1,6 +1,7 @@
 package httpresp
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,29 @@ func requestID(c *gin.Context) string {
 }
 
 func Error(c *gin.Context, status int, code, message string, details map[string]any) {
+	// Server-side faults (5xx) must leave a trace: without this, every 500 was
+	// silent server-side and the actual cause (deploy failure, projection, argo,
+	// etc.) was undiagnosable from logs — only the client saw the message.
+	// 4xx are expected client errors and are intentionally not logged as errors
+	// to avoid noise. (CYB-3569)
+	if status >= http.StatusInternalServerError {
+		method, path := "", ""
+		if c != nil && c.Request != nil {
+			method = c.Request.Method
+			path = c.FullPath()
+			if path == "" {
+				path = c.Request.URL.Path
+			}
+		}
+		slog.Error("http error response",
+			"status", status,
+			"code", code,
+			"message", message,
+			"method", method,
+			"path", path,
+			"request_id", requestID(c),
+		)
+	}
 	c.JSON(status, ErrorBody{
 		Code:      code,
 		Message:   message,
