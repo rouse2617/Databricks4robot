@@ -654,6 +654,11 @@ export interface Cluster {
 	argoServerUrl?: string;
 	argoNamespace?: string;
 	koordInstalled: boolean;
+	// K8s client rate limits to this cluster's API (rest.Config QPS/Burst).
+	// Editable online; the backend rebuilds this cluster's clients on save.
+	// Unset/0 → backend default 50/100. CYB-3486.
+	clientQps?: number;
+	clientBurst?: number;
 	createdAt?: string;
 	updatedAt?: string;
 	deletedAt?: string;

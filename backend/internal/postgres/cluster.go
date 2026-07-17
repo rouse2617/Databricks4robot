@@ -27,6 +27,7 @@ const clusterCols = `id, name, display_name, description, is_default, status,
 	auth_type, auth_secret_ref,
 	argo_server_url, argo_namespace,
 	koord_installed,
+	client_qps, client_burst,
 	created_at, updated_at, deleted_at`
 
 func scanCluster(s rowScanner) (*models.Cluster, error) {
@@ -37,6 +38,7 @@ func scanCluster(s rowScanner) (*models.Cluster, error) {
 		&c.AuthType, &c.AuthSecretRef,
 		&c.ArgoServerURL, &c.ArgoNamespace,
 		&c.KoordInstalled,
+		&c.ClientQPS, &c.ClientBurst,
 		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
 	); err != nil {
 		return nil, err
@@ -98,18 +100,23 @@ func (r *ClusterRepo) Create(ctx context.Context, c *models.Cluster) (*models.Cl
 	if authType == "" {
 		authType = "gke_wif"
 	}
+	// Persist resolved limits so a row never stores 0 (which would re-introduce
+	// client-go's 5/10 throttling defaults on the next factory build).
+	qps, burst := c.ResolveClientLimits()
 	const q = `INSERT INTO clusters (
 		id, name, display_name, description, is_default, status,
 		k8s_api_endpoint, k8s_audience, k8s_ca_data,
 		auth_type, auth_secret_ref,
-		argo_server_url, argo_namespace, koord_installed
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		argo_server_url, argo_namespace, koord_installed,
+		client_qps, client_burst
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 	RETURNING ` + clusterCols
 	row := r.c.db.QueryRow(ctx, q,
 		c.ID, c.Name, c.DisplayName, c.Description, c.IsDefault, c.Status,
 		c.K8sAPIEndpoint, c.K8sAudience, c.K8sCAData,
 		authType, c.AuthSecretRef,
 		c.ArgoServerURL, c.ArgoNamespace, c.KoordInstalled,
+		qps, burst,
 	)
 	out, err := scanCluster(row)
 	if err != nil {
@@ -127,11 +134,15 @@ func (r *ClusterRepo) Update(ctx context.Context, c *models.Cluster) (*models.Cl
 	if authType == "" {
 		authType = "gke_wif"
 	}
+	// Persist resolved limits so a row never stores 0 (which would re-introduce
+	// client-go's 5/10 throttling defaults on the next factory build).
+	qps, burst := c.ResolveClientLimits()
 	const q = `UPDATE clusters SET
 		name = $2, display_name = $3, description = $4, is_default = $5, status = $6,
 		k8s_api_endpoint = $7, k8s_audience = $8, k8s_ca_data = $9,
 		auth_type = $10, auth_secret_ref = $11,
 		argo_server_url = $12, argo_namespace = $13, koord_installed = $14,
+		client_qps = $15, client_burst = $16,
 		updated_at = now()
 	WHERE id = $1 AND deleted_at IS NULL
 	RETURNING ` + clusterCols
@@ -140,6 +151,7 @@ func (r *ClusterRepo) Update(ctx context.Context, c *models.Cluster) (*models.Cl
 		c.K8sAPIEndpoint, c.K8sAudience, c.K8sCAData,
 		authType, c.AuthSecretRef,
 		c.ArgoServerURL, c.ArgoNamespace, c.KoordInstalled,
+		qps, burst,
 	)
 	out, err := scanCluster(row)
 	if err != nil {

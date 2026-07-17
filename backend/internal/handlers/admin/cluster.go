@@ -53,6 +53,10 @@ type clusterRequest struct {
 	ArgoServerURL  string `json:"argoServerUrl"`
 	ArgoNamespace  string `json:"argoNamespace"`
 	KoordInstalled bool   `json:"koordInstalled"`
+	// ClientQPS / ClientBurst tune the backend's K8s client rate limit to this
+	// cluster (rest.Config QPS/Burst). Zero → repo default (50/100). CYB-3486.
+	ClientQPS   float32 `json:"clientQps"`
+	ClientBurst int     `json:"clientBurst"`
 }
 
 func normalizeClusterReq(req *clusterRequest) string {
@@ -129,6 +133,8 @@ func (h *ClusterHandler) Create(c *gin.Context) {
 		ArgoServerURL:  req.ArgoServerURL,
 		ArgoNamespace:  req.ArgoNamespace,
 		KoordInstalled: req.KoordInstalled,
+		ClientQPS:      req.ClientQPS,
+		ClientBurst:    req.ClientBurst,
 	}
 	created, err := h.repo.Create(c.Request.Context(), cluster)
 	if err != nil {
@@ -169,6 +175,8 @@ func (h *ClusterHandler) Update(c *gin.Context) {
 		ArgoServerURL:  req.ArgoServerURL,
 		ArgoNamespace:  req.ArgoNamespace,
 		KoordInstalled: req.KoordInstalled,
+		ClientQPS:      req.ClientQPS,
+		ClientBurst:    req.ClientBurst,
 	}
 	updated, err := h.repo.Update(c.Request.Context(), cluster)
 	if err != nil {

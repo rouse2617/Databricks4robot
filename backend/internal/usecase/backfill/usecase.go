@@ -24,14 +24,21 @@ import (
 )
 
 // maxConcurrentBatchItems controls how many goroutines submit batch items
-// to Argo in parallel. Set via BACKFILL_CONCURRENCY env var (default 5).
+// to Argo in parallel. Set via BACKFILL_CONCURRENCY env var.
+//
+// Default raised 5→20 (CYB-3486): paired with the per-cluster K8s client QPS
+// lift (5→50), 5 submitters left the API mostly idle. Each submit does ~3 K8s
+// calls, so at QPS=50 roughly ~16 concurrent submitters saturate the client
+// rate limit; 20 gives a little headroom. Bump BACKFILL_CONCURRENCY higher only
+// if you also raise the target cluster's client QPS (else submitters just queue
+// on the client rate limiter).
 var maxConcurrentBatchItems = func() int {
 	if v := os.Getenv("BACKFILL_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	return 5
+	return 20
 }()
 
 // perJobSubmitBatch caps how many pending items one job dispatches per submit

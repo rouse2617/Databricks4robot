@@ -180,6 +180,21 @@ func (f *dbClientFactory) load(ctx context.Context, clusterID string) (*cachedEn
 // path. Non-GCP customer support (ACK / EKS / bearer token) will land as
 // additional cases here without changing consumers.
 func buildConfigFromCluster(c *models.Cluster) (*rest.Config, error) {
+	cfg, err := buildBaseConfigFromCluster(c)
+	if err != nil {
+		return nil, err
+	}
+	// Per-cluster K8s client rate limits. Without this the clients run at
+	// client-go defaults (QPS=5 / Burst=10), which throttles every call to the
+	// cluster API at ~5 req/s — the real cap on batch submission throughput.
+	// Stored on the cluster row so they're editable online from the admin UI
+	// (the factory Invalidate()s on cluster update, so changes apply within
+	// seconds without a restart). CYB-3486.
+	cfg.QPS, cfg.Burst = c.ResolveClientLimits()
+	return cfg, nil
+}
+
+func buildBaseConfigFromCluster(c *models.Cluster) (*rest.Config, error) {
 	// Default-cluster compatibility path: empty API endpoint → env-derived.
 	// Auth is implicit from env (the singleton startup path). This is unchanged.
 	if c.K8sAPIEndpoint == "" {

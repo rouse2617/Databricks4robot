@@ -10,6 +10,7 @@ import {
 	Checkbox,
 	Form,
 	Input,
+	InputNumber,
 	Modal,
 	message,
 	Space,
@@ -42,6 +43,8 @@ interface ClusterFormValues {
 	argoServerUrl?: string;
 	argoNamespace?: string;
 	koordInstalled?: boolean;
+	clientQps?: number;
+	clientBurst?: number;
 }
 
 // ClusterManager renders an admin-only CRUD panel for K8s clusters (CYB-3425
@@ -80,7 +83,12 @@ export default function ClusterManager() {
 	const openCreate = () => {
 		setEditing(null);
 		form.resetFields();
-		form.setFieldsValue({ status: "available", koordInstalled: false });
+		form.setFieldsValue({
+			status: "available",
+			koordInstalled: false,
+			clientQps: 50,
+			clientBurst: 100,
+		});
 		setModalOpen(true);
 	};
 
@@ -98,6 +106,8 @@ export default function ClusterManager() {
 			argoServerUrl: c.argoServerUrl,
 			argoNamespace: c.argoNamespace,
 			koordInstalled: c.koordInstalled,
+			clientQps: c.clientQps ?? 50,
+			clientBurst: c.clientBurst ?? 100,
 		});
 		setModalOpen(true);
 	};
@@ -123,6 +133,10 @@ export default function ClusterManager() {
 			argoServerUrl: values.argoServerUrl?.trim(),
 			argoNamespace: values.argoNamespace?.trim(),
 			koordInstalled: !!values.koordInstalled,
+			// Cleared InputNumber yields null; send 0 so the backend applies its
+			// documented "0 → default" (50 / 100) path rather than a null literal.
+			clientQps: values.clientQps ?? 0,
+			clientBurst: values.clientBurst ?? 0,
 		};
 
 		setSaving(true);
@@ -386,6 +400,31 @@ export default function ClusterManager() {
 					</Form.Item>
 					<Form.Item name="argoNamespace" label="默认 Argo namespace">
 						<Input placeholder="例如: cyber-databrew-dev" />
+					</Form.Item>
+					<Form.Item
+						name="clientQps"
+						label="K8s 客户端 QPS"
+						tooltip="后端调用本集群 K8s API 的每秒请求上限。留空/0 用默认 50。改后几秒生效,无需重启。批量下发吞吐受此限制。"
+					>
+						<InputNumber
+							min={1}
+							max={1000}
+							style={{ width: "100%" }}
+							placeholder="50"
+						/>
+					</Form.Item>
+					<Form.Item
+						name="clientBurst"
+						label="K8s 客户端 Burst"
+						tooltip="突发请求上限(令牌桶容量),一般设为 QPS 的 ~2 倍。留空/0 用默认 100。"
+					>
+						<InputNumber
+							min={1}
+							max={2000}
+							precision={0}
+							style={{ width: "100%" }}
+							placeholder="100"
+						/>
 					</Form.Item>
 				</Form>
 			</Modal>

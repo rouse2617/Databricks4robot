@@ -257,3 +257,16 @@ func TestFactory_FailureIsolation(t *testing.T) {
 		t.Fatalf("healthy cluster should still work after neighbor failed: %v", err)
 	}
 }
+
+// CYB-3486: cluster rows drive the K8s client QPS/Burst so they're tunable
+// online. Explicit values pass through; unset (0) falls back to the safe
+// defaults (50/100), never client-go's throttling defaults (5/10). The resolver
+// lives on the model so the postgres repo and this factory never drift.
+func TestClusterClientRateLimits(t *testing.T) {
+	if qps, burst := (&models.Cluster{ClientQPS: 120, ClientBurst: 240}).ResolveClientLimits(); qps != 120 || burst != 240 {
+		t.Fatalf("explicit: got qps=%v burst=%v, want 120/240", qps, burst)
+	}
+	if qps, burst := (&models.Cluster{}).ResolveClientLimits(); qps != models.DefaultClientQPS || burst != models.DefaultClientBurst {
+		t.Fatalf("unset: got qps=%v burst=%v, want %v/%v", qps, burst, models.DefaultClientQPS, models.DefaultClientBurst)
+	}
+}

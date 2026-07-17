@@ -33,7 +33,40 @@ type Cluster struct {
 	ArgoServerURL  string     `json:"argoServerUrl,omitempty"`
 	ArgoNamespace  string     `json:"argoNamespace,omitempty"`
 	KoordInstalled bool       `json:"koordInstalled"`
+	// ClientQPS / ClientBurst cap the backend's K8s client request rate to this
+	// cluster's API (rest.Config QPS/Burst). Editable online from the cluster
+	// admin UI; the ClientFactory rebuilds this cluster's clients on update, so
+	// changes apply within seconds without a restart. Zero → factory default
+	// (50 / 100), which is a safe lift over client-go's throttling defaults
+	// (5 / 10) that otherwise cap batch submission throughput. CYB-3486.
+	ClientQPS      float32    `json:"clientQps"`
+	ClientBurst    int        `json:"clientBurst"`
 	CreatedAt      time.Time  `json:"createdAt,omitempty"`
 	UpdatedAt      time.Time  `json:"updatedAt,omitempty"`
 	DeletedAt      *time.Time `json:"deletedAt,omitempty"`
+}
+
+// DefaultClientQPS / DefaultClientBurst are the effective K8s client rate limits
+// applied when a cluster leaves ClientQPS / ClientBurst unset (<=0). They lift
+// client-go's throttling defaults (5 / 10) — the ceiling that otherwise caps
+// batch submission throughput — to a batch-friendly level. CYB-3486.
+const (
+	DefaultClientQPS   float32 = 50
+	DefaultClientBurst int     = 100
+)
+
+// ResolveClientLimits returns the effective K8s client QPS / Burst for this
+// cluster, substituting the package defaults for unset (<=0) values. Both the
+// postgres repo (persisted rows) and the k8s ClientFactory (rest.Config build)
+// route through here so the two never drift.
+func (c *Cluster) ResolveClientLimits() (float32, int) {
+	qps := c.ClientQPS
+	if qps <= 0 {
+		qps = DefaultClientQPS
+	}
+	burst := c.ClientBurst
+	if burst <= 0 {
+		burst = DefaultClientBurst
+	}
+	return qps, burst
 }
