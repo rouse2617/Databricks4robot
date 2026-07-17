@@ -1847,3 +1847,52 @@ func assertErrorCode(t *testing.T, body []byte, want string) {
 		t.Fatalf("expected error code %s, got %v", want, resp["code"])
 	}
 }
+
+// CYB-3568: a TTL'd/GC'd workflow is gone, not a server fault — the logs
+// endpoint must return 404, not a bare 500.
+func TestGetWorkflowLogs_WorkflowNotFoundReturns404(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return nil, argo.ErrNotFound
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-gone/logs?nodeId=n1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a gone workflow, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// CYB-3568: when the workflow survives but the pod was recycled, live log fetch
+// returns ErrNotFound — surface an empty log window (200), not a 500.
+func TestGetWorkflowLogs_PodRecycledReturnsEmpty(t *testing.T) {
+	globalPodNameCache.set("wf-recycled/n1", "wf-recycled-n1-pod")
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{ObjectMeta: metav1.ObjectMeta{Name: "wf-recycled"}}, nil
+		},
+		logsFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+			return argo.WorkflowLogResult{}, argo.ErrNotFound
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-recycled/logs?nodeId=n1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with empty logs for a recycled pod, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["source"] != "unavailable" || resp["logs"] != "" {
+		t.Fatalf("expected graceful empty logs (source=unavailable), got %v", resp)
+	}
+}

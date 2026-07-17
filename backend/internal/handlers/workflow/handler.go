@@ -523,6 +523,13 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
 	workflow, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
+		// A TTL'd / GC'd workflow is genuinely gone, not a server fault —
+		// return 404 so the UI shows "已清理" instead of an error toast
+		// (CYB-3568). Mirrors GetWorkflow handling elsewhere in this file.
+		if errors.Is(err, argo.ErrNotFound) {
+			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -568,6 +575,34 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 
 	result, err := client.GetWorkflowLogs(c.Request.Context(), name, podName, namespace, opts)
 	if err != nil {
+		// Pod recycled after the workflow object survived — return an empty log
+		// window instead of a 500 so the viewer shows "日志不可用" gracefully,
+		// mirroring the archive-fallback shape above (CYB-3568). Genuine faults
+		// (RBAC, API connectivity) still 500.
+		if errors.Is(err, argo.ErrNotFound) {
+			c.JSON(200, gin.H{
+				"workflowName": name,
+				"nodeId":       nodeId,
+				"podName":      podName,
+				"container":    opts.Container,
+				"source":       "unavailable",
+				"logs":         "",
+				"lineCount":    0,
+				"truncated":    false,
+				"truncation": gin.H{
+					"bounded": true,
+				},
+				"pagination": gin.H{
+					"available": false,
+					"reason":    "pod recycled; live logs no longer available",
+				},
+				"window": gin.H{
+					"mode":  "unavailable",
+					"scope": "pod-recycled",
+				},
+			})
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
