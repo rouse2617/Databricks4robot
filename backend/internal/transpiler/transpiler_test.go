@@ -528,6 +528,26 @@ func TestTranspileDefaultTTL(t *testing.T) {
 	}
 }
 
+func TestTranspilePodGC(t *testing.T) {
+	p := &Pipeline{
+		Name: "podgc",
+		Nodes: []Node{{
+			ID:        "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	wf, err := Transpile(p, &Options{Name: "podgc-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodGC == nil {
+		t.Fatal("expected PodGC strategy")
+	}
+	if wf.Spec.PodGC.Strategy != wfv1.PodGCOnWorkflowSuccess {
+		t.Fatalf("podGC strategy = %q, want %q", wf.Spec.PodGC.Strategy, wfv1.PodGCOnWorkflowSuccess)
+	}
+}
+
 func TestTranspileRetryStrategy(t *testing.T) {
 	p := &Pipeline{
 		Name: "retry-test",

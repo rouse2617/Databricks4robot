@@ -195,6 +195,13 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 			TTLStrategy: &wfv1.TTLStrategy{
 				SecondsAfterCompletion: &opts.TTLSecondsAfter,
 			},
+			// Reclaim step pods once the whole workflow succeeds, so finished
+			// runs stop accumulating in etcd. Failed workflows keep their pods
+			// for operator diagnostics (logs, exit codes); the workflow object
+			// itself is still cleaned up later by TTLStrategy.
+			PodGC: &wfv1.PodGC{
+				Strategy: wfv1.PodGCOnWorkflowSuccess,
+			},
 		},
 	}
 
