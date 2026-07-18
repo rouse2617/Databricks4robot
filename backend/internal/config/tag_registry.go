@@ -45,7 +45,6 @@ type TagRegistry struct {
 	tags    map[string]TagDef
 	managed map[string]TagDef
 	sources map[string]TagSourceDef
-	path    string
 }
 
 // effectiveLocked returns the definition for key from the managed overlay, then
@@ -71,7 +70,7 @@ func LoadTagRegistry(path string) (*TagRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TagRegistry{tags: tags, sources: sources, path: path}, nil
+	return &TagRegistry{tags: tags, sources: sources}, nil
 }
 
 func loadTagsFromFile(path string) (map[string]TagDef, map[string]TagSourceDef, error) {
@@ -95,18 +94,11 @@ func loadTagsFromFile(path string) (map[string]TagDef, map[string]TagSourceDef, 
 	return f.Tags, sources, nil
 }
 
-// Reload re-reads the YAML file and swaps the internal maps atomically.
-func (r *TagRegistry) Reload() error {
-	tags, sources, err := loadTagsFromFile(r.path)
-	if err != nil {
-		return err
-	}
-	r.mu.Lock()
-	r.tags = tags
-	r.sources = sources
-	r.mu.Unlock()
-	return nil
-}
+// NOTE: TagRegistry is deliberately load-once (CYB-3263). It has no Reload
+// method and is not hot-reloaded by ConfigWatcher: the YAML supplies only the
+// enum/propagation/source contracts at startup, while asset_tags is the runtime
+// source of truth (open vocabulary, CYB-3246). Live-reloading the YAML created a
+// second, drifting source of truth — see internal/config/watcher.go.
 
 // DefaultUnregisteredTagMaxLength bounds the value length of open-vocabulary
 // tags (CYB-3246). Keys not present in the registry are accepted as free-form

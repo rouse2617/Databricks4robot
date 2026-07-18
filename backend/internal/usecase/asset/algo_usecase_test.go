@@ -30,6 +30,9 @@ import (
 type mockAssetRepo struct {
 	mu     sync.Mutex
 	assets map[string]*models.Asset
+	// descendants maps an ancestor assetID to the assets ListDescendants
+	// returns for it. Nil (the default) preserves the no-op behavior.
+	descendants map[string][]*models.Asset
 }
 
 func newMockAssetRepo() *mockAssetRepo {
@@ -100,8 +103,10 @@ func (m *mockAssetRepo) ListByLogicalAssetID(_ context.Context, _ string) ([]*mo
 	return nil, nil
 }
 func (m *mockAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) error { return nil }
-func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
-	return nil, nil
+func (m *mockAssetRepo) ListDescendants(_ context.Context, assetID string) ([]*models.Asset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.descendants[assetID], nil
 }
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil

@@ -4,11 +4,7 @@
 
 import type { AssetsDiscoveryAction } from "./assetsDiscoveryActions";
 import { createFilterChip } from "./assetsDiscoveryActions";
-import type {
-	AssetsDiscoveryState,
-	QueryState,
-	SavedView,
-} from "./assetsDiscoveryTypes";
+import type { AssetsDiscoveryState, QueryState } from "./assetsDiscoveryTypes";
 
 // ─── Helpers ───
 
@@ -83,12 +79,6 @@ export function assetsDiscoveryReducer(
 				routerState: { ...state.routerState, urlHydrated: true },
 			};
 
-		case "SET_CURRENT_PATH":
-			return {
-				...state,
-				routerState: { ...state.routerState, currentPath: action.payload.path },
-			};
-
 		// ── Search UI ──
 
 		case "SET_SEARCH_DRAFT":
@@ -100,60 +90,12 @@ export function assetsDiscoveryReducer(
 				},
 			};
 
-		case "SEARCH_DRAFT_CHANGE":
-			return {
-				...state,
-				searchUiState: {
-					...state.searchUiState,
-					draftText: action.payload.text,
-				},
-			};
-
-		case "SEARCH_COMMIT": {
-			const newFilters = [
-				...state.queryState.activeFilters.filter((c) => c.source !== "search"),
-				...action.payload.tokens,
-			];
-			return withQueryReset(state, {
-				...state.queryState,
-				activeFilters: normalizeSearchFiltersForMode(
-					state.queryState.searchMode,
-					newFilters,
-				),
-			});
-		}
-
-		case "SEARCH_MODE_CHANGE":
-			return {
-				...state,
-				searchUiState: { ...state.searchUiState },
-				queryState: { ...state.queryState, searchMode: action.payload.mode },
-			};
-
 		case "TOGGLE_SUGGESTIONS":
 			return {
 				...state,
 				searchUiState: {
 					...state.searchUiState,
 					suggestionsOpen: action.payload.open,
-				},
-			};
-
-		case "SET_HIGHLIGHTED_INDEX":
-			return {
-				...state,
-				searchUiState: {
-					...state.searchUiState,
-					highlightedIndex: action.payload.index,
-				},
-			};
-
-		case "TOGGLE_HELP":
-			return {
-				...state,
-				searchUiState: {
-					...state.searchUiState,
-					helpOpen: action.payload.open,
 				},
 			};
 
@@ -244,28 +186,6 @@ export function assetsDiscoveryReducer(
 					state.queryState.activeFilters,
 				),
 			});
-
-		case "APPLY_SAVED_VIEW": {
-			const view: SavedView = action.payload.view;
-			return {
-				...withQueryReset(state, {
-					...state.queryState,
-					...view.queryState,
-				}),
-				searchUiState: {
-					...state.searchUiState,
-					draftText: view.queryState.queryText ?? "",
-				},
-				selectionState: {
-					selectedIds: new Set(),
-					mode: "none",
-				},
-				savedViewState: {
-					...state.savedViewState,
-					currentViewId: view.id,
-				},
-			};
-		}
 
 		// ── Facet UI ──
 
@@ -533,15 +453,6 @@ export function assetsDiscoveryReducer(
 			};
 		}
 
-		case "SELECT_ALL_FILTERED":
-			return {
-				...state,
-				selectionState: {
-					...state.selectionState,
-					mode: "all_filtered_results",
-				},
-			};
-
 		// CYB-3231: replace selection with an explicit id set. "Select all filtered"
 		// resolves the matching asset_ids up front (capped) and dispatches this, so
 		// selectedCount and every bulk action (which read selectedIds) reflect it.
@@ -563,12 +474,6 @@ export function assetsDiscoveryReducer(
 					selectedIds: new Set(),
 					mode: "none",
 				},
-			};
-
-		case "SET_SELECTION_MODE":
-			return {
-				...state,
-				selectionState: { ...state.selectionState, mode: action.payload.mode },
 			};
 
 		// ── Preview ──
@@ -730,116 +635,7 @@ export function assetsDiscoveryReducer(
 				},
 			};
 
-		// ── Saved Views ──
-
-		case "SAVED_VIEW_SELECT":
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					currentViewId: action.payload.viewId,
-				},
-			};
-
-		case "SAVED_VIEW_SAVE": {
-			const newView: SavedView = {
-				id: `custom_${Date.now()}`,
-				name: action.payload.name,
-				builtin: false,
-				queryState: { ...state.queryState },
-			};
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					views: [...state.savedViewState.views, newView],
-					currentViewId: newView.id,
-					saveDialogOpen: false,
-				},
-			};
-		}
-
-		case "SAVED_VIEW_DELETE": {
-			const viewToDelete = state.savedViewState.views.find(
-				(v) => v.id === action.payload.viewId,
-			);
-			if (!viewToDelete || viewToDelete.builtin) return state;
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					views: state.savedViewState.views.filter(
-						(v) => v.id !== action.payload.viewId,
-					),
-					currentViewId:
-						state.savedViewState.currentViewId === action.payload.viewId
-							? null
-							: state.savedViewState.currentViewId,
-				},
-			};
-		}
-
-		case "SAVED_VIEW_RENAME": {
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					views: state.savedViewState.views.map((v) =>
-						v.id === action.payload.viewId
-							? { ...v, name: action.payload.name }
-							: v,
-					),
-				},
-			};
-		}
-
-		case "SAVED_VIEW_LOAD":
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					views: action.payload.views,
-				},
-			};
-
-		case "TOGGLE_SAVE_DIALOG":
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					saveDialogOpen: action.payload.open,
-				},
-			};
-
-		case "SET_CURRENT_VIEW":
-			return {
-				...state,
-				savedViewState: {
-					...state.savedViewState,
-					currentViewId: action.payload.viewId,
-				},
-			};
-
 		// ── Layout ──
-
-		case "FACET_COLLAPSE_TOGGLE":
-			return {
-				...state,
-				layoutState: {
-					...state.layoutState,
-					facetCollapsed: !state.layoutState.facetCollapsed,
-				},
-			};
-
-		case "LAYOUT_RESPONSIVE":
-			return {
-				...state,
-				layoutState: {
-					...state.layoutState,
-					facetCollapsed: action.payload.isMobile,
-					previewCollapsed: action.payload.isMobile || action.payload.isTablet,
-				},
-			};
 
 		case "TOGGLE_COLUMNS_POPOVER":
 			return {
