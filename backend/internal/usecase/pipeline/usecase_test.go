@@ -4959,6 +4959,92 @@ func TestReconcileMisclassified_RevivesLegacyUnschedulableVerdict(t *testing.T) 
 	}
 }
 
+// CYB-3672: past-revival-age terminal misclassified runs must NOT call Argo
+// GetWorkflow — the workflow was TTL-GCed long ago, every lookup returns 404
+// and floods argo-server's ERROR log. Observed on shared argo-server: ~1 req/s
+// steady load per legacy stranded run across all namespaces.
+func TestReconcileMisclassified_SkipsArgo_WhenPastRevivalAge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 60 days old ≫ staleActiveRunMaxAge, so age gate must reject.
+	createdAt := now.Add(-60 * 24 * time.Hour)
+	finished := createdAt.Add(1 * time.Hour)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "youxin-1782182330729-legacy",
+				Status:       "Error",
+				Message:      "", // empty; also covers real-diagnostic case since we don't touch message
+				FinishedAt:   &finished,
+				CreatedAt:    createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	getCalls := 0
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		getCalls++
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	uc.reconcileMisclassifiedRunFromArgo(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
+	if getCalls != 0 {
+		t.Fatalf("past-revival-age terminal run must not call Argo GetWorkflow, got %d", getCalls)
+	}
+	// Status + message untouched.
+	if runRepo.byID["run-1"].Status != "Error" {
+		t.Fatalf("status must be preserved, got %q", runRepo.byID["run-1"].Status)
+	}
+	if runRepo.byID["run-1"].Message != "" {
+		t.Fatalf("message must not be stomped, got %q", runRepo.byID["run-1"].Message)
+	}
+}
+
+// CYB-3672 negative: within-revival-age terminal misclassified runs must still
+// call Argo — they might genuinely need reviving (e.g., "Kubernetes 调度失败"
+// verdict on a workflow that's actually still Running).
+func TestReconcileMisclassified_CallsArgo_WithinRevivalAge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 30 min old, well within staleActiveRunMaxAge — Argo must be consulted.
+	createdAt := now.Add(-30 * time.Minute)
+	finished := createdAt.Add(1 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-fresh",
+				ArgoWorkflowUID: "uid-1",
+				Status:          "Error",
+				Message:         "Kubernetes 调度失败：节点 x Pending 1h",
+				FinishedAt:      &finished,
+				CreatedAt:       createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	getCalls := 0
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		getCalls++
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-fresh", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	uc.reconcileMisclassifiedRunFromArgo(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
+	if getCalls != 1 {
+		t.Fatalf("fresh terminal run must call Argo GetWorkflow once, got %d", getCalls)
+	}
+}
+
 func TestRefreshRunForList_MarksLongInvalidImageNamePendingError(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)

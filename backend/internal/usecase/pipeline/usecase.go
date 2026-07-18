@@ -2581,6 +2581,36 @@ func isStaleWorkflowUnavailableMessage(message string) bool {
 	}
 }
 
+// isNoisyMisclassifiedMessage reports whether the run's message carries no
+// actionable diagnostic — i.e., we'd learn nothing by asking Argo again.
+// Empty message + the known "stale/unavailable" markers count as noisy;
+// anything else (real scheduler / image error text) counts as real and
+// deserves a re-check. Used by the CYB-3672 age-based short-circuit.
+func isNoisyMisclassifiedMessage(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return true
+	}
+	return isStaleWorkflowUnavailableMessage(trimmed)
+}
+
+// runHasCreatedTimestamp reports whether the run carries a real CreatedAt or
+// StartedAt. Zero timestamps only occur in test fixtures; production DB rows
+// always populate CreatedAt (NOT NULL). Used by CYB-3672 to avoid gating
+// tests that leave timestamps unset.
+func runHasCreatedTimestamp(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	if !run.CreatedAt.IsZero() {
+		return true
+	}
+	if run.StartedAt != nil && !run.StartedAt.IsZero() {
+		return true
+	}
+	return false
+}
+
 func workflowUnavailableMessage(run *models.PipelineRun) string {
 	if run == nil {
 		return messageWorkflowUnavailable
@@ -2683,6 +2713,24 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	if !isMisclassifiedTerminalRunStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
 		return
 	}
+	// CYB-3672: past-revival-age terminal runs whose message carries no real
+	// diagnostic will never come back from Argo — the workflow was TTL-GCed
+	// and every GetWorkflow will 404. Skip the lookup (and its ERROR log).
+	// Observed on shared argo-server: ~1 req/s steady load per legacy stranded
+	// run across all namespaces.
+	//
+	// Runs with a real diagnostic message (e.g., "Kubernetes 调度失败：..."
+	// or scheduler / image-pull error text) still hit Argo — the operator
+	// might benefit from a live re-check even beyond the revival window.
+	//
+	// runHasCreatedTimestamp gates the age check to real DB rows; test
+	// fixtures that leave CreatedAt zero still exercise the full flow.
+	if isMisclassifiedTerminalRunStatus(run.Status) &&
+		runHasCreatedTimestamp(run) &&
+		!runAgeWithinStaleLimit(run, uc.nowUTC()) &&
+		isNoisyMisclassifiedMessage(run.Message) {
+		return
+	}
 	if isPendingBatchWorkflowCreation(run) && shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
 		run.Status = "Pending"
 		run.Message = ""
@@ -2768,6 +2816,12 @@ func needsMisclassifiedReconcile(run *models.PipelineRun) bool {
 	// Only reconcile truly terminal misclassified statuses (Failed/Error/Expired).
 	// Running + stale message is not misclassified — normalizeActiveRunRuntimeField
 	// handles cleaning up the message locally without an Argo call.
+	//
+	// NOTE (CYB-3672): the age-based early-exit is enforced INSIDE
+	// reconcileMisclassifiedRunFromArgo, not here. `now` is not available in
+	// this signature and callers of needsMisclassifiedReconcile also drive the
+	// non-reconcile display-annotation path — we still want to route past-age
+	// runs through that path.
 	return isMisclassifiedTerminalRunStatus(run.Status)
 }
 
