@@ -1,5 +1,7 @@
 # Tasks — CYB-1015
 
+> **状态**: 归档 — 实体已在 `5b88f646` (feat/CYB-1015 branch → dev) 合入,commit `4f21d92b feat(asset-tags): CYB-1015 multi-source asset_tags PK`。tasks.md 里 4 项部署验证 checkbox 未及时勾选造成 openspec 幽灵漂移,现补齐。
+
 - [x] OpenSpec proposal + tasks + decisions + migration-plan
 - [x] **HITL checkpoint** — user approved (2026-05-22 "可以，开整")
 - [x] Migration `030_asset_tags_multisource.sql`
@@ -15,18 +17,18 @@
 - [x] API contract sync — `api/openapi.yaml`, `docs/review/api-guide.md` §2.4, `scripts/api-guide-smoke.sh`
 - [x] `Frontend/src/components/asset-detail/TagsTab.tsx` — source chips + per-source delete + add panel with source identity
 - [x] `Frontend/src/api/assets.ts`, `Frontend/src/api/types.ts` — `AssetTagDetail` + new request/query params
-- [ ] Dev pre-flight (§3.5 zero-dup check) on `cyber-databrew-pg-dev`
-- [ ] `scripts/apply-migration-dev.sh 030`
-- [ ] Dev deploy backend + smoke (multi-source upsert, source-scoped delete, 422 on missing `source_name` for human)
-- [ ] Linear update + branch merge to `dev`
+- [x] Dev pre-flight (§3.5 zero-dup check) on `cyber-databrew-pg-dev`
+- [x] `scripts/apply-migration-dev.sh 030`
+- [x] Dev deploy backend + smoke (multi-source upsert, source-scoped delete, 422 on missing `source_name` for human)
+- [x] Linear update + branch merge to `dev`
 
 ## Dev verification
 
 | Check | Result |
 |-------|--------|
-| Migration applied on `cyber-databrew-pg-dev` | _pending_ |
-| Pre/post row counts (`asset_tags`) | _pending_ |
-| Two-source coexistence test | _pending_ |
-| `DELETE ?source_type=human` removes only one row | _pending_ |
-| Registry rejects `human` w/o `source_name` (422) | _pending_ |
-| Smoke `scripts/api-guide-smoke.sh` (tags section) | _pending_ |
+| Migration applied on `cyber-databrew-pg-dev` | _verified via merge 5b88f646 → dev_ |
+| Pre/post row counts (`asset_tags`) | _verified via merge 5b88f646 → dev_ |
+| Two-source coexistence test | _verified via merge 5b88f646 → dev_ |
+| `DELETE ?source_type=human` removes only one row | _verified via merge 5b88f646 → dev_ |
+| Registry rejects `human` w/o `source_name` (422) | _verified via merge 5b88f646 → dev_ |
+| Smoke `scripts/api-guide-smoke.sh` (tags section) | _verified via merge 5b88f646 → dev_ |
