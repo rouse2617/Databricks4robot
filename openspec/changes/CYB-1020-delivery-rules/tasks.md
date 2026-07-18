@@ -1,5 +1,7 @@
 # Tasks — CYB-1020
 
+> **状态**: 归档 — 实体已合入 dev(见下方 Deploy record + git log CYB-1020 有 2 个 commits)。最后 1 个 checkbox "PR → dev; Linear Done" 未及时勾选,现补齐。
+
 - [x] OpenSpec proposal + design + spec
 - [x] Migration `032_delivery_rules.sql`
 - [x] Models + repo + `deliveryrules` evaluator
@@ -18,4 +20,4 @@
 
 Smoke: `ASSET_ID=9KnuP7F3 bash scripts/smoke-delivery-rules-dev.sh` — 5/5 OK
 
-- [ ] PR → `dev`; Linear Done
+- [x] PR → `dev`; Linear Done
