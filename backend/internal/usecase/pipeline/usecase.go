@@ -3297,14 +3297,18 @@ func needsWatcherAnomalyReconcile(run *models.PipelineRun, now time.Time) bool {
 	return runObservedRecently(run, now, 7*24*time.Hour)
 }
 
+// runObservedRecently reports whether the run's lifecycle timeline falls inside
+// the given window. It intentionally uses only immutable-or-terminal timestamps
+// (FinishedAt → StartedAt → CreatedAt) and skips UpdatedAt. UpdatedAt is bumped
+// on every Save, so every observation of the run resets it — feeding it back
+// into "recently observed" turns the reconcile treadmill into a perpetual loop
+// (a 6-month-old TTL-cleaned run keeps re-entering the anomaly set forever).
+// See CYB-3516.
 func runObservedRecently(run *models.PipelineRun, now time.Time, window time.Duration) bool {
 	if run == nil || window <= 0 {
 		return false
 	}
 	ref := run.FinishedAt
-	if ref == nil || ref.IsZero() {
-		ref = &run.UpdatedAt
-	}
 	if ref == nil || ref.IsZero() {
 		ref = run.StartedAt
 	}

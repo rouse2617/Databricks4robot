@@ -5389,6 +5389,101 @@ func TestPersistRunObservation_MisclassifiedFailureStillRevivable(t *testing.T) 
 	}
 }
 
+// TestNeedsWatcherAnomalyReconcile_SkipsAgedRunWithRecentUpdatedAt covers the
+// self-perpetuating reconcile loop: an old TTL-cleaned run whose UpdatedAt keeps
+// getting bumped by ordinary observation writes must not be picked back into the
+// anomaly reconcile set. runObservedRecently is expected to use only lifecycle
+// timestamps (FinishedAt → StartedAt → CreatedAt), not UpdatedAt.
+func TestNeedsWatcherAnomalyReconcile_SkipsAgedRunWithRecentUpdatedAt(t *testing.T) {
+	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	oldFinished := now.AddDate(0, -1, 0) // ~30 days ago
+	oldCreated := now.AddDate(0, -1, -1)
+	freshFinished := now.Add(-30 * time.Minute)
+	// UpdatedAt is recent — simulating a repo Save from any code path that
+	// touched the row (persistRunObservation, syncBackfillItemStatusFromRun,
+	// UpdateLedgerState, etc.). Under the old ref chain this would drag the
+	// run back into the anomaly set forever.
+	recentUpdated := now.Add(-2 * time.Hour)
+
+	cases := []struct {
+		name        string
+		run         models.PipelineRun
+		want        bool
+		description string
+	}{
+		{
+			name: "aged TTL-cleaned run with recent UpdatedAt is not observed recently",
+			run: models.PipelineRun{
+				ID:           "run-aged",
+				WorkflowName: "youxin-1782-aged",
+				Status:       "Expired",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "pending",
+				CreatedAt:    oldCreated,
+				UpdatedAt:    recentUpdated,
+				FinishedAt:   &oldFinished,
+			},
+			want:        false,
+			description: "FinishedAt is the reference, not UpdatedAt",
+		},
+		{
+			name: "aged run with nil FinishedAt still not selected via UpdatedAt fallback",
+			run: models.PipelineRun{
+				ID:           "run-aged-no-fin",
+				WorkflowName: "youxin-1782-nofin",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "",
+				CreatedAt:    oldCreated,
+				UpdatedAt:    recentUpdated,
+			},
+			want:        false,
+			description: "falls through to CreatedAt (StartedAt nil), which is 30d ago; UpdatedAt is skipped",
+		},
+		{
+			name: "recently finished run is still eligible for reconcile",
+			run: models.PipelineRun{
+				ID:           "run-fresh",
+				WorkflowName: "wf-fresh",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "pending",
+				CreatedAt:    now.Add(-6 * time.Hour),
+				UpdatedAt:    now.Add(-1 * time.Minute),
+				FinishedAt:   &freshFinished,
+			},
+			want:        true,
+			description: "FinishedAt is inside the 7-day window",
+		},
+		{
+			name: "ledger already resolved to no_ledger short-circuits regardless of dates",
+			run: models.PipelineRun{
+				ID:           "run-noledger",
+				WorkflowName: "wf-noledger",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "no_ledger",
+				CreatedAt:    now.Add(-1 * time.Hour),
+				UpdatedAt:    now.Add(-1 * time.Minute),
+				FinishedAt:   &freshFinished,
+			},
+			want:        false,
+			description: "no_ledger is a definitive answer — do not re-poll Argo",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := needsWatcherAnomalyReconcile(&tc.run, now)
+			if got != tc.want {
+				t.Fatalf("needsWatcherAnomalyReconcile(%s) = %v, want %v (%s)",
+					tc.name, got, tc.want, tc.description)
+			}
+		})
+	}
+}
+
 // TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun
 // reproduces the actual reported path (batch detail page → GetRun →
 // reconcileMisclassifiedRunFromArgo): a resource-guard-rejected batch subtask
