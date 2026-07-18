@@ -26,6 +26,7 @@ type fakeSubmitQueue struct {
 	lastListLimit  int
 	withTxErrs     []error
 	rollbackedByTx int
+	findErr        error // scripted FindSubmittableJobs failure
 }
 
 func (q *fakeSubmitQueue) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
@@ -40,6 +41,9 @@ func (q *fakeSubmitQueue) WithTx(ctx context.Context, fn func(ctx context.Contex
 }
 
 func (q *fakeSubmitQueue) FindSubmittableJobs(_ context.Context, _ int) ([]models.BackfillJob, error) {
+	if q.findErr != nil {
+		return nil, q.findErr
+	}
 	return q.jobs, nil
 }
 
@@ -83,11 +87,13 @@ type fakeDeployer struct {
 	runsByID         map[string]*models.PipelineRun
 	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
 
-	upserts   []string
-	deploys   []string
-	commits   []string
-	failures  []string
-	refreshes []string
+	upserts        []string
+	upsertVersions []int
+	deploys        []string
+	deployVersions []int
+	commits        []string
+	failures       []string
+	refreshes      []string
 }
 
 func (d *fakeDeployer) GetRun(_ context.Context, id string) (*models.PipelineRun, error) {
@@ -101,13 +107,17 @@ func (d *fakeDeployer) UpsertBatchSubtaskRun(_ context.Context, in pipelineUC.Ba
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.upserts = append(d.upserts, in.AssetID)
+	d.upsertVersions = append(d.upsertVersions, in.TemplateVersion)
 	return "run-" + in.AssetID, "wf-batch-" + in.AssetID, nil
 }
 
-func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string, assetIDs []string, _ ...pipelineUC.DeployOptions) (*models.PipelineDeployment, error) {
+func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string, assetIDs []string, opts ...pipelineUC.DeployOptions) (*models.PipelineDeployment, error) {
 	asset := assetIDs[0]
 	d.mu.Lock()
 	d.deploys = append(d.deploys, asset)
+	if len(opts) > 0 {
+		d.deployVersions = append(d.deployVersions, opts[0].TemplateVersion)
+	}
 	err := d.deployErrByAsset[asset]
 	d.mu.Unlock()
 	if err != nil {

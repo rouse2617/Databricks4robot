@@ -121,12 +121,38 @@ type Usecase struct {
 	nodeResolver nodeInstanceResolver
 
 	// batchCancels holds cancel funcs for in-flight batch submission
-	// goroutines so StopBatchRuns can halt further run creation.
+	// goroutines so StopBatchRuns can halt further run creation. Legacy
+	// dispatch mode only — in submitter mode cancellation is DB-state driven
+	// (job status 'cancelled' is never selected by the submitter).
 	batchCancelMu sync.Mutex
 	batchCancels  map[string]context.CancelFunc
 
+	// batchDispatchLegacy selects the pre-CYB-3677 in-memory dispatch
+	// goroutine instead of the durable backfill submitter. Rollback-only;
+	// removed one release after G4 (see CYB-3677).
+	batchDispatchLegacy bool
+	// batchSubmitKick pokes the backfill submitter after a batch lands so
+	// dispatch starts immediately instead of on the next 15s tick. Nil is
+	// fine — the ticker picks the job up regardless (durability never
+	// depends on the kick).
+	batchSubmitKick func()
+
 	watcherLedgerMu     sync.RWMutex
 	watcherLedgerHealth models.LedgerHealth
+}
+
+// SetBatchDispatchMode selects the batch dispatch path (CYB-3677).
+// "legacy" restores the in-memory goroutine; anything else (default
+// "submitter") persists the job as 'running' and lets the durable backfill
+// submitter own submission.
+func (uc *Usecase) SetBatchDispatchMode(mode string) {
+	uc.batchDispatchLegacy = strings.EqualFold(strings.TrimSpace(mode), "legacy")
+}
+
+// SetBatchSubmitKicker wires the backfill submitter's kick so newly created
+// batches dispatch without waiting for the next ticker cycle.
+func (uc *Usecase) SetBatchSubmitKicker(kick func()) {
+	uc.batchSubmitKick = kick
 }
 
 type DeployOptions struct {

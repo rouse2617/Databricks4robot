@@ -301,4 +301,16 @@ var (
 			Buckets: []float64{0, 1, 10, 50, 100, 500, 1000, 5000, 10000, 50000, 100000, 500000},
 		},
 	)
+
+	// DispatcherTemplateFallbackTotal counts batch submissions where the
+	// pinned template version was missing from both the template_version
+	// column and filter_json, forcing a fallback to the template's current
+	// active version (CYB-3677). Non-zero on legacy rows only; growth on new
+	// batches indicates the pinning write path regressed.
+	DispatcherTemplateFallbackTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_template_fallback_total",
+			Help: "Batch submissions that fell back to the active template version (pin missing)",
+		},
+	)
 )

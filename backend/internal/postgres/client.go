@@ -89,6 +89,41 @@ func (r *realDB) ExecResult(ctx context.Context, sql string, args ...any) (int64
 func (r *realDB) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 func (r *realDB) Close()                         { r.pool.Close() }
 
+// WithAdvisoryLock runs fn while holding a Postgres session advisory lock on
+// key, pinned to a dedicated pooled connection so the lock's session semantics
+// are reliable (pg advisory locks are per-session; going through the pool's
+// per-call routing would lock a random connection). Returns acquired=false
+// without running fn when another session holds the lock (pg_try_advisory_lock
+// is non-blocking). The session lock is released explicitly on completion and,
+// crucially, released by Postgres automatically if the connection drops — a
+// crashed holder never wedges other instances (CYB-3677 multi-instance
+// mutual exclusion; NOT a row lock, and fn's own DB work still goes through
+// the normal pool, so this never wraps business statements in a transaction —
+// the CYB-3491 pool-starvation failure mode does not apply).
+func (r *realDB) WithAdvisoryLock(ctx context.Context, key int64, fn func(context.Context) error) (bool, error) {
+	conn, err := r.pool.Acquire(ctx)
+	if err != nil {
+		return false, fmt.Errorf("advisory lock acquire conn: %w", err)
+	}
+	var got bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&got); err != nil {
+		conn.Release()
+		return false, fmt.Errorf("advisory lock try: %w", err)
+	}
+	if !got {
+		conn.Release()
+		return false, nil
+	}
+	defer func() {
+		// Unlock on a context detached from cancellation so a cancelled fn
+		// still releases the lock; if this fails the connection is destroyed
+		// by Release/pool health-checking and the session lock dies with it.
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", key)
+		conn.Release()
+	}()
+	return true, fn(ctx)
+}
+
 // realTx wraps pgx.Tx so that the same repo code path works inside a
 // transaction. It is *not* directly closeable; the lifecycle is owned by
 // WithTx via Commit / Rollback on the underlying tx.

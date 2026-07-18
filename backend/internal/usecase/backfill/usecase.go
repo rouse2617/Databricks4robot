@@ -567,6 +567,27 @@ func (uc *Usecase) isJobPaused(ctx context.Context, jobID string) bool {
 	return err != nil || job == nil || job.Status == "paused"
 }
 
+// templateVersionFromBackfillFilter recovers the version pinned by legacy
+// (pre CYB-3677) batch rows, which stored it only in filter_json. JSON
+// round-tripping turns numbers into float64; strings are tolerated too.
+func templateVersionFromBackfillFilter(values map[string]interface{}) int {
+	raw, ok := values["template_version"]
+	if !ok {
+		return 0
+	}
+	switch v := raw.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
 func stringFromBackfillFilter(values map[string]interface{}, keys ...string) string {
 	for _, key := range keys {
 		raw, ok := values[key]

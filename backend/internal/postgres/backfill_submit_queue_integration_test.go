@@ -82,12 +82,26 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 		}
 	}
 
+	// CYB-3677: the pinned template version must round-trip through
+	// FindSubmittableJobs (NULL coalesces to 0 for the others).
+	if err := db.Exec(ctx, `UPDATE backfill_jobs SET template_version = 7 WHERE id = $1`, jobRun); err != nil {
+		t.Fatalf("pin template_version: %v", err)
+	}
+
 	repo := NewBackfillRepo(client)
 
 	// 1. Submittable jobs: running + pilot_running with pending items only.
 	jobs, err := repo.FindSubmittableJobs(ctx, 50)
 	if err != nil {
 		t.Fatalf("FindSubmittableJobs: %v", err)
+	}
+	for _, j := range jobs {
+		if j.ID == jobRun && j.TemplateVersion != 7 {
+			t.Errorf("job %s template_version = %d, want 7 (CYB-3677 pin)", jobRun, j.TemplateVersion)
+		}
+		if j.ID == jobPilot && j.TemplateVersion != 0 {
+			t.Errorf("job %s template_version = %d, want 0 (NULL coalesced)", jobPilot, j.TemplateVersion)
+		}
 	}
 	got := map[string]bool{}
 	for _, j := range jobs {
@@ -176,5 +190,63 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 	})
 	if err != nil {
 		t.Fatalf("non-pending lock: %v", err)
+	}
+}
+
+// TestFreshDB_SubmitterCycleLock verifies the CYB-3677 cross-instance mutual
+// exclusion against a real PostgreSQL: two clients = two pools = two sessions.
+// While session 1 holds the cycle advisory lock, session 2's try is refused
+// without blocking; after release, session 2 acquires. Session scoping also
+// means a crashed holder's lock dies with its connection (natural lease).
+func TestFreshDB_SubmitterCycleLock(t *testing.T) {
+	if os.Getenv("INTEGRATION_DB") != "1" {
+		t.Skip("set INTEGRATION_DB=1 with Postgres env (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME)")
+	}
+
+	ctx := context.Background()
+	cfg := config.Load()
+	c1, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("postgres connect #1: %v", err)
+	}
+	t.Cleanup(c1.Close)
+	c2, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("postgres connect #2: %v", err)
+	}
+	t.Cleanup(c2.Close)
+
+	r1, r2 := NewBackfillRepo(c1), NewBackfillRepo(c2)
+
+	ran1 := 0
+	acq1, err := r1.WithSubmitterCycleLock(ctx, func(ctx context.Context) error {
+		ran1++
+		// While held, a second session must be refused, non-blocking.
+		acq2, err := r2.WithSubmitterCycleLock(ctx, func(context.Context) error {
+			t.Error("second session must not run while the lock is held")
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if acq2 {
+			t.Error("second session acquired the lock while held, want refusal")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("session 1 lock: %v", err)
+	}
+	if !acq1 || ran1 != 1 {
+		t.Fatalf("session 1: acquired=%v ran=%d, want true/1", acq1, ran1)
+	}
+
+	// After release the lock is free again.
+	acq2b, err := r2.WithSubmitterCycleLock(ctx, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("session 2 post-release lock: %v", err)
+	}
+	if !acq2b {
+		t.Fatal("session 2 must acquire after session 1 released")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
@@ -111,13 +112,47 @@ func (uc *Usecase) KickSubmitter() {
 	}
 }
 
-// runSubmitterCycle submits pending items for every submittable job. Jobs are
-// processed sequentially (a cycle is cheap when there is nothing to do);
-// items within a job are submitted by a small worker group.
+// submitterCycleLocker is the optional cross-instance mutual-exclusion
+// surface (CYB-3677). The postgres SubmitQueue implements it with a session
+// advisory lock; test fakes that don't implement it run cycles unguarded —
+// correctness never depends on the lock (deterministic workflow name +
+// AlreadyExists converge racing instances), it only removes wasted duplicate
+// attempts and duplicate reconcile events on the Argo controller.
+type submitterCycleLocker interface {
+	WithSubmitterCycleLock(ctx context.Context, fn func(context.Context) error) (bool, error)
+}
+
+// runSubmitterCycle runs one dispatch cycle under the cross-instance lock
+// when the queue provides one. A lock ERROR (e.g. transient DB trouble
+// acquiring the lock connection) degrades to running unguarded — availability
+// over economy, since idempotency already guarantees correctness.
 func (uc *Usecase) runSubmitterCycle(ctx context.Context) {
 	if uc.submitQueue == nil || uc.deployer == nil {
 		return
 	}
+	locker, ok := uc.submitQueue.(submitterCycleLocker)
+	if !ok {
+		uc.runSubmitterCycleLocked(ctx)
+		return
+	}
+	acquired, err := locker.WithSubmitterCycleLock(ctx, func(ctx context.Context) error {
+		uc.runSubmitterCycleLocked(ctx)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("submitter: cycle lock unavailable, running unguarded", "err", err)
+		uc.runSubmitterCycleLocked(ctx)
+		return
+	}
+	if !acquired {
+		slog.Debug("submitter: cycle held by another instance, skipping")
+	}
+}
+
+// runSubmitterCycleLocked submits pending items for every submittable job.
+// Jobs are processed sequentially (a cycle is cheap when there is nothing to
+// do); items within a job are submitted by a small worker group.
+func (uc *Usecase) runSubmitterCycleLocked(ctx context.Context) {
 	jobs, err := uc.submitQueue.FindSubmittableJobs(ctx, submittableJobsPerCycle)
 	if err != nil {
 		slog.Warn("submitter: find submittable jobs failed", "err", err)
@@ -162,9 +197,21 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob) 
 	if len(ids) == 0 {
 		return 0
 	}
+	// Version pinning (CYB-3677 P0): the template_version column is
+	// authoritative — when set, the submitter must NEVER fall back to the
+	// template's current active version, or one batch mixes versions when the
+	// template moves mid-dispatch. Legacy rows (column NULL) pinned the
+	// version in filter_json only; truly unpinned rows fall back to active
+	// with a warning metric.
 	templateVersion := job.TemplateVersion
 	if templateVersion <= 0 {
+		templateVersion = templateVersionFromBackfillFilter(job.FilterJSON)
+	}
+	if templateVersion <= 0 {
 		templateVersion = uc.resolveTemplateVersion(ctx, job.TemplateID)
+		metrics.DispatcherTemplateFallbackTotal.Inc()
+		slog.Warn("submitter: template version pin missing, using active version",
+			"jobID", job.ID, "templateID", job.TemplateID, "resolved", templateVersion)
 	}
 
 	var wg sync.WaitGroup

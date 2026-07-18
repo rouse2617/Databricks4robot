@@ -51,22 +51,36 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 		name = t.Name + "-" + time.Now().Format("2006-01-02")
 	}
 
+	// Submitter mode (default, CYB-3677): the job is born 'running' — the
+	// status the durable backfill submitter selects — and this call only
+	// persists; submission is owned by the submitter (crash-resumable,
+	// idempotent). Legacy mode keeps the old 'pending' + in-memory goroutine.
+	status := "running"
+	if uc.batchDispatchLegacy {
+		status = "pending"
+	}
 	job := &models.BackfillJob{
 		ID:         batchID,
 		TemplateID: templateID,
 		Name:       name,
-		Status:     "pending",
+		Status:     status,
 		PilotPhase: "none",
 		TotalCount: len(assetIDs),
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		FilterJSON: map[string]interface{}{},
-		CreatedBy:  owner,
+		// TemplateVersion pins the batch to the version resolved at creation
+		// time (P0: the submitter must never mix versions within one batch
+		// when the template's active version moves mid-dispatch).
+		TemplateVersion: resolvedVersion,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		FilterJSON:      map[string]interface{}{},
+		CreatedBy:       owner,
 	}
 
 	if targetID != "" && targetID != "default" {
 		job.FilterJSON["target_id"] = targetID
 	}
+	// Kept alongside the column for one release so a legacy-flag rollback
+	// still sees the pin.
 	if resolvedVersion > 0 {
 		job.FilterJSON["template_version"] = resolvedVersion
 	}
@@ -91,12 +105,21 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 		return nil, fmt.Errorf("save batch items: %w", err)
 	}
 
-	// Process in background — never use request context for goroutines.
-	// A dedicated cancellable context lets StopBatchRuns halt submission.
-	jobCtx, cancel := context.WithCancel(context.Background())
-	uc.registerBatchCancel(batchID, cancel)
-	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
+	if uc.batchDispatchLegacy {
+		// Legacy (pre CYB-3677, rollback only): one-shot in-memory dispatch
+		// goroutine. Not crash-resumable — a restart strands pending items.
+		jobCtx, cancel := context.WithCancel(context.Background())
+		uc.registerBatchCancel(batchID, cancel)
+		go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
+		return job, nil
+	}
 
+	// Submitter mode: persistence IS the dispatch. Kick the submitter so the
+	// first cycle starts now instead of on the next 15s tick; durability
+	// never depends on the kick (boot-eager + ticker re-list this job).
+	if uc.batchSubmitKick != nil {
+		uc.batchSubmitKick()
+	}
 	return job, nil
 }
 

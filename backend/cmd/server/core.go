@@ -210,6 +210,12 @@ func setupCore(inf *infra) *coreHandlers {
 	// all gone. Argo owns queueing/parallelism/execution from here.
 	backfillUC.SetSubmitQueue(backfillRepo)
 	backfillUC.StartSubmitter()
+	// CYB-3677: the legacy batch entry now persists jobs for the submitter
+	// (durable dispatch) instead of a one-shot in-memory goroutine. The kick
+	// starts the first cycle immediately; BATCH_DISPATCH_MODE=legacy is the
+	// one-release rollback switch.
+	puc.SetBatchDispatchMode(inf.cfg.BatchDispatchMode)
+	puc.SetBatchSubmitKicker(backfillUC.KickSubmitter)
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
 	backfillUC.StartJobReconciler(
