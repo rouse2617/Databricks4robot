@@ -22,6 +22,7 @@ type PodDiagnostics struct {
 	PodIP              string             `json:"podIp,omitempty"`
 	ServiceAccountName string             `json:"serviceAccountName,omitempty"`
 	RestartCount       int32              `json:"restartCount"`
+	GarbageCollected   bool               `json:"garbageCollected,omitempty"`
 	Containers         []ContainerInfo    `json:"containers"`
 	Conditions         []PodConditionInfo `json:"podConditions"`
 	Events             []EventInfo        `json:"podEvents"`

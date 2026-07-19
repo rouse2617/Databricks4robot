@@ -1728,6 +1728,38 @@ func TestGetNodePodDiagnostics_NodeNotFound(t *testing.T) {
 	assertErrorCode(t, w.Body.Bytes(), "NODE_NOT_FOUND")
 }
 
+func TestGetNodePodDiagnostics_PodNotFound_ReturnsStub(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetPodClient(&mockPodClient{
+		diagFn: func(_ context.Context, _, _ string) (*k8s.PodDiagnostics, error) {
+			return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a")
+		},
+	})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/a/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var diag k8s.PodDiagnostics
+	if err := json.Unmarshal(w.Body.Bytes(), &diag); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !diag.GarbageCollected {
+		t.Error("expected garbageCollected=true")
+	}
+	if diag.PodName == "" {
+		t.Error("expected non-empty podName in stub")
+	}
+}
+
 func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1735,12 +1767,6 @@ func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
 		code int
 		want string
 	}{
-		{
-			name: "pod not found",
-			err:  apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a"),
-			code: http.StatusNotFound,
-			want: "POD_NOT_FOUND",
-		},
 		{
 			name: "forbidden",
 			err:  apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "pod-a", errors.New("no rbac")),

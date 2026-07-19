@@ -58,7 +58,14 @@ func (h *Handler) GetNodePodDiagnostics(c *gin.Context) {
 	if err != nil {
 		switch {
 		case apierrors.IsNotFound(err):
-			httpresp.NotFound(c, "POD_NOT_FOUND", "pod "+podName+" was not found")
+			// Pod was garbage-collected but we still know its resolved name.
+			// Return a stub so the frontend can build the GKE console deep link.
+			c.JSON(200, k8s.PodDiagnostics{
+				Namespace:        namespace,
+				PodName:          podName,
+				GarbageCollected: true,
+			})
+			return
 		case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
 			httpresp.Error(c, http.StatusForbidden, "K8S_FORBIDDEN", "Kubernetes credentials cannot read pod diagnostics", nil)
 		case errors.Is(err, k8s.ErrUnavailable):
