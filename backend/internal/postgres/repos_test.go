@@ -101,6 +101,34 @@ func TestPipelineRunRepoSaveUsesExplicitEmptyAssetArray(t *testing.T) {
 	}
 }
 
+// CYB-3681 load-test fix: an empty execution_target_id must be persisted as
+// NULL (not an empty string), or the FK to execution_targets rejects the
+// write and a summary-loaded run (where a NULL target reads back as empty)
+// can never be re-saved — the watcher's status update is silently lost.
+func TestPipelineRunRepoSaveNullsEmptyExecutionTarget(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   any
+	}{
+		{"empty → NULL", "", nil},
+		{"blank → NULL", "   ", nil},
+		{"set → kept", "spot-pool", "spot-pool"},
+	}
+	for _, tc := range cases {
+		db := &fakeDB{}
+		repo := NewPipelineRunRepo(&Client{db: db})
+		run := &models.PipelineRun{ID: "r", WorkflowName: "wf", Status: "Succeeded", ExecutionTargetID: tc.target}
+		if err := repo.Save(context.Background(), run); err != nil {
+			t.Fatalf("%s: Save() = %v", tc.name, err)
+		}
+		got := db.execArgs[0][5] // execution_target_id is the 6th bind arg
+		if got != tc.want {
+			t.Fatalf("%s: execution_target_id arg = %#v, want %#v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 	db := &fakeDB{
 		queryRow: &fakeRow{values: []any{0}},

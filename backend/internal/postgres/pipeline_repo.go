@@ -952,9 +952,19 @@ ON CONFLICT (id) DO UPDATE SET
 
 	db := dbFromCtx(ctx, r.c.db)
 	assetIDs := pgtype.FlatArray[string](run.AssetIDs)
+	// execution_target_id has an FK to execution_targets(id) with ON DELETE
+	// SET NULL, so a run whose target was deleted stores NULL. Summary reads
+	// COALESCE that NULL to '', so round-tripping a summary-loaded run (the
+	// watcher does this) would try to Save '' — which is not NULL and matches
+	// no target → FK violation, and the run's status update is silently lost.
+	// Empty means "no target": persist it as NULL. (CYB-3681 load-test fix.)
+	var execTargetID any
+	if strings.TrimSpace(run.ExecutionTargetID) != "" {
+		execTargetID = run.ExecutionTargetID
+	}
 	if err := db.Exec(ctx, q,
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
-		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
+		execTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
 		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner, run.BatchJobID,
 		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.Progress,
 	); err != nil {
@@ -1108,25 +1118,29 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 // too (a freshly-created run before its first status write).
 var activeRunStatuses = []string{"Running", "Pending", "Unknown", "Suspended"}
 
-// FindActiveRunSummaries loads active-status runs oldest-first, capped at
-// limit. Unlike ListSummaries("most recent N"), a burst of just-completed runs
-// can never crowd older still-active runs out of the set — every active run is
-// reachable by the watcher within one scan when the active total is <= limit
-// (CYB-3681 load-test fix). Oldest-first so the longest-waiting runs (the ones
-// a bounded per-scan budget would otherwise starve) are refreshed first.
+// FindActiveRunSummaries loads active-status runs NEWEST-first, capped at
+// limit. Filtering by active status (not "most recent N of all statuses")
+// means a burst of just-completed runs can never crowd still-active runs out
+// of the set — completed runs simply aren't in it (CYB-3681 load-test fix).
+// Newest-first prioritizes fresh in-flight work (a user's live batch) over a
+// backlog of ancient stuck-active orphans: when the per-scan residual-GET
+// budget is smaller than the active total, the newest runs — the ones most
+// likely genuinely running and being waited on — are refreshed first, while
+// the orphan tail drains in the background. (Oldest-first inverted this and
+// let an accumulated orphan backlog starve every fresh batch.)
 func (r *PipelineRunRepo) FindActiveRunSummaries(ctx context.Context, limit int) ([]models.PipelineRun, error) {
 	if limit <= 0 {
 		limit = 2000
 	}
 	// status = ANY($1) is served by idx_pipeline_runs_status_created_at
-	// (status, created_at); the ORDER BY + LIMIT then reads oldest-first
+	// (status, created_at); the ORDER BY + LIMIT then reads newest-first
 	// straight off the index without a sort. pipeline_runs.status is
 	// NOT NULL in practice (Save always writes one), so no COALESCE.
 	q := `SELECT ` + pipelineRunSummarySelectSQL(false) + `
 FROM pipeline_runs pr
 LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
 WHERE pr.status = ANY($1)
-ORDER BY pr.created_at ASC
+ORDER BY pr.created_at DESC
 LIMIT $2`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q, activeRunStatuses, limit)
