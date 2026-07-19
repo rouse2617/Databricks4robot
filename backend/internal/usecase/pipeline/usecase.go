@@ -351,6 +351,58 @@ func (uc *Usecase) persistRuntimeConfigBlob(ctx context.Context, p *RuntimeConfi
 	}
 }
 
+// ResolveTargetClusterID maps a target id to its cluster id — the sharding
+// key for per-cluster dispatch channels (CYB-3678). Unresolvable targets and
+// empty cluster ids collapse to "default".
+func (uc *Usecase) ResolveTargetClusterID(ctx context.Context, targetID string) string {
+	target, err := uc.resolveExecutionTarget(ctx, targetID)
+	if err != nil || target == nil || strings.TrimSpace(target.ClusterID) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(target.ClusterID)
+}
+
+// ListBatchDLQ returns a batch's dead-lettered items (status=failed) with
+// their recorded failure reasons (CYB-3678).
+func (uc *Usecase) ListBatchDLQ(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
+	if uc.backfillRepo == nil {
+		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
+	}
+	items, err := uc.backfillRepo.FindItemsByJobID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	failed := make([]models.BackfillItem, 0, 8)
+	for _, it := range items {
+		if it.Status == "failed" {
+			failed = append(failed, it)
+		}
+	}
+	return failed, nil
+}
+
+// RetryBatchDLQ re-queues a batch's dead-lettered items: failed → pending
+// with a fresh attempt cap, job back to 'running' so the submitter selects
+// it, and an immediate kick (CYB-3678).
+func (uc *Usecase) RetryBatchDLQ(ctx context.Context, jobID string) (int64, error) {
+	if uc.backfillRepo == nil {
+		return 0, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
+	}
+	n, err := uc.backfillRepo.ResetFailedItems(ctx, jobID)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		if err := uc.backfillRepo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
+			return n, fmt.Errorf("dlq retry: job status: %w", err)
+		}
+		if uc.batchSubmitKick != nil {
+			uc.batchSubmitKick()
+		}
+	}
+	return n, nil
+}
+
 func (uc *Usecase) SetRuntimeConfigStoreFactory(f RuntimeConfigStoreFactory) {
 	uc.runtimeConfigStoreFactory = f
 }

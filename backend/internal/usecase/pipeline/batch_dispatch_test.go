@@ -21,6 +21,11 @@ type dispatchBatchRepo struct {
 	progressCalls int
 }
 
+
+func (m *dispatchBatchRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
+
+func (m *dispatchBatchRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (m *dispatchBatchRepo) SaveJob(_ context.Context, j *models.BackfillJob) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -318,4 +323,173 @@ func TestSetBatchDispatchMode(t *testing.T) {
 			t.Fatalf("mode %q: legacy = %v, want %v", tc.mode, uc.batchDispatchLegacy, tc.want)
 		}
 	}
+}
+
+// ── CYB-3678: DLQ list / retry ───────────────────────────────────────────────
+
+type dlqBatchRepo struct {
+	dispatchBatchRepo
+	items   []models.BackfillItem
+	revived int64
+}
+
+func (m *dlqBatchRepo) FindItemsByJobID(_ context.Context, jobID string) ([]models.BackfillItem, error) {
+	out := []models.BackfillItem{}
+	for _, it := range m.items {
+		if it.JobID == jobID {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
+func (m *dlqBatchRepo) ResetFailedItems(_ context.Context, jobID string) (int64, error) {
+	var n int64
+	for i := range m.items {
+		if m.items[i].JobID == jobID && m.items[i].Status == "failed" {
+			m.items[i].Status = "pending"
+			n++
+		}
+	}
+	m.revived = n
+	return n, nil
+}
+
+func TestListBatchDLQ(t *testing.T) {
+	msg := "boom"
+	repo := &dlqBatchRepo{items: []models.BackfillItem{
+		{ID: "i1", JobID: "j1", AssetID: "a1", Status: "failed", ErrorMessage: &msg},
+		{ID: "i2", JobID: "j1", AssetID: "a2", Status: "completed"},
+		{ID: "i3", JobID: "j2", AssetID: "a3", Status: "failed"},
+	}}
+	uc := &Usecase{}
+	uc.SetBackfillRepo(repo)
+
+	got, err := uc.ListBatchDLQ(context.Background(), "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "i1" {
+		t.Fatalf("dlq = %+v, want only i1", got)
+	}
+
+	if _, err := (&Usecase{}).ListBatchDLQ(context.Background(), "j1"); err == nil {
+		t.Fatal("nil repo must error")
+	}
+}
+
+func TestRetryBatchDLQ(t *testing.T) {
+	repo := &dlqBatchRepo{items: []models.BackfillItem{
+		{ID: "i1", JobID: "j1", AssetID: "a1", Status: "failed"},
+		{ID: "i2", JobID: "j1", AssetID: "a2", Status: "failed"},
+	}}
+	uc := &Usecase{}
+	uc.SetBackfillRepo(repo)
+	kicked := 0
+	uc.SetBatchSubmitKicker(func() { kicked++ })
+
+	n, err := uc.RetryBatchDLQ(context.Background(), "j1")
+	if err != nil || n != 2 {
+		t.Fatalf("revived = %d err = %v, want 2/nil", n, err)
+	}
+	repo.mu.Lock()
+	statusOK := len(repo.statusUpdates) == 1 && repo.statusUpdates[0] == "running"
+	repo.mu.Unlock()
+	if !statusOK {
+		t.Fatalf("status updates = %v, want [running]", repo.statusUpdates)
+	}
+	if kicked != 1 {
+		t.Fatalf("kicks = %d, want 1", kicked)
+	}
+
+	// Nothing to revive → no status flip, no kick.
+	n, err = uc.RetryBatchDLQ(context.Background(), "j1")
+	if err != nil || n != 0 {
+		t.Fatalf("second revive = %d err=%v, want 0/nil", n, err)
+	}
+	if kicked != 1 {
+		t.Fatalf("kicks = %d, want still 1", kicked)
+	}
+
+	if _, err := (&Usecase{}).RetryBatchDLQ(context.Background(), "j1"); err == nil {
+		t.Fatal("nil repo must error")
+	}
+}
+
+// ── CYB-3678: cluster resolution + DLQ error branches ────────────────────────
+
+func TestResolveTargetClusterID(t *testing.T) {
+	uc := &Usecase{}
+	// No target repo, empty target → the built-in default target (no
+	// ClusterID) → "default".
+	if got := uc.ResolveTargetClusterID(context.Background(), ""); got != "default" {
+		t.Fatalf("empty target → %q, want default", got)
+	}
+	// Unresolvable target id (no repo) → "default", never an error.
+	if got := uc.ResolveTargetClusterID(context.Background(), "ghost"); got != "default" {
+		t.Fatalf("unresolvable target → %q, want default", got)
+	}
+	// A resolvable target with a ClusterID → that cluster.
+	target := &models.ExecutionTarget{ID: "tgt-b", ClusterID: " cluster-b ", Enabled: true}
+	uc2 := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), nil, "default")
+	uc2.SetRunRepositories(&mockTargetRepo{byID: map[string]*models.ExecutionTarget{"tgt-b": target}}, nil, nil)
+	if got := uc2.ResolveTargetClusterID(context.Background(), "tgt-b"); got != "cluster-b" {
+		t.Fatalf("target with cluster → %q, want cluster-b", got)
+	}
+}
+
+type erroringDLQRepo struct {
+	dlqBatchRepo
+	findErr   error
+	statusErr error
+	resetErr  error
+}
+
+func (m *erroringDLQRepo) ResetFailedItems(ctx context.Context, jobID string) (int64, error) {
+	if m.resetErr != nil {
+		return 0, m.resetErr
+	}
+	return m.dlqBatchRepo.ResetFailedItems(ctx, jobID)
+}
+
+func (m *erroringDLQRepo) FindItemsByJobID(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	return m.dlqBatchRepo.FindItemsByJobID(ctx, jobID)
+}
+
+func (m *erroringDLQRepo) UpdateJobStatus(ctx context.Context, id, status string) error {
+	if m.statusErr != nil {
+		return m.statusErr
+	}
+	return m.dlqBatchRepo.UpdateJobStatus(ctx, id, status)
+}
+
+func TestBatchDLQErrorBranches(t *testing.T) {
+	ctx := context.Background()
+	t.Run("list surfaces repo error", func(t *testing.T) {
+		uc := &Usecase{}
+		uc.SetBackfillRepo(&erroringDLQRepo{findErr: context.DeadlineExceeded})
+		if _, err := uc.ListBatchDLQ(ctx, "j1"); err == nil {
+			t.Fatal("want find error")
+		}
+	})
+	t.Run("retry surfaces status error", func(t *testing.T) {
+		repo := &erroringDLQRepo{statusErr: context.DeadlineExceeded}
+		repo.items = []models.BackfillItem{{ID: "i1", JobID: "j1", Status: "failed"}}
+		uc := &Usecase{}
+		uc.SetBackfillRepo(repo)
+		if _, err := uc.RetryBatchDLQ(ctx, "j1"); err == nil {
+			t.Fatal("want status error")
+		}
+	})
+	t.Run("retry surfaces reset error", func(t *testing.T) {
+		repo := &erroringDLQRepo{resetErr: context.DeadlineExceeded}
+		uc := &Usecase{}
+		uc.SetBackfillRepo(repo)
+		if _, err := uc.RetryBatchDLQ(ctx, "j1"); err == nil {
+			t.Fatal("want reset error")
+		}
+	})
 }

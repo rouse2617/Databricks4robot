@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -23,10 +24,16 @@ func (r *BackfillRepo) WithTx(ctx context.Context, fn func(ctx context.Context) 
 	return r.c.WithTx(ctx, fn)
 }
 
-// submitterCycleLockKey scopes the submitter's cross-instance mutual
-// exclusion. One fixed key = one global cycle at a time (CYB-3677); CYB-3678
-// shards this to per-cluster keys.
+// submitterCycleLockKey is the base of the per-cluster lock keyspace: each
+// cluster's channel locks base ^ fnv64a(cluster), so channels are mutually
+// independent across instances (CYB-3678; supersedes the CYB-3677 global key).
 const submitterCycleLockKey int64 = 0x63796237_37000001 // "cyb77" | v1
+
+func clusterLockKey(cluster string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(cluster))
+	return submitterCycleLockKey ^ int64(h.Sum64())
+}
 
 // advisoryLocker is implemented by the pool-backed pgDB (realDB). Tx-bound
 // DBs and test fakes don't implement it, which callers treat as "locking
@@ -35,17 +42,45 @@ type advisoryLocker interface {
 	WithAdvisoryLock(ctx context.Context, key int64, fn func(context.Context) error) (bool, error)
 }
 
-// WithSubmitterCycleLock runs one submitter cycle under the cross-instance
-// advisory lock. acquired=false means another instance is currently running a
-// cycle and fn was skipped. Environments whose pgDB cannot take session locks
-// run fn unguarded (acquired=true) — correctness is still covered by the
-// deterministic-workflow-name + AlreadyExists convergence; the lock only
-// removes wasted duplicate attempts.
-func (r *BackfillRepo) WithSubmitterCycleLock(ctx context.Context, fn func(context.Context) error) (bool, error) {
+// WithSubmitterClusterLock runs one cluster channel's cycle under that
+// cluster's cross-instance advisory lock. acquired=false means another
+// instance currently runs this cluster's channel and fn was skipped.
+// Environments whose pgDB cannot take session locks run fn unguarded
+// (acquired=true) — correctness is still covered by the deterministic
+// workflow-name + AlreadyExists convergence; the lock only removes wasted
+// duplicate attempts.
+func (r *BackfillRepo) WithSubmitterClusterLock(ctx context.Context, cluster string, fn func(context.Context) error) (bool, error) {
 	if l, ok := r.c.db.(advisoryLocker); ok {
-		return l.WithAdvisoryLock(ctx, submitterCycleLockKey, fn)
+		return l.WithAdvisoryLock(ctx, clusterLockKey(cluster), fn)
 	}
 	return true, fn(ctx)
+}
+
+// IncrementItemSubmitAttempts bumps the durable transient-retry counter
+// (CYB-3678) and returns the new value.
+func (r *BackfillRepo) IncrementItemSubmitAttempts(ctx context.Context, itemID string) (int, error) {
+	db := dbFromCtx(ctx, r.c.db)
+	var attempts int
+	if err := db.QueryRow(ctx, `
+UPDATE backfill_items SET submit_attempts = submit_attempts + 1
+WHERE id = $1 RETURNING submit_attempts`, itemID).Scan(&attempts); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.IncrementItemSubmitAttempts: %w", err)
+	}
+	return attempts, nil
+}
+
+// ResetFailedItems re-queues a job's DLQ: failed → pending, error cleared,
+// attempt counter reset (an explicit human retry earns a fresh cap).
+func (r *BackfillRepo) ResetFailedItems(ctx context.Context, jobID string) (int64, error) {
+	db := dbFromCtx(ctx, r.c.db)
+	n, err := db.ExecResult(ctx, `
+UPDATE backfill_items
+SET status = 'pending', error_message = NULL, submit_attempts = 0
+WHERE job_id = $1 AND status = 'failed'`, jobID)
+	if err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.ResetFailedItems: %w", err)
+	}
+	return n, nil
 }
 
 // FindSubmittableJobs returns running / pilot_running jobs that still have

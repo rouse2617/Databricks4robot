@@ -219,10 +219,10 @@ func TestFreshDB_SubmitterCycleLock(t *testing.T) {
 	r1, r2 := NewBackfillRepo(c1), NewBackfillRepo(c2)
 
 	ran1 := 0
-	acq1, err := r1.WithSubmitterCycleLock(ctx, func(ctx context.Context) error {
+	acq1, err := r1.WithSubmitterClusterLock(ctx, "clu-int", func(ctx context.Context) error {
 		ran1++
 		// While held, a second session must be refused, non-blocking.
-		acq2, err := r2.WithSubmitterCycleLock(ctx, func(context.Context) error {
+		acq2, err := r2.WithSubmitterClusterLock(ctx, "clu-int", func(context.Context) error {
 			t.Error("second session must not run while the lock is held")
 			return nil
 		})
@@ -242,7 +242,7 @@ func TestFreshDB_SubmitterCycleLock(t *testing.T) {
 	}
 
 	// After release the lock is free again.
-	acq2b, err := r2.WithSubmitterCycleLock(ctx, func(context.Context) error { return nil })
+	acq2b, err := r2.WithSubmitterClusterLock(ctx, "clu-int", func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("session 2 post-release lock: %v", err)
 	}

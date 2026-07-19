@@ -16,6 +16,12 @@ type BackfillRepository interface {
 	UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error
 	IncrementCompleted(ctx context.Context, id string) error
 	IncrementFailed(ctx context.Context, id string) error
+	// IncrementItemSubmitAttempts bumps the durable transient-retry counter
+	// (CYB-3678 DLQ) and returns the new value.
+	IncrementItemSubmitAttempts(ctx context.Context, itemID string) (int, error)
+	// ResetFailedItems re-queues a job's DLQ (failed items → pending, error
+	// cleared, attempt counter reset). Returns how many items were revived.
+	ResetFailedItems(ctx context.Context, jobID string) (int64, error)
 
 	// ClaimJobNotification atomically claims the completion-notification slot
 	// for a job (notification_sent_at IS NULL -> now()). Returns true only for

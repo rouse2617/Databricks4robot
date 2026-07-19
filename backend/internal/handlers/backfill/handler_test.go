@@ -18,6 +18,11 @@ import (
 
 type missingJobRepo struct{}
 
+func (missingJobRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (missingJobRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (missingJobRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
 func (missingJobRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
 	return nil, nil

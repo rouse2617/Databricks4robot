@@ -307,6 +307,36 @@ var (
 	// column and filter_json, forcing a fallback to the template's current
 	// active version (CYB-3677). Non-zero on legacy rows only; growth on new
 	// batches indicates the pinning write path regressed.
+	// CYB-3678 per-cluster dispatch instrumentation.
+	DispatcherSubmitDurationSeconds = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "backend_dispatcher_submit_duration_seconds",
+			Help:    "Per-item workflow submission latency (AIMD input)",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
+	DispatcherEffectiveConcurrency = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_effective_concurrency",
+			Help: "Governor-adjusted in-flight submit concurrency per cluster",
+		},
+		[]string{"cluster"},
+	)
+	DispatcherChannelBreakerTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_channel_breaker_total",
+			Help: "Cluster channels skipped after consecutive transient failures",
+		},
+		[]string{"cluster"},
+	)
+	DispatcherDLQTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_dlq_total",
+			Help: "Batch items dead-lettered (failed), by reason",
+		},
+		[]string{"reason"},
+	)
+
 	DispatcherTemplateFallbackTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "backend_dispatcher_template_fallback_total",

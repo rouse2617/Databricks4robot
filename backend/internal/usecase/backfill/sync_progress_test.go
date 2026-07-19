@@ -27,6 +27,34 @@ type pausedSyncRepo struct {
 	// return false) so tests can exercise the CYB-3071 notification path.
 	notifyMu sync.Mutex
 	notified bool
+
+	attemptsMu     sync.Mutex
+	submitAttempts map[string]int
+
+	// extraJobs lets multi-job fixtures (CYB-3678 sharding) resolve every
+	// job by id, not just the primary one.
+	extraJobs []models.BackfillJob
+}
+
+func (r *pausedSyncRepo) IncrementItemSubmitAttempts(_ context.Context, itemID string) (int, error) {
+	r.attemptsMu.Lock()
+	defer r.attemptsMu.Unlock()
+	if r.submitAttempts == nil {
+		r.submitAttempts = map[string]int{}
+	}
+	r.submitAttempts[itemID]++
+	return r.submitAttempts[itemID], nil
+}
+
+func (r *pausedSyncRepo) ResetFailedItems(_ context.Context, jobID string) (int64, error) {
+	var n int64
+	for i := range r.items {
+		if r.items[i].JobID == jobID && r.items[i].Status == "failed" {
+			r.items[i].Status = "pending"
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
@@ -34,6 +62,12 @@ func (r *pausedSyncRepo) FindAllJobs(context.Context) ([]models.BackfillJob, err
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
+	for i := range r.extraJobs {
+		if r.extraJobs[i].ID == id {
+			cp := r.extraJobs[i]
+			return &cp, nil
+		}
+	}
 	if r.job != nil && r.job.ID == id {
 		if r.findJobByIDHook != nil {
 			r.findJobByIDHook()

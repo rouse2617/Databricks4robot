@@ -19,6 +19,12 @@ type mockBackfillRepo struct {
 	items []models.BackfillItem
 }
 
+func (m *mockBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (m *mockBackfillRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
 func (m *mockBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
@@ -662,6 +668,11 @@ type trackingBackfillRepo struct {
 	runsTotal          int
 	runsWithNodeRows   int
 }
+
+
+func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
+
+func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJob) error {
 	r.mu.Lock()

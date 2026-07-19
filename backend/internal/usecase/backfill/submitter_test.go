@@ -83,7 +83,8 @@ func (q *fakeSubmitQueue) LockPendingItem(_ context.Context, itemID string) (*mo
 type fakeDeployer struct {
 	mu sync.Mutex
 
-	deployErrByAsset map[string]error // nil entry → success
+	deployErrByAsset map[string]error  // nil entry → success
+	clusterByTarget  map[string]string // targetID → cluster (sharding tests)
 	runsByID         map[string]*models.PipelineRun
 	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
 
@@ -94,6 +95,15 @@ type fakeDeployer struct {
 	commits        []string
 	failures       []string
 	refreshes      []string
+}
+
+func (d *fakeDeployer) ResolveTargetClusterID(_ context.Context, targetID string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c, ok := d.clusterByTarget[targetID]; ok {
+		return c
+	}
+	return "default"
 }
 
 func (d *fakeDeployer) GetRun(_ context.Context, id string) (*models.PipelineRun, error) {

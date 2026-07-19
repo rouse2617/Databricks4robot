@@ -110,3 +110,46 @@ func (h *Handler) GetBatchStatus(c *gin.Context) {
 		"created_at":      job.CreatedAt,
 	})
 }
+
+// ListBatchDLQ handles GET /api/v1/runs/batch/:batchId/dlq — the batch's
+// dead-lettered items (status=failed) with their recorded reasons (CYB-3678).
+func (h *Handler) ListBatchDLQ(c *gin.Context) {
+	batchID := c.Param("batchId")
+	items, err := h.uc.ListBatchDLQ(c.Request.Context(), batchID)
+	if err != nil {
+		httpresp.Internal(c, "failed to list batch dlq")
+		return
+	}
+	type dlqItem struct {
+		ID           string `json:"id"`
+		AssetID      string `json:"asset_id"`
+		ErrorMessage string `json:"error_message,omitempty"`
+		WorkflowName string `json:"workflow_name,omitempty"`
+	}
+	out := make([]dlqItem, 0, len(items))
+	for _, it := range items {
+		d := dlqItem{ID: it.ID, AssetID: it.AssetID}
+		if it.ErrorMessage != nil {
+			d.ErrorMessage = *it.ErrorMessage
+		}
+		if it.WorkflowName != nil {
+			d.WorkflowName = *it.WorkflowName
+		}
+		out = append(out, d)
+	}
+	c.JSON(200, gin.H{"batch_id": batchID, "count": len(out), "items": out})
+}
+
+// RetryBatchDLQ handles POST /api/v1/runs/batch/:batchId/dlq:retry — revives
+// the batch's failed items (fresh attempt cap) and kicks the submitter. The
+// revived items rejoin the NORMAL dispatch pipeline and are subject to the
+// same per-cluster governor — a mass retry can never become a storm.
+func (h *Handler) RetryBatchDLQ(c *gin.Context) {
+	batchID := c.Param("batchId")
+	n, err := h.uc.RetryBatchDLQ(c.Request.Context(), batchID)
+	if err != nil {
+		httpresp.Internal(c, "failed to retry batch dlq")
+		return
+	}
+	c.JSON(200, gin.H{"batch_id": batchID, "revived": n})
+}

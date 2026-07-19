@@ -466,6 +466,9 @@ func RegisterAll(
 		api.POST("/runs/batch", pipelineHandler.CreateBatchRun)
 		api.POST("/runs/batch/:batchId/stop", pipelineHandler.StopBatchRun)
 		api.GET("/runs/batch/:batchId", pipelineHandler.GetBatchStatus)
+		// CYB-3678: batch DLQ — dead-lettered items + explicit revive.
+		api.GET("/runs/batch/:batchId/dlq", pipelineHandler.ListBatchDLQ)
+		api.POST("/runs/batch/:batchId/dlq:retry", pipelineHandler.RetryBatchDLQ)
 		api.GET("/runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
 		api.GET("/runs/by-workflow/:workflowName", pipelineHandler.GetRunByWorkflowName)
 		api.GET("/runs/:id", pipelineHandler.GetRun)

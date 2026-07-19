@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"sort"
 	"strconv"
@@ -91,6 +92,13 @@ type Usecase struct {
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
+	// per-cluster dispatch governors (CYB-3678)
+	governorMu sync.Mutex
+	governors  map[string]*clusterGovernor
+	// bootJitter delays the boot-eager cycle (0–5s default) so simultaneous
+	// instance cold-starts de-align (C17). Nil in tests = no delay.
+	bootJitter func() time.Duration
+
 	reconcileStop chan struct{}
 	reconcileWg   sync.WaitGroup
 
@@ -133,6 +141,11 @@ func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Us
 	uc := &Usecase{repo: repo, pipelineUC: pipelineUC}
 	if pipelineUC != nil {
 		uc.deployer = pipelineUC
+		// Production wiring gets boot jitter; the fixture path (nil
+		// pipelineUC) stays deterministic for tests.
+		uc.bootJitter = func() time.Duration {
+			return time.Duration(rand.Int63n(int64(5 * time.Second)))
+		}
 	}
 	return uc
 }

@@ -104,7 +104,7 @@ type lockingSubmitQueue struct {
 	lockCalls int
 }
 
-func (q *lockingSubmitQueue) WithSubmitterCycleLock(ctx context.Context, fn func(context.Context) error) (bool, error) {
+func (q *lockingSubmitQueue) WithSubmitterClusterLock(ctx context.Context, _ string, fn func(context.Context) error) (bool, error) {
 	q.lockCalls++
 	if q.lockErr != nil {
 		return false, q.lockErr
