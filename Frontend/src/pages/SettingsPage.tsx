@@ -26,6 +26,7 @@ import {
 import { type SearchSyncStatusResponse, searchApi } from "../api/search";
 import BronzeSyncStatusAlert from "../components/assets/BronzeSyncStatusAlert";
 import SearchSyncStatusAlert from "../components/assets/SearchSyncStatusAlert";
+import DispatcherPanel from "../components/settings/DispatcherPanel";
 import { useAuth } from "../hooks/useAuth";
 import { extractApiErrorMessage } from "../lib/apiError";
 
@@ -306,6 +307,8 @@ export default function SettingsPage() {
 					<Descriptions.Item label="API 地址">/api/v1</Descriptions.Item>
 				</Descriptions>
 			</Card>
+
+			<DispatcherPanel />
 
 			<Card
 				title={

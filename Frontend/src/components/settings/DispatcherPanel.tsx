@@ -1,3 +1,4 @@
+import { ControlOutlined } from "@ant-design/icons";
 import {
 	Alert,
 	Button,
@@ -15,19 +16,22 @@ import {
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
-import { type DispatcherClusterStatus, dispatcherApi } from "../api/dispatcher";
-import { extractApiErrorMessage } from "../lib/apiError";
+import {
+	type DispatcherClusterStatus,
+	dispatcherApi,
+} from "../../api/dispatcher";
+import { extractApiErrorMessage } from "../../lib/apiError";
 import {
 	DISPATCHER_LIMITS,
 	suppressionChip,
 	validateDispatcherForm,
-} from "../lib/dispatcher";
+} from "../../lib/dispatcher";
 
 // CYB-3679 — dispatcher 在线调参:每集群 配置 vs 生效 + 压制原因 + 编辑/暂停。
 
 const REFRESH_MS = 15_000;
 
-export default function DispatcherPage() {
+export default function DispatcherPanel() {
 	const [rows, setRows] = useState<DispatcherClusterStatus[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [editing, setEditing] = useState<DispatcherClusterStatus | null>(null);
@@ -178,7 +182,17 @@ export default function DispatcherPage() {
 	];
 
 	return (
-		<Card title="调度器在线调参" loading={loading && rows.length === 0}>
+		<Card
+			title={
+				<span>
+					<ControlOutlined style={{ marginRight: 8 }} />
+					调度调参
+				</span>
+			}
+			size="small"
+			style={{ marginBottom: 16 }}
+			loading={loading && rows.length === 0}
+		>
 			<Alert
 				style={{ marginBottom: 16 }}
 				type="info"
