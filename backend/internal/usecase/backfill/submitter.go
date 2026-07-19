@@ -88,21 +88,34 @@ func (uc *Usecase) StartSubmitter() {
 				return
 			}
 		}
+		// Per-cycle deadline (G1 load-test hotfix, mirrors the reconciler):
+		// one hung Argo call under context.Background() would otherwise pin
+		// the dispatch loop forever with zero telemetry.
+		runCycle := func() {
+			cycleCtx, cancel := context.WithTimeout(context.Background(), submitterCycleTimeout)
+			uc.runSubmitterCycle(cycleCtx)
+			cancel()
+		}
 		// One eager cycle on boot: this replaces ResumeIncompleteBatches —
 		// anything left pending by a redeploy is picked up immediately.
-		uc.runSubmitterCycle(context.Background())
+		runCycle()
 		for {
 			select {
 			case <-uc.submitStop:
 				return
 			case <-ticker.C:
-				uc.runSubmitterCycle(context.Background())
+				runCycle()
 			case <-uc.submitKick:
-				uc.runSubmitterCycle(context.Background())
+				runCycle()
 			}
 		}
 	}()
 }
+
+// submitterCycleTimeout bounds one dispatch cycle. Sized for the worst
+// legitimate case (full submittable set at the token-bucket rate), far above
+// a healthy cycle but finite — a hung call must never kill the loop.
+const submitterCycleTimeout = 10 * time.Minute
 
 // StopSubmitter signals the loop to stop and waits for it.
 func (uc *Usecase) StopSubmitter() {

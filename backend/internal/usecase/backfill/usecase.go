@@ -226,6 +226,11 @@ func (uc *Usecase) AdvanceItemForRun(ctx context.Context, run *models.PipelineRu
 // it force-syncs each non-terminal batch job, so a job whose children finished
 // in the background is finalized + notified without a user opening its page and
 // without depending on the exit hook firing. Runs until StopJobReconciler.
+// reconcileCycleTimeout bounds one reconciler pass. Generous: a pass over
+// FindActiveJobs is item-count bounded, but individual Argo GETs must never
+// pin the goroutine past this.
+const reconcileCycleTimeout = 5 * time.Minute
+
 func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
 	if interval <= 0 {
 		interval = 60 * time.Second
@@ -244,7 +249,14 @@ func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
 			case <-uc.reconcileStop:
 				return
 			case <-ticker.C:
-				uc.reconcileActiveJobs(context.Background(), scanLimit)
+				// Per-cycle deadline (G1 load-test hotfix): one hung Argo/DB
+				// call under context.Background() wedged the reconciler
+				// FOREVER — no error, no log, job counters frozen until the
+				// instance restarted. The deadline bounds a cycle; the next
+				// tick starts clean.
+				cycleCtx, cancel := context.WithTimeout(context.Background(), reconcileCycleTimeout)
+				uc.reconcileActiveJobs(cycleCtx, scanLimit)
+				cancel()
 			}
 		}
 	}()
