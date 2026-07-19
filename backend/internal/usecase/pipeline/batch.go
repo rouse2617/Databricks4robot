@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,22 @@ import (
 // from this process. It does NOT limit the actual cluster-side concurrency of
 // the submitted runs — that is governed by Argo controller parallelism. Callers
 // must not treat it as a true concurrency limit on running workflows.
+// dedupPreservingOrder returns ids with duplicates (and blank entries)
+// removed, keeping first-occurrence order.
+func dedupPreservingOrder(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, submitWorkers int, owner string) (*models.BackfillJob, error) {
 	if uc.backfillRepo == nil {
 		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
@@ -43,6 +60,11 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	if len(assetIDs) == 0 {
 		return nil, fmt.Errorf("%w: asset_ids is required", ErrInvalidArgument)
 	}
+	// Dedup asset ids, order-preserving (G1 load-test finding): duplicate ids
+	// create duplicate items, but progress summaries dedup per asset — the
+	// job's total_count then exceeds what the summary can ever reach and the
+	// job stays "running" forever. One asset = one item.
+	assetIDs = dedupPreservingOrder(assetIDs)
 
 	batchID := "batch_" + uuid.New().String()
 	now := time.Now().UTC()

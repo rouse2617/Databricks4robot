@@ -362,19 +362,31 @@ func TestCreateBackfill_DoesNotDuplicateItemsDuringMaterialization(t *testing.T)
 	}
 }
 
+// deriveJobStatus settles on the summary's own arithmetic — totalCount drift
+// (duplicate-asset jobs, historical item-count skew) must not wedge a job in
+// "running" forever (G1 load-test finding).
 func TestDeriveJobStatus(t *testing.T) {
-	status := deriveJobStatus(repository.BackfillItemStatusSummary{
-		Completed: 8,
-		Failed:    2,
-	}, 10)
-	if status != "failed" {
-		t.Fatalf("expected failed, got %q", status)
+	s := func(c, f, p, r int) repository.BackfillItemStatusSummary {
+		return repository.BackfillItemStatusSummary{Completed: c, Failed: f, Pending: p, Running: r}
 	}
-	status = deriveJobStatus(repository.BackfillItemStatusSummary{
-		Completed: 10,
-	}, 10)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %q", status)
+	cases := []struct {
+		name    string
+		summary repository.BackfillItemStatusSummary
+		total   int
+		want    string
+	}{
+		{"pending keeps running", s(5, 0, 1, 0), 6, "running"},
+		{"in-flight keeps running", s(5, 0, 0, 1), 6, "running"},
+		{"all completed settles", s(10, 0, 0, 0), 10, "completed"},
+		{"any failure settles failed", s(8, 2, 0, 0), 10, "failed"},
+		{"dup-asset job settles despite total mismatch", s(249, 8, 0, 0), 514, "failed"},
+		{"dup-asset all-green settles completed", s(257, 0, 0, 0), 514, "completed"},
+		{"empty summary stays running", s(0, 0, 0, 0), 6, "running"},
+	}
+	for _, tc := range cases {
+		if got := deriveJobStatus(tc.summary, tc.total); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

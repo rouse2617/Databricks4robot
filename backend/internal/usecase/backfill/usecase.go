@@ -1666,12 +1666,18 @@ func (uc *Usecase) ensureBatchParentRun(ctx context.Context, job *models.Backfil
 }
 
 func deriveJobStatus(summary repository.BackfillItemStatusSummary, totalCount int) string {
+	// Settle on the SUMMARY's own arithmetic, never on totalCount: the
+	// summary dedups per asset, so a job created with duplicate asset ids
+	// (or any historical item-count drift) has totalCount > the summary's
+	// reachable maximum — comparing against it left such jobs "running"
+	// forever (G1 load-test finding). No pending or running work = settled.
+	_ = totalCount
 	switch {
 	case summary.Pending > 0 || summary.Running > 0:
 		return "running"
-	case summary.Failed > 0 && summary.Completed+summary.Failed == totalCount:
+	case summary.Failed > 0:
 		return "failed"
-	case summary.Completed == totalCount:
+	case summary.Completed > 0:
 		return "completed"
 	default:
 		return "running"
