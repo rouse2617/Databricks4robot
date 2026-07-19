@@ -123,12 +123,18 @@ func setupCore(inf *infra) *coreHandlers {
 	// by target.cluster_id. Nil-safe (no PG → nil factory → legacy adapter path).
 	puc.SetArgoFactory(inf.argoFactory)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
-	puc.SetArgoRunWebhook(
-		inf.cfg.ArgoRunWebhookURL,
-		inf.cfg.ArgoRunWebhookTokenSecretName,
-		inf.cfg.ArgoRunWebhookTokenSecretKey,
-		inf.cfg.ArgoRunWebhookImage,
-	)
+	// CYB-3681: exit-hook injection is opt-in (ARGO_EXIT_HOOK_ENABLED=true).
+	// The bulk-pull watcher is the writeback path; an exit-notify pod per
+	// workflow is pure cost at batch scale. The inbound webhook endpoint stays
+	// registered regardless, so re-enabling is a config flip, not a deploy.
+	if inf.cfg.ArgoExitHookEnabled {
+		puc.SetArgoRunWebhook(
+			inf.cfg.ArgoRunWebhookURL,
+			inf.cfg.ArgoRunWebhookTokenSecretName,
+			inf.cfg.ArgoRunWebhookTokenSecretKey,
+			inf.cfg.ArgoRunWebhookImage,
+		)
+	}
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
 		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,

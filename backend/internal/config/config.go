@@ -160,6 +160,11 @@ type Config struct {
 	PipelineUnschedulablePendingThreshold string
 
 	// Argo run status push webhook (CYB-3058).
+	// ArgoExitHookEnabled gates exit-hook injection into workflows (CYB-3681).
+	// Default false: the bulk-pull watcher is the writeback path and each
+	// exit-notify pod costs real money at batch scale. The inbound webhook
+	// ENDPOINT stays registered either way (transition safety).
+	ArgoExitHookEnabled bool
 	// ArgoRunWebhookURL empty disables exit-hook injection (poll-only fallback).
 	ArgoRunWebhookURL             string
 	ArgoRunWebhookToken           string // backend-side token to validate inbound webhook calls
@@ -297,6 +302,7 @@ func Load() *Config {
 		PipelineResourceMaxGPU:                getenv("PIPELINE_RESOURCE_MAX_GPU", ""),
 		PipelineUnschedulablePendingThreshold: getenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "15m"),
 
+		ArgoExitHookEnabled:           strings.EqualFold(getenv("ARGO_EXIT_HOOK_ENABLED", "false"), "true"),
 		ArgoRunWebhookURL:             getenv("ARGO_RUN_WEBHOOK_URL", ""),
 		ArgoRunWebhookToken:           getenv("ARGO_RUN_WEBHOOK_TOKEN", ""),
 		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),

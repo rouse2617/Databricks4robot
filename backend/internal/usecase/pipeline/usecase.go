@@ -72,6 +72,11 @@ type Usecase struct {
 	// single watcher goroutine touches it; resets on restart, which is fine —
 	// coverage is eventual, the webhook remains the primary signal.
 	watcherActiveCursor int
+	// watcherAppliedRV gates repeat applies of unchanged workflows in the
+	// bulk-pull path (CYB-3681): runID → last applied resourceVersion.
+	// In-memory by design — restart means one full re-apply (recalibration).
+	watcherRVMu      sync.Mutex
+	watcherAppliedRV map[string]string
 	// targetClusterCache memoizes execution_target_id → cluster_id so the
 	// watcher / status-refresh paths can resolve a run's cluster without an
 	// ExecutionTarget object populated on the run (ListSummaries doesn't load
@@ -3340,7 +3345,12 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		}
 	}
 	synced := 0
-	if n := len(activeIdx); n > 0 {
+	if watcherBulkModeEnabled() {
+		// CYB-3681: one LIST per (cluster, namespace) covers ALL active runs
+		// per tick — no rotating window, no starvation. Every 10th scan
+		// recalibrates (bypasses the resourceVersion change gate).
+		synced = uc.bulkSyncActiveRuns(ctx, runs, activeIdx, limit, nextState.TotalScans%recalibrateEvery == 0)
+	} else if n := len(activeIdx); n > 0 {
 		start := uc.watcherActiveCursor % n
 		// Pick the round-robin window FIRST — cursor semantics unchanged from
 		// the pre-4d.5.b sequential loop; fairness across active runs is still

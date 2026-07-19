@@ -2,6 +2,7 @@ package transpiler
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -34,8 +35,36 @@ func ValidatePipeline(p *Pipeline) error {
 	problems = append(problems, validateDuplicateTargetInputs(p)...)
 	problems = append(problems, validateConsumedOutputFiles(p)...)
 	problems = append(problems, validateNoCycles(p)...)
+	problems = append(problems, validateStepCount(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
+	}
+	return nil
+}
+
+// Step-count guardrails (CYB-3681): one workflow's node status blob lives in
+// a single etcd object — hundreds of steps per workflow at batch scale is how
+// apiserver memory and controller reconcile latency blow up. Warn early, hard
+// reject before etcd does it for us (opaque "request too large").
+const (
+	stepCountWarn   = 200
+	stepCountReject = 500
+)
+
+// stepCountWarnHook is a seam for observing warn-level oversize pipelines
+// (production wires slog; tests capture).
+var stepCountWarnHook = func(name string, steps int) {
+	slog.Warn("pipeline step count is high — consider splitting the batch per asset",
+		"pipeline", name, "steps", steps, "warnAt", stepCountWarn, "rejectAt", stepCountReject)
+}
+
+func validateStepCount(p *Pipeline) []string {
+	total := len(flattenNodes(p.Nodes))
+	if total > stepCountReject {
+		return []string{fmt.Sprintf("pipeline has %d steps, exceeding the maximum of %d (one workflow object must stay small; split the work across runs)", total, stepCountReject)}
+	}
+	if total > stepCountWarn {
+		stepCountWarnHook(p.Name, total)
 	}
 	return nil
 }

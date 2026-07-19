@@ -255,6 +255,7 @@ type mockWorkflowClient struct {
 	getWorkflowFn       func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
 	getWorkflowStatusFn func(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error)
 	createWorkflowFn    func(ctx context.Context, wf *wfv1.Workflow, namespace string) error
+	listWorkflowsFn     func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
 	stopCalls           []string
 	stopErr             error
 }
@@ -274,7 +275,10 @@ func (m *mockWorkflowClient) GetWorkflowStatus(ctx context.Context, name, namesp
 func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
 	return nil
 }
-func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
+func (m *mockWorkflowClient) ListWorkflows(ctx context.Context, namespace string, labelSelector string) ([]wfv1.Workflow, error) {
+	if m.listWorkflowsFn != nil {
+		return m.listWorkflowsFn(ctx, namespace, labelSelector)
+	}
 	return nil, nil
 }
 func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
@@ -3564,6 +3568,7 @@ func TestAttachBatchNodeProgress_FallsBackToWorkflowProgress(t *testing.T) {
 // every workflow has been refreshed at least once (the old always-from-0 scan
 // would never reach the third).
 func TestSyncActiveRunEvents_RotatesActiveWindowNoStarvation(t *testing.T) {
+	t.Setenv(watcherModeEnv, watcherModeLegacy) // rotation is the legacy path (CYB-3681)
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
 		byID: map[string]*models.PipelineRun{

@@ -34,6 +34,21 @@ func TestLoadOpenLineageConfig(t *testing.T) {
 	}
 }
 
+func TestLoadArgoExitHookEnabled(t *testing.T) {
+	t.Setenv("ARGO_EXIT_HOOK_ENABLED", "")
+	if Load().ArgoExitHookEnabled {
+		t.Fatal("exit hook must default OFF (CYB-3681)")
+	}
+	t.Setenv("ARGO_EXIT_HOOK_ENABLED", "TRUE")
+	if !Load().ArgoExitHookEnabled {
+		t.Fatal("TRUE (case-insensitive) must enable")
+	}
+	t.Setenv("ARGO_EXIT_HOOK_ENABLED", "yes")
+	if Load().ArgoExitHookEnabled {
+		t.Fatal("non-true values stay off")
+	}
+}
+
 func TestLoadArgoWorkflowTTLConfig(t *testing.T) {
 	t.Setenv("ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION", "7200")
 	cfg := Load()
