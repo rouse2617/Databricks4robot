@@ -3349,7 +3349,15 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		// CYB-3681: one LIST per (cluster, namespace) covers ALL active runs
 		// per tick — no rotating window, no starvation. Every 10th scan
 		// recalibrates (bypasses the resourceVersion change gate).
-		synced = uc.bulkSyncActiveRuns(ctx, runs, activeIdx, limit, nextState.TotalScans%recalibrateEvery == 0)
+		//
+		// The residual GET budget is watcherResidualGetBudget, NOT the scan
+		// limit: short tasks finish and leave the active-workflow LIST almost
+		// immediately, so their runs are resolved via a targeted GET, not the
+		// LIST. Tying that budget to the 50-cap throttled writeback to ~50/scan
+		// and a burst of 1000 short tasks drained for minutes. These GETs are
+		// cheap single-workflow reads (cpu-throttling is off), so the budget is
+		// generous.
+		synced = uc.bulkSyncActiveRuns(ctx, runs, activeIdx, watcherResidualGetBudget, nextState.TotalScans%recalibrateEvery == 0)
 	} else if n := len(activeIdx); n > 0 {
 		start := uc.watcherActiveCursor % n
 		// Pick the round-robin window FIRST — cursor semantics unchanged from
@@ -3446,14 +3454,66 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	if uc.runRepo == nil {
 		return nil, nil
 	}
-	// CYB-3491: ListSummaries 现在强制分页,unbounded 扫描被禁 (dev 30k+
-	// 行时该扫描 39s,连锁把 submitter 事务打成 deadline exceeded)。
-	// watcher 只需要 "最近的一批 run summaries" 参与轮转 —— 上限 500 (repo
-	// 硬上限);默认按 created_at DESC,天然拿到最新一段,active runs 都
-	// 在这里,历史行不再参与。
-	items, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
-	return items, err
+	// The candidate set has three consumers: (1) active-run refresh, (2)
+	// terminal-anomaly reconcile (Error/Expired runs re-verified against Argo),
+	// (3) ledger backfill for recently-completed runs. It is the UNION of:
+	//
+	//   • ALL active-status runs (CYB-3681 load-test fix) — the old "most
+	//     recent 500" window silently broke on bursts: 1000 short tasks finish
+	//     near-simultaneously, the 500 newest rows fill with just-completed
+	//     runs, and older still-active runs fall outside the window → never
+	//     refreshed → stuck "Running" forever though Argo finished them.
+	//     Filtering by active status makes this the true in-flight universe,
+	//     bounded by concurrent work not history, so no active run is invisible.
+	//   • a recent window — feeds the terminal-repair paths (2)/(3), which
+	//     operate on non-active recently-finished runs the active query omits.
+	//
+	// The CYB-3491 concern (unbounded 39s scan) stays addressed: both halves
+	// are status-indexed and hard-capped.
+	active, err := uc.runRepo.FindActiveRunSummaries(ctx, watcherActiveRunLoadCap)
+	if err != nil {
+		return nil, err
+	}
+	recent, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
+	if err != nil {
+		return nil, err
+	}
+	return mergeRunsByID(active, recent), nil
 }
+
+// mergeRunsByID concatenates two run slices, dropping the second slice's
+// duplicates (matched by ID). Order: all of a, then b's new entries.
+func mergeRunsByID(a, b []models.PipelineRun) []models.PipelineRun {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]models.PipelineRun, 0, len(a)+len(b))
+	for _, r := range a {
+		if _, dup := seen[r.ID]; dup {
+			continue
+		}
+		seen[r.ID] = struct{}{}
+		out = append(out, r)
+	}
+	for _, r := range b {
+		if _, dup := seen[r.ID]; dup {
+			continue
+		}
+		seen[r.ID] = struct{}{}
+		out = append(out, r)
+	}
+	return out
+}
+
+// watcherActiveRunLoadCap bounds the active-run candidate set per scan. Sized
+// well above steady-state in-flight volume so a large burst is fully covered
+// in one scan; a status-indexed query keeps it cheap even against a big
+// pipeline_runs table.
+const watcherActiveRunLoadCap = 3000
+
+// watcherResidualGetBudget caps targeted GetWorkflow calls per scan for runs
+// whose workflow is absent from the active-workflow LIST (finished short
+// tasks, orphans). Decoupled from the scan limit so bursty short-task
+// writeback isn't throttled to ~50/scan.
+const watcherResidualGetBudget = 600
 
 func computeLedgerHealth(runs []models.PipelineRun, lastBackfill *time.Time) models.LedgerHealth {
 	total := len(runs)

@@ -199,6 +199,10 @@ func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 	}
 	return out
 }
+func (m *mockPipelineRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+
 func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	items := m.summaries()
 	filtered := make([]models.PipelineRun, 0, len(items))

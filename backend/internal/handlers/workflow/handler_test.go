@@ -80,6 +80,10 @@ func (m *mockRunRepo) Save(_ context.Context, run *models.PipelineRun) error {
 	return nil
 }
 func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+
 func (m *mockRunRepo) ListSummaries(context.Context, models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	return nil, 0, nil
 }

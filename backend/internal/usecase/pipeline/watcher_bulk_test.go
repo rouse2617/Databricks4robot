@@ -81,6 +81,63 @@ func activeWorkflow(name, rv string, phase wfv1.WorkflowPhase) wfv1.Workflow {
 	}
 }
 
+func TestMergeRunsByID(t *testing.T) {
+	a := []models.PipelineRun{{ID: "1"}, {ID: "2"}, {ID: "1"}}
+	b := []models.PipelineRun{{ID: "2"}, {ID: "3"}}
+	got := mergeRunsByID(a, b)
+	var ids []string
+	for _, r := range got {
+		ids = append(ids, r.ID)
+	}
+	// a's dup ("1") dropped within a; b's overlap ("2") dropped; "3" appended.
+	want := []string{"1", "2", "3"}
+	if len(ids) != len(want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("ids = %v, want %v", ids, want)
+		}
+	}
+	if got := mergeRunsByID(nil, nil); len(got) != 0 {
+		t.Fatalf("empty merge = %v, want []", got)
+	}
+}
+
+// Load-test regression (CYB-3681): a pile of just-COMPLETED recent runs must
+// not crowd an older still-active run out of the watcher's candidate set. The
+// candidate loader is status-based (FindActiveRunSummaries), so completed runs
+// never consume the budget and the active run is always refreshed.
+func TestSyncActiveRunEvents_ActiveNotStarvedByCompletedBurst(t *testing.T) {
+	t.Setenv(watcherModeEnv, "")
+	runRepo := &mockRunRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), nil, "test-ns")
+	uc.SetRunRepositories(nil, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+	client := &mockWorkflowClient{}
+	uc.wfClient = client
+
+	// 600 already-completed runs (the "recent burst") + 1 older active run.
+	for i := 0; i < 600; i++ {
+		_ = runRepo.Save(context.Background(), &models.PipelineRun{
+			ID: "done-" + string(rune(i)), Status: "Succeeded", WorkflowName: "done-wf", PipelineName: "p",
+		})
+	}
+	_ = runRepo.Save(context.Background(), &models.PipelineRun{
+		ID: "run-active", Status: "Running", WorkflowName: "wf-active", PipelineName: "p",
+	})
+	client.listWorkflowsFn = func(context.Context, string, string) ([]wfv1.Workflow, error) {
+		return []wfv1.Workflow{activeWorkflow("wf-active", "7", wfv1.WorkflowSucceeded)}, nil
+	}
+
+	if _, err := uc.SyncActiveRunEvents(context.Background(), 50); err != nil {
+		t.Fatalf("SyncActiveRunEvents: %v", err)
+	}
+	if got := runRepo.byID["run-active"].Status; got != "Succeeded" {
+		t.Fatalf("active run status = %q, want Succeeded (must not be starved by the completed burst)", got)
+	}
+}
+
 // Listed workflows are applied from the snapshot with ZERO targeted GETs; an
 // unchanged snapshot next tick applies nothing (RV gate).
 func TestBulkSync_AppliesListedAndGatesUnchanged(t *testing.T) {

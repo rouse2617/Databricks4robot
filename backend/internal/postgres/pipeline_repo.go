@@ -1103,6 +1103,48 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 	return out, total, nil
 }
 
+// activeRunStatuses mirrors isActiveDeploymentStatus (pipeline usecase): the
+// statuses the watcher must keep refreshing. Empty string is treated as active
+// too (a freshly-created run before its first status write).
+var activeRunStatuses = []string{"Running", "Pending", "Unknown", "Suspended"}
+
+// FindActiveRunSummaries loads active-status runs oldest-first, capped at
+// limit. Unlike ListSummaries("most recent N"), a burst of just-completed runs
+// can never crowd older still-active runs out of the set — every active run is
+// reachable by the watcher within one scan when the active total is <= limit
+// (CYB-3681 load-test fix). Oldest-first so the longest-waiting runs (the ones
+// a bounded per-scan budget would otherwise starve) are refreshed first.
+func (r *PipelineRunRepo) FindActiveRunSummaries(ctx context.Context, limit int) ([]models.PipelineRun, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	// status = ANY($1) is served by idx_pipeline_runs_status_created_at
+	// (status, created_at); the ORDER BY + LIMIT then reads oldest-first
+	// straight off the index without a sort. pipeline_runs.status is
+	// NOT NULL in practice (Save always writes one), so no COALESCE.
+	q := `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+ORDER BY pr.created_at ASC
+LIMIT $2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, activeRunStatuses, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummaries: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummaries scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, nil
+}
+
 func (r *PipelineRunRepo) findAllPipelineRuns(
 	ctx context.Context,
 	cols string,

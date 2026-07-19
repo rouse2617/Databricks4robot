@@ -2064,6 +2064,20 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
+func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models.PipelineRun, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	active := make([]models.PipelineRun, 0, len(items))
+	for _, it := range items {
+		if isActiveDeploymentStatus(it.Status) {
+			active = append(active, it)
+		}
+	}
+	return active, nil
+}
+
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())
