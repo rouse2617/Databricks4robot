@@ -145,6 +145,10 @@ type Config struct {
 	// Argo Workflows
 	ArgoWorkflowsNamespace                string
 	ArgoWorkflowTTLSecondsAfterCompletion int32
+	// RuntimeConfigTTLDays ages content-addressed runtime-config ConfigMaps
+	// via the sliding-reference janitor (CYB-3680). Must exceed the workflow
+	// TTL so Argo-native retries never re-mount a reclaimed CM.
+	RuntimeConfigTTLDays int32
 	// BatchDispatchMode selects the batch dispatch path (CYB-3677):
 	// "submitter" (default) persists jobs for the durable backfill submitter;
 	// "legacy" restores the pre-3677 in-memory goroutine (rollback only).
@@ -282,6 +286,7 @@ func Load() *Config {
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
 		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
 		BatchDispatchMode:         getenv("BATCH_DISPATCH_MODE", "submitter"),
+		RuntimeConfigTTLDays:      getenvInt32("RUNTIME_CONFIG_TTL_DAYS", 35),
 		ArgoWorkflowTTLSecondsAfterCompletion: getenvInt32(
 			"ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION",
 			transpiler.DefaultTTLSecondsAfterCompletion,

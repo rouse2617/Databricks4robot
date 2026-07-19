@@ -1020,8 +1020,13 @@ func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	manifest := *dep.Manifest
 	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
@@ -1093,8 +1098,9 @@ func TestDeploy_RuntimeAdapterSubmitPreservesRuntimeConfigOwnerLookup(t *testing
 	if createdThroughWorkflowClient {
 		t.Fatal("expected submit to use runtime adapter, not workflow client")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference from lookup, got %#v", store.lastOwner)
+	// CYB-3680: owner-less + created before the Workflow (no lookup needed).
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
 	}
 	if store.lastNamespace != "runtime-ns" || store.lastDeploymentID != dep.ID {
 		t.Fatalf("unexpected runtime config store target namespace=%q deployment=%q", store.lastNamespace, store.lastDeploymentID)
@@ -1174,8 +1180,13 @@ func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
 		t.Fatalf("expected forwarded runtime config volume in manifest, got %s", manifest)
@@ -1263,8 +1274,13 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	if got := store.lastProjection.Files["01-step-a-a.yaml"]; got != "threshold: 0.8\n" {
 		t.Fatalf("unexpected step-a config content %q", got)

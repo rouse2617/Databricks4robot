@@ -152,7 +152,16 @@ func setupCore(inf *infra) *coreHandlers {
 		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
 		// Price pipeline step costs by the node's real machine type (CYB-3073).
 		puc.SetNodeInstanceResolver(k8s.NewNodeInstanceResolver(clientset))
+		// CYB-3680: content-addressed runtime-config CMs are shared and
+		// owner-less; this janitor reclaims those whose sliding-reference
+		// annotation aged past the TTL (default cluster; per-cluster sweeps
+		// ride CYB-3678/3681's channel loops).
+		k8s.StartRuntimeConfigJanitor(context.Background(), clientset,
+			time.Duration(inf.cfg.RuntimeConfigTTLDays)*24*time.Hour, time.Hour)
 	}
+	// CYB-3680: DB blob = rebuildable source of truth for content-addressed
+	// runtime configs.
+	puc.SetRuntimeConfigBlobStore(postgres.NewRuntimeConfigBlobRepo(pg))
 	// CYB-3486: route the runtime-config ConfigMap to the TARGET's cluster.
 	// Without this, a delivery-clust run creates its ConfigMap through the
 	// default (cyber-clust) clientset and fails with `namespaces

@@ -92,7 +92,12 @@ type Usecase struct {
 	// is created on the TARGET's cluster, not the default-cluster singleton.
 	// Nil is tolerated — falls back to runtimeConfigStore (default cluster).
 	runtimeConfigStoreFactory RuntimeConfigStoreFactory
-	wfClient                  argo.WorkflowClient
+
+	// runtimeConfigBlobs persists content-addressed config bytes as the
+	// rebuildable source of truth (CYB-3680). Nil disables blob persistence;
+	// blob write failures never block dispatch (the CM itself was ensured).
+	runtimeConfigBlobs RuntimeConfigBlobStore
+	wfClient           argo.WorkflowClient
 	// CYB-3486 PR 4c: per-cluster Argo client factory. When set, Deploy
 	// resolves argo client via argoFactory.ForTarget(target) instead of the
 	// wfClient singleton so multi-cluster submit routing works. Nil is
@@ -194,6 +199,55 @@ type RuntimeConfigProjection struct {
 	Content    string
 	Files      map[string]string
 	VolumeName string
+	// ContentHash is the canonical sha256 (hex) of the projection's files.
+	// Non-empty marks the projection content-addressed (CYB-3680): the
+	// ConfigMap name derives from content, is shared across runs, is created
+	// BEFORE the Workflow, carries no owner, and is reclaimed by the
+	// sliding-reference TTL janitor.
+	ContentHash string
+}
+
+// runtimeConfigContentHash canonically hashes a projection: the single-file
+// form and the multi-file form that carry identical bytes hash identically,
+// and map iteration order never leaks into the digest.
+func runtimeConfigProjectionHash(p RuntimeConfigProjection) string {
+	files := make(map[string]string, len(p.Files)+1)
+	for k, v := range p.Files {
+		files[k] = v
+	}
+	if name := strings.TrimSpace(p.FileName); name != "" {
+		files[name] = p.Content
+	}
+	keys := make([]string, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		// Length-prefixed fields prevent boundary ambiguity between
+		// name/content pairs.
+		fmt.Fprintf(h, "%d:%s%d:%s", len(k), k, len(files[k]), files[k])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// runtimeConfigVolumeNameForContent derives the shared, content-addressed
+// ConfigMap/volume name. 32 hex chars = 128 bits — collision-safe at any
+// realistic distinct-config count, and "runtime-config-" + 32 stays well
+// under the 63-char DNS label limit.
+func runtimeConfigVolumeNameForContent(hash string) string {
+	if len(hash) > 32 {
+		hash = hash[:32]
+	}
+	return "runtime-config-" + hash
+}
+
+// RuntimeConfigBlobStore persists the content-addressed config bytes in the
+// database as the source of truth (CYB-3680): the in-cluster ConfigMap is a
+// disposable projection that self-heal layers can rebuild from the blob.
+type RuntimeConfigBlobStore interface {
+	Upsert(ctx context.Context, hash string, files map[string]string) error
 }
 
 type RuntimeConfigOwnerReference struct {
@@ -271,6 +325,32 @@ func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
 // SetRuntimeConfigStoreFactory wires the per-cluster runtime-config store
 // factory (CYB-3486). When set, Deploy creates the runtime-config ConfigMap on
 // the target's own cluster instead of the default-cluster singleton.
+// SetRuntimeConfigBlobStore wires the DB-backed blob source of truth for
+// content-addressed runtime configs (CYB-3680).
+func (uc *Usecase) SetRuntimeConfigBlobStore(s RuntimeConfigBlobStore) {
+	uc.runtimeConfigBlobs = s
+}
+
+// persistRuntimeConfigBlob best-effort persists the projection's bytes keyed
+// by content hash. Dispatch never blocks on it: the ConfigMap was already
+// ensured; the blob only powers rebuild/self-heal.
+func (uc *Usecase) persistRuntimeConfigBlob(ctx context.Context, p *RuntimeConfigProjection) {
+	if uc.runtimeConfigBlobs == nil || p == nil || p.ContentHash == "" {
+		return
+	}
+	files := make(map[string]string, len(p.Files)+1)
+	for k, v := range p.Files {
+		files[k] = v
+	}
+	if name := strings.TrimSpace(p.FileName); name != "" {
+		files[name] = p.Content
+	}
+	if err := uc.runtimeConfigBlobs.Upsert(ctx, p.ContentHash, files); err != nil {
+		slog.Warn("runtime config blob upsert failed (self-heal source degraded)",
+			"hash", p.ContentHash, "err", err)
+	}
+}
+
 func (uc *Usecase) SetRuntimeConfigStoreFactory(f RuntimeConfigStoreFactory) {
 	uc.runtimeConfigStoreFactory = f
 }
@@ -3828,7 +3908,12 @@ func (uc *Usecase) Deploy(
 	var runtimeConfigProjection *RuntimeConfigProjection
 	if runtimeConfig != nil || len(nodeRuntimeConfigs) > 0 {
 		projection := buildRuntimeConfigProjection(runtimeConfig, nodeRuntimeConfigs)
-		volumeName := runtimeConfigVolumeNameForDeployment(depID)
+		// CYB-3680: content-addressed name — identical config content across a
+		// batch collapses to ONE shared ConfigMap per namespace instead of one
+		// per run, and the name needs no server-side identity so the CM can be
+		// ensured BEFORE the Workflow exists.
+		projection.ContentHash = runtimeConfigProjectionHash(projection)
+		volumeName := runtimeConfigVolumeNameForContent(projection.ContentHash)
 		projection.VolumeName = volumeName
 		runtimeConfigProjection = &projection
 		if runtimeConfig != nil {
@@ -3942,9 +4027,6 @@ func (uc *Usecase) Deploy(
 	if runtimeConfigProjection != nil && uc.runtimeConfigStore == nil && uc.runtimeConfigStoreFactory == nil {
 		return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
 	}
-	if runtimeConfigProjection != nil && uc.wfClient == nil {
-		return nil, fmt.Errorf("%w: runtime config owner lookup requires workflow client", ErrWorkflowUnavailable)
-	}
 	// CYB-3486 PR 4c.1: resolve the target's argo client ONCE and use it for
 	// every subsequent workflow op in this Deploy call. Previously each op
 	// hit uc.wfClient (the process-global singleton), so a delivery-clust
@@ -3953,6 +4035,24 @@ func (uc *Usecase) Deploy(
 	if err != nil {
 		return nil, err
 	}
+	// CYB-3680: ensure the runtime-config ConfigMap BEFORE the Workflow. The
+	// content-addressed name needs no server identity, so the historical
+	// ordering (owner UID required the Workflow first) is gone — and with it
+	// the crash window that stranded pods on a ConfigMap that was never
+	// created (the Init:0/1 FailedMount class). Owner-less by design: the CM
+	// is shared across runs; its lifecycle belongs to the TTL janitor, and
+	// the DB blob is the rebuildable source of truth.
+	if runtimeConfigProjection != nil {
+		configStore, err := uc.resolveRuntimeConfigStore(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve runtime config store: %w", err)
+		}
+		if _, err := configStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, nil); err != nil {
+			return nil, fmt.Errorf("ensure runtime config: %w", err)
+		}
+		uc.persistRuntimeConfigBlob(ctx, runtimeConfigProjection)
+	}
+
 	status := "Pending"
 	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, client, depID, pipeName, wf, targetNamespace)
 	if err != nil {
@@ -3969,34 +4069,9 @@ func (uc *Usecase) Deploy(
 		wfUID = strings.TrimSpace(runtimeJob.Ref.UID)
 	}
 	wfDetail := workflowFromRuntimeJob(runtimeJob)
-	if runtimeConfigProjection != nil {
-		if client == nil {
-			return nil, fmt.Errorf("%w: runtime config projection requires an argo client", ErrWorkflowUnavailable)
-		}
-		wfDetail, err = uc.getWorkflowWithUID(ctx, client, wfName, targetNamespace)
-		if err != nil {
-			logPipelineSideEffect("delete workflow after runtime config owner lookup failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
-			return nil, fmt.Errorf("resolve runtime config owner workflow: %w", err)
-		}
-		owner := &RuntimeConfigOwnerReference{
-			APIVersion: "argoproj.io/v1alpha1",
-			Kind:       "Workflow",
-			Name:       wfName,
-			UID:        string(wfDetail.UID),
-		}
-		// CYB-3486: resolve the store for THIS target's cluster. Without this the
-		// ConfigMap is created via the default-cluster clientset, so a delivery
-		// run fails with `namespaces "cyber-delivery-prod" not found`.
-		configStore, err := uc.resolveRuntimeConfigStore(ctx, target)
-		if err != nil {
-			logPipelineSideEffect("delete workflow after runtime config store resolve failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
-			return nil, fmt.Errorf("resolve runtime config store: %w", err)
-		}
-		if _, err := configStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, owner); err != nil {
-			logPipelineSideEffect("delete workflow after runtime config projection failed", client.DeleteWorkflow(ctx, wfName, targetNamespace))
-			return nil, fmt.Errorf("create runtime config projection: %w", err)
-		}
-	}
+	// (CYB-3680) The post-submit ConfigMap block — owner-UID lookup, create,
+	// and its delete-workflow compensations — is gone: the CM is ensured
+	// before submission, owner-less and content-addressed.
 	if client != nil && (wfDetail == nil || wfUID == "" || status == "Pending") {
 		phase, err := client.GetWorkflowStatus(ctx, wfName, targetNamespace)
 		if err == nil && phase != "" {
