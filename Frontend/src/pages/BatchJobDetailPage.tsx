@@ -60,6 +60,7 @@ import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
 } from "../lib/pipelineNavigation";
+import { humanizeDlqReason } from "../lib/dispatcher";
 import {
 	formatBatchJobStatus,
 	formatWorkflowPhaseLabel,
@@ -503,7 +504,8 @@ function renderRunTreeReason(reason: RunBlockingReason) {
 					ellipsis={{ tooltip: reason.message }}
 					style={{ maxWidth: 520 }}
 				>
-					{reason.message}
+					{/* CYB-3679: 人话优先,原始信息进 tooltip */}
+					{humanizeDlqReason(reason.message)}
 				</Text>
 			) : null}
 		</Space>

@@ -95,6 +95,9 @@ type Usecase struct {
 	// per-cluster dispatch governors (CYB-3678)
 	governorMu sync.Mutex
 	governors  map[string]*clusterGovernor
+	// online dispatcher tuning (CYB-3679)
+	dispatcherCfgRepo  dispatcherConfigStore
+	dispatcherCfgState dispatcherConfigState
 	// bootJitter delays the boot-eager cycle (0–5s default) so simultaneous
 	// instance cold-starts de-align (C17). Nil in tests = no delay.
 	bootJitter func() time.Duration

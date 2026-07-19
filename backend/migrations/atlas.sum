@@ -1,4 +1,4 @@
-h1:ciiBUCr8p6c8tvixngVn4yNHzh+spKJubQAgIVWyIHw=
+h1:LTwj1wivAOaDYYzv3yp7jXU1gOPvZViWfxw0ROuzoWk=
 20260708104125_baseline_from_dev.sql h1:4Au3WycWryjm8C+s2O0DaYIj6iRQNFnoC70uJ4bL2fg=
 20260708223517_add_databrew_runs_family.sql h1:I4rHssD4Du7x5eaJAYZG0hcHioeE7CltyS/dv3eE03Q=
 20260708223937_drop_dead_pipeline_tables.sql h1:PPRe63ihj3bok43hQycuSEoQtj/0QP1Szauhxz+Sv2U=
@@ -15,3 +15,4 @@ h1:ciiBUCr8p6c8tvixngVn4yNHzh+spKJubQAgIVWyIHw=
 20260719120000_batch_jobs_processing_to_running.sql h1:y9eIU79FTak2H2i6S1n9Xk/bmIS9q33fif8U51/N0FU=
 20260719150000_runtime_config_blobs.sql h1:tggPu0OXHroP3PZLTzCXo6mjAMFTSJqWxM4C/219cco=
 20260719170000_backfill_items_submit_attempts.sql h1:PurNtQ8JvkpymAzhYD+Qvtm8RDa59lhPHVUMxLG+SoE=
+20260719200000_dispatcher_config.sql h1:9HPqcL/QgomgT8eAMkGjHM0JCGNbRm8R8pzVDSjl35Q=

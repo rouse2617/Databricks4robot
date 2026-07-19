@@ -134,6 +134,7 @@ func (uc *Usecase) runSubmitterCycle(ctx context.Context) {
 	if uc.submitQueue == nil || uc.deployer == nil {
 		return
 	}
+	uc.refreshDispatcherConfigs(ctx) // CYB-3679: pick up online tuning each cycle
 	jobs, err := uc.submitQueue.FindSubmittableJobs(ctx, submittableJobsPerCycle)
 	if err != nil {
 		slog.Warn("submitter: find submittable jobs failed", "err", err)
@@ -170,6 +171,11 @@ func (uc *Usecase) runSubmitterCycle(ctx context.Context) {
 // Pilot jobs only submit within the remaining pilot quota.
 func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, gov *clusterGovernor) (int, []submitOutcome) {
 	limit := perJobSubmitBatch
+	if gov != nil {
+		if sb := gov.submitBatchLimit(); sb > 0 {
+			limit = sb // CYB-3679 per-cluster override
+		}
+	}
 	if job.Status == "pilot_running" && job.PilotCount > 0 {
 		pending, err := uc.repo.CountItemsByStatus(ctx, job.ID, "pending")
 		if err != nil {

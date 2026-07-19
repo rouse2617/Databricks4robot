@@ -322,6 +322,13 @@ var (
 		},
 		[]string{"cluster"},
 	)
+	DispatcherChannelPaused = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_channel_paused",
+			Help: "1 when a cluster's dispatch channel is paused by dispatcher config (CYB-3679)",
+		},
+		[]string{"cluster"},
+	)
 	DispatcherChannelBreakerTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "backend_dispatcher_channel_breaker_total",

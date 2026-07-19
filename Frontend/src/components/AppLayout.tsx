@@ -1,5 +1,6 @@
 import {
 	ApartmentOutlined,
+	ControlOutlined,
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
@@ -56,6 +57,7 @@ const menuItems = [
 		label: "指标检索",
 	},
 	{ key: "/api-keys", icon: <KeyOutlined />, label: "API 密钥" },
+	{ key: "/dispatcher", icon: <ControlOutlined />, label: "调度调参" },
 	{ key: "/settings", icon: <SettingOutlined />, label: "设置" },
 ];
 

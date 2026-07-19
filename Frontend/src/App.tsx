@@ -26,6 +26,7 @@ const RegistryCenterPage = lazy(() => import("./pages/RegistryCenterPage"));
 const MetricsSearchPage = lazy(() => import("./pages/MetricsSearchPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage"));
+const DispatcherPage = lazy(() => import("./pages/DispatcherPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
@@ -99,6 +100,7 @@ function ProtectedRoutes() {
 							element={<BatchJobDetailPage />}
 						/>
 						<Route path="/settings" element={<SettingsPage />} />
+						<Route path="/dispatcher" element={<DispatcherPage />} />
 						<Route path="/api-keys" element={<ApiKeysPage />} />
 						{/* <Route path="/preview" element={<PreviewPage />} /> */}
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />

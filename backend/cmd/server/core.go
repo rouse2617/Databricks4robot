@@ -224,6 +224,9 @@ func setupCore(inf *infra) *coreHandlers {
 	// boot-time ResumeIncompleteBatches, and the P0 pool-recovery stopgap are
 	// all gone. Argo owns queueing/parallelism/execution from here.
 	backfillUC.SetSubmitQueue(backfillRepo)
+	// CYB-3679: per-cluster online tuning (concurrency/rate/batch/paused) —
+	// re-read every cycle, so a PUT bites within one tick.
+	backfillUC.SetDispatcherConfigRepo(postgres.NewDispatcherConfigRepo(pg))
 	backfillUC.StartSubmitter()
 	// CYB-3677: the legacy batch entry now persists jobs for the submitter
 	// (durable dispatch) instead of a one-shot in-memory goroutine. The kick

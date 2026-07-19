@@ -77,6 +77,8 @@ type clusterGovernor struct {
 	configured int
 	effective  int
 	floor      int
+	// batchLimit overrides perJobSubmitBatch when >0 (CYB-3679 online tuning).
+	batchLimit int
 
 	// per-cycle window
 	slow      int // submits slower than slowSubmitThreshold
@@ -97,6 +99,39 @@ func newClusterGovernor(configured int) *clusterGovernor {
 		effective:  configured,
 		floor:      floor,
 	}
+}
+
+// applyConfig retunes the governor online (CYB-3679): new concurrency ceiling
+// (effective clamps into [floor, configured]), token-bucket rate, and per-job
+// submit batch. Idempotent — applying the same config is a no-op.
+func (g *clusterGovernor) applyConfig(maxConcurrency int, ratePerSec float64, submitBatch int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if maxConcurrency > 0 && maxConcurrency != g.configured {
+		g.configured = maxConcurrency
+		g.floor = maxConcurrency / 4
+		if g.floor < 1 {
+			g.floor = 1
+		}
+		if g.effective > g.configured {
+			g.effective = g.configured
+		}
+		if g.effective < g.floor {
+			g.effective = g.floor
+		}
+	}
+	if ratePerSec > 0 && rate.Limit(ratePerSec) != g.limiter.Limit() {
+		g.limiter.SetLimit(rate.Limit(ratePerSec))
+		g.limiter.SetBurst(int(ratePerSec) * 2)
+	}
+	g.batchLimit = submitBatch
+}
+
+// submitBatchLimit returns the per-job batch override (0 = compiled default).
+func (g *clusterGovernor) submitBatchLimit() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.batchLimit
 }
 
 // slots returns the current in-flight concurrency bound.
@@ -194,6 +229,18 @@ type clusterCycleLocker interface {
 // batch (backlog remains → the caller self-kicks instead of waiting a tick).
 func (uc *Usecase) runClusterChannel(ctx context.Context, cluster string, jobs []*models.BackfillJob) bool {
 	refill := false
+	// Online tuning (CYB-3679): paused wins over everything — an operator
+	// pause must stop dispatch within one tick. Non-paused config retunes the
+	// governor in place (AIMD keeps working around the new ceiling).
+	if cfg, ok := uc.dispatcherConfigFor(cluster); ok {
+		if cfg.Paused {
+			metrics.DispatcherChannelPaused.WithLabelValues(cluster).Set(1)
+			slog.Info("submitter: channel paused by dispatcher config, skipping", "cluster", cluster)
+			return false
+		}
+		uc.governorFor(cluster).applyConfig(cfg.MaxConcurrency, cfg.RatePerSec, cfg.SubmitBatch)
+	}
+	metrics.DispatcherChannelPaused.WithLabelValues(cluster).Set(0)
 	body := func(ctx context.Context) error {
 		gov := uc.governorFor(cluster)
 		consecutiveTransient := 0
