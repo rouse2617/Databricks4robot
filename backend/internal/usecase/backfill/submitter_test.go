@@ -283,11 +283,13 @@ func TestSubmitter_IncompleteSubmitLeavesItemPending(t *testing.T) {
 	}
 }
 
-// AlreadyExists but the workflow isn't readable in Argo (e.g. GC'd right after
-// create) → the refreshed run still has no uid. The item must stay PENDING;
-// marking it submitted would strand it forever (invariant ②: only pending items
-// are re-listed by the submitter).
-func TestSubmitter_AlreadyExistsWithoutUIDLeavesItemPending(t *testing.T) {
+// AlreadyExists but the workflow isn't readable in Argo: our create landed
+// (per-run UUID name) and the CR was TTL/GC-cleaned before the uid read-back —
+// the normal shape for seconds-long tasks at burst rate. The item must advance
+// to SUBMITTED (watcher orphan grading owns the run from here); leaving it
+// pending wedged the whole channel in the G1 load test: the retry loop never
+// counted toward the attempt cap and tripped the breaker every cycle.
+func TestSubmitter_AlreadyExistsWithoutUIDMarksSubmitted(t *testing.T) {
 	ctx := context.Background()
 	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
 	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
@@ -298,8 +300,8 @@ func TestSubmitter_AlreadyExistsWithoutUIDLeavesItemPending(t *testing.T) {
 
 	uc.runSubmitterCycle(ctx)
 
-	if got := itemStatus(repo, "item-1"); got != "pending" {
-		t.Fatalf("item status = %q, want pending (uid-less run must not be surfaced submitted)", got)
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (run resolution is the watcher's job)", got)
 	}
 	if len(d.refreshes) != 1 {
 		t.Fatalf("refreshes = %v, want exactly one attempt", d.refreshes)

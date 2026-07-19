@@ -363,15 +363,20 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 					"jobID", job.ID, "itemID", item.ID, "workflow", workflowName, "err", refreshErr)
 				return outcomeTransient, refreshErr
 			}
-			// AlreadyExists but the CR isn't actually readable in Argo (name
-			// reuse, or the CR was GC'd right after create) → the run still has
-			// no uid. Advancing to "submitted" here would strand the item
-			// forever (invariant ②: only pending items get re-listed). Leave it
-			// pending so the next cycle re-submits.
+			// AlreadyExists with an unreadable CR: our create definitively
+			// landed (the name is a per-run UUID minted by us), but the
+			// workflow already finished and was TTL/GC-cleaned before the uid
+			// could be read back — the normal shape for seconds-long tasks at
+			// burst rate (G1 load test, CYB-3678 hotfix). Re-submitting
+			// forever wedges the whole channel: every cycle re-fails, the
+			// breaker trips, throughput drops to zero, and this path never
+			// counted toward the attempt cap. Mark the item submitted and let
+			// the watcher's orphan grading resolve the run from Argo/ledger
+			// truth (item status then follows the run on writeback).
 			if refreshed == nil || !runAlreadySubmitted(refreshed) {
-				slog.Warn("submitter: already-exists but run still has no uid, leaving pending",
+				slog.Warn("submitter: already-exists but CR unreadable (likely TTL-cleaned), marking submitted for watcher resolution",
 					"jobID", job.ID, "itemID", item.ID, "workflow", workflowName)
-				return outcomeTransient, fmt.Errorf("%w: already-exists without a readable workflow", pipelineUC.ErrWorkflowSubmitIncomplete)
+				return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "submitted")
 			}
 			return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "submitted")
 		}
