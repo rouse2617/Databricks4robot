@@ -14,11 +14,29 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
-// PricingConfig maps GCP machine types to hourly USD rates.
+// provisioning tiers used to key unit rates.
+const (
+	provisioningStandard = "standard"
+	provisioningSpot     = "spot"
+)
+
+// PricingConfig holds per-resource unit rates used to price pipeline pods.
+//
+// Units maps an Argo resourcesDuration resource name to its unit rate per
+// provisioning tier, e.g.:
+//
+//	units:
+//	  cpu:            { standard: 0.0300, spot: 0.0100 }  # $/vCPU-hour
+//	  nvidia.com/gpu: { standard: 0.9500, spot: 0.3000 }  # $/GPU-hour
+//	  memory:         { standard: 0.0004, spot: 0.0001 }  # $/100Mi-hour
+//
+// The keys match Argo's resourcesDuration keys directly, so pricing degrades
+// gracefully: an unknown/unpriced resource contributes $0 rather than a wrong
+// fallback. Future accelerators (e.g. nvidia.com/h100) are added as new keys.
 type PricingConfig struct {
-	Region            string         `yaml:"region"`
-	CalibrationFactor float64        `yaml:"calibration_factor"`
-	Prices            map[string]any `yaml:"prices"`
+	Region            string                        `yaml:"region"`
+	CalibrationFactor float64                       `yaml:"calibration_factor"`
+	Units             map[string]map[string]float64 `yaml:"units"`
 }
 
 var (
@@ -30,6 +48,9 @@ var (
 // path. Successful loads are cached so subsequent calls for the same path skip
 // the file read; transient read/parse failures are not cached so a later fixed
 // file can still load. Different paths are cached independently.
+//
+// This is the single load point for pricing; a future online-config source can
+// populate the same PricingConfig struct without changing the cost math.
 func LoadPricing(path string) (*PricingConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
@@ -50,8 +71,8 @@ func LoadPricing(path string) (*PricingConfig, error) {
 	if cfg.CalibrationFactor == 0 {
 		cfg.CalibrationFactor = 1.0
 	}
-	if cfg.Prices == nil {
-		cfg.Prices = map[string]any{}
+	if cfg.Units == nil {
+		cfg.Units = map[string]map[string]float64{}
 	}
 	pricingByPath[path] = &cfg
 	return &cfg, nil
@@ -64,127 +85,83 @@ func resetPricingCache() {
 	pricingByPath = map[string]*PricingConfig{}
 }
 
-// resourcesDurationToCost computes estimated cost in USD from Argo's
-// resourcesDuration map. The function is deterministic: same inputs always
-// produce the same cost.
+// resourcesDurationToCost computes estimated cost in USD by summing each Argo
+// resourcesDuration resource against its per-resource unit rate. Deterministic:
+// same inputs always produce the same cost.
 //
-// The resourcesDuration keys are resource names ("cpu", "memory",
-// "nvidia.com/gpu") with values in seconds of usage. Pricing lookup uses
-// the instance_type and provisioning_mode keys when present; when absent
-// it falls back to the "g2-standard-16" / "nvidia-l4" / "standard" path
-// as the default GPU pipeline configuration.
+// Argo's resourcesDuration is already expressed as "resource-quantity × seconds"
+// in a fixed base unit per resource:
+//   - cpu            = cores × seconds        → priced by $/vCPU-hour
+//   - nvidia.com/gpu = gpus  × seconds        → priced by $/GPU-hour
+//   - memory         = (100Mi-units) × seconds → priced by $/100Mi-hour
 //
-// Costing model and its known approximations (intentional — see decision A1):
-//   - cost = dominantResourceSeconds * instanceHourlyRate / 3600. We bill the
-//     whole instance by wall-clock, using one resource's duration (GPU > CPU >
-//     max) as a wall-clock proxy rather than summing cpu+memory+gpu durations.
-//   - When the node carries no embedded instance_type/gpu_type, we default to
-//     the GPU node pool rate. A CPU-only step therefore gets priced at the GPU
-//     instance hourly rate, which OVERESTIMATES non-GPU work. This is accepted
-//     for now; tighten by embedding per-node instance info during Argo refresh.
+// So cost = Σ_r resourcesDuration[r] × unit_rate[r][provisioning] / 3600. This
+// is why we do NOT convert to wall-clock or multiply by a whole-instance rate:
+// core-seconds is the correct quantity to multiply by a per-vCPU-hour rate.
+//
+// Design notes:
+//   - GPU cost is added only when nvidia.com/gpu > 0, so a CPU-only step never
+//     inherits GPU pricing even when the node's machine type is unresolved.
+//   - provisioning comes from the resolved cloud.google.com/gke-provisioning
+//     label (embedded during Argo refresh) and defaults to "standard" when
+//     unavailable — an unresolved spot node is over-estimated by ≤3×, never the
+//     ~10× a whole-instance GPU fallback produced.
+//   - Per-vCPU rates vary only ~1.6× across machine types, so a single blended
+//     cpu rate keeps the estimate best-effort without per-cluster node RBAC.
 func resourcesDurationToCost(rd map[string]any, pricing *PricingConfig) *float64 {
-	if pricing == nil || len(rd) == 0 {
+	if pricing == nil || len(rd) == 0 || len(pricing.Units) == 0 {
 		return nil
 	}
 
-	// Default instance specs for the primary GPU node pool.
-	instanceType := "g2-standard-16"
-	gpuType := "nvidia-l4"
-	provisioning := "standard"
-
-	// If the node has explicit instance info embedded (set during Argo refresh),
-	// use that instead. For now we default to the GPU pool.
-	if v, ok := rd["instance_type"].(string); ok && v != "" {
-		instanceType = v
-	}
-	if v, ok := rd["gpu_type"].(string); ok && v != "" {
-		gpuType = v
-	}
-	if v, ok := rd["provisioning"].(string); ok && v != "" {
-		provisioning = v
+	provisioning := provisioningStandard
+	if v, ok := rd["provisioning"].(string); ok && strings.TrimSpace(v) == provisioningSpot {
+		provisioning = provisioningSpot
 	}
 
-	hourlyRate := lookupHourlyRate(pricing, instanceType, gpuType, provisioning)
-	if hourlyRate == nil {
+	var cost float64
+	priced := false
+	for resource, raw := range rd {
+		switch resource {
+		case "instance_type", "gpu_type", "provisioning":
+			// Metadata keys embedded during Argo refresh, not billable resources.
+			continue
+		}
+		sec, ok := toFloat64(raw)
+		if !ok || sec <= 0 {
+			continue
+		}
+		// A positive resource duration means the pod ran; record the cost even
+		// when its unit rate is 0 so the snapshot is considered present and the
+		// refresh loop does not keep retrying an unpriced node.
+		priced = true
+		cost += sec * unitRate(pricing, resource, provisioning) / 3600.0
+	}
+	if !priced {
 		return nil
 	}
 
-	// Argo tracks each resource independently. Use the dominant resource
-	// duration as wall-clock runtime; short pods can report cpu=0 while memory
-	// still has a positive duration.
-	var totalSec float64
-	if gpuSec, ok := toFloat64(rd["nvidia.com/gpu"]); ok && gpuSec > 0 {
-		totalSec = gpuSec
-	} else if cpuSec, ok := toFloat64(rd["cpu"]); ok && cpuSec > 0 {
-		totalSec = cpuSec
-	} else if maxSec := maxResourceDurationSeconds(rd); maxSec > 0 {
-		totalSec = maxSec
-	} else {
-		return nil
-	}
-
-	cost := totalSec * (*hourlyRate) / 3600.0
+	cost *= pricing.CalibrationFactor
 	if math.IsNaN(cost) || math.IsInf(cost, 0) {
 		return nil
 	}
 	return &cost
 }
 
-func maxResourceDurationSeconds(rd map[string]any) float64 {
-	var maxSec float64
-	for key, raw := range rd {
-		switch key {
-		case "instance_type", "gpu_type", "provisioning":
-			continue
-		}
-		sec, ok := toFloat64(raw)
-		if ok && sec > maxSec {
-			maxSec = sec
-		}
-	}
-	return maxSec
-}
-
-// lookupHourlyRate resolves (instance_type, gpu_type, provisioning) → $/hr.
-// Returns nil when the combination is not found in pricing.
-func lookupHourlyRate(pricing *PricingConfig, instanceType, gpuType, provisioning string) *float64 {
-	prices := pricing.Prices
-	if prices == nil {
-		return nil
-	}
-
-	instBlockRaw, ok := prices[instanceType]
+// unitRate returns the $/hour unit rate for a resource at a provisioning tier.
+// Falls back to the standard tier when the specific tier is absent, and 0 when
+// the resource is not priced (unknown resources contribute nothing).
+func unitRate(pricing *PricingConfig, resource, provisioning string) float64 {
+	tiers, ok := pricing.Units[resource]
 	if !ok {
-		return nil
+		return 0
 	}
-	instBlock, ok := instBlockRaw.(map[string]any)
-	if !ok {
-		return nil
+	if rate, ok := tiers[provisioning]; ok {
+		return rate
 	}
-
-	gpuBlockRaw, ok := instBlock[gpuType]
-	if !ok {
-		gpuBlockRaw, ok = instBlock["none"]
-		if !ok {
-			return nil
-		}
+	if rate, ok := tiers[provisioningStandard]; ok {
+		return rate
 	}
-	gpuBlock, ok := gpuBlockRaw.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	rateRaw, ok := gpuBlock[provisioning]
-	if !ok {
-		return nil
-	}
-	rate, ok := toFloat64(rateRaw)
-	if !ok {
-		return nil
-	}
-
-	result := rate * pricing.CalibrationFactor
-	return &result
+	return 0
 }
 
 // isLeafPodNode reports whether a run node is a real executed pod (a leaf) whose
