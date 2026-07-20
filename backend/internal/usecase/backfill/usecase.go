@@ -117,6 +117,13 @@ type Usecase struct {
 	submitWg    sync.WaitGroup
 	submitKick  chan struct{}
 
+	// monWriter writes stale-items gauge to GCP Cloud Monitoring (CYB-3691).
+	// Nil = disabled. Writes are best-effort (logged on error, reconciler continues).
+	monWriter interface {
+		WriteInt64Metric(ctx context.Context, metricType string, value int64) error
+		Close() error
+	}
+
 	// Batch job completion Feishu notification (CYB-3071). notifier nil
 	// disables the feature entirely (no claim, no send).
 	notifier        Notifier
@@ -138,6 +145,15 @@ type Notifier interface {
 func (uc *Usecase) SetNotifier(sender Notifier, frontendBaseURL string) {
 	uc.notifier = sender
 	uc.frontendBaseURL = strings.TrimSpace(frontendBaseURL)
+}
+
+// SetMonWriter wires a Cloud Monitoring writer for dispatcher gauges (CYB-3691).
+// Nil is safe (no-ops), but the writer constructor returns nil only on error.
+func (uc *Usecase) SetMonWriter(mw interface {
+	WriteInt64Metric(ctx context.Context, metricType string, value int64) error
+	Close() error
+}) {
+	uc.monWriter = mw
 }
 
 // New creates a Usecase without transaction support.

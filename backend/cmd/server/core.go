@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
@@ -23,6 +24,7 @@ import (
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics/cloudmonitoring"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -212,6 +214,17 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+
+	// CYB-3691: write stale-items gauge to GCP Cloud Monitoring (best-effort).
+	// GOOGLE_CLOUD_PROJECT is set automatically by Cloud Run; fallback to
+	// "green-valley-442103" for local dev. The SA needs monitoring.metricWriter.
+	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(),
+		os.Getenv("GOOGLE_CLOUD_PROJECT")); mwErr == nil {
+		backfillUC.SetMonWriter(mw)
+		slog.Info("cloud monitoring writer initialized")
+	} else {
+		slog.Warn("cloud monitoring writer unavailable", "err", mwErr)
+	}
 	// Batch job completion Feishu notification (CYB-3071). Empty webhook URL
 	// disables it; feishu.Client.SendText becomes a no-op in that case.
 	backfillUC.SetNotifier(
