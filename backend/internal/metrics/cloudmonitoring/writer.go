@@ -12,6 +12,7 @@ package cloudmonitoring
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	computemetadata "cloud.google.com/go/compute/metadata"
@@ -21,6 +22,9 @@ import (
 	monitoredrespb "google.golang.org/genproto/googleapis/api/monitoredres"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// Force direct dep (go mod tidy may demote indirect ones).
+var _ = computemetadata.OnGCE
 
 const metricPrefix = "custom.googleapis.com/"
 
@@ -41,8 +45,15 @@ func NewWriter(ctx context.Context, projectID string) (*Writer, error) {
 		return nil, fmt.Errorf("cloudmonitoring: new client: %w", err)
 	}
 	if projectID == "" {
-		projectID, _ = computemetadata.ProjectID()
+		projectID, err = computemetadata.ProjectIDWithContext(ctx)
+		if err != nil {
+			slog.Warn("cloudmonitoring: metadata project id lookup failed", "err", err)
+		}
 	}
+	if projectID == "" {
+		return nil, fmt.Errorf("cloudmonitoring: project id empty after env and metadata lookup")
+	}
+	slog.Info("cloudmonitoring writer initialized", "project", projectID)
 	return &Writer{client: client, projectID: projectID}, nil
 }
 
@@ -52,6 +63,9 @@ func NewWriter(ctx context.Context, projectID string) (*Writer, error) {
 func (w *Writer) WriteInt64Metric(ctx context.Context, metricType string, value int64) error {
 	if w == nil {
 		return nil
+	}
+	if w.projectID == "" {
+		return fmt.Errorf("project id is empty, cannot write metric")
 	}
 	req := &monitoringpb.CreateTimeSeriesRequest{
 		Name: fmt.Sprintf("projects/%s", w.projectID),
