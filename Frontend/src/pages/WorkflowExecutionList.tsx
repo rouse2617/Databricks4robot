@@ -137,11 +137,10 @@ interface RunListFilterParams {
 	finishedBefore?: string;
 }
 
-// CYB-3491: 停滞判定使用 updatedAt (freshness) + 30min 阈值 —— 之前用
-// createdAt + 48h 只在任务活了两天之后才亮标,而实际停滞往往是"新任务
-// 十几分钟无进展"(收不到 webhook / poll 掉了)。仍是纯展示提示,不改
-// run status —— 原则:任务可以等,不该自动判死 (see #417)。
-const STALE_ACTIVE_RUN_MS = 30 * 60 * 1000;
+// CYB-3691: 停滞判定使用 updatedAt (freshness) + 3h 阈值 —— 大任务
+// 跑两三小时是常态（容器计算无阶段更新）,30min 过于敏感 (see #417)。
+// 仍是纯展示提示,不改 run status —— 原则:任务可以等,不该自动判死。
+const STALE_ACTIVE_RUN_MS = 3 * 60 * 60 * 1000;
 
 const isActiveWorkflowStatus = (status?: string): boolean =>
 	activeWorkflowStatuses.has(status ?? "");
@@ -1304,7 +1303,7 @@ export function WorkflowExecutionList({
 							{isStaleRunningWorkflow(record) ? (
 								// CYB-3491: 展示提示,不再对应"将自动标为失败"—— 任务保持
 								// Argo 真值,恢复更新后 tag 自然消失。
-								<Tooltip title="任务长时间无状态更新（>30 分钟）,可能停滞或平台跟丢了状态回执。刷新页面查看最新状态。">
+								<Tooltip title="任务长时间无状态更新（>3 小时）,可能停滞或平台跟丢了状态回执。刷新页面查看最新状态。">
 									<Tag color="warning">疑似停滞</Tag>
 								</Tooltip>
 							) : null}
