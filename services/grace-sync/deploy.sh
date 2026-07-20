@@ -13,13 +13,13 @@ if [ "$ENV" = "prod" ]; then
 
   # Prod 配置
   GRACE_USERNAME="grace-service-prod"
-  GRACE_API_URL="https://main.cyber-grace.pages.dev/api"
+  GRACE_API_URL="https://grace.cyberorigin.ai/api"
   GRACE_PASSWORD_SECRET="grace-api-prod"
 
   DATABREW_URL="https://cyber-databrew.cyberorigin.ai/api/v1"
   DATABREW_TOKEN_SECRET="cyber-databrew-prod-databrew-token"
 
-  PIPELINE_TEMPLATE_ID="05c18471-9182-4af6-a373-31e802ea5121"
+  PIPELINE_TEMPLATE_ID="9138dc6d-8577-48e3-81d6-c7c2cde70adc"
   TARGET_ID="video-proc-prod"
 
   FEISHU_BOT_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/d611e124-3bde-4688-8dac-93b86edb2c7a"
