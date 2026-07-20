@@ -24,6 +24,7 @@ import {
 	Space,
 	Tag,
 	Tooltip,
+	Typography,
 } from "antd";
 import {
 	type ChangeEvent,
@@ -39,10 +40,12 @@ import {
 	type DeployConfigSelection,
 	type Deployment,
 	deletePipeline,
+	type ElasticQuota,
 	type ExecutionTarget,
 	getPipeline,
 	type ListPipelinesParams,
 	listDeployments,
+	listElasticQuotas,
 	listExecutionTargets,
 	listPipelines,
 	listPipelineVersions,
@@ -65,6 +68,15 @@ import {
 	TEMPLATE_PAGE_SIZE,
 } from "./deployPanelUtils";
 import { PipelineEmptyState } from "./PipelineEmptyState";
+import { PoolUsageBar } from "./PoolUsageBar";
+import {
+	distinctClusterKeys,
+	matchPoolEq,
+	poolAvailability,
+	poolAvailabilityLabel,
+	poolEqName,
+	poolFreeSummary,
+} from "./poolUsage";
 import type { Pipeline } from "./types";
 import { VersionHistoryDrawer } from "./VersionHistoryDrawer";
 
@@ -75,6 +87,18 @@ const STATUS_COLORS: Record<string, string> = {
 	Failed: "error",
 	Error: "error",
 	Expired: "default",
+};
+
+// Shown in the pool picker when no execution targets loaded, so the field is
+// never empty (and the run still points at the backend default target).
+const DEFAULT_FALLBACK_TARGET: ExecutionTarget = {
+	id: "default",
+	name: "Default Argo target",
+	namespace: "default",
+	cluster: "default",
+	status: "unavailable",
+	isDefault: true,
+	argoServerConfigured: false,
 };
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
@@ -551,6 +575,14 @@ export function DeployPanel({
 			}
 		>
 	>({});
+	// Live Koordinator ElasticQuota usage keyed by cluster (CYB-3486), so the
+	// pool picker can surface min/max/used for koord pools instead of leaving
+	// deployers to pick blind. Namespace-coarse pools have no EQ and fall back to
+	// the ResourceQuota view above.
+	const [eqsByCluster, setEqsByCluster] = useState<
+		Record<string, ElasticQuota[]>
+	>({});
+	const [eqsLoading, setEqsLoading] = useState(false);
 
 	// Fetch live quota data
 	useEffect(() => {
@@ -559,6 +591,32 @@ export function DeployPanel({
 			.then((data) => setQuotaMap(data.items || {}))
 			.catch(() => {});
 	}, []);
+
+	// Fetch ElasticQuota usage once when the run modal opens (not polled). One
+	// request per distinct cluster among the pools; failures degrade to the
+	// namespace-quota view.
+	useEffect(() => {
+		if (!assetModalOpen) return;
+		let cancelled = false;
+		setEqsLoading(true);
+		const keys = distinctClusterKeys(targets);
+		Promise.all(
+			keys.map((key) =>
+				listElasticQuotas(key || undefined)
+					.then((list) => [key, list] as const)
+					.catch(() => [key, [] as ElasticQuota[]] as const),
+			),
+		).then((pairs) => {
+			if (cancelled) return;
+			const map: Record<string, ElasticQuota[]> = {};
+			for (const [key, list] of pairs) map[key] = list;
+			setEqsByCluster(map);
+			setEqsLoading(false);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [assetModalOpen, targets]);
 	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>(
 		[],
 	);
@@ -634,6 +692,18 @@ export function DeployPanel({
 	const deployTargetTemplate = useMemo(
 		() => templates.find((item) => item.id === deployTargetId),
 		[deployTargetId, templates],
+	);
+	const poolTargets = useMemo(
+		() => (targets.length > 0 ? targets : [DEFAULT_FALLBACK_TARGET]),
+		[targets],
+	);
+	const selectedPool = useMemo(
+		() => poolTargets.find((target) => target.id === selectedTargetId),
+		[poolTargets, selectedTargetId],
+	);
+	const selectedPoolEq = useMemo(
+		() => (selectedPool ? matchPoolEq(selectedPool, eqsByCluster) : undefined),
+		[selectedPool, eqsByCluster],
 	);
 	const displayDeployments = useMemo(
 		() => prepareDeployments(deployments),
@@ -1627,38 +1697,72 @@ export function DeployPanel({
 					/>
 				</div>
 				<div className="deploy-run-field">
-					<div className="deploy-run-field__label">存储池</div>
+					<div className="deploy-run-field__label">资源池</div>
 					<Select
-						aria-label="存储池"
+						aria-label="资源池"
 						value={selectedTargetId}
 						onChange={setSelectedTargetId}
 						style={{ width: "100%" }}
-						options={(targets.length > 0
-							? targets
-							: [
-									{
-										id: "default",
-										name: "Default Argo target",
-										namespace: "default",
-										cluster: "default",
-										status: "unavailable",
-										isDefault: true,
-										argoServerConfigured: false,
-									} satisfies ExecutionTarget,
-								]
-						).map((target) => {
-							const q = quotaMap[target.namespace];
-							const usage = q ? `  ⚡${q.cpu.used}/${q.cpu.hard}C` : "";
+						options={poolTargets.map((target) => {
+							// Prefer live ElasticQuota usage for koord pools; fall back to
+							// the namespace ResourceQuota for coarse namespace pools.
+							const eq = matchPoolEq(target, eqsByCluster);
+							const nsq = quotaMap[target.namespace];
+							let usage = "";
+							let title = "";
+							if (eq) {
+								usage = ` · ${poolAvailabilityLabel(poolAvailability(eq))} · ${poolFreeSummary(eq)}`;
+								title = `弹性配额 ${eq.name} — CPU ${eq.used.cpu}/${eq.min.cpu}/${eq.max.cpu} · Mem ${eq.used.memory}/${eq.min.memory}/${eq.max.memory}（used/min/max）`;
+							} else if (nsq) {
+								usage = ` · ⚡${nsq.cpu.used}/${nsq.cpu.hard}C`;
+								title = `命名空间配额 — CPU ${nsq.cpu.used}/${nsq.cpu.hard} · MEM ${nsq.memory.used}/${nsq.memory.hard}`;
+							}
 							return {
 								value: target.id,
 								label: `${target.name}${usage}`,
-								title: q
-									? `CPU: ${q.cpu.used}/${q.cpu.hard}  MEM: ${q.memory.used}/${q.memory.hard}`
-									: "",
+								title,
 								disabled: target.status !== "available",
 							};
 						})}
 					/>
+					{selectedPool ? (
+						<div style={{ marginTop: 8 }} data-testid="pool-usage">
+							{selectedPoolEq ? (
+								<Space direction="vertical" size={4} style={{ width: "100%" }}>
+									<PoolUsageBar
+										label="CPU"
+										used={selectedPoolEq.used.cpu}
+										min={selectedPoolEq.min.cpu}
+										max={selectedPoolEq.max.cpu}
+										percent={selectedPoolEq.utilizationPercent.cpu}
+									/>
+									<PoolUsageBar
+										label="Mem"
+										used={selectedPoolEq.used.memory}
+										min={selectedPoolEq.min.memory}
+										max={selectedPoolEq.max.memory}
+										percent={selectedPoolEq.utilizationPercent.memory}
+									/>
+									<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+										弹性配额 {selectedPoolEq.name} · used / min / max ·
+										空闲时可跨池借用至 max
+									</Typography.Text>
+								</Space>
+							) : poolEqName(selectedPool) ? (
+								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+									弹性配额 {poolEqName(selectedPool)} ·{" "}
+									{eqsLoading ? "加载用量…" : "用量数据暂不可用"}
+								</Typography.Text>
+							) : (
+								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+									整命名空间池 · 无弹性配额可视
+									{quotaMap[selectedPool.namespace]
+										? `（命名空间 CPU ${quotaMap[selectedPool.namespace].cpu.used}/${quotaMap[selectedPool.namespace].cpu.hard}）`
+										: ""}
+								</Typography.Text>
+							)}
+						</div>
+					) : null}
 				</div>
 				<div className="deploy-run-field" data-testid="deploy-config-panel">
 					{/* CYB-3391: fold the advanced block into a Collapse — collapsed by

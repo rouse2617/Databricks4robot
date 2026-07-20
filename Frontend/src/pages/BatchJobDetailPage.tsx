@@ -45,6 +45,7 @@ import {
 } from "../api/batchJobApi";
 import {
 	listPipelineVersions,
+	type PipelineRun,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
 import {
@@ -54,10 +55,12 @@ import {
 	type RunChildSummary,
 } from "../api/runApi";
 import type { WorkflowSummary } from "../api/workflowApi";
+import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
 } from "../lib/pipelineNavigation";
+import { humanizeDlqReason } from "../lib/dispatcher";
 import {
 	formatBatchJobStatus,
 	formatWorkflowPhaseLabel,
@@ -353,21 +356,17 @@ function exportFailuresCsv(
 	URL.revokeObjectURL(url);
 }
 
-function extractAssetIds(runs: RunChildSummary[]): string[] {
+// 入参是 run 树的子 run 行(PipelineRun),不是 RunChildSummary(那是聚合统计,
+// 之前的注解写反导致 tsc 恒红)。后端 run JSON 只有 assetIds,没有 labels 字段
+// (models.PipelineRun 无 Labels),原先的 labels.asset_id 回退是永不可达的死分支。
+function extractAssetIds(runs: PipelineRun[]): string[] {
 	const ids = new Set<string>();
 	for (const item of runs) {
-		// 优先从 assetIds 数组中获取
 		if (item.assetIds && item.assetIds.length > 0) {
 			for (const id of item.assetIds) {
 				const trimmed = id?.trim();
 				if (trimmed) ids.add(trimmed);
 			}
-		} else if (item.labels?.asset_id) {
-			const trimmed = item.labels.asset_id.trim();
-			if (trimmed) ids.add(trimmed);
-		} else if (item.labels?.assetId) {
-			const trimmed = item.labels.assetId.trim();
-			if (trimmed) ids.add(trimmed);
 		}
 	}
 	return Array.from(ids);
@@ -478,6 +477,7 @@ const RUN_TREE_REASON_LABELS: Record<string, string> = {
 	runtime_missing: "Runtime 不可用",
 	stale_running: "超时",
 	runtime_config_projection_failed: "运行配置投影失败",
+	workflow_rbac_forbidden: "工作流权限不足",
 	cancelled: "已取消",
 	run_failed: "运行失败",
 };
@@ -504,7 +504,8 @@ function renderRunTreeReason(reason: RunBlockingReason) {
 					ellipsis={{ tooltip: reason.message }}
 					style={{ maxWidth: 520 }}
 				>
-					{reason.message}
+					{/* CYB-3679: 人话优先,原始信息进 tooltip */}
+					{humanizeDlqReason(reason.message)}
 				</Text>
 			) : null}
 		</Space>
@@ -647,15 +648,15 @@ export default function BatchJobDetailPage() {
 
 	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
-	useEffect(() => {
-		if (pollIntervalMs === null) {
-			return;
-		}
-		const timer = window.setInterval(() => {
+	// CYB-3486: pause polling while the tab is hidden (resumes + refreshes on
+	// return). pollIntervalMs is null when the job is in a terminal state.
+	useVisibleInterval(
+		() => {
 			void refresh({ silent: true });
-		}, pollIntervalMs);
-		return () => window.clearInterval(timer);
-	}, [pollIntervalMs, refresh]);
+		},
+		pollIntervalMs ?? 0,
+		pollIntervalMs !== null,
+	);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);

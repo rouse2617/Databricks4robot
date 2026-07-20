@@ -1521,6 +1521,7 @@ function formatRunDiagnosticReason(reason: string) {
 		resource_incompatible: "资源不匹配",
 		image_startup: "镜像启动",
 		runtime_config_projection_failed: "运行配置投影失败",
+		workflow_rbac_forbidden: "工作流权限不足",
 		cancelled: "已取消",
 		run_failed: "运行失败",
 	};
@@ -2027,7 +2028,7 @@ function WorkflowRunMetadataPanel({
 						{ label: "Namespace", val: runtime?.namespace, mono: true },
 						{ label: "UID", val: runtime?.uid, mono: true },
 						{ label: "状态", val: runtime?.status },
-						{ label: "存储池", val: runtime?.executionTargetId, mono: true },
+						{ label: "资源池", val: runtime?.executionTargetId, mono: true },
 					]
 						.filter((kv) => kv.val)
 						.map((kv) => (
@@ -2920,6 +2921,7 @@ export default function WorkflowDetailPage({
 				node={displaySelectedNode}
 				workflow={displayWorkflow}
 				pipelineNode={displaySelectedPipelineNode}
+				argoNamespace={runEventState.run?.argoNamespace}
 				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
 				canRetryWorkflow={canRetryFailedNode}

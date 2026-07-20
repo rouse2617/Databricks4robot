@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"sort"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
@@ -24,14 +26,21 @@ import (
 )
 
 // maxConcurrentBatchItems controls how many goroutines submit batch items
-// to Argo in parallel. Set via BACKFILL_CONCURRENCY env var (default 5).
+// to Argo in parallel. Set via BACKFILL_CONCURRENCY env var.
+//
+// Default raised 5→20 (CYB-3486): paired with the per-cluster K8s client QPS
+// lift (5→50), 5 submitters left the API mostly idle. Each submit does ~3 K8s
+// calls, so at QPS=50 roughly ~16 concurrent submitters saturate the client
+// rate limit; 20 gives a little headroom. Bump BACKFILL_CONCURRENCY higher only
+// if you also raise the target cluster's client QPS (else submitters just queue
+// on the client rate limiter).
 var maxConcurrentBatchItems = func() int {
 	if v := os.Getenv("BACKFILL_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	return 5
+	return 20
 }()
 
 // perJobSubmitBatch caps how many pending items one job dispatches per submit
@@ -76,8 +85,23 @@ type Usecase struct {
 	pipelineUC *pipelineUC.Usecase
 	pgClient   any // *postgres.Client — set via NewWithPostgres
 
+	// spawn runs a background job. Defaults to `go f()` (lazy, see spawnFn);
+	// tests override it with an inline runner so async side effects (e.g. the
+	// PauseJob stop-cleanup) are deterministic.
+	spawn func(func())
+
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
+
+	// per-cluster dispatch governors (CYB-3678)
+	governorMu sync.Mutex
+	governors  map[string]*clusterGovernor
+	// online dispatcher tuning (CYB-3679)
+	dispatcherCfgRepo  dispatcherConfigStore
+	dispatcherCfgState dispatcherConfigState
+	// bootJitter delays the boot-eager cycle (0–5s default) so simultaneous
+	// instance cold-starts de-align (C17). Nil in tests = no delay.
+	bootJitter func() time.Duration
 
 	reconcileStop chan struct{}
 	reconcileWg   sync.WaitGroup
@@ -92,6 +116,13 @@ type Usecase struct {
 	submitStop  chan struct{}
 	submitWg    sync.WaitGroup
 	submitKick  chan struct{}
+
+	// monWriter writes stale-items gauge to GCP Cloud Monitoring (CYB-3691).
+	// Nil = disabled. Writes are best-effort (logged on error, reconciler continues).
+	monWriter interface {
+		WriteInt64Metric(ctx context.Context, metricType string, value int64) error
+		Close() error
+	}
 
 	// Batch job completion Feishu notification (CYB-3071). notifier nil
 	// disables the feature entirely (no claim, no send).
@@ -116,11 +147,25 @@ func (uc *Usecase) SetNotifier(sender Notifier, frontendBaseURL string) {
 	uc.frontendBaseURL = strings.TrimSpace(frontendBaseURL)
 }
 
+// SetMonWriter wires a Cloud Monitoring writer for dispatcher gauges (CYB-3691).
+// Nil is safe (no-ops), but the writer constructor returns nil only on error.
+func (uc *Usecase) SetMonWriter(mw interface {
+	WriteInt64Metric(ctx context.Context, metricType string, value int64) error
+	Close() error
+}) {
+	uc.monWriter = mw
+}
+
 // New creates a Usecase without transaction support.
 func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Usecase {
 	uc := &Usecase{repo: repo, pipelineUC: pipelineUC}
 	if pipelineUC != nil {
 		uc.deployer = pipelineUC
+		// Production wiring gets boot jitter; the fixture path (nil
+		// pipelineUC) stays deterministic for tests.
+		uc.bootJitter = func() time.Duration {
+			return time.Duration(rand.Int63n(int64(5 * time.Second)))
+		}
 	}
 	return uc
 }
@@ -135,15 +180,74 @@ func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.
 // SyncJob force-syncs a batch job's progress from its child runs, flipping it to
 // a terminal status and sending the once-only completion notification if all
 // children have finished. Safe to call repeatedly (notification is claimed
-// atomically). Used by the run-status webhook cascade (CYB-3078, fast path).
+// atomically). Used by the reconcile backstop (StartJobReconciler) — NOT the
+// webhook hot path any more (see AdvanceItemForRun): a per-child O(batch)
+// aggregate on every terminal exit hook collapsed the DB connection pool under
+// even a 6k-item batch. Reconciler-only means it runs at most every 60s per
+// job, no matter how many child webhooks arrive between ticks.
 func (uc *Usecase) SyncJob(ctx context.Context, jobID string) error {
 	return uc.syncJobProgressForce(ctx, jobID)
+}
+
+// AdvanceItemForRun is the O(1) webhook hot path: given a run that just moved
+// to a terminal state, resolve its backfill item and advance it (and the job's
+// counters) in one atomic CTE. Zero full-batch aggregation, zero cross-item
+// scans — the webhook stays flat in the batch size, so tens or hundreds of
+// thousands of child terminations no longer swamp the DB.
+//
+// Idempotency is enforced by the SQL (see AdvanceItemAndCountAtomic): a repeat
+// delivery finds the item already terminal and updates nothing. Finalization
+// and completion notification are the reconciler's job (StartJobReconciler,
+// 60s), which reads the authoritative full summary and calls
+// notifyJobTerminalIfNeeded — that method already claims the notification slot
+// atomically, so the reconciler owning finalize does not race.
+//
+// Returns nil when the run isn't a batch child (no batch_job_id), isn't in a
+// terminal state yet, or has no linked backfill item — those cases are just
+// noise and shouldn't error.
+func (uc *Usecase) AdvanceItemForRun(ctx context.Context, run *models.PipelineRun) error {
+	if run == nil {
+		return nil
+	}
+	if run.BatchJobID == nil || strings.TrimSpace(*run.BatchJobID) == "" {
+		return nil
+	}
+	if !isTerminalRunStatus(run.Status) {
+		return nil
+	}
+	newItemStatus := mapRunStatusToItem(run.Status, run.ArgoWorkflowUID)
+	switch newItemStatus {
+	case "completed", "failed":
+		// only these two terminal transitions are ever produced by
+		// mapRunStatusToItem; cancelled comes from PauseJob elsewhere.
+	default:
+		return nil
+	}
+	item, err := uc.repo.FindItemByPipelineRunID(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if item == nil {
+		// Run isn't wired to a backfill item — e.g. a non-batch run, or the
+		// item link was stripped. Nothing to advance; not an error.
+		return nil
+	}
+	errMsg := ""
+	if newItemStatus == "failed" {
+		errMsg = strings.TrimSpace(run.Message)
+	}
+	return uc.repo.AdvanceItemAndCountAtomic(ctx, item.ID, newItemStatus, strings.TrimSpace(run.WorkflowName), errMsg)
 }
 
 // StartJobReconciler launches the reconcile backstop (CYB-3078): every interval
 // it force-syncs each non-terminal batch job, so a job whose children finished
 // in the background is finalized + notified without a user opening its page and
 // without depending on the exit hook firing. Runs until StopJobReconciler.
+// reconcileCycleTimeout bounds one reconciler pass. Generous: a pass over
+// FindActiveJobs is item-count bounded, but individual Argo GETs must never
+// pin the goroutine past this.
+const reconcileCycleTimeout = 5 * time.Minute
+
 func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
 	if interval <= 0 {
 		interval = 60 * time.Second
@@ -162,7 +266,14 @@ func (uc *Usecase) StartJobReconciler(interval time.Duration, scanLimit int) {
 			case <-uc.reconcileStop:
 				return
 			case <-ticker.C:
-				uc.reconcileActiveJobs(context.Background(), scanLimit)
+				// Per-cycle deadline (G1 load-test hotfix): one hung Argo/DB
+				// call under context.Background() wedged the reconciler
+				// FOREVER — no error, no log, job counters frozen until the
+				// instance restarted. The deadline bounds a cycle; the next
+				// tick starts clean.
+				cycleCtx, cancel := context.WithTimeout(context.Background(), reconcileCycleTimeout)
+				uc.reconcileActiveJobs(cycleCtx, scanLimit)
+				cancel()
 			}
 		}
 	}()
@@ -183,6 +294,13 @@ func (uc *Usecase) StopJobReconciler() {
 // convergence — missing-run repair (formerly done on GetJob/node-summary
 // reads) plus counter/settle sync. Reads never do this work anymore.
 func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
+	// Emit stale-items gauge before the reconciler resolves the gap, so it
+	// reflects the watcher→reconciler delay (max ~60s in a healthy cycle).
+	if uc.repo != nil {
+		if n, err := uc.repo.CountStaleBackfillItems(ctx); err == nil {
+			metrics.DispatcherStaleItems.Set(float64(n))
+		}
+	}
 	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
 	if err != nil {
 		slog.Warn("job reconciler: find active jobs failed", "err", err)
@@ -501,6 +619,27 @@ func (uc *Usecase) isJobPaused(ctx context.Context, jobID string) bool {
 	return err != nil || job == nil || job.Status == "paused"
 }
 
+// templateVersionFromBackfillFilter recovers the version pinned by legacy
+// (pre CYB-3677) batch rows, which stored it only in filter_json. JSON
+// round-tripping turns numbers into float64; strings are tolerated too.
+func templateVersionFromBackfillFilter(values map[string]interface{}) int {
+	raw, ok := values["template_version"]
+	if !ok {
+		return 0
+	}
+	switch v := raw.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
 func stringFromBackfillFilter(values map[string]interface{}, keys ...string) string {
 	for _, key := range keys {
 		raw, ok := values[key]
@@ -694,33 +833,65 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 		if err != nil {
 			return result, err
 		}
+		type stopTarget struct{ itemID, runID string }
+		var targets []stopTarget
 		for _, item := range items {
-			runID := ""
-			if item.PipelineRunID != nil {
-				runID = strings.TrimSpace(*item.PipelineRunID)
+			if item.PipelineRunID == nil {
+				continue
 			}
+			runID := strings.TrimSpace(*item.PipelineRunID)
 			if runID == "" {
 				continue
 			}
-			if err := uc.pipelineUC.StopRun(ctx, runID); err != nil {
-				result.StopFailedCount++
-				slog.Warn("PauseJob: stop run failed", "jobID", id, "runID", runID, "err", err)
-				continue
-			}
-			result.StoppedCount++
-			// Stopping removes the workflow from Argo, so the item is no longer
-			// running. Reset it to "pending" and drop its run link so a later
-			// resume re-submits it cleanly. Leaving it "running" with a stale run
-			// both hides it from ResumeJob (ClaimNextItem only claims "pending")
-			// and trips executeItem's dedup guard (the run still looks submitted)
-			// — that combination is what stranded items after pause→resume.
-			if err := uc.repo.UpdateItemPipelineRun(ctx, item.ID, "", "", "pending"); err != nil {
-				slog.Warn("PauseJob: reset stopped item to pending failed", "jobID", id, "itemID", item.ID, "err", err)
-			}
+			targets = append(targets, stopTarget{itemID: item.ID, runID: runID})
+		}
+		// StoppedCount reports how many in-flight items are being stopped; the
+		// actual per-run Stop calls happen asynchronously below.
+		result.StoppedCount = len(targets)
+		if len(targets) > 0 {
+			// CYB-3572: stopping in-flight runs is best-effort cleanup — the job is
+			// already marked "paused" above, so dispatch has already halted. Doing
+			// N sequential per-run Stop calls inside the request handler blew the
+			// 60s gateway timeout (→ 504) on large / slow (cross-cluster) batches.
+			// Detach it: respond immediately and stop the runs in the background
+			// with a fresh, request-independent context.
+			uc.spawnFn()(func() {
+				bg, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				for _, t := range targets {
+					stopCtx, stopCancel := context.WithTimeout(bg, 30*time.Second)
+					err := uc.pipelineUC.StopRun(stopCtx, t.runID)
+					stopCancel()
+					if err != nil {
+						slog.Warn("PauseJob: async stop run failed", "jobID", id, "runID", t.runID, "err", err)
+						continue
+					}
+					// Stopping removes the workflow from Argo; reset the item to
+					// "pending" and drop its run link so a later resume re-submits it
+					// cleanly. Leaving it "running" with a stale run both hides it from
+					// ResumeJob (ClaimNextItem only claims "pending") and trips
+					// executeItem's dedup guard — that stranded items after
+					// pause→resume.
+					if err := uc.repo.UpdateItemPipelineRun(bg, t.itemID, "", "", "pending"); err != nil {
+						slog.Warn("PauseJob: async reset stopped item to pending failed", "jobID", id, "itemID", t.itemID, "err", err)
+					}
+				}
+				_ = uc.syncJobProgress(bg, id)
+				slog.Info("PauseJob: async stop-cleanup complete", "jobID", id, "stopped", len(targets))
+			})
 		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
 	return result, nil
+}
+
+// spawnFn returns the background-job runner, defaulting to a real goroutine.
+// Tests override uc.spawn with an inline runner for determinism.
+func (uc *Usecase) spawnFn() func(func()) {
+	if uc.spawn != nil {
+		return uc.spawn
+	}
+	return func(f func()) { go f() }
 }
 
 // ResumeJob resumes a paused backfill job and re-schedules pending items.
@@ -1519,12 +1690,18 @@ func (uc *Usecase) ensureBatchParentRun(ctx context.Context, job *models.Backfil
 }
 
 func deriveJobStatus(summary repository.BackfillItemStatusSummary, totalCount int) string {
+	// Settle on the SUMMARY's own arithmetic, never on totalCount: the
+	// summary dedups per asset, so a job created with duplicate asset ids
+	// (or any historical item-count drift) has totalCount > the summary's
+	// reachable maximum — comparing against it left such jobs "running"
+	// forever (G1 load-test finding). No pending or running work = settled.
+	_ = totalCount
 	switch {
 	case summary.Pending > 0 || summary.Running > 0:
 		return "running"
-	case summary.Failed > 0 && summary.Completed+summary.Failed == totalCount:
+	case summary.Failed > 0:
 		return "failed"
-	case summary.Completed == totalCount:
+	case summary.Completed > 0:
 		return "completed"
 	default:
 		return "running"

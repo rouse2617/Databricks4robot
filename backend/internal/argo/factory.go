@@ -7,13 +7,35 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
+// K8sFactory is the subset of k8s.ClientFactory the argo package uses to reach
+// the CRD path. Declared here (rather than importing internal/k8s directly) to
+// keep the argo → k8s edge out of the DAG — k8s already imports usecase/pipeline
+// which imports back into argo. Callers pass their k8s.ClientFactory unchanged;
+// it structurally satisfies this interface.
+type K8sFactory interface {
+	ForCluster(ctx context.Context, clusterID string) (kubernetes.Interface, error)
+	DynamicForCluster(ctx context.Context, clusterID string) (dynamic.Interface, error)
+}
+
 // ErrClusterNotFound is returned by ClientFactory when the given clusterID
 // does not exist in the clusters table (or has been soft-deleted).
 var ErrClusterNotFound = errors.New("cluster not found")
+
+// ErrClusterMisconfigured is returned when a cluster row can't be resolved to
+// any concrete WorkflowClient — e.g. no argo-server URL and no k8s.ClientFactory
+// wired for the CRD path. Distinct from ErrClusterNotFound (the row exists).
+var ErrClusterMisconfigured = errors.New("cluster misconfigured for argo client")
+
+// defaultArgoNamespace is the ns crdWorkflowClient falls back to when the
+// cluster row leaves argo_namespace blank. Argo's own charts default here.
+const defaultArgoNamespace = "argo"
 
 // ClientFactory abstracts "which Argo Workflow client for this cluster" so
 // consumers (Deploy usecase, run_watcher, log streamer) can call ForTarget
@@ -41,11 +63,12 @@ type cachedArgoEntry struct {
 
 // dbClientFactory builds argo.Client per cluster row, with TTL cache.
 type dbClientFactory struct {
-	repo    repository.ClusterRepository
-	envCfg  *Config // fallback for the default cluster (empty ArgoServerURL)
-	ttl     time.Duration
-	mu      sync.RWMutex
-	entries map[string]*cachedArgoEntry
+	repo       repository.ClusterRepository
+	envCfg     *Config    // fallback URL/token for the default cluster (empty ArgoServerURL)
+	k8sFactory K8sFactory // required for CRD mode (empty resolved URL); nil disables CRD mode
+	ttl        time.Duration
+	mu         sync.RWMutex
+	entries    map[string]*cachedArgoEntry
 }
 
 // FactoryOption customizes dbClientFactory behavior.
@@ -61,6 +84,15 @@ func WithTTL(ttl time.Duration) FactoryOption {
 // wire the existing env-based startup config as fallback.
 func WithEnvFallback(cfg *Config) FactoryOption {
 	return func(f *dbClientFactory) { f.envCfg = cfg }
+}
+
+// WithK8sFactory injects the per-cluster K8s client factory used by the CRD
+// mode (crdWorkflowClient). Pass the same instance that Deploy usecase and
+// handlers already share; without it, a cluster row that resolves to an empty
+// argo-server URL will fail with ErrClusterMisconfigured instead of returning
+// an unusable HTTP client with no server URL. See design doc D1/D7.
+func WithK8sFactory(k8sFactory K8sFactory) FactoryOption {
+	return func(f *dbClientFactory) { f.k8sFactory = k8sFactory }
 }
 
 // NewClientFactory wires a ClientFactory backed by the given cluster repo.
@@ -93,14 +125,50 @@ func (f *dbClientFactory) ForCluster(ctx context.Context, clusterID string) (Wor
 		return nil, fmt.Errorf("%w: %s", ErrClusterNotFound, clusterID)
 	}
 
-	cfg := f.configForCluster(cluster)
-	client := NewClientFromConfig(cfg)
+	client, err := f.buildClient(ctx, cluster)
+	if err != nil {
+		return nil, err
+	}
 
 	e := &cachedArgoEntry{client: client, fetchedAt: time.Now()}
 	f.mu.Lock()
 	f.entries[clusterID] = e
 	f.mu.Unlock()
 	return client, nil
+}
+
+// buildClient picks between HTTP (argo-server) and CRD (dynamic client) mode.
+//
+// Mode is decided by the cluster's OWN argo_server_url plus the env fallback,
+// where the env fallback applies ONLY to the default cluster. This is the
+// crux of CYB-3486d1d: a non-default cluster (delivery-clust) with an empty
+// argo_server_url deliberately means "use CRD mode", and must NOT inherit the
+// env ARGO_SERVER_URL (which points at cyber-clust's argo-server). Before the
+// fix, configForCluster's env fallback fired for every empty-URL cluster, so
+// clearing delivery-clust's URL silently routed its workflows to cyber-clust's
+// argo-server — producing "namespaces cyber-delivery-dev not found".
+func (f *dbClientFactory) buildClient(ctx context.Context, cluster *models.Cluster) (WorkflowClient, error) {
+	cfg := f.configForCluster(cluster)
+	if cfg.ServerURL != "" {
+		return NewClientFromConfig(cfg), nil
+	}
+	if f.k8sFactory == nil {
+		return nil, fmt.Errorf("%w: cluster %q has no argo-server URL and no k8s factory wired",
+			ErrClusterMisconfigured, cluster.Name)
+	}
+	dyn, err := f.k8sFactory.DynamicForCluster(ctx, cluster.ID)
+	if err != nil {
+		return nil, fmt.Errorf("argo.ClientFactory: dynamic client for %q: %w", cluster.Name, err)
+	}
+	typed, err := f.k8sFactory.ForCluster(ctx, cluster.ID)
+	if err != nil {
+		return nil, fmt.Errorf("argo.ClientFactory: typed client for %q: %w", cluster.Name, err)
+	}
+	ns := cluster.ArgoNamespace
+	if ns == "" {
+		ns = defaultArgoNamespace
+	}
+	return newCRDWorkflowClient(dyn, typed, ns), nil
 }
 
 func (f *dbClientFactory) ForTarget(ctx context.Context, t *models.ExecutionTarget) (WorkflowClient, error) {
@@ -120,24 +188,25 @@ func (f *dbClientFactory) Invalidate(clusterID string) {
 	delete(f.entries, clusterID)
 }
 
-// configForCluster resolves the Argo Config to use for the cluster. When
-// ArgoServerURL is empty the factory falls back to the env-derived Config
-// captured at startup (default-cluster compat). Non-empty URL overrides;
-// token / TLS come from the cluster row when populated, otherwise env.
+// configForCluster resolves the Argo Config to use for the cluster.
+//
+// Empty ArgoServerURL is resolved differently by cluster kind:
+//   - default cluster → fall back to the env-derived Config (byte-identical
+//     to the pre-3486 singleton startup). This keeps cyber-clust on HTTP.
+//   - non-default cluster → return an empty Config so buildClient routes to
+//     CRD mode. Critically we do NOT leak the env's argo-server URL here, or
+//     the cluster would wrongly talk HTTP to cyber-clust's argo-server
+//     (CYB-3486d1d regression).
+//
+// Non-empty ArgoServerURL always means HTTP with that URL (token / TLS still
+// come from env because per-cluster secret storage is out of scope for now).
 func (f *dbClientFactory) configForCluster(c *models.Cluster) *Config {
 	if c.ArgoServerURL == "" {
-		// Default cluster path: reuse the env config passed via
-		// WithEnvFallback so backend behavior is byte-identical to the
-		// pre-3486 singleton startup.
-		if f.envCfg != nil {
+		if isDefaultCluster(c) && f.envCfg != nil {
 			return f.envCfg
 		}
 		return &Config{}
 	}
-	// Non-default cluster: use its ArgoServerURL; token/TLS still come from
-	// env because per-cluster secret storage is intentionally out of scope
-	// for PR 4a (defense against key sprawl; add per-cluster fields when
-	// there's a real need).
 	cfg := &Config{ServerURL: c.ArgoServerURL}
 	if f.envCfg != nil {
 		cfg.Token = f.envCfg.Token
@@ -145,4 +214,12 @@ func (f *dbClientFactory) configForCluster(c *models.Cluster) *Config {
 		cfg.CACertBase64 = f.envCfg.CACertBase64
 	}
 	return cfg
+}
+
+// isDefaultCluster reports whether the cluster is the legacy single-cluster
+// row that inherits env-derived Argo/K8s config. Matches on the explicit
+// IsDefault flag or the seed id, so either a correctly-flagged row or the
+// pre-flag "cluster-default" seed is recognized.
+func isDefaultCluster(c *models.Cluster) bool {
+	return c.IsDefault || c.ID == "cluster-default"
 }

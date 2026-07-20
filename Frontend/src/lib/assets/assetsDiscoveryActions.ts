@@ -8,9 +8,7 @@ import type {
 	FilterChip,
 	PreviewManifest,
 	QueryState,
-	SavedView,
 	SearchMode,
-	SelectionMode,
 	ViewMode,
 } from "./assetsDiscoveryTypes";
 
@@ -31,16 +29,10 @@ export type AssetsDiscoveryAction =
 			};
 	  }
 	| { type: "MARK_URL_HYDRATED" }
-	| { type: "SET_CURRENT_PATH"; payload: { path: string } }
 
 	// ── Search UI (7) ──
 	| { type: "SET_SEARCH_DRAFT"; payload: { text: string } }
-	| { type: "SEARCH_DRAFT_CHANGE"; payload: { text: string } }
-	| { type: "SEARCH_COMMIT"; payload: { tokens: FilterChip[] } }
-	| { type: "SEARCH_MODE_CHANGE"; payload: { mode: SearchMode } }
 	| { type: "TOGGLE_SUGGESTIONS"; payload: { open: boolean } }
-	| { type: "SET_HIGHLIGHTED_INDEX"; payload: { index: number } }
-	| { type: "TOGGLE_HELP"; payload: { open: boolean } }
 
 	// ── Query Commit (11) ──
 	| {
@@ -56,7 +48,6 @@ export type AssetsDiscoveryAction =
 	| { type: "SET_VIEW_MODE"; payload: { mode: ViewMode } }
 	| { type: "SET_SELECTED_COLUMNS"; payload: { columns: string[] } }
 	| { type: "SET_SEARCH_MODE"; payload: { mode: SearchMode } }
-	| { type: "APPLY_SAVED_VIEW"; payload: { view: SavedView } }
 
 	// ── Facet UI (7) ──
 	| { type: "FACET_TOGGLE"; payload: { field: string; value: string } }
@@ -122,12 +113,10 @@ export type AssetsDiscoveryAction =
 
 	// ── Selection (5) ──
 	| { type: "TOGGLE_ROW_SELECTION"; payload: { id: string } }
-	| { type: "SELECT_ALL_FILTERED" }
 	// CYB-3231: replace the selection with an explicit id set (used by
 	// "select all filtered results" after fetching the matching asset_ids).
 	| { type: "SET_SELECTED_IDS"; payload: { ids: string[] } }
 	| { type: "CLEAR_SELECTION" }
-	| { type: "SET_SELECTION_MODE"; payload: { mode: SelectionMode } }
 
 	// ── Preview (6) ──
 	| { type: "SET_ACTIVE_PREVIEW_ASSET"; payload: { assetId: string | null } }
@@ -144,21 +133,7 @@ export type AssetsDiscoveryAction =
 	| { type: "PREVIEW_COLLAPSE_TOGGLE" }
 	| { type: "PREVIEW_CLEAR" }
 
-	// ── Saved Views (7) ──
-	| { type: "SAVED_VIEW_SELECT"; payload: { viewId: string } }
-	| { type: "SAVED_VIEW_SAVE"; payload: { name: string } }
-	| { type: "SAVED_VIEW_DELETE"; payload: { viewId: string } }
-	| { type: "SAVED_VIEW_RENAME"; payload: { viewId: string; name: string } }
-	| { type: "SAVED_VIEW_LOAD"; payload: { views: SavedView[] } }
-	| { type: "TOGGLE_SAVE_DIALOG"; payload: { open: boolean } }
-	| { type: "SET_CURRENT_VIEW"; payload: { viewId: string | null } }
-
-	// ── Layout (3) ──
-	| { type: "FACET_COLLAPSE_TOGGLE" }
-	| {
-			type: "LAYOUT_RESPONSIVE";
-			payload: { isTablet: boolean; isMobile: boolean };
-	  }
+	// ── Layout ──
 	| { type: "TOGGLE_COLUMNS_POPOVER"; payload: { open: boolean } };
 
 // ─── Action Creator Helpers ───

@@ -80,6 +80,7 @@ var (
 	cfg           Config
 	gracePassword = parseGracePassword(getEnv("GRACE_PASSWORD", ""))
 	databrewToken = getEnv("DATABREW_TOKEN", "dev-token")
+	httpClient    *http.Client
 )
 
 func getEnv(key, def string) string {
@@ -225,15 +226,15 @@ func main() {
 
 	// ─── Login & submit batch ───
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	httpClient = &http.Client{Jar: jar, Timeout: 30 * time.Second}
 
-	if err := databrewLogin(client); err != nil {
+	if err := databrewLogin(httpClient); err != nil {
 		log.Fatalf("DataBrew login: %v", err)
 	}
 	log.Printf("DataBrew login OK")
 
 	batchName := "grace-sync-" + time.Now().UTC().Format("20060102-150405")
-	batchResp, err := submitBatch(client, tmplID, targetID, videoIDs, batchName)
+	batchResp, err := submitBatch(httpClient, tmplID, targetID, videoIDs, batchName)
 	if err != nil {
 		log.Fatalf("Batch submit: %v", err)
 	}
@@ -321,7 +322,7 @@ func fetchVideoSteps(start, end time.Time, stepKey string) ([]string, error) {
 		// Grace connection can't block the Cloud Run Job indefinitely.
 		// The job has its own overall timeout; per-request timeout keeps
 		// a single bad page from eating the whole budget.
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}

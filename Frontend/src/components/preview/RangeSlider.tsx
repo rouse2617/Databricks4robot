@@ -125,7 +125,7 @@ export default function RangeSlider({
 	return (
 		<div
 			role="slider"
-			aria-valuenow={currentSec}
+			aria-valuenow={currentTime}
 			aria-valuemin={0}
 			aria-valuemax={durationSec}
 			tabIndex={0}
@@ -273,7 +273,7 @@ export default function RangeSlider({
 			{/* Playhead */}
 			<div
 				role="slider"
-				aria-valuenow={currentSec}
+				aria-valuenow={currentTime}
 				aria-valuemin={0}
 				aria-valuemax={durationSec}
 				tabIndex={0}

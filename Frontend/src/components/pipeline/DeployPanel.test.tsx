@@ -47,6 +47,7 @@ const mockDeletePipeline = vi.fn();
 const mockGetPipeline = vi.fn();
 const mockListExecutionTargets = vi.fn();
 const mockListPipelineConfigs = vi.fn();
+const mockListElasticQuotas = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
@@ -55,6 +56,7 @@ vi.mock("../../api/pipelineApi", () => ({
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
+	listElasticQuotas: (...args: unknown[]) => mockListElasticQuotas(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
@@ -208,6 +210,7 @@ beforeEach(() => {
 			isDefault: true,
 		},
 	]);
+	mockListElasticQuotas.mockResolvedValue([]);
 	mockDeployPipelineForAssets.mockImplementation(
 		async (templateId, assetIds, _options) => {
 			if (assetIds.length >= 2) {
@@ -370,6 +373,82 @@ describe("DeployPanel", () => {
 				expect.anything(),
 			);
 		});
+	});
+
+	it("shows koord ElasticQuota usage for the selected pool in the run modal", async () => {
+		// A koord pool: its EQ is wired via resource_defaults.scheduling.podLabels.
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "pool-koord",
+				name: "delivery-high",
+				cluster: "default",
+				clusterId: "c-default",
+				namespace: "video-proc-dev",
+				argoServerConfigured: true,
+				status: "available",
+				isDefault: true,
+				resourceDefaults: {
+					scheduling: {
+						podLabels: {
+							"quota.scheduling.koordinator.sh/name":
+								"cyberorigin-delivery-high",
+						},
+					},
+				},
+			},
+		]);
+		mockListElasticQuotas.mockResolvedValue([
+			{
+				name: "cyberorigin-delivery-high",
+				namespace: "video-proc-dev",
+				min: { cpu: "4", memory: "8Gi" },
+				max: { cpu: "24", memory: "48Gi" },
+				used: { cpu: "6", memory: "12Gi" },
+				utilizationPercent: { cpu: 25, memory: 25 },
+			},
+		]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		await waitFor(() => expect(screen.getByText(/运行流水线/)).toBeTruthy());
+
+		// The inline usage block surfaces the EQ name + a used/min/max bar.
+		const usage = await screen.findByTestId("pool-usage");
+		await waitFor(() =>
+			expect(
+				within(usage).getByText(/cyberorigin-delivery-high/),
+			).toBeTruthy(),
+		);
+		expect(within(usage).getByText("6 / 4 / 24")).toBeTruthy();
+	});
+
+	it("notes a namespace-coarse pool has no ElasticQuota to visualise", async () => {
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "pool-ns",
+				name: "whole-namespace",
+				cluster: "default",
+				namespace: "cyber-databrew-dev",
+				argoServerConfigured: true,
+				status: "available",
+				isDefault: true,
+			},
+		]);
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		await waitFor(() => expect(screen.getByText(/运行流水线/)).toBeTruthy());
+
+		const usage = await screen.findByTestId("pool-usage");
+		expect(within(usage).getByText(/无弹性配额可视/)).toBeTruthy();
 	});
 
 	it("builds saved config selection payload for deploy requests", () => {

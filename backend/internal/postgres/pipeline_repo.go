@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -532,7 +533,8 @@ func (r *ExecutionTargetRepo) Delete(ctx context.Context, id string) error {
 
 const executionTargetSelectCols = `id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
-  enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at`
+  enabled, status, is_default, resource_defaults, quota_policy, labels,
+  created_at, updated_at`
 
 func mapFromJSON(raw []byte) map[string]interface{} {
 	if len(raw) == 0 {
@@ -620,11 +622,13 @@ func (r *ExecutionTargetRepo) Save(ctx context.Context, t *models.ExecutionTarge
 INSERT INTO execution_targets (
   id, name, description, cluster, cluster_id, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
-  enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at
+  enabled, status, is_default, resource_defaults, quota_policy, labels,
+  created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7,
   $8, $9, $10, $11,
-  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19
+  $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb,
+  $18, $19
 )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
@@ -803,16 +807,17 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
 
 func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	var (
-		r           models.PipelineRun
-		templateID  *string
-		templateVer *int
-		assetIDs    []string
-		batchJobID  *string
-		totalCost   *float64
+		r            models.PipelineRun
+		templateID   *string
+		templateVer  *int
+		assetIDs     []string
+		batchJobID   *string
+		totalCost    *float64
+		execTargetID sql.NullString // nullable since FK is ON DELETE SET NULL
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
-		&r.ExecutionTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
+		&execTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
@@ -821,6 +826,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	); err != nil {
 		return nil, err
 	}
+	r.ExecutionTargetID = execTargetID.String
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
@@ -839,16 +845,18 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		manifest       *string
 		pipelineJSON   []byte
 		batchJobID     *string
+		execTargetID   sql.NullString // nullable since FK is ON DELETE SET NULL
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
-		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
+		&execTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt, &r.Progress,
 	); err != nil {
 		return nil, err
 	}
+	r.ExecutionTargetID = execTargetID.String
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
@@ -944,9 +952,19 @@ ON CONFLICT (id) DO UPDATE SET
 
 	db := dbFromCtx(ctx, r.c.db)
 	assetIDs := pgtype.FlatArray[string](run.AssetIDs)
+	// execution_target_id has an FK to execution_targets(id) with ON DELETE
+	// SET NULL, so a run whose target was deleted stores NULL. Summary reads
+	// COALESCE that NULL to '', so round-tripping a summary-loaded run (the
+	// watcher does this) would try to Save '' — which is not NULL and matches
+	// no target → FK violation, and the run's status update is silently lost.
+	// Empty means "no target": persist it as NULL. (CYB-3681 load-test fix.)
+	var execTargetID any
+	if strings.TrimSpace(run.ExecutionTargetID) != "" {
+		execTargetID = run.ExecutionTargetID
+	}
 	if err := db.Exec(ctx, q,
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
-		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
+		execTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
 		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner, run.BatchJobID,
 		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.Progress,
 	); err != nil {
@@ -958,12 +976,6 @@ ON CONFLICT (id) DO UPDATE SET
 // FindAll returns pipeline runs ordered by created_at DESC.
 func (r *PipelineRunRepo) FindAll(ctx context.Context) ([]models.PipelineRun, error) {
 	return r.findAllPipelineRuns(ctx, pipelineRunSelectCols, scanPipelineRun, "FindAll")
-}
-
-// FindAllSummaries returns lightweight pipeline runs for list endpoints.
-func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error) {
-	items, _, err := r.ListSummaries(ctx, models.PipelineRunListFilter{})
-	return items, err
 }
 
 // ListSummaries returns filtered/paginated summary rows.
@@ -1099,6 +1111,52 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		out = append(out, *run)
 	}
 	return out, total, nil
+}
+
+// activeRunStatuses mirrors isActiveDeploymentStatus (pipeline usecase): the
+// statuses the watcher must keep refreshing. Empty string is treated as active
+// too (a freshly-created run before its first status write).
+var activeRunStatuses = []string{"Running", "Pending", "Unknown", "Suspended"}
+
+// FindActiveRunSummaries loads active-status runs NEWEST-first, capped at
+// limit. Filtering by active status (not "most recent N of all statuses")
+// means a burst of just-completed runs can never crowd still-active runs out
+// of the set — completed runs simply aren't in it (CYB-3681 load-test fix).
+// Newest-first prioritizes fresh in-flight work (a user's live batch) over a
+// backlog of ancient stuck-active orphans: when the per-scan residual-GET
+// budget is smaller than the active total, the newest runs — the ones most
+// likely genuinely running and being waited on — are refreshed first, while
+// the orphan tail drains in the background. (Oldest-first inverted this and
+// let an accumulated orphan backlog starve every fresh batch.)
+func (r *PipelineRunRepo) FindActiveRunSummaries(ctx context.Context, limit int) ([]models.PipelineRun, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	// status = ANY($1) is served by idx_pipeline_runs_status_created_at
+	// (status, created_at); the ORDER BY + LIMIT then reads newest-first
+	// straight off the index without a sort. pipeline_runs.status is
+	// NOT NULL in practice (Save always writes one), so no COALESCE.
+	q := `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+ORDER BY pr.created_at DESC
+LIMIT $2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, activeRunStatuses, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummaries: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummaries scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, nil
 }
 
 func (r *PipelineRunRepo) findAllPipelineRuns(

@@ -73,19 +73,10 @@ export interface PreviewManifest {
 	activeSourceId?: string | null;
 }
 
-/** Alias kept for readability — structurally identical to SavedView. */
-export interface SavedViewItem {
-	id: string;
-	name: string;
-	builtin: boolean;
-	queryState: Partial<QueryState>;
-}
-
 // ─── State Domain 1: RouterState ───
 
 export interface RouterState {
 	urlHydrated: boolean;
-	currentPath: string;
 }
 
 // ─── State Domain 2: SearchUiState ───
@@ -93,8 +84,6 @@ export interface RouterState {
 export interface SearchUiState {
 	draftText: string;
 	suggestionsOpen: boolean;
-	highlightedIndex: number;
-	helpOpen: boolean;
 }
 
 // ─── State Domain 3: QueryState ───
@@ -157,22 +146,6 @@ export interface PreviewState {
 	collapsed: boolean;
 }
 
-// ─── State Domain 8: SavedViewState ───
-
-export interface SavedView {
-	id: string;
-	name: string;
-	builtin: boolean;
-	queryState: Partial<QueryState>;
-}
-
-export interface SavedViewState {
-	currentViewId: string | null;
-	views: SavedView[];
-	saveDialogOpen: boolean;
-	remoteViewsLoading: boolean;
-}
-
 export interface ValidationState {
 	fetchStatus: FetchStatus;
 	valid: boolean;
@@ -187,8 +160,6 @@ export interface ValidationState {
 // ─── State Domain 9: LayoutState ───
 
 export interface LayoutState {
-	facetCollapsed: boolean;
-	previewCollapsed: boolean;
 	columnsPopoverOpen: boolean;
 }
 
@@ -202,7 +173,6 @@ export interface AssetsDiscoveryState {
 	resultsState: ResultsState;
 	selectionState: SelectionState;
 	previewState: PreviewState;
-	savedViewState: SavedViewState;
 	layoutState: LayoutState;
 	validationState: ValidationState;
 }
@@ -225,13 +195,10 @@ export const DEFAULT_EXPANDED_GROUPS: string[] = ["algorithm"];
 export const defaultAssetsDiscoveryState: AssetsDiscoveryState = {
 	routerState: {
 		urlHydrated: false,
-		currentPath: "/assets",
 	},
 	searchUiState: {
 		draftText: "",
 		suggestionsOpen: false,
-		highlightedIndex: -1,
-		helpOpen: false,
 	},
 	queryState: {
 		searchMode: "structured",
@@ -279,15 +246,7 @@ export const defaultAssetsDiscoveryState: AssetsDiscoveryState = {
 		retryNonce: 0,
 		collapsed: true,
 	},
-	savedViewState: {
-		currentViewId: null,
-		views: [],
-		saveDialogOpen: false,
-		remoteViewsLoading: false,
-	},
 	layoutState: {
-		facetCollapsed: false,
-		previewCollapsed: false,
 		columnsPopoverOpen: false,
 	},
 	validationState: {

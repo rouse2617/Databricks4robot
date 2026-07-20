@@ -39,7 +39,9 @@ MEMORY="${MEMORY:-4Gi}"
 # CYB-3489 executor on dev — a batch would only advance while someone kept the
 # page open. min-instances=1 makes the loops run continuously. (cyb-3491)
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
-MAX_INSTANCES="${MAX_INSTANCES:-5}"
+# Raised 5 → 30 to give the dev backend more headroom under batch-dispatch load
+# (user request 2026-07-17). Still overridable via the MAX_INSTANCES env.
+MAX_INSTANCES="${MAX_INSTANCES:-30}"
 TIMEOUT="${TIMEOUT:-60}"
 CPU_THROTTLING="${CPU_THROTTLING:-false}"
 CPU_BOOST="${CPU_BOOST:-true}"
@@ -47,6 +49,11 @@ ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
 
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
 VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
+
+# Enable GMP (Google Managed Prometheus) scraping on Cloud Run.
+# When true, GCP automatically scrapes /metrics and ingests into Cloud Monitoring.
+# Cost: ~$0.04/month for the ~20 dispatcher metrics on dev.
+PROMETHEUS_SCRAPE="${PROMETHEUS_SCRAPE:-true}"
 
 # Optional overrides for Cloud Run reachability.
 DB_HOST_OVERRIDE="${DB_HOST_OVERRIDE:-172.27.160.7}"
@@ -535,6 +542,15 @@ if [[ "${remove_es_password_secret}" == "true" && ${#secret_mappings[@]} -eq 0 ]
   deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
 fi
 
+# CYB-3486d1c: when set, the new revision is created idle. Traffic must be
+# routed explicitly (e.g. by the deploy-dev.yml migrate step after Atlas
+# migrations run). Without this, `gcloud run deploy` defaults to 100%-traffic
+# on the new revision, which races the migration step — new code queries
+# columns the old schema doesn't have yet, until traffic-switch completes.
+if [[ "${DEPLOY_NO_TRAFFIC:-false}" == "true" ]]; then
+  deploy_args+=(--no-traffic)
+fi
+
 if [[ "${ALLOW_UNAUTHENTICATED}" == "true" ]]; then
   deploy_args+=(--allow-unauthenticated)
 else
@@ -543,6 +559,10 @@ fi
 
 if [[ -n "${VPC_CONNECTOR}" ]]; then
   deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
+fi
+
+if [[ "${PROMETHEUS_SCRAPE}" == "true" ]]; then
+  deploy_args+=(--update-annotations "run.googleapis.com/prometheus_scrape=true,run.googleapis.com/prometheus_port=8080")
 fi
 
 gcloud "${deploy_args[@]}"

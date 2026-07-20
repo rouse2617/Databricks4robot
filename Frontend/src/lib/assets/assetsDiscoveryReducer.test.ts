@@ -114,22 +114,6 @@ describe("query-changing actions reset page to 1 and set isStale", () => {
 		expect(result.queryState.activeFilters).toHaveLength(1);
 		expect(result.queryState.activeFilters[0].field).toBe("status");
 	});
-
-	it("APPLY_SAVED_VIEW resets page and marks stale", () => {
-		const result = assetsDiscoveryReducer(stateOnPage3, {
-			type: "APPLY_SAVED_VIEW",
-			payload: {
-				view: {
-					id: "v1",
-					name: "Test",
-					builtin: false,
-					queryState: { sort: "created_at" },
-				},
-			},
-		});
-		expect(result.queryState.page).toBe(1);
-		expect(result.resultsState.isStale).toBe(true);
-	});
 });
 
 // ─── TOGGLE_ROW_SELECTION ───
@@ -212,73 +196,6 @@ describe("SET_ACTIVE_PREVIEW_ASSET", () => {
 			payload: { assetId: null },
 		});
 		expect(result.previewState.collapsed).toBe(false);
-	});
-});
-
-// ─── APPLY_SAVED_VIEW ───
-
-describe("APPLY_SAVED_VIEW", () => {
-	it("overwrites queryState from snapshot", () => {
-		const result = assetsDiscoveryReducer(freshState(), {
-			type: "APPLY_SAVED_VIEW",
-			payload: {
-				view: {
-					id: "algo_failed",
-					name: "Algo Failed",
-					builtin: true,
-					queryState: {
-						sort: "created_at",
-						activeFilters: [
-							createFilterChip("algo_status", "eq", "failed", "saved_view"),
-						],
-					},
-				},
-			},
-		});
-		expect(result.queryState.sort).toBe("created_at");
-		expect(result.queryState.activeFilters).toHaveLength(1);
-		expect(result.queryState.activeFilters[0].field).toBe("algo_status");
-	});
-
-	it("clears selectionState", () => {
-		const s = freshState();
-		s.selectionState = {
-			selectedIds: new Set(["a", "b"]),
-			mode: "explicit_rows",
-		};
-		const result = assetsDiscoveryReducer(s, {
-			type: "APPLY_SAVED_VIEW",
-			payload: {
-				view: { id: "v1", name: "V", builtin: false, queryState: {} },
-			},
-		});
-		expect(result.selectionState.selectedIds.size).toBe(0);
-		expect(result.selectionState.mode).toBe("none");
-	});
-
-	it("updates searchUiState.draftText from view queryText", () => {
-		const result = assetsDiscoveryReducer(freshState(), {
-			type: "APPLY_SAVED_VIEW",
-			payload: {
-				view: {
-					id: "v1",
-					name: "V",
-					builtin: false,
-					queryState: { queryText: "env:warehouse" },
-				},
-			},
-		});
-		expect(result.searchUiState.draftText).toBe("env:warehouse");
-	});
-
-	it("sets draftText to empty when view has no queryText", () => {
-		const result = assetsDiscoveryReducer(freshState(), {
-			type: "APPLY_SAVED_VIEW",
-			payload: {
-				view: { id: "v1", name: "V", builtin: false, queryState: {} },
-			},
-		});
-		expect(result.searchUiState.draftText).toBe("");
 	});
 });
 
@@ -417,15 +334,6 @@ describe("FACET_DATE_APPLY", () => {
 
 // ─── Selection actions ───
 
-describe("SELECT_ALL_FILTERED", () => {
-	it("sets mode to all_filtered_results", () => {
-		const result = assetsDiscoveryReducer(freshState(), {
-			type: "SELECT_ALL_FILTERED",
-		});
-		expect(result.selectionState.mode).toBe("all_filtered_results");
-	});
-});
-
 // CYB-3231: "select all filtered" resolves ids then dispatches SET_SELECTED_IDS.
 describe("SET_SELECTED_IDS", () => {
 	it("replaces selectedIds with the given ids (explicit mode)", () => {
@@ -479,17 +387,6 @@ describe("PREVIEW_COLLAPSE_TOGGLE", () => {
 	});
 });
 
-describe("FACET_COLLAPSE_TOGGLE", () => {
-	it("toggles layoutState.facetCollapsed", () => {
-		const s = freshState();
-		expect(s.layoutState.facetCollapsed).toBe(false);
-		const r1 = assetsDiscoveryReducer(s, { type: "FACET_COLLAPSE_TOGGLE" });
-		expect(r1.layoutState.facetCollapsed).toBe(true);
-		const r2 = assetsDiscoveryReducer(r1, { type: "FACET_COLLAPSE_TOGGLE" });
-		expect(r2.layoutState.facetCollapsed).toBe(false);
-	});
-});
-
 describe("FACET_GROUP_TOGGLE", () => {
 	it("toggles group in facetUiState.expandedGroups", () => {
 		const s = freshState();
@@ -504,52 +401,6 @@ describe("FACET_GROUP_TOGGLE", () => {
 			payload: { group: "algorithm" },
 		});
 		expect(r2.facetUiState.expandedGroups).toContain("algorithm");
-	});
-});
-
-// ─── Saved View actions ───
-
-describe("SAVED_VIEW_SAVE", () => {
-	it("creates a new SavedView from current queryState", () => {
-		const s = freshState();
-		s.queryState.sort = "created_at";
-		const result = assetsDiscoveryReducer(s, {
-			type: "SAVED_VIEW_SAVE",
-			payload: { name: "My View" },
-		});
-		expect(result.savedViewState.views).toHaveLength(1);
-		expect(result.savedViewState.views[0].name).toBe("My View");
-		expect(result.savedViewState.views[0].builtin).toBe(false);
-		expect(result.savedViewState.views[0].queryState.sort).toBe("created_at");
-		expect(result.savedViewState.currentViewId).toBe(
-			result.savedViewState.views[0].id,
-		);
-	});
-});
-
-describe("SAVED_VIEW_DELETE", () => {
-	it("removes non-builtin view by id", () => {
-		const s = freshState();
-		s.savedViewState.views = [
-			{ id: "custom_1", name: "Custom", builtin: false, queryState: {} },
-		];
-		const result = assetsDiscoveryReducer(s, {
-			type: "SAVED_VIEW_DELETE",
-			payload: { viewId: "custom_1" },
-		});
-		expect(result.savedViewState.views).toHaveLength(0);
-	});
-
-	it("does NOT remove builtin views", () => {
-		const s = freshState();
-		s.savedViewState.views = [
-			{ id: "all", name: "All", builtin: true, queryState: {} },
-		];
-		const result = assetsDiscoveryReducer(s, {
-			type: "SAVED_VIEW_DELETE",
-			payload: { viewId: "all" },
-		});
-		expect(result.savedViewState.views).toHaveLength(1);
 	});
 });
 

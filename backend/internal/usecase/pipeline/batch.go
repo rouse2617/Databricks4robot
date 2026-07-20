@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,22 @@ import (
 // from this process. It does NOT limit the actual cluster-side concurrency of
 // the submitted runs — that is governed by Argo controller parallelism. Callers
 // must not treat it as a true concurrency limit on running workflows.
+// dedupPreservingOrder returns ids with duplicates (and blank entries)
+// removed, keeping first-occurrence order.
+func dedupPreservingOrder(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, submitWorkers int, owner string) (*models.BackfillJob, error) {
 	if uc.backfillRepo == nil {
 		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
@@ -43,6 +60,11 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	if len(assetIDs) == 0 {
 		return nil, fmt.Errorf("%w: asset_ids is required", ErrInvalidArgument)
 	}
+	// Dedup asset ids, order-preserving (G1 load-test finding): duplicate ids
+	// create duplicate items, but progress summaries dedup per asset — the
+	// job's total_count then exceeds what the summary can ever reach and the
+	// job stays "running" forever. One asset = one item.
+	assetIDs = dedupPreservingOrder(assetIDs)
 
 	batchID := "batch_" + uuid.New().String()
 	now := time.Now().UTC()
@@ -51,22 +73,36 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 		name = t.Name + "-" + time.Now().Format("2006-01-02")
 	}
 
+	// Submitter mode (default, CYB-3677): the job is born 'running' — the
+	// status the durable backfill submitter selects — and this call only
+	// persists; submission is owned by the submitter (crash-resumable,
+	// idempotent). Legacy mode keeps the old 'pending' + in-memory goroutine.
+	status := "running"
+	if uc.batchDispatchLegacy {
+		status = "pending"
+	}
 	job := &models.BackfillJob{
 		ID:         batchID,
 		TemplateID: templateID,
 		Name:       name,
-		Status:     "pending",
+		Status:     status,
 		PilotPhase: "none",
 		TotalCount: len(assetIDs),
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		FilterJSON: map[string]interface{}{},
-		CreatedBy:  owner,
+		// TemplateVersion pins the batch to the version resolved at creation
+		// time (P0: the submitter must never mix versions within one batch
+		// when the template's active version moves mid-dispatch).
+		TemplateVersion: resolvedVersion,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		FilterJSON:      map[string]interface{}{},
+		CreatedBy:       owner,
 	}
 
 	if targetID != "" && targetID != "default" {
 		job.FilterJSON["target_id"] = targetID
 	}
+	// Kept alongside the column for one release so a legacy-flag rollback
+	// still sees the pin.
 	if resolvedVersion > 0 {
 		job.FilterJSON["template_version"] = resolvedVersion
 	}
@@ -91,12 +127,21 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 		return nil, fmt.Errorf("save batch items: %w", err)
 	}
 
-	// Process in background — never use request context for goroutines.
-	// A dedicated cancellable context lets StopBatchRuns halt submission.
-	jobCtx, cancel := context.WithCancel(context.Background())
-	uc.registerBatchCancel(batchID, cancel)
-	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
+	if uc.batchDispatchLegacy {
+		// Legacy (pre CYB-3677, rollback only): one-shot in-memory dispatch
+		// goroutine. Not crash-resumable — a restart strands pending items.
+		jobCtx, cancel := context.WithCancel(context.Background())
+		uc.registerBatchCancel(batchID, cancel)
+		go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
+		return job, nil
+	}
 
+	// Submitter mode: persistence IS the dispatch. Kick the submitter so the
+	// first cycle starts now instead of on the next 15s tick; durability
+	// never depends on the kick (boot-eager + ticker re-list this job).
+	if uc.batchSubmitKick != nil {
+		uc.batchSubmitKick()
+	}
 	return job, nil
 }
 

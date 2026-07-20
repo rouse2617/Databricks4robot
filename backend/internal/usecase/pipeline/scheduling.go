@@ -59,6 +59,75 @@ func executionTargetTemplateTolerations(target *models.ExecutionTarget) []corev1
 	return out
 }
 
+// executionTargetSchedulerName reads the pod scheduler for the pool from the
+// target's scheduling config (resource_defaults / quota_policy JSONB, or their
+// "scheduling" sub-object). Empty → transpiler leaves it unset → the cluster's
+// default scheduler runs the pods (scheduler-agnostic pool).
+//
+// CYB-3486 pool.3: fully data-driven — the backend hardcodes NO scheduler name.
+// A Koordinator pool works because its config carries the literal
+// "koord-scheduler"; the backend doesn't know or care what koord is.
+func executionTargetSchedulerName(target *models.ExecutionTarget) string {
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "schedulerName", "scheduler"); ok {
+			if s := stringValue(raw); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// executionTargetPriorityClassName reads the pool's PriorityClass from the
+// scheduling config. Empty → K8s global default. Data-driven (no hardcoded
+// class name).
+func executionTargetPriorityClassName(target *models.ExecutionTarget) string {
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "priorityClassName", "priorityClass"); ok {
+			if s := stringValue(raw); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// executionTargetPodLabels reads pool pod labels from the scheduling config
+// (e.g. a Koordinator ElasticQuota label). Data-driven: the pool config
+// supplies BOTH the label key and value — the backend hardcodes neither koord
+// nor any quota-label key. Later sources win on key conflicts.
+func executionTargetPodLabels(target *models.ExecutionTarget) map[string]string {
+	out := map[string]string{}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "podLabels"); ok {
+			for k, v := range stringMapValue(raw) {
+				out[k] = v
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// executionTargetPodAnnotations reads pool pod annotations from the scheduling
+// config. Same data-driven contract as executionTargetPodLabels.
+func executionTargetPodAnnotations(target *models.ExecutionTarget) map[string]string {
+	out := map[string]string{}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "podAnnotations"); ok {
+			for k, v := range stringMapValue(raw) {
+				out[k] = v
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func jsonMapEnv(envName string) map[string]interface{} {
 	raw := strings.TrimSpace(os.Getenv(envName))
 	if raw == "" {

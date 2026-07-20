@@ -201,10 +201,37 @@ export interface TargetToleration {
 	effect: "NoSchedule" | "NoExecute" | "PreferNoSchedule";
 }
 
+// TargetScheduling is the pool's scheduling config (CYB-3486 pool.3), stored
+// under resource_defaults.scheduling (JSONB). The backend injects every field
+// onto each Argo Workflow pod verbatim — it hardcodes NO scheduler / quota
+// semantics. A Koordinator ElasticQuota pool is just a config that happens to
+// carry schedulerName="koord-scheduler" plus the EQ pod label; the frontend
+// hardcodes neither. All fields optional; empty = cluster / K8s defaults.
+export interface TargetScheduling {
+	// Pod scheduler → wf.Spec.SchedulerName. Empty → cluster default scheduler
+	// (scheduler-agnostic pool).
+	schedulerName?: string;
+	// PriorityClass applied to every pod → wf.Spec.PodPriorityClassName. Empty
+	// → K8s global default. Must already exist in the target cluster.
+	priorityClassName?: string;
+	// Pod labels merged onto every workflow pod (e.g. a Koordinator ElasticQuota
+	// label). The admin supplies both key and value.
+	podLabels?: Record<string, string>;
+	// Pod annotations merged onto every workflow pod.
+	podAnnotations?: Record<string, string>;
+	// nodeSelector / tolerations are ALSO read from here by the backend, but the
+	// PoolManager edits those via the top-level templateNodeSelector /
+	// templateTolerations fields, so they are not managed through this sub-object.
+	nodeSelector?: Record<string, string>;
+	tolerations?: TargetToleration[];
+}
+
 export interface TargetResourceDefaults {
 	computeTier?: string;
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: Record<string, string>;
+	// Pool scheduling directives (scheduler, priorityclass, pod labels/annotations).
+	scheduling?: TargetScheduling;
 	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
 	[key: string]: unknown;
 }
@@ -226,6 +253,9 @@ export interface ExecutionTarget {
 	enabled?: boolean;
 	isDefault: boolean;
 	description?: string;
+	// resourceDefaults carries the pool's scheduling config under `.scheduling`
+	// (CYB-3486 pool.3). The dedicated elastic_quota_name / priority_class_name
+	// columns were dropped in #439 — do not reintroduce top-level fields for them.
 	resourceDefaults?: TargetResourceDefaults;
 	quotaPolicy?: Record<string, unknown>;
 	labels?: Record<string, string>;
@@ -624,6 +654,11 @@ export interface Cluster {
 	argoServerUrl?: string;
 	argoNamespace?: string;
 	koordInstalled: boolean;
+	// K8s client rate limits to this cluster's API (rest.Config QPS/Burst).
+	// Editable online; the backend rebuilds this cluster's clients on save.
+	// Unset/0 → backend default 50/100. CYB-3486.
+	clientQps?: number;
+	clientBurst?: number;
 	createdAt?: string;
 	updatedAt?: string;
 	deletedAt?: string;

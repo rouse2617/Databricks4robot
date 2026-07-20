@@ -122,20 +122,22 @@ function AlgoSummaryInline({
 	if (onJumpToAlgo) {
 		return (
 			<Tooltip title="查看算法处理">
-				<span
-					role="button"
-					tabIndex={0}
+				<button
+					type="button"
 					onClick={onJumpToAlgo}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" || e.key === " ") {
-							e.preventDefault();
-							onJumpToAlgo();
-						}
+					style={{
+						cursor: "pointer",
+						border: "none",
+						background: "none",
+						padding: 0,
+						margin: 0,
+						font: "inherit",
+						color: "inherit",
+						textAlign: "inherit",
 					}}
-					style={{ cursor: "pointer" }}
 				>
 					{content}
-				</span>
+				</button>
 			</Tooltip>
 		);
 	}

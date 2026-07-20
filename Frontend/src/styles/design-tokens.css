@@ -188,8 +188,14 @@
 	margin: 0 auto;
 }
 
+/*
+ * Dashboard uses fluid full-width (intentional, CYB-3266): KPI cards must use
+ * 100% horizontal space on ultrawide screens so large numbers are not
+ * truncated (see 606e2e12). The inner ant-* overflow rules below keep card and
+ * table content contained within that fluid width.
+ */
 .page-container--dashboard {
-	max-width: 1280px;
+	max-width: none;
 }
 
 .page-container--dashboard .ant-row,

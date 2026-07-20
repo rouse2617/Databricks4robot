@@ -19,6 +19,12 @@ type mockBackfillRepo struct {
 	items []models.BackfillItem
 }
 
+func (m *mockBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (m *mockBackfillRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
 func (m *mockBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
@@ -110,6 +116,9 @@ func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, e
 	}
 	return nil
 }
+func (m *mockBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return m.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
+}
 func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -196,6 +205,9 @@ func (m *mockBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ st
 	return 0, nil
 }
 func (m *mockBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (m *mockBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
 	return 0, nil
 }
 func (m *mockBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
@@ -353,19 +365,31 @@ func TestCreateBackfill_DoesNotDuplicateItemsDuringMaterialization(t *testing.T)
 	}
 }
 
+// deriveJobStatus settles on the summary's own arithmetic — totalCount drift
+// (duplicate-asset jobs, historical item-count skew) must not wedge a job in
+// "running" forever (G1 load-test finding).
 func TestDeriveJobStatus(t *testing.T) {
-	status := deriveJobStatus(repository.BackfillItemStatusSummary{
-		Completed: 8,
-		Failed:    2,
-	}, 10)
-	if status != "failed" {
-		t.Fatalf("expected failed, got %q", status)
+	s := func(c, f, p, r int) repository.BackfillItemStatusSummary {
+		return repository.BackfillItemStatusSummary{Completed: c, Failed: f, Pending: p, Running: r}
 	}
-	status = deriveJobStatus(repository.BackfillItemStatusSummary{
-		Completed: 10,
-	}, 10)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %q", status)
+	cases := []struct {
+		name    string
+		summary repository.BackfillItemStatusSummary
+		total   int
+		want    string
+	}{
+		{"pending keeps running", s(5, 0, 1, 0), 6, "running"},
+		{"in-flight keeps running", s(5, 0, 0, 1), 6, "running"},
+		{"all completed settles", s(10, 0, 0, 0), 10, "completed"},
+		{"any failure settles failed", s(8, 2, 0, 0), 10, "failed"},
+		{"dup-asset job settles despite total mismatch", s(249, 8, 0, 0), 514, "failed"},
+		{"dup-asset all-green settles completed", s(257, 0, 0, 0), 514, "completed"},
+		{"empty summary stays running", s(0, 0, 0, 0), 6, "running"},
+	}
+	for _, tc := range cases {
+		if got := deriveJobStatus(tc.summary, tc.total); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -660,6 +684,11 @@ type trackingBackfillRepo struct {
 	runsWithNodeRows   int
 }
 
+
+func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
+
+func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJob) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -748,6 +777,9 @@ func (r *trackingBackfillRepo) UpdateItemStatus(_ context.Context, id, status, w
 		}
 	}
 	return nil
+}
+func (r *trackingBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return r.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
 }
 func (r *trackingBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
 	r.mu.Lock()
@@ -889,6 +921,9 @@ func (r *trackingBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models
 func (r *trackingBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
 }
+func (r *trackingBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
+}
 
 func TestPauseJob_SetsPausedStatus(t *testing.T) {
 	repo := &mockBackfillRepo{
@@ -929,6 +964,8 @@ func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
 	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
 	pipeline.SetRunRepositories(nil, runRepo, nil)
 	uc := New(repo, pipeline)
+	// Run the async stop-cleanup inline so its effects are deterministic here.
+	uc.spawn = func(f func()) { f() }
 
 	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{StopRunning: true})
 	if err != nil {
@@ -940,6 +977,50 @@ func TestPauseJob_StopRunning_ResetsStoppedItemsToPending(t *testing.T) {
 	if repo.items[0].Status != "pending" {
 		t.Fatalf("stopped item status = %q, want pending (so resume re-runs it)", repo.items[0].Status)
 	}
+}
+
+// CYB-3572: pausing with StopRunning must NOT stop the runs inline — that
+// serialized N per-run Stop calls in the request and hit the 60s gateway
+// timeout (504). The job is marked paused and the count is reported
+// immediately; the actual stops run in the background.
+func TestPauseJob_StopRunning_DefersStopsToBackground(t *testing.T) {
+	runID := "run-1"
+	repo := &mockBackfillRepo{
+		jobs: map[string]*models.BackfillJob{
+			"job-1": {ID: "job-1", Status: "running", TotalCount: 1},
+		},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "a1", Status: "running", PipelineRunID: &runID},
+		},
+	}
+	runRepo := &syncTestRunRepo{byID: map[string]*models.PipelineRun{
+		runID: {ID: runID, WorkflowName: "wf-1", Status: "Running", ArgoNamespace: "default"},
+	}}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+	// Capture the background job instead of running it — proves PauseJob returns
+	// without doing the stop work inline.
+	var deferred func()
+	uc.spawn = func(f func()) { deferred = f }
+
+	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{StopRunning: true})
+	if err != nil {
+		t.Fatalf("PauseJob: %v", err)
+	}
+	if result.Status != "paused" {
+		t.Fatalf("status = %q, want paused", result.Status)
+	}
+	if result.StoppedCount != 1 {
+		t.Fatalf("StoppedCount = %d, want 1 (reported immediately)", result.StoppedCount)
+	}
+	// The per-run stop work was scheduled to the background rather than run
+	// inline — that is the fix for the 60s-gateway-timeout 504. Running the
+	// captured job then performs the reset without error.
+	if deferred == nil {
+		t.Fatal("expected the stop-cleanup to be scheduled to the background, not run inline")
+	}
+	deferred()
 }
 
 // CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery

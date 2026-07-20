@@ -145,6 +145,14 @@ type Config struct {
 	// Argo Workflows
 	ArgoWorkflowsNamespace                string
 	ArgoWorkflowTTLSecondsAfterCompletion int32
+	// RuntimeConfigTTLDays ages content-addressed runtime-config ConfigMaps
+	// via the sliding-reference janitor (CYB-3680). Must exceed the workflow
+	// TTL so Argo-native retries never re-mount a reclaimed CM.
+	RuntimeConfigTTLDays int32
+	// BatchDispatchMode selects the batch dispatch path (CYB-3677):
+	// "submitter" (default) persists jobs for the durable backfill submitter;
+	// "legacy" restores the pre-3677 in-memory goroutine (rollback only).
+	BatchDispatchMode                     string
 	PipelineResourceMaxCPU                string
 	PipelineResourceMaxMemory             string
 	PipelineResourceMaxDisk               string
@@ -152,6 +160,11 @@ type Config struct {
 	PipelineUnschedulablePendingThreshold string
 
 	// Argo run status push webhook (CYB-3058).
+	// ArgoExitHookEnabled gates exit-hook injection into workflows (CYB-3681).
+	// Default false: the bulk-pull watcher is the writeback path and each
+	// exit-notify pod costs real money at batch scale. The inbound webhook
+	// ENDPOINT stays registered either way (transition safety).
+	ArgoExitHookEnabled bool
 	// ArgoRunWebhookURL empty disables exit-hook injection (poll-only fallback).
 	ArgoRunWebhookURL             string
 	ArgoRunWebhookToken           string // backend-side token to validate inbound webhook calls
@@ -277,6 +290,8 @@ func Load() *Config {
 		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
 		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
+		BatchDispatchMode:         getenv("BATCH_DISPATCH_MODE", "submitter"),
+		RuntimeConfigTTLDays:      getenvInt32("RUNTIME_CONFIG_TTL_DAYS", 35),
 		ArgoWorkflowTTLSecondsAfterCompletion: getenvInt32(
 			"ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION",
 			transpiler.DefaultTTLSecondsAfterCompletion,
@@ -287,6 +302,7 @@ func Load() *Config {
 		PipelineResourceMaxGPU:                getenv("PIPELINE_RESOURCE_MAX_GPU", ""),
 		PipelineUnschedulablePendingThreshold: getenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "15m"),
 
+		ArgoExitHookEnabled:           strings.EqualFold(getenv("ARGO_EXIT_HOOK_ENABLED", "false"), "true"),
 		ArgoRunWebhookURL:             getenv("ARGO_RUN_WEBHOOK_URL", ""),
 		ArgoRunWebhookToken:           getenv("ARGO_RUN_WEBHOOK_TOKEN", ""),
 		ArgoRunWebhookTokenSecretName: getenv("ARGO_RUN_WEBHOOK_TOKEN_SECRET_NAME", "databrew-run-webhook-token"),

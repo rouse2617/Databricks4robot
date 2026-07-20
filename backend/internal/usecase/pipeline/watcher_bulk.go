@@ -1,0 +1,204 @@
+package pipeline
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"strings"
+	"sync"
+
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+)
+
+// CYB-3681 — DB-driven bulk-pull writeback.
+//
+// The watcher's active-run refresh used to issue one GetWorkflow per active
+// run per tick (bounded to a rotating window of ≤50). With thousands of
+// active runs that is both slow (starvation across windows) and expensive
+// (N GETs against the K8s API). The bulk path replaces it:
+//
+//  1. per (cluster, namespace): ONE full LIST of active workflows, selected
+//     by the positive label `workflows.argoproj.io/completed=false` (the Argo
+//     controller stamps it on first reconcile). No pagination: the active set
+//     is bounded by cluster capacity, and a consistent snapshot beats a
+//     Continue-chain racing the controller.
+//  2. every DB-active run present in the snapshot is applied from the listed
+//     object — change-gated on resourceVersion so an unchanged workflow costs
+//     zero DB writes. Every recalibrateEvery-th scan ignores the gate and
+//     re-applies everything (drift sweep).
+//  3. DB-active runs ABSENT from the snapshot get a bounded targeted GET
+//     (refreshPipelineRunStatus): a just-finished workflow no longer matches
+//     the selector but still exists (terminal apply), and a 404 flows into
+//     the existing orphan grading (preserve window → ledger reconcile →
+//     expired). Freshly submitted workflows without the label yet land here
+//     too and simply read back their live phase.
+//
+// `WATCHER_MODE=legacy` restores the per-run rotating-window path (rollback
+// hatch, same convention as BATCH_DISPATCH_MODE).
+
+const (
+	watcherModeEnv    = "WATCHER_MODE"
+	watcherModeLegacy = "legacy"
+
+	// activeWorkflowSelector matches workflows the Argo controller considers
+	// live. Positive match (not `!=true`) so an apiserver that drops the
+	// selector can only over-return, never silently hide active workflows.
+	activeWorkflowSelector = "workflows.argoproj.io/completed=false"
+
+	// recalibrateEvery: every N-th scan bypasses the resourceVersion gate and
+	// re-applies every listed workflow, so a bug in the gate (or a missed
+	// write) self-heals within N ticks instead of persisting forever.
+	recalibrateEvery = 10
+)
+
+func watcherBulkModeEnabled() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv(watcherModeEnv)), watcherModeLegacy)
+}
+
+// markWorkflowApplied gates repeat applies of an unchanged workflow within
+// this process. Returns true when rv is NEW for the run (caller must apply).
+// Memory only: a restart re-applies everything once, which is exactly the
+// recalibration semantic.
+func (uc *Usecase) markWorkflowApplied(runID, rv string) bool {
+	uc.watcherRVMu.Lock()
+	defer uc.watcherRVMu.Unlock()
+	if uc.watcherAppliedRV == nil {
+		uc.watcherAppliedRV = map[string]string{}
+	}
+	if uc.watcherAppliedRV[runID] == rv && rv != "" {
+		return false
+	}
+	uc.watcherAppliedRV[runID] = rv
+	return true
+}
+
+// forgetWorkflowApplied drops a run from the RV gate (terminal runs must not
+// pin map memory forever).
+func (uc *Usecase) forgetWorkflowApplied(runID string) {
+	uc.watcherRVMu.Lock()
+	defer uc.watcherRVMu.Unlock()
+	delete(uc.watcherAppliedRV, runID)
+}
+
+// bulkSyncActiveRuns refreshes all DB-active runs from per-cluster LIST
+// snapshots. Returns the number of runs whose state was applied or probed.
+// residualLimit bounds the targeted GETs for snapshot-absent runs per cluster
+// per tick (the residual set is naturally small: just-finished or just-created
+// workflows).
+func (uc *Usecase) bulkSyncActiveRuns(ctx context.Context, runs []models.PipelineRun, activeIdx []int, residualLimit int, recalibrate bool) int {
+	if len(activeIdx) == 0 {
+		return 0
+	}
+	byCluster := groupRunIndicesByCluster(runs, activeIdx, func(r *models.PipelineRun) string {
+		return uc.resolveRunClusterID(ctx, r)
+	})
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		synced int
+	)
+	for cluster, group := range byCluster {
+		wg.Add(1)
+		go func(cluster string, group []int) {
+			defer wg.Done()
+			n := uc.bulkSyncClusterRuns(ctx, runs, group, residualLimit, recalibrate)
+			mu.Lock()
+			synced += n
+			mu.Unlock()
+			_ = cluster
+		}(cluster, group)
+	}
+	wg.Wait()
+	return synced
+}
+
+// bulkSyncClusterRuns handles one cluster's group: LIST once per namespace,
+// apply matches, probe absentees.
+func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.PipelineRun, group []int, residualLimit int, recalibrate bool) int {
+	if len(group) == 0 {
+		return 0
+	}
+	client, err := uc.resolveArgoClientForRun(ctx, &runs[group[0]])
+	if err != nil || client == nil {
+		if err != nil {
+			slog.Warn("bulk watcher: resolve argo client failed, falling back to per-run refresh",
+				"clusterID", uc.resolveRunClusterID(ctx, &runs[group[0]]), "err", err)
+		}
+		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
+	}
+
+	// One LIST per namespace present in the group (almost always exactly one).
+	namespaces := map[string]bool{}
+	for _, i := range group {
+		ns := runs[i].ArgoNamespace
+		if ns == "" {
+			ns = uc.namespace
+		}
+		namespaces[ns] = true
+	}
+	listed := map[string]*wfv1.Workflow{} // "ns/name" → workflow
+	listOK := true
+	for ns := range namespaces {
+		items, err := client.ListWorkflows(ctx, ns, activeWorkflowSelector)
+		if err != nil {
+			// A failed LIST must NOT make every run in the namespace look
+			// absent (mass orphan-probing a healthy cluster). Degrade to the
+			// bounded per-run path for this tick.
+			slog.Warn("bulk watcher: list active workflows failed, falling back to per-run refresh",
+				"namespace", ns, "err", err)
+			listOK = false
+			break
+		}
+		for i := range items {
+			listed[ns+"/"+items[i].Name] = &items[i]
+		}
+	}
+	if !listOK {
+		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
+	}
+
+	synced, residuals := 0, 0
+	for _, i := range group {
+		run := &runs[i]
+		ns := run.ArgoNamespace
+		if ns == "" {
+			ns = uc.namespace
+		}
+		if wf, ok := listed[ns+"/"+strings.TrimSpace(run.WorkflowName)]; ok && run.WorkflowName != "" {
+			if recalibrate || uc.markWorkflowApplied(run.ID, wf.ResourceVersion) {
+				uc.applyWorkflowToRun(ctx, run, wf, nodeProjectTerminalArchive)
+				if !isActiveDeploymentStatus(run.Status) {
+					uc.forgetWorkflowApplied(run.ID)
+				}
+				synced++
+			}
+			continue
+		}
+		// Absent from the active snapshot: terminal, orphaned, or not yet
+		// labeled. Targeted GET resolves which; bounded per tick.
+		if residuals >= residualLimit {
+			continue
+		}
+		residuals++
+		uc.refreshPipelineRunStatus(ctx, run)
+		uc.forgetWorkflowApplied(run.ID)
+		synced++
+	}
+	return synced
+}
+
+// legacyRefreshGroup is the bounded per-run fallback used when a cluster's
+// LIST is unavailable this tick.
+func (uc *Usecase) legacyRefreshGroup(ctx context.Context, runs []models.PipelineRun, group []int, limit int) int {
+	n := 0
+	for _, i := range group {
+		if n >= limit {
+			break
+		}
+		uc.refreshPipelineRunStatus(ctx, &runs[i])
+		n++
+	}
+	return n
+}

@@ -196,8 +196,22 @@ func classifyRunDiagnosticReason(status, message, workflowName, workflowUID stri
 		return "resource_incompatible"
 	case containsAny(normalizedMessage, "imagepullbackoff", "errimagepull", "invalidimagename", "invalid image", "failed to apply default image tag", "couldn't parse image name", "manifest unknown", "pull access denied"):
 		return "image_startup"
-	case containsAny(normalizedMessage, "create runtime config projection", "runtime config projection", "configmap", "insufficient privileges", "forbidden", "unauthorized"):
+	case containsAny(normalizedMessage, "create runtime config projection", "runtime config projection", "configmap"):
+		// The backend wraps every genuine projection error with the
+		// "create runtime config projection: %w" prefix (see usecase.go), so the
+		// prefix — not a bare "forbidden" — is what reliably identifies a
+		// projection failure. Keep this case first: a projection RBAC denial
+		// also matches the workflow-RBAC signatures below, and it must land here.
 		return "runtime_config_projection_failed"
+	case containsAny(normalizedMessage, "workflowtaskresults", "workflowtasksets", "argoproj.io is forbidden", "cannot create resource", "cannot get resource", "cannot list resource", "cannot patch resource", "cannot watch resource", "cannot delete resource", "insufficient privileges", "forbidden", "unauthorized"):
+		// CYB-3486: the argo wait/executor sidecar runs under the workflow pod's
+		// service account. On a cluster/namespace where that SA lacks the argo
+		// RBAC (e.g. delivery-clust cyber-delivery-prod's default KSA cannot
+		// create workflowtaskresults → wait sidecar exit 64), the run fails with
+		// a k8s RBAC denial. That is a workflow-execution permission problem, NOT
+		// the runtime-config ConfigMap projection — previously every such denial
+		// was mislabeled "运行配置投影失败", pointing operators at the wrong subsystem.
+		return "workflow_rbac_forbidden"
 	case containsAny(normalizedMessage, "stale run: exceeded maximum active duration"):
 		return "stale_running"
 	case containsAny(normalizedMessage, "argo 工作流已被 ttl 清理", "workflow not found", "workflow service unavailable"):
@@ -230,6 +244,8 @@ func defaultDiagnosticMessage(reason string) string {
 		return "Run 已取消。"
 	case "runtime_config_projection_failed":
 		return "运行配置投影失败。"
+	case "workflow_rbac_forbidden":
+		return "工作流在目标集群/命名空间的权限不足(RBAC),无法创建 argo 运行时资源。"
 	case "run_failed":
 		return "Run 已失败，暂无更具体的运行时诊断。"
 	default:

@@ -176,7 +176,10 @@ func setupInfra() *infra {
 	if pgClient != nil {
 		clusterRepo = postgres.NewClusterRepo(pgClient)
 		k8sFactory = k8s.NewClientFactory(clusterRepo)
-		argoFactoryImpl = argo.NewClientFactory(clusterRepo, argo.WithEnvFallback(argoCfg))
+		argoFactoryImpl = argo.NewClientFactory(clusterRepo,
+			argo.WithEnvFallback(argoCfg),
+			argo.WithK8sFactory(k8sFactory),
+		)
 	}
 
 	return &infra{

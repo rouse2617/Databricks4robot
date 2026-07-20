@@ -288,6 +288,64 @@ func (u *Usecase) propagateTagToDescendants(ctx context.Context, assetID, tagKey
 		}); err != nil {
 			return fmt.Errorf("tag propagation to %s: %w", desc.AssetID, err)
 		}
+		// Emit a tag_upserted event per descendant row so the event-driven ES
+		// reindex fires and ListTagHistory shows the propagated write. Without
+		// this the descendant projection drifts silently from search/history.
+		if err := u.appendAssetEvent(ctx, "tag_upserted", desc, map[string]any{
+			"tag_key":         tagKey,
+			"tag_value":       tagValue,
+			"tag_type":        tagType,
+			"source_type":     src.SourceType,
+			"source_name":     src.SourceName,
+			"source_version":  src.SourceVersion,
+			"run_id":          src.RunID,
+			"propagated_from": assetID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unpropagateTagFromDescendants is the symmetric inverse of
+// propagateTagToDescendants (CYB-1068): when a propagating tag is removed from
+// an ancestor, the copies it pushed onto descendants must be removed too, else
+// orphaned descendant rows survive. sourceType scoping mirrors DeleteTag (empty
+// removes all sources for the key). A tag_deleted event is emitted per removed
+// descendant row so ES reindex fires and history stays consistent.
+func (u *Usecase) unpropagateTagFromDescendants(ctx context.Context, assetID, tagKey, sourceType string) error {
+	if u.tagRegistry == nil || u.tagRepo == nil || !u.tagRegistry.ShouldPropagate(tagKey) {
+		return nil
+	}
+	descendants, err := u.repo.ListDescendants(ctx, assetID)
+	if err != nil {
+		return fmt.Errorf("tag un-propagation: %w", err)
+	}
+	for _, desc := range descendants {
+		victims, err := u.findTagsForDelete(ctx, desc.AssetID, tagKey, sourceType)
+		if err != nil {
+			return err
+		}
+		if len(victims) == 0 {
+			continue
+		}
+		if err := u.tagRepo.Delete(ctx, desc.AssetID, tagKey, sourceType); err != nil {
+			return fmt.Errorf("tag un-propagation from %s: %w", desc.AssetID, err)
+		}
+		for _, v := range victims {
+			if err := u.appendAssetEvent(ctx, "tag_deleted", desc, map[string]any{
+				"tag_key":         v.TagKey,
+				"tag_value":       v.TagValue,
+				"tag_type":        v.TagType,
+				"source_type":     v.SourceType,
+				"source_name":     v.SourceName,
+				"source_version":  v.SourceVersion,
+				"run_id":          v.RunID,
+				"propagated_from": assetID,
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -1361,7 +1419,9 @@ func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey, sourceType str
 				return err
 			}
 		}
-		return nil
+		// CYB-1068: un-propagate to descendants so a propagating tag removed
+		// from an ancestor does not leave orphaned copies behind.
+		return u.unpropagateTagFromDescendants(txCtx, assetID, tagKey, sourceType)
 	}); err != nil {
 		return nil, err
 	}

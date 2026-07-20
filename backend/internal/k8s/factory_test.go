@@ -138,6 +138,40 @@ func TestFactory_ForCluster_ExplicitEndpointWithAudience_Success(t *testing.T) {
 	}
 }
 
+// TestFactory_ForCluster_AuthTypeGKEWIFExplicit verifies explicit auth_type
+// "gke_wif" behaves identically to the empty-string default.
+func TestFactory_ForCluster_AuthTypeGKEWIFExplicit(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{
+		ID:             "cluster-delivery",
+		Name:           "delivery-clust",
+		K8sAPIEndpoint: "https://34.44.27.160",
+		K8sAudience:    "test-audience",
+		AuthType:       "gke_wif",
+	})
+	f := NewClientFactory(repo)
+	if _, err := f.ForCluster(context.Background(), "cluster-delivery"); err != nil {
+		t.Fatalf("gke_wif auth_type should build, got %v", err)
+	}
+}
+
+// TestFactory_ForCluster_UnsupportedAuthType guards the auth-dispatch switch:
+// unknown auth_type values must fail with ErrClusterMisconfigured, not build
+// a broken config.
+func TestFactory_ForCluster_UnsupportedAuthType(t *testing.T) {
+	repo := newStubRepo(&models.Cluster{
+		ID:             "cluster-ack",
+		Name:           "aliyun-ack-prod",
+		K8sAPIEndpoint: "https://kubernetes.ack.aliyuncs.com",
+		K8sAudience:    "sts.aliyuncs.com",
+		AuthType:       "ack_wif",
+	})
+	f := NewClientFactory(repo)
+	_, err := f.ForCluster(context.Background(), "cluster-ack")
+	if !errors.Is(err, ErrClusterMisconfigured) {
+		t.Fatalf("unsupported auth_type must return ErrClusterMisconfigured, got %v", err)
+	}
+}
+
 func TestFactory_CacheHit(t *testing.T) {
 	defaultTestEnv(t)
 	repo := newStubRepo(&models.Cluster{ID: "cluster-default", Name: "d"})
@@ -221,5 +255,18 @@ func TestFactory_FailureIsolation(t *testing.T) {
 	// Default cluster still works — one failure doesn't poison the cache.
 	if _, err := f.ForCluster(context.Background(), "cluster-default"); err != nil {
 		t.Fatalf("healthy cluster should still work after neighbor failed: %v", err)
+	}
+}
+
+// CYB-3486: cluster rows drive the K8s client QPS/Burst so they're tunable
+// online. Explicit values pass through; unset (0) falls back to the safe
+// defaults (50/100), never client-go's throttling defaults (5/10). The resolver
+// lives on the model so the postgres repo and this factory never drift.
+func TestClusterClientRateLimits(t *testing.T) {
+	if qps, burst := (&models.Cluster{ClientQPS: 120, ClientBurst: 240}).ResolveClientLimits(); qps != 120 || burst != 240 {
+		t.Fatalf("explicit: got qps=%v burst=%v, want 120/240", qps, burst)
+	}
+	if qps, burst := (&models.Cluster{}).ResolveClientLimits(); qps != models.DefaultClientQPS || burst != models.DefaultClientBurst {
+		t.Fatalf("unset: got qps=%v burst=%v, want %v/%v", qps, burst, models.DefaultClientQPS, models.DefaultClientBurst)
 	}
 }

@@ -528,6 +528,41 @@ func TestTranspileDefaultTTL(t *testing.T) {
 	}
 }
 
+func TestTranspilePodGC(t *testing.T) {
+	p := &Pipeline{
+		Name: "podgc",
+		Nodes: []Node{{
+			ID:        "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	wf, err := Transpile(p, &Options{Name: "podgc-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodGC == nil {
+		t.Fatal("expected PodGC strategy")
+	}
+	if wf.Spec.PodGC.Strategy != wfv1.PodGCOnWorkflowSuccess {
+		t.Fatalf("podGC strategy = %q, want %q", wf.Spec.PodGC.Strategy, wfv1.PodGCOnWorkflowSuccess)
+	}
+	// Post-CYB-3667 tightening: keep step pods around for 24h after a workflow
+	// succeeds so the GCP-console deep link, kubectl logs / kubectl describe, and
+	// the frontend "查看 Pod" button keep working through a normal after-hours
+	// operator window. Bare OnWorkflowSuccess (no delay) tore pods down the
+	// instant a workflow finished and broke every deep link (see #494).
+	if got, want := wf.Spec.PodGC.DeleteDelayDuration, "24h"; got != want {
+		t.Fatalf("podGC deleteDelayDuration = %q, want %q", got, want)
+	}
+	if _, err := wf.Spec.PodGC.GetDeleteDelayDuration(); err != nil {
+		// Guardrail: string form must parse into a time.Duration so the argo
+		// controller accepts it. Anything the SDK's own parser rejects here
+		// would silently drop back to immediate GC in the cluster.
+		t.Fatalf("podGC deleteDelayDuration %q does not parse as time.Duration: %v",
+			wf.Spec.PodGC.DeleteDelayDuration, err)
+	}
+}
+
 func TestTranspileRetryStrategy(t *testing.T) {
 	p := &Pipeline{
 		Name: "retry-test",
@@ -801,6 +836,80 @@ func TestTranspileInjectsExitHookWhenURLSet(t *testing.T) {
 	}
 	if tokEnv.ValueFrom.SecretKeyRef.Name != "databrew-run-webhook-token" || tokEnv.ValueFrom.SecretKeyRef.Key != "token" { // pragma: allowlist secret
 		t.Fatalf("unexpected secretKeyRef: %+v", tokEnv.ValueFrom.SecretKeyRef)
+	}
+}
+
+// TestTranspileSetsPodPriorityClassName verifies pool.2 (CYB-3486) injects
+// the target's PriorityClass onto the workflow spec so every pod inherits it.
+func TestTranspileSetsPodPriorityClassName(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:                 "wf-prio",
+		Namespace:            "default",
+		PodPriorityClassName: "cyber-databrew-batch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodPriorityClassName != "cyber-databrew-batch" {
+		t.Errorf("PodPriorityClassName: want %q, got %q", "cyber-databrew-batch", wf.Spec.PodPriorityClassName)
+	}
+}
+
+// TestTranspileOmitsPodPriorityClassNameWhenEmpty guards the byte-identical
+// backward-compat: empty option leaves the field unset so K8s default
+// scheduling behavior is preserved for pre-pool.2 rows.
+func TestTranspileOmitsPodPriorityClassNameWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noprio", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodPriorityClassName != "" {
+		t.Errorf("empty option must leave PodPriorityClassName empty, got %q", wf.Spec.PodPriorityClassName)
+	}
+}
+
+// TestTranspileSetsSchedulerName verifies pool (CYB-3486) injects the pool's
+// scheduler onto the workflow spec. Data-driven: transpiler sets whatever
+// string it's given, no hardcoded scheduler.
+func TestTranspileSetsSchedulerName(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:          "wf-sched",
+		Namespace:     "default",
+		SchedulerName: "koord-scheduler",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.SchedulerName != "koord-scheduler" {
+		t.Errorf("SchedulerName: want koord-scheduler, got %q", wf.Spec.SchedulerName)
+	}
+}
+
+// TestTranspileOmitsSchedulerNameWhenEmpty: scheduler-agnostic pool leaves the
+// field unset so the cluster default scheduler runs the pods.
+func TestTranspileOmitsSchedulerNameWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nosched", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.SchedulerName != "" {
+		t.Errorf("empty option must leave SchedulerName unset, got %q", wf.Spec.SchedulerName)
+	}
+}
+
+// TestTranspileSetsPodAnnotations verifies pool pod annotations reach
+// Spec.PodMetadata.Annotations.
+func TestTranspileSetsPodAnnotations(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:           "wf-anno",
+		Namespace:      "default",
+		PodAnnotations: map[string]string{"scheduling.koordinator.sh/tier": "batch"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.PodMetadata == nil || wf.Spec.PodMetadata.Annotations["scheduling.koordinator.sh/tier"] != "batch" {
+		t.Errorf("pod annotation not injected: %+v", wf.Spec.PodMetadata)
 	}
 }
 

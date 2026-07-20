@@ -26,6 +26,7 @@ type fakeSubmitQueue struct {
 	lastListLimit  int
 	withTxErrs     []error
 	rollbackedByTx int
+	findErr        error // scripted FindSubmittableJobs failure
 }
 
 func (q *fakeSubmitQueue) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
@@ -40,6 +41,9 @@ func (q *fakeSubmitQueue) WithTx(ctx context.Context, fn func(ctx context.Contex
 }
 
 func (q *fakeSubmitQueue) FindSubmittableJobs(_ context.Context, _ int) ([]models.BackfillJob, error) {
+	if q.findErr != nil {
+		return nil, q.findErr
+	}
 	return q.jobs, nil
 }
 
@@ -79,14 +83,27 @@ func (q *fakeSubmitQueue) LockPendingItem(_ context.Context, itemID string) (*mo
 type fakeDeployer struct {
 	mu sync.Mutex
 
-	deployErrByAsset map[string]error // nil entry → success
+	deployErrByAsset map[string]error  // nil entry → success
+	clusterByTarget  map[string]string // targetID → cluster (sharding tests)
 	runsByID         map[string]*models.PipelineRun
+	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
 
-	upserts   []string
-	deploys   []string
-	commits   []string
-	failures  []string
-	refreshes []string
+	upserts        []string
+	upsertVersions []int
+	deploys        []string
+	deployVersions []int
+	commits        []string
+	failures       []string
+	refreshes      []string
+}
+
+func (d *fakeDeployer) ResolveTargetClusterID(_ context.Context, targetID string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c, ok := d.clusterByTarget[targetID]; ok {
+		return c
+	}
+	return "default"
 }
 
 func (d *fakeDeployer) GetRun(_ context.Context, id string) (*models.PipelineRun, error) {
@@ -100,13 +117,17 @@ func (d *fakeDeployer) UpsertBatchSubtaskRun(_ context.Context, in pipelineUC.Ba
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.upserts = append(d.upserts, in.AssetID)
+	d.upsertVersions = append(d.upsertVersions, in.TemplateVersion)
 	return "run-" + in.AssetID, "wf-batch-" + in.AssetID, nil
 }
 
-func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string, assetIDs []string, _ ...pipelineUC.DeployOptions) (*models.PipelineDeployment, error) {
+func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string, assetIDs []string, opts ...pipelineUC.DeployOptions) (*models.PipelineDeployment, error) {
 	asset := assetIDs[0]
 	d.mu.Lock()
 	d.deploys = append(d.deploys, asset)
+	if len(opts) > 0 {
+		d.deployVersions = append(d.deployVersions, opts[0].TemplateVersion)
+	}
 	err := d.deployErrByAsset[asset]
 	d.mu.Unlock()
 	if err != nil {
@@ -133,7 +154,11 @@ func (d *fakeDeployer) RefreshRunFromWorkflowByName(_ context.Context, workflowN
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.refreshes = append(d.refreshes, workflowName)
-	return &models.PipelineRun{WorkflowName: workflowName, ArgoWorkflowUID: "uid-backfilled"}, nil
+	uid := "uid-backfilled"
+	if d.refreshNoUID {
+		uid = ""
+	}
+	return &models.PipelineRun{WorkflowName: workflowName, ArgoWorkflowUID: uid}, nil
 }
 
 func newSubmitterFixture(job *models.BackfillJob, items []models.BackfillItem) (*Usecase, *pausedSyncRepo, *fakeSubmitQueue, *fakeDeployer) {
@@ -232,6 +257,57 @@ func TestSubmitter_DeterministicFailureSurfaces(t *testing.T) {
 	}
 	if len(d.failures) != 1 {
 		t.Fatalf("failures = %v, want one recorded subtask failure", d.failures)
+	}
+}
+
+// A retryable incomplete submit (runtime accepted the workflow but no Argo uid
+// materialized — typically a rate-limited post-submit re-read) leaves the item
+// PENDING, not failed: the CR is very likely live, so the next cycle re-submits
+// (deterministic name → AlreadyExists → uid backfill). Failing it would strand a
+// run that may be running. This is the phantom-Pending batch bug's fix.
+func TestSubmitter_IncompleteSubmitLeavesItemPending(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.deployErrByAsset["asset-1"] = fmt.Errorf("deploy: %w", pipelineUC.ErrWorkflowSubmitIncomplete)
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending (retryable, not failed)", got)
+	}
+	if len(d.failures) != 0 {
+		t.Fatalf("failures = %v, want none (incomplete submit is retryable)", d.failures)
+	}
+}
+
+// AlreadyExists but the workflow isn't readable in Argo: our create landed
+// (per-run UUID name) and the CR was TTL/GC-cleaned before the uid read-back —
+// the normal shape for seconds-long tasks at burst rate. The item must advance
+// to SUBMITTED (watcher orphan grading owns the run from here); leaving it
+// pending wedged the whole channel in the G1 load test: the retry loop never
+// counted toward the attempt cap and tripped the breaker every cycle.
+func TestSubmitter_AlreadyExistsWithoutUIDMarksSubmitted(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.deployErrByAsset["asset-1"] = fmt.Errorf("submit: %w", errAlreadyExistsForTest)
+	d.refreshNoUID = true
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (run resolution is the watcher's job)", got)
+	}
+	if len(d.refreshes) != 1 {
+		t.Fatalf("refreshes = %v, want exactly one attempt", d.refreshes)
+	}
+	if len(d.failures) != 0 {
+		t.Fatalf("failures = %v, want none", d.failures)
 	}
 }
 

@@ -68,6 +68,12 @@ type stubBackfillRepo struct {
 	items []models.BackfillItem
 }
 
+func (s *stubBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (s *stubBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (s *stubBackfillRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
 func (s *stubBackfillRepo) FindAllJobs(context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
@@ -131,6 +137,9 @@ func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ 
 	}
 	return nil
 }
+func (s *stubBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return s.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
+}
 func (s *stubBackfillRepo) UpdateItemPipelineRun(context.Context, string, string, string, string) error {
 	return nil
 }
@@ -163,6 +172,9 @@ func (s *stubBackfillRepo) CountPipelineRunsByBatchJobID(context.Context, string
 	return 0, nil
 }
 func (s *stubBackfillRepo) CountRunsWithNodeRowsByBatchJobID(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (s *stubBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
 	return 0, nil
 }
 func (s *stubBackfillRepo) FindItemsByAssetID(_ context.Context, assetID string) ([]models.BackfillItem, error) {

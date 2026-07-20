@@ -376,6 +376,62 @@ func TestDeleteTag_MissingIsIdempotent(t *testing.T) {
 	}
 }
 
+// countEventsFor returns the number of recorded events of eventType for the
+// given assetID.
+func countEventsFor(events []*models.AssetEvent, assetID, eventType string) int {
+	n := 0
+	for _, e := range events {
+		if e.AssetID == assetID && e.EventType == eventType {
+			n++
+		}
+	}
+	return n
+}
+
+// TestTagPropagation_EmitsEventsAndUnpropagates covers CYB-1068: a propagating
+// tag (compliance.status) written to an ancestor must (1) copy onto descendants
+// AND emit a tag_upserted event per descendant, and (2) on DeleteTag remove the
+// descendant copies AND emit a tag_deleted event per descendant.
+func TestTagPropagation_EmitsEventsAndUnpropagates(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["parent"] = &models.Asset{AssetID: "parent", McapFileID: "m1"}
+	repo.assets["child"] = &models.Asset{AssetID: "child", McapFileID: "m1"}
+	repo.descendants = map[string][]*models.Asset{
+		"parent": {{AssetID: "child", McapFileID: "m1"}},
+	}
+	tagRepo := newMockAssetTagRepo()
+	eventRepo := newMockAssetEventRepo()
+	reg := buildTestTagRegistry(t)
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, reg, nil)
+
+	// compliance.status is registered with propagation=descendants; source
+	// "compliance" requires a source_name.
+	if _, err := uc.UpsertTag(context.Background(), "parent", UpsertTagInput{
+		Key: "compliance.status", Value: "approved",
+		SourceType: "compliance", SourceName: "reviewer-1",
+	}); err != nil {
+		t.Fatalf("UpsertTag failed: %v", err)
+	}
+
+	if _, ok := tagRepo.rows[tagRowKey("child", "compliance.status")]; !ok {
+		t.Fatalf("expected tag to propagate to descendant")
+	}
+	if got := countEventsFor(eventRepo.all(), "child", "tag_upserted"); got != 1 {
+		t.Fatalf("expected 1 tag_upserted event on descendant, got %d", got)
+	}
+
+	// DeleteTag must un-propagate: remove the descendant copy + emit tag_deleted.
+	if _, err := uc.DeleteTag(context.Background(), "parent", "compliance.status", ""); err != nil {
+		t.Fatalf("DeleteTag failed: %v", err)
+	}
+	if _, ok := tagRepo.rows[tagRowKey("child", "compliance.status")]; ok {
+		t.Fatalf("expected descendant tag copy to be un-propagated on delete")
+	}
+	if got := countEventsFor(eventRepo.all(), "child", "tag_deleted"); got != 1 {
+		t.Fatalf("expected 1 tag_deleted event on descendant, got %d", got)
+	}
+}
+
 func TestGet_HydratesTagsAndAlgoResultsFromProjections(t *testing.T) {
 	repo := &readModelAssetRepo{
 		getFn: func(context.Context, string) (*models.Asset, error) {

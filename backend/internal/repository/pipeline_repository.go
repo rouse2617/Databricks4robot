@@ -96,10 +96,13 @@ type ExecutionTargetRepository interface {
 type PipelineRunRepository interface {
 	Save(ctx context.Context, r *models.PipelineRun) error
 	FindAll(ctx context.Context) ([]models.PipelineRun, error)
-	// FindAllSummaries returns list rows without manifest/pipeline_json/target_snapshot.
-	FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error)
 	// ListSummaries returns filtered/paginated summary rows for batch job UIs.
 	ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error)
+	// FindActiveRunSummaries returns summary rows for runs still in an active
+	// status (Running/Pending/…), oldest first, capped at limit. The watcher
+	// uses it instead of "most-recent N" so a burst of just-completed runs
+	// can't crowd older still-active runs out of the refresh set (CYB-3681).
+	FindActiveRunSummaries(ctx context.Context, limit int) ([]models.PipelineRun, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindSummaryByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)

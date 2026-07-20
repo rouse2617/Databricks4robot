@@ -65,10 +65,25 @@ type Options struct {
 	ExitHookImage string
 
 	// PodLabels are applied verbatim to every pod created for this workflow (via
-	// Spec.PodMetadata), for cost-attribution via GKE Cost Allocation. Callers own
-	// sanitizing values to valid Kubernetes label syntax before setting this field;
-	// Transpile does not validate or mutate it. Nil/empty is a no-op.
+	// Spec.PodMetadata), for cost-attribution via GKE Cost Allocation and for
+	// pool scheduling labels (e.g. a Koordinator ElasticQuota label). Callers
+	// own sanitizing values to valid Kubernetes label syntax before setting
+	// this field; Transpile does not validate or mutate it. Nil/empty is a no-op.
 	PodLabels map[string]string
+
+	// PodAnnotations are applied verbatim to every pod (via Spec.PodMetadata),
+	// for pool scheduling annotations. Nil/empty is a no-op.
+	PodAnnotations map[string]string
+
+	// PodPriorityClassName sets the K8s PriorityClass applied to every pod in
+	// the workflow (CYB-3486 pool). Empty = unset, K8s global default.
+	PodPriorityClassName string
+
+	// SchedulerName sets the K8s scheduler for every pod (CYB-3486 pool).
+	// Empty = unset → cluster default scheduler (scheduler-agnostic pool).
+	// The value is supplied by the pool config (data-driven); Transpile does
+	// not hardcode or validate any specific scheduler.
+	SchedulerName string
 }
 
 // ExitNotifyTemplateName is the template invoked by the workflow-level exit hook.
@@ -180,6 +195,24 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 			TTLStrategy: &wfv1.TTLStrategy{
 				SecondsAfterCompletion: &opts.TTLSecondsAfter,
 			},
+			// Reclaim step pods once the whole workflow succeeds, so finished
+			// runs stop accumulating in etcd. Failed workflows keep their pods
+			// for operator diagnostics (logs, exit codes); the workflow object
+			// itself is still cleaned up later by TTLStrategy.
+			//
+			// DeleteDelayDuration keeps a successful workflow's step pods around
+			// for 24h before the argo controller actually removes them. Post-run
+			// forensics (GCP console "查看 Pod", kubectl describe, kubectl logs
+			// live-stream) work for the operator's normal after-hours window;
+			// after 24h the pod is gone and #494's stub diagnostics take over so
+			// the UI stays consistent. Trades some etcd footprint (roughly a
+			// day of successful pod objects) for a real usability win — the
+			// previous "GC immediately on success" broke every deep link the
+			// moment a pod finished.
+			PodGC: &wfv1.PodGC{
+				Strategy:            wfv1.PodGCOnWorkflowSuccess,
+				DeleteDelayDuration: "24h",
+			},
 		},
 	}
 
@@ -189,8 +222,21 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	for _, s := range opts.ImagePullSecrets {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
 	}
-	if len(opts.PodLabels) > 0 {
-		wf.Spec.PodMetadata = &wfv1.Metadata{Labels: opts.PodLabels}
+	if len(opts.PodLabels) > 0 || len(opts.PodAnnotations) > 0 {
+		md := &wfv1.Metadata{}
+		if len(opts.PodLabels) > 0 {
+			md.Labels = opts.PodLabels
+		}
+		if len(opts.PodAnnotations) > 0 {
+			md.Annotations = opts.PodAnnotations
+		}
+		wf.Spec.PodMetadata = md
+	}
+	if opts.PodPriorityClassName != "" {
+		wf.Spec.PodPriorityClassName = opts.PodPriorityClassName
+	}
+	if opts.SchedulerName != "" {
+		wf.Spec.SchedulerName = opts.SchedulerName
 	}
 
 	// Workflow-level exit hook: poke DataBrew on terminal phase (push status).

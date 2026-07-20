@@ -22,8 +22,13 @@ func (h *Handler) GetNodePodDiagnostics(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	// CYB-3486: resolve the workflow's owning cluster once, then route both the
+	// Argo GetWorkflow and the K8s pod-diagnostics read to that cluster.
+	ctx := c.Request.Context()
+	run, _ := h.findPipelineRunByWorkflow(ctx, name)
+	clusterID := h.resolveRunClusterID(ctx, run)
+	namespace := h.namespaceForRequest(c, run)
+	wf, err := h.argoClientForCluster(ctx, clusterID).GetWorkflow(ctx, name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -39,16 +44,28 @@ func (h *Handler) GetNodePodDiagnostics(c *gin.Context) {
 		return
 	}
 
-	if h.podClient == nil {
+	podClient, err := h.podClientForCluster(ctx, clusterID)
+	if err != nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, "K8S_UNAVAILABLE", "k8s client: "+err.Error(), nil)
+		return
+	}
+	if podClient == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable, "K8S_UNAVAILABLE", "Kubernetes Pod diagnostics are not configured", nil)
 		return
 	}
 
-	diag, err := h.podClient.GetPodDiagnostics(c.Request.Context(), namespace, podName)
+	diag, err := podClient.GetPodDiagnostics(ctx, namespace, podName)
 	if err != nil {
 		switch {
 		case apierrors.IsNotFound(err):
-			httpresp.NotFound(c, "POD_NOT_FOUND", "pod "+podName+" was not found")
+			// Pod was garbage-collected but we still know its resolved name.
+			// Return a stub so the frontend can build the GKE console deep link.
+			c.JSON(200, k8s.PodDiagnostics{
+				Namespace:        namespace,
+				PodName:          podName,
+				GarbageCollected: true,
+			})
+			return
 		case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
 			httpresp.Error(c, http.StatusForbidden, "K8S_FORBIDDEN", "Kubernetes credentials cannot read pod diagnostics", nil)
 		case errors.Is(err, k8s.ErrUnavailable):

@@ -23,6 +23,7 @@ import (
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics/cloudmonitoring"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -123,12 +124,18 @@ func setupCore(inf *infra) *coreHandlers {
 	// by target.cluster_id. Nil-safe (no PG → nil factory → legacy adapter path).
 	puc.SetArgoFactory(inf.argoFactory)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
-	puc.SetArgoRunWebhook(
-		inf.cfg.ArgoRunWebhookURL,
-		inf.cfg.ArgoRunWebhookTokenSecretName,
-		inf.cfg.ArgoRunWebhookTokenSecretKey,
-		inf.cfg.ArgoRunWebhookImage,
-	)
+	// CYB-3681: exit-hook injection is opt-in (ARGO_EXIT_HOOK_ENABLED=true).
+	// The bulk-pull watcher is the writeback path; an exit-notify pod per
+	// workflow is pure cost at batch scale. The inbound webhook endpoint stays
+	// registered regardless, so re-enabling is a config flip, not a deploy.
+	if inf.cfg.ArgoExitHookEnabled {
+		puc.SetArgoRunWebhook(
+			inf.cfg.ArgoRunWebhookURL,
+			inf.cfg.ArgoRunWebhookTokenSecretName,
+			inf.cfg.ArgoRunWebhookTokenSecretKey,
+			inf.cfg.ArgoRunWebhookImage,
+		)
+	}
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
 		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,
@@ -152,6 +159,23 @@ func setupCore(inf *infra) *coreHandlers {
 		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
 		// Price pipeline step costs by the node's real machine type (CYB-3073).
 		puc.SetNodeInstanceResolver(k8s.NewNodeInstanceResolver(clientset))
+		// CYB-3680: content-addressed runtime-config CMs are shared and
+		// owner-less; this janitor reclaims those whose sliding-reference
+		// annotation aged past the TTL (default cluster; per-cluster sweeps
+		// ride CYB-3678/3681's channel loops).
+		k8s.StartRuntimeConfigJanitor(context.Background(), clientset,
+			time.Duration(inf.cfg.RuntimeConfigTTLDays)*24*time.Hour, time.Hour)
+	}
+	// CYB-3680: DB blob = rebuildable source of truth for content-addressed
+	// runtime configs.
+	puc.SetRuntimeConfigBlobStore(postgres.NewRuntimeConfigBlobRepo(pg))
+	// CYB-3486: route the runtime-config ConfigMap to the TARGET's cluster.
+	// Without this, a delivery-clust run creates its ConfigMap through the
+	// default (cyber-clust) clientset and fails with `namespaces
+	// "cyber-delivery-prod" not found`. Nil-safe (no PG → nil factory → the
+	// default-cluster singleton set above stays in effect).
+	if inf.k8sFactory != nil {
+		puc.SetRuntimeConfigStoreFactory(k8s.NewRuntimeConfigStoreFactory(inf.k8sFactory))
 	}
 	if inf.cfg.PricingConfigPath != "" {
 		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
@@ -189,6 +213,15 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+
+	// CYB-3691: write stale-items gauge to GCP Cloud Monitoring (best-effort).
+	// projectID is passed empty; the writer falls back to the metadata server.
+	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(), ""); mwErr == nil {
+		backfillUC.SetMonWriter(mw)
+		slog.Info("cloud monitoring writer initialized")
+	} else {
+		slog.Warn("cloud monitoring writer unavailable", "err", mwErr)
+	}
 	// Batch job completion Feishu notification (CYB-3071). Empty webhook URL
 	// disables it; feishu.Client.SendText becomes a no-op in that case.
 	backfillUC.SetNotifier(
@@ -201,7 +234,16 @@ func setupCore(inf *infra) *coreHandlers {
 	// boot-time ResumeIncompleteBatches, and the P0 pool-recovery stopgap are
 	// all gone. Argo owns queueing/parallelism/execution from here.
 	backfillUC.SetSubmitQueue(backfillRepo)
+	// CYB-3679: per-cluster online tuning (concurrency/rate/batch/paused) —
+	// re-read every cycle, so a PUT bites within one tick.
+	backfillUC.SetDispatcherConfigRepo(postgres.NewDispatcherConfigRepo(pg))
 	backfillUC.StartSubmitter()
+	// CYB-3677: the legacy batch entry now persists jobs for the submitter
+	// (durable dispatch) instead of a one-shot in-memory goroutine. The kick
+	// starts the first cycle immediately; BATCH_DISPATCH_MODE=legacy is the
+	// one-release rollback switch.
+	puc.SetBatchDispatchMode(inf.cfg.BatchDispatchMode)
+	puc.SetBatchSubmitKicker(backfillUC.KickSubmitter)
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
 	backfillUC.StartJobReconciler(
@@ -232,6 +274,13 @@ func setupCore(inf *infra) *coreHandlers {
 	// through the factory. Nil-safe: if inf.k8sFactory is nil (no PG), the
 	// handlers fall back to the pre-3486 env singleton.
 	workflowHandler.SetK8sFactory(inf.k8sFactory)
+	// CYB-3486: /workflows/:name resolves the workflow's owning cluster (by name
+	// → run → target → cluster_id) and routes its Argo calls there, so
+	// non-default-cluster runs (e.g. delivery-clust) return logs/detail instead
+	// of "workflow not found" from the default argo-server. Nil-safe: no PG →
+	// nil factory → env singleton, unchanged behavior.
+	workflowHandler.SetArgoFactory(inf.argoFactory)
+	workflowHandler.SetExecutionTargetRepo(executionTargetRepo)
 
 	// ── Storage (GCS signed URL proxy + Grace resolver) ──
 	var storageHandler *storageH.Handler

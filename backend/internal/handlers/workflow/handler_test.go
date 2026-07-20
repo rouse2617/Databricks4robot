@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -79,9 +80,10 @@ func (m *mockRunRepo) Save(_ context.Context, run *models.PipelineRun) error {
 	return nil
 }
 func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) { return nil, nil }
-func (m *mockRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
+func (m *mockRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+
 func (m *mockRunRepo) ListSummaries(context.Context, models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	return nil, 0, nil
 }
@@ -1192,6 +1194,132 @@ func TestStreamWorkflowLogs_DoesNotFollowFinishedNode(t *testing.T) {
 	}
 }
 
+// When a node has no live logs to stream — workflow TTL'd/GC'd, pod recycled, or
+// pod not yet created — the SSE handler must end gracefully with an "end" event
+// (200, text/event-stream) rather than a 4xx/5xx. A non-2xx fires
+// EventSource.onerror → exponential-backoff reconnect storm; an "end" event
+// closes the client cleanly. Mirrors the non-stream GetWorkflowLogs graceful
+// branches for the SSE variant (CYB-3579).
+func TestStreamWorkflowLogs_GracefulEndForMissingLogs(t *testing.T) {
+	notFound := fmt.Errorf("%w: pods not found", argo.ErrNotFound)
+
+	tests := []struct {
+		name       string
+		wfName     string
+		getFn      func(context.Context, string, string) (*wfv1.Workflow, error)
+		streamFn   func(context.Context, string, string, string, argo.WorkflowLogOptions) (io.ReadCloser, error)
+		wantReason string
+	}{
+		{
+			name:   "pod recycled: stream returns ErrNotFound",
+			wfName: "wf-recycled",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return makeWorkflow("wf-recycled", "Running", 1), nil
+			},
+			streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+				return nil, notFound
+			},
+			wantReason: "pod-recycled",
+		},
+		{
+			name:   "workflow gone: get returns ErrNotFound",
+			wfName: "wf-gone",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return nil, notFound
+			},
+			wantReason: "workflow-gone",
+		},
+		{
+			name:   "pending workflow: no pod yet",
+			wfName: "wf-pending",
+			getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+				return makeWorkflow("wf-pending", "Pending", 0), nil
+			},
+			wantReason: "pod-not-created",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockWorkflowClient{getFn: tt.getFn, streamFn: tt.streamFn}
+			h := New(client, "default")
+			server := httptest.NewServer(setupRouter(h))
+			defer server.Close()
+
+			resp, err := http.Get(server.URL + "/workflows/" + tt.wfName + "/logs/stream?nodeId=a")
+			if err != nil {
+				t.Fatalf("stream request: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 graceful end, got %d", resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+				t.Fatalf("expected event-stream content type, got %q", ct)
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			body := string(raw)
+			if !strings.Contains(body, "event: end") {
+				t.Fatalf("expected terminal end event, got %q", body)
+			}
+			if !strings.Contains(body, `"reason":"`+tt.wantReason+`"`) {
+				t.Fatalf("expected end reason %q, got %q", tt.wantReason, body)
+			}
+			// The stream never opened, so no heartbeat/log frames must be emitted.
+			if strings.Contains(body, "event: heartbeat") || strings.Contains(body, "event: log") {
+				t.Fatalf("graceful end must not emit stream frames, got %q", body)
+			}
+		})
+	}
+}
+
+// A genuinely unknown node id on a live (non-pending) workflow is a real client
+// error and still 400s — the graceful-end path must not swallow it.
+func TestStreamWorkflowLogs_UnknownNodeStill400(t *testing.T) {
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("wf-unknown", "Running", 1), nil // only node "a" exists
+		},
+	}
+	h := New(client, "default")
+	server := httptest.NewServer(setupRouter(h))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/wf-unknown/logs/stream?nodeId=zzz")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown node on live workflow, got %d", resp.StatusCode)
+	}
+}
+
+// A genuine (non-not-found) stream fault still surfaces as 500 so the client
+// retries transient argo/RBAC failures and #462 logs them server-side.
+func TestStreamWorkflowLogs_GenuineFaultStill500(t *testing.T) {
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("wf-fault", "Running", 1), nil
+		},
+		streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+			return nil, fmt.Errorf("argo-server connection refused")
+		},
+	}
+	h := New(client, "default")
+	server := httptest.NewServer(setupRouter(h))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/wf-fault/logs/stream?nodeId=a")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for genuine fault, got %d", resp.StatusCode)
+	}
+}
+
 func TestWorkflowOperations(t *testing.T) {
 	tests := []struct {
 		method string
@@ -1600,6 +1728,38 @@ func TestGetNodePodDiagnostics_NodeNotFound(t *testing.T) {
 	assertErrorCode(t, w.Body.Bytes(), "NODE_NOT_FOUND")
 }
 
+func TestGetNodePodDiagnostics_PodNotFound_ReturnsStub(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetPodClient(&mockPodClient{
+		diagFn: func(_ context.Context, _, _ string) (*k8s.PodDiagnostics, error) {
+			return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a")
+		},
+	})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/a/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var diag k8s.PodDiagnostics
+	if err := json.Unmarshal(w.Body.Bytes(), &diag); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !diag.GarbageCollected {
+		t.Error("expected garbageCollected=true")
+	}
+	if diag.PodName == "" {
+		t.Error("expected non-empty podName in stub")
+	}
+}
+
 func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1607,12 +1767,6 @@ func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
 		code int
 		want string
 	}{
-		{
-			name: "pod not found",
-			err:  apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a"),
-			code: http.StatusNotFound,
-			want: "POD_NOT_FOUND",
-		},
 		{
 			name: "forbidden",
 			err:  apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "pod-a", errors.New("no rbac")),
@@ -1848,5 +2002,104 @@ func assertErrorCode(t *testing.T, body []byte, want string) {
 	}
 	if resp["code"] != want {
 		t.Fatalf("expected error code %s, got %v", want, resp["code"])
+	}
+}
+
+// CYB-3568: a TTL'd/GC'd workflow is gone, not a server fault — the logs
+// endpoint must return 404, not a bare 500.
+func TestGetWorkflowLogs_WorkflowNotFoundReturns404(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return nil, argo.ErrNotFound
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-gone/logs?nodeId=n1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a gone workflow, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// CYB-3568: when the workflow survives but the pod was recycled, live log fetch
+// returns ErrNotFound — surface an empty log window (200), not a 500.
+func TestGetWorkflowLogs_PodRecycledReturnsEmpty(t *testing.T) {
+	globalPodNameCache.set("wf-recycled/n1", "wf-recycled-n1-pod")
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{ObjectMeta: metav1.ObjectMeta{Name: "wf-recycled"}}, nil
+		},
+		logsFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+			return argo.WorkflowLogResult{}, argo.ErrNotFound
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-recycled/logs?nodeId=n1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with empty logs for a recycled pod, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["source"] != "unavailable" || resp["logs"] != "" {
+		t.Fatalf("expected graceful empty logs (source=unavailable), got %v", resp)
+	}
+}
+
+// CYB-3575: a Pending / not-yet-scheduled workflow has no pods yet, so node
+// logs must return an empty window (200), not a 400 client error.
+func TestGetWorkflowLogs_PendingWorkflowReturnsEmpty(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: "wf-pending"},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowPending},
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-pending/logs?nodeId=step-not-started", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 empty logs for a pending workflow, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["source"] != "pending" || resp["logs"] != "" {
+		t.Fatalf("expected source=pending + empty logs, got %v", resp)
+	}
+}
+
+// A genuinely unknown node id on a live (Running) workflow is still a 400.
+func TestGetWorkflowLogs_UnknownNodeOnRunningWorkflowReturns400(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: "wf-running"},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-running/logs?nodeId=bogus-node-xyz", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unknown node on a running workflow, got %d: %s", w.Code, w.Body.String())
 	}
 }

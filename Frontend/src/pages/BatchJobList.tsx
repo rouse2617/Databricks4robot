@@ -32,6 +32,7 @@ import {
 	retryFailedBatchItems,
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
+import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
 	batchJobCompletionAt,
 	batchJobCreatedAtMs,
@@ -101,18 +102,18 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		}
 	}, [active, refresh]);
 
-	// Auto-refresh when there are running/paused jobs
-	useEffect(() => {
-		if (!active) return;
-		const hasActive = jobs.some(
-			(j) => j.status === "running" || j.status === "paused",
-		);
-		if (!hasActive) return;
-		const id = setInterval(() => {
+	// Auto-refresh when there are running/paused jobs — but only while the tab
+	// is visible (CYB-3486): a backgrounded list used to poll every 10s.
+	const hasActiveJobs = jobs.some(
+		(j) => j.status === "running" || j.status === "paused",
+	);
+	useVisibleInterval(
+		() => {
 			void refresh(true);
-		}, 10_000);
-		return () => clearInterval(id);
-	}, [active, jobs, refresh]);
+		},
+		10_000,
+		active && hasActiveJobs,
+	);
 
 	const runAction = async (
 		jobId: string,

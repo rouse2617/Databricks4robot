@@ -31,6 +31,11 @@ for entry in "${STAGED[@]:-}"; do
   # Renames are "old\tnew"; collapse to the new path.
   if [[ "$path" == *"	"* ]]; then path="${path##*	}"; fi
 
+  # atlas.sum is REGENERATED (modified) every time a new migration is added —
+  # that is the intended flow, not a hand-edit. Its integrity is enforced by
+  # the atlas-migrate-validate hook (replay + hash), not by this guard.
+  if [[ "$path" == backend/migrations/atlas.sum ]]; then continue; fi
+
   # (a) Don't allow editing/deleting/renaming files inside backend/migrations/
   # other than the new-file (A) case. Hand-editing an applied migration is
   # the most common silent break (changes DDL without updating atlas.sum).
@@ -48,7 +53,7 @@ for entry in "${STAGED[@]:-}"; do
   case "$path" in
     backend/migrations/*|backend/migrations/archive/*) continue ;;
     *.md|*.txt) continue ;;
-    scripts/check_migration_*.sh) continue ;;  # this script + sibling
+    scripts/check_no_manual_schema_change.sh|scripts/check_migration_*.sh) continue ;;  # this script + sibling
   esac
   if grep -nqE '\b(ALTER\s+TABLE|CREATE\s+TABLE|CREATE\s+INDEX|CREATE\s+OR\s+REPLACE\s+FUNCTION|CREATE\s+TRIGGER|DROP\s+TABLE|DROP\s+INDEX|DROP\s+CONSTRAINT|TRUNCATE)\b' "$path" 2>/dev/null; then
     if [[ "$status" != "D" ]]; then

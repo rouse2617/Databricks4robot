@@ -7,7 +7,9 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { unstableSetRender } from "antd";
 import { StrictMode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import {
 	afterEach,
 	beforeAll,
@@ -17,7 +19,11 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { ElasticQuota, ExecutionTarget } from "../../api/pipelineApi";
+import type {
+	Cluster,
+	ElasticQuota,
+	ExecutionTarget,
+} from "../../api/pipelineApi";
 import PoolManager from "./PoolManager";
 
 const mockListExecutionTargets = vi.hoisted(() => vi.fn());
@@ -25,6 +31,15 @@ const mockCreateExecutionTarget = vi.hoisted(() => vi.fn());
 const mockUpdateExecutionTarget = vi.hoisted(() => vi.fn());
 const mockDeleteExecutionTarget = vi.hoisted(() => vi.fn());
 const mockListElasticQuotas = vi.hoisted(() => vi.fn());
+const mockListClusters = vi.hoisted(() => vi.fn());
+
+// ClusterManager is a sibling admin panel PoolManager renders above its own
+// table. It calls useAuth(), which needs an AuthProvider the PoolManager tests
+// don't (and shouldn't) set up — so stub it out to isolate PoolManager. It has
+// its own test coverage.
+vi.mock("./ClusterManager", () => ({
+	default: () => null,
+}));
 
 vi.mock("../../api/pipelineApi", () => ({
 	listExecutionTargets: (...args: unknown[]) =>
@@ -36,12 +51,14 @@ vi.mock("../../api/pipelineApi", () => ({
 	deleteExecutionTarget: (...args: unknown[]) =>
 		mockDeleteExecutionTarget(...args),
 	listElasticQuotas: (...args: unknown[]) => mockListElasticQuotas(...args),
+	listClusters: (...args: unknown[]) => mockListClusters(...args),
 }));
 
 const mockMessage = vi.hoisted(() => ({
 	success: vi.fn(),
 	error: vi.fn(),
 	warning: vi.fn(),
+	info: vi.fn(),
 }));
 
 vi.mock("antd", async (importOriginal) => {
@@ -91,6 +108,36 @@ const defaultTarget: ExecutionTarget = {
 	description: "Current backend-configured Argo workflow namespace.",
 };
 
+// PoolManager.fetchData() also calls listClusters(); the cluster picker needs at
+// least one entry because clusterId is a required form field.
+const defaultCluster: Cluster = {
+	id: "cluster-default",
+	name: "default",
+	displayName: "Default cluster",
+	isDefault: true,
+	status: "active",
+	koordInstalled: true,
+};
+
+// antd v5 static methods (Modal.confirm — used by the delete flow) need a React
+// 19 render adapter; without it jsdom renders nothing and the confirm dialog
+// never appears. The real app wires this up in its entrypoint; register it here
+// so the confirm-based tests can drive the dialog.
+const antdRoots = new WeakMap<Element | DocumentFragment, Root>();
+unstableSetRender((node, container) => {
+	let root = antdRoots.get(container);
+	if (!root) {
+		root = createRoot(container);
+		antdRoots.set(container, root);
+	}
+	root.render(node);
+	return async () => {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		root?.unmount();
+		antdRoots.delete(container);
+	};
+});
+
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -121,6 +168,7 @@ beforeEach(() => {
 	mockUpdateExecutionTarget.mockReset();
 	mockDeleteExecutionTarget.mockReset();
 	mockListElasticQuotas.mockReset();
+	mockListClusters.mockReset();
 	mockMessage.success.mockClear();
 	mockMessage.error.mockClear();
 
@@ -129,6 +177,7 @@ beforeEach(() => {
 	mockUpdateExecutionTarget.mockResolvedValue(nonDefaultTarget);
 	mockDeleteExecutionTarget.mockResolvedValue(undefined);
 	mockListElasticQuotas.mockResolvedValue([] as ElasticQuota[]);
+	mockListClusters.mockResolvedValue([defaultCluster]);
 
 	// Mock the resource-quotas fetch (component calls fetch directly for it)
 	global.fetch = vi.fn().mockResolvedValue({
@@ -152,18 +201,48 @@ function renderPoolManager() {
 describe("PoolManager — templateTolerations editor", () => {
 	it("renders existing tolerations as tags in the scheduling column", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
-		expect(await screen.findByText("compute-tier=med")).toBeDefined();
-		expect(screen.getByText("durability=spot")).toBeDefined();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+		expect(await screen.findByText(/tol: compute-tier=med/)).toBeDefined();
+		expect(screen.getByText(/tol: durability=spot/)).toBeDefined();
+	});
+
+	it("distinguishes toleration vs nodeSelector in the scheduling column (CYB-3486)", async () => {
+		// Regression: the list column flattened tolerations and nodeSelector into
+		// identical key=value capsules, so the SAME key (durability) looked the
+		// same whether it was a soft toleration or a hard node pin. Prefixes must
+		// split them — tol: vs sel:.
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "mixed-1",
+				name: "mixed-pool",
+				cluster: "default",
+				namespace: "video-proc-prod",
+				argoServerConfigured: true,
+				status: "available",
+				isDefault: false,
+				resourceDefaults: {
+					templateTolerations: [
+						{
+							key: "durability",
+							operator: "Equal",
+							value: "spot",
+							effect: "NoSchedule",
+						},
+					],
+					templateNodeSelector: { durability: "standard" },
+				},
+			},
+			defaultTarget,
+		]);
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+		expect(await screen.findByText(/tol: durability=spot/)).toBeDefined();
+		expect(screen.getByText(/sel: durability=standard/)).toBeDefined();
 	});
 
 	it("prefills tolerations when opening edit modal", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
 		const editBtn = await screen.findByLabelText("edit-video-proc-dev");
 		fireEvent.click(editBtn);
@@ -179,9 +258,7 @@ describe("PoolManager — templateTolerations editor", () => {
 
 	it("submits update with modified toleration value", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
 		fireEvent.click(await screen.findByLabelText("edit-video-proc-dev"));
 
@@ -191,7 +268,7 @@ describe("PoolManager — templateTolerations editor", () => {
 		fireEvent.change(valueInputs[0], { target: { value: "high" } });
 
 		// Click 保存
-		const okBtn = screen.getByRole("button", { name: "保存" });
+		const okBtn = screen.getByRole("button", { name: /保\s*存/ });
 		fireEvent.click(okBtn);
 
 		await waitFor(() =>
@@ -216,9 +293,7 @@ describe("PoolManager — templateTolerations editor", () => {
 
 	it("rejects submit when operator=Equal but value is empty", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
 		fireEvent.click(await screen.findByLabelText("edit-video-proc-dev"));
 
@@ -227,7 +302,7 @@ describe("PoolManager — templateTolerations editor", () => {
 			await screen.findAllByPlaceholderText(/value\(如 med\)/);
 		fireEvent.change(valueInputs[0], { target: { value: "" } });
 
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
 
 		// Wait a tick — validation should fail synchronously; update must NOT fire
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -236,9 +311,7 @@ describe("PoolManager — templateTolerations editor", () => {
 
 	it("does not render delete/edit buttons for default target", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 		expect(screen.queryByLabelText("delete-Default Argo target")).toBeNull();
 		expect(screen.queryByLabelText("edit-Default Argo target")).toBeNull();
 	});
@@ -247,14 +320,12 @@ describe("PoolManager — templateTolerations editor", () => {
 describe("PoolManager — delete", () => {
 	it("calls deleteExecutionTarget after confirm", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
 		fireEvent.click(await screen.findByLabelText("delete-video-proc-dev"));
 
 		// antd Modal.confirm renders a Modal with 删除 / 取消 buttons
-		const confirmBtn = await screen.findByRole("button", { name: "删除" });
+		const confirmBtn = await screen.findByRole("button", { name: /删\s*除/ });
 		fireEvent.click(confirmBtn);
 
 		await waitFor(() =>
@@ -325,24 +396,56 @@ describe("PoolManager — ElasticQuota panel", () => {
 			screen.queryByText("Koordinator 弹性配额池 (ElasticQuota)"),
 		).toBeNull();
 	});
+
+	// CYB-3486: with more than one cluster, same-named EQs across clusters are
+	// easy to misread. The panel labels the picker ("查看集群") and folds the
+	// currently-viewed cluster into every row so a row is self-describing.
+	it("labels each quota row with the viewed cluster when >1 cluster exists", async () => {
+		mockListClusters.mockResolvedValue([
+			defaultCluster,
+			{
+				id: "cluster-delivery",
+				name: "delivery-clust",
+				displayName: "交付集群",
+				isDefault: false,
+				status: "active",
+				koordInstalled: true,
+			},
+		]);
+		mockListElasticQuotas.mockResolvedValue(quotas);
+		renderPoolManager();
+
+		const title = await screen.findByText(
+			"Koordinator 弹性配额池 (ElasticQuota)",
+		);
+		const card = title.closest(".ant-card");
+		// The picker is labeled so the user knows they are choosing which
+		// cluster's quotas to view.
+		expect(card?.textContent).toContain("查看集群");
+		// Rows carry the selected cluster (default is selected initially): the
+		// "<cluster> · ns:" prefix is only present in the >1-cluster view.
+		expect(card?.textContent).toContain("Default cluster · ns:");
+	});
 });
 
 describe("PoolManager — create", () => {
 	it("submits create with new toleration", async () => {
 		renderPoolManager();
-		await waitFor(() =>
-			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1),
-		);
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
 
 		const newBtn = await screen.findByRole("button", { name: /新建/ });
 		fireEvent.click(newBtn);
 
-		// Fill name / namespace
+		// Fill name / namespace (namespace is an AutoComplete — its placeholder is
+		// not a real input attribute, so locate it by its form label instead).
 		const nameInput = await screen.findByPlaceholderText("例如: 客户A生产池");
 		fireEvent.change(nameInput, { target: { value: "test-pool" } });
-		fireEvent.change(screen.getByPlaceholderText("例如: pool-customer-a"), {
+		fireEvent.change(screen.getByLabelText("K8s 命名空间"), {
 			target: { value: "test-ns" },
 		});
+
+		// Node constraints are collapsed by default — expand before editing them.
+		fireEvent.click(screen.getByRole("button", { name: /节点约束/ }));
 
 		// Add one toleration
 		const addTolBtn = screen.getByRole("button", { name: /添加 toleration/ });
@@ -355,7 +458,7 @@ describe("PoolManager — create", () => {
 			await screen.findAllByPlaceholderText(/value\(如 med\)/);
 		fireEvent.change(valueInputs[0], { target: { value: "prod" } });
 
-		fireEvent.click(screen.getByRole("button", { name: "创建" }));
+		fireEvent.click(screen.getByRole("button", { name: /创\s*建/ }));
 
 		await waitFor(() =>
 			expect(mockCreateExecutionTarget).toHaveBeenCalledTimes(1),
@@ -369,5 +472,220 @@ describe("PoolManager — create", () => {
 			operator: "Equal",
 			effect: "NoSchedule",
 		});
+	});
+});
+
+// CYB-3486 pool.3: scheduler / priorityclass / pod labels / annotations are now
+// stored under resource_defaults.scheduling (JSONB). The dedicated top-level
+// elastic_quota_name / priority_class_name columns were dropped in #439 — the
+// UI must never write them back.
+describe("PoolManager — scheduling config (resource_defaults.scheduling)", () => {
+	const schedulingTarget: ExecutionTarget = {
+		id: "sched-target-1",
+		name: "koord-pool",
+		cluster: "default",
+		namespace: "video-proc-dev",
+		argoServerConfigured: true,
+		status: "available",
+		isDefault: false,
+		description: "pool wired to a koord elastic quota",
+		resourceDefaults: {
+			computeTier: "cpu-low",
+			scheduling: {
+				schedulerName: "koord-scheduler",
+				priorityClassName: "cyber-databrew-prod",
+				podLabels: {
+					"quota.scheduling.koordinator.sh/name": "cyberorigin-delivery-low",
+				},
+			},
+		},
+	};
+
+	beforeEach(() => {
+		mockListExecutionTargets.mockResolvedValue([
+			schedulingTarget,
+			defaultTarget,
+		]);
+	});
+
+	it("prefills scheduler / priorityclass and splits the EQ label into the pool picker", async () => {
+		mockListElasticQuotas.mockResolvedValue([
+			{
+				name: "cyberorigin-delivery-low",
+				namespace: "video-proc-dev",
+				min: { cpu: "1", memory: "2Gi" },
+				max: { cpu: "10", memory: "20Gi" },
+				used: { cpu: "0", memory: "0" },
+				utilizationPercent: { cpu: 0, memory: 0 },
+			},
+		]);
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByLabelText("edit-koord-pool"));
+
+		const schedulerInput = (await screen.findByPlaceholderText(
+			/koord-scheduler/,
+		)) as HTMLInputElement;
+		expect(schedulerInput.value).toBe("koord-scheduler");
+
+		const prioInput = screen.getByPlaceholderText(
+			/cyber-databrew-prod/,
+		) as HTMLInputElement;
+		expect(prioInput.value).toBe("cyber-databrew-prod");
+
+		// scheduler=koord-scheduler → the Koord pool picker is shown, and it OWNS
+		// the EQ label: it must NOT leak into the manual podLabels editor as a row.
+		expect(screen.getByText("Koord 资源池(选填)")).toBeDefined();
+		expect(
+			screen.queryByDisplayValue("quota.scheduling.koordinator.sh/name"),
+		).toBeNull();
+	});
+
+	it("writes edits into resource_defaults.scheduling and no legacy top-level fields", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByLabelText("edit-koord-pool"));
+
+		// Edit priorityClass — scheduler stays koord-scheduler, so the EQ picker
+		// (and the EQ label it owns) persists across the save.
+		const prioInput = await screen.findByPlaceholderText(/cyber-databrew-prod/);
+		fireEvent.change(prioInput, {
+			target: { value: "cyber-databrew-canary" },
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+		await waitFor(() =>
+			expect(mockUpdateExecutionTarget).toHaveBeenCalledTimes(1),
+		);
+
+		const [id, body] = mockUpdateExecutionTarget.mock.calls[0];
+		expect(id).toBe("sched-target-1");
+		const scheduling = body.resourceDefaults?.scheduling;
+		expect(scheduling?.priorityClassName).toBe("cyber-databrew-canary");
+		// Untouched scheduling keys survive the PUT.
+		expect(scheduling?.schedulerName).toBe("koord-scheduler");
+		// The EQ label — owned by the picker — is folded back into podLabels.
+		expect(scheduling?.podLabels).toEqual({
+			"quota.scheduling.koordinator.sh/name": "cyberorigin-delivery-low",
+		});
+		// Sibling resource_defaults keys preserved.
+		expect(body.resourceDefaults?.computeTier).toBe("cpu-low");
+		// The dropped columns must not reappear at the top level.
+		expect("elasticQuotaName" in body).toBe(false);
+		expect(body.priorityClassName).toBeUndefined();
+	});
+
+	it("emptying scheduler unsets it while other scheduling keys remain", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByLabelText("edit-koord-pool"));
+		const schedulerInput =
+			await screen.findByPlaceholderText(/koord-scheduler/);
+		fireEvent.change(schedulerInput, { target: { value: "" } });
+
+		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+		await waitFor(() =>
+			expect(mockUpdateExecutionTarget).toHaveBeenCalledTimes(1),
+		);
+
+		const [, body] = mockUpdateExecutionTarget.mock.calls[0];
+		expect(body.resourceDefaults?.scheduling?.schedulerName).toBeUndefined();
+		expect(body.resourceDefaults?.scheduling?.priorityClassName).toBe(
+			"cyber-databrew-prod",
+		);
+	});
+
+	it("adds an arbitrary pod label on create — no hardcoded koord key", async () => {
+		mockListExecutionTargets.mockResolvedValue([defaultTarget]);
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByRole("button", { name: /新建/ }));
+		fireEvent.change(await screen.findByPlaceholderText("例如: 客户A生产池"), {
+			target: { value: "custom-pool" },
+		});
+		fireEvent.change(screen.getByLabelText("K8s 命名空间"), {
+			target: { value: "custom-ns" },
+		});
+		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
+			target: { value: "my-scheduler" },
+		});
+
+		// Admin supplies both the label key and value — nothing is hardcoded.
+		fireEvent.click(screen.getByRole("button", { name: /添加 pod label/ }));
+		const keyInput = await screen.findByPlaceholderText("label key");
+		fireEvent.change(keyInput, { target: { value: "example.com/pool" } });
+		const valInput = screen.getByPlaceholderText("label value");
+		fireEvent.change(valInput, { target: { value: "gold" } });
+
+		fireEvent.click(screen.getByRole("button", { name: /创\s*建/ }));
+		await waitFor(() =>
+			expect(mockCreateExecutionTarget).toHaveBeenCalledTimes(1),
+		);
+
+		const [body] = mockCreateExecutionTarget.mock.calls[0];
+		expect(body.resourceDefaults?.scheduling?.schedulerName).toBe(
+			"my-scheduler",
+		);
+		expect(body.resourceDefaults?.scheduling?.podLabels).toEqual({
+			"example.com/pool": "gold",
+		});
+	});
+});
+
+// CYB-3486 pool UX: the "Koord 资源池" picker turns the raw EQ pod-label into a
+// cluster-pulled dropdown. It only appears for scheduler=koord-scheduler, and on
+// pick it folds the choice into podLabels[EQ key] and aligns the pool namespace
+// to the EQ's namespace (koord EQs are namespace-scoped).
+describe("PoolManager — Koord 资源池 picker", () => {
+	const koordEqs: ElasticQuota[] = [
+		{
+			name: "cyberorigin-delivery-low",
+			namespace: "cyber-delivery-prod",
+			min: { cpu: "1", memory: "2Gi" },
+			max: { cpu: "10", memory: "20Gi" },
+			used: { cpu: "0", memory: "0" },
+			utilizationPercent: { cpu: 0, memory: 0 },
+		},
+	];
+
+	beforeEach(() => {
+		mockListExecutionTargets.mockResolvedValue([defaultTarget]);
+		mockListElasticQuotas.mockResolvedValue(koordEqs);
+	});
+
+	it("stays hidden until the scheduler is koord-scheduler", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByRole("button", { name: /新建/ }));
+		expect(screen.queryByText("Koord 资源池(选填)")).toBeNull();
+
+		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
+			target: { value: "koord-scheduler" },
+		});
+		expect(await screen.findByText("Koord 资源池(选填)")).toBeDefined();
+	});
+
+	it("populates the picker with the cluster's ElasticQuotas (name + usage)", async () => {
+		renderPoolManager();
+		await waitFor(() => expect(mockListExecutionTargets).toHaveBeenCalled());
+
+		fireEvent.click(await screen.findByRole("button", { name: /新建/ }));
+		fireEvent.change(screen.getByPlaceholderText(/koord-scheduler/), {
+			target: { value: "koord-scheduler" },
+		});
+
+		// The picker pulls the selected cluster's EQs and lists each by name with
+		// its live usage, so the admin picks a pool instead of typing a raw label.
+		fireEvent.mouseDown(screen.getByLabelText("Koord 资源池(选填)"));
+		expect(
+			await screen.findByRole("option", {
+				name: /cyberorigin-delivery-low.*CPU 0%/,
+			}),
+		).toBeDefined();
 	});
 });

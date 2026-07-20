@@ -27,9 +27,14 @@ type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
 	// SyncJob force-syncs a batch job's progress (terminal detection + once-only
-	// completion notification). Used to cascade a child run's terminal status
-	// push up to its parent batch (CYB-3078).
+	// completion notification). Kept on the interface for the reconcile backstop
+	// path; the webhook hot path uses AdvanceItemForRun instead.
 	SyncJob(ctx context.Context, jobID string) error
+	// AdvanceItemForRun is the O(1) webhook hot path — advances one batch
+	// child's item + increments the job counter atomically, without scanning
+	// the whole batch. Replaces the O(N²) SyncJob-per-webhook cascade that
+	// collapsed the DB connection pool on large batches.
+	AdvanceItemForRun(ctx context.Context, run *models.PipelineRun) error
 }
 
 // Handler bundles the pipeline endpoints.
@@ -841,14 +846,17 @@ func (h *Handler) HandleRunWebhook(c *gin.Context) {
 		httpresp.NotFound(c, "RUN_NOT_FOUND", "no run found for workflow")
 		return
 	}
-	// Cascade a terminal batch-child run up to its parent batch so the batch
-	// finalizes + notifies immediately on the last child's exit hook, without
-	// waiting for the reconcile backstop or a page open (CYB-3078, fast path).
-	if h.batchRuns != nil && run.BatchJobID != nil && isTerminalRunStatus(run.Status) {
-		if jobID := strings.TrimSpace(*run.BatchJobID); jobID != "" {
-			if err := h.batchRuns.SyncJob(c.Request.Context(), jobID); err != nil {
-				slog.Warn("run webhook: batch sync cascade failed", "jobID", jobID, "runID", run.ID, "err", err)
-			}
+	// Advance the child item's ledger row + increment the parent job's counter
+	// in one atomic CTE. O(1) per event — batch size does not matter. The old
+	// path (SyncJob → full-batch aggregate on every terminal exit hook) was
+	// O(batch) per event: a 6k-item batch produced 24s slow queries that
+	// swamped the DB connection pool. Finalization + completion notification
+	// still happen — the reconcile backstop (StartJobReconciler, 60s) is the
+	// single place that judges "batch done" now, so at most one finalize check
+	// per job per minute regardless of how many child webhooks arrived.
+	if h.batchRuns != nil {
+		if err := h.batchRuns.AdvanceItemForRun(c.Request.Context(), run); err != nil {
+			slog.Warn("run webhook: advance batch item failed", "runID", run.ID, "err", err)
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"runId": run.ID, "status": run.Status})

@@ -3,8 +3,10 @@ package workflow
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
 
@@ -274,6 +277,24 @@ func streamWorkflowLogs(
 	return false
 }
 
+// writeGracefulLogStreamEnd opens the SSE response and emits a single terminal
+// "end" event carrying reason, then returns. Used when a node has no live logs
+// to stream — the workflow was TTL'd/GC'd, its pod was recycled, or the pod has
+// not been created yet. The browser's EventSource treats an "end" event as
+// normal completion and closes without reconnecting; a 4xx/5xx instead fires
+// onerror and reconnects with exponential backoff, hammering this endpoint in a
+// loop (the reconnect storm the non-stream /logs handler already avoids via
+// CYB-3568/3575). This mirrors that handler's graceful branches for the SSE
+// variant (CYB-3579).
+func writeGracefulLogStreamEnd(c *gin.Context, reason string) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	fmt.Fprint(c.Writer, formatSSEFrame(1, "end", gin.H{"reason": reason}))
+}
+
 // StreamWorkflowLogs handles GET /api/v1/workflows/:name/logs/stream?nodeId=xxx
 // This is an SSE endpoint that streams Argo workflow pod logs with id-based
 // sequencing for reconnection support.
@@ -285,16 +306,35 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
 
-	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	workflow, err := client.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow not found", nil)
+		// A TTL'd/GC'd workflow is genuinely gone — end the SSE stream cleanly
+		// so EventSource stops instead of reconnecting on a 4xx. Genuine faults
+		// (argo-server down, RBAC) still 500 so the client retries and #462
+		// logs them server-side.
+		if errors.Is(err, argo.ErrNotFound) {
+			writeGracefulLogStreamEnd(c, "workflow-gone")
+			return
+		}
+		httpresp.Internal(c, err.Error())
 		return
 	}
 
 	podName, ok := resolveCachedWorkflowPodName(workflow, nodeID)
 	if !ok {
+		// A Pending / not-yet-scheduled node has no pod yet (Status.Nodes still
+		// empty, or the node is known but its pod hasn't materialized). End the
+		// stream cleanly so the viewer shows "已结束" and EventSource stops,
+		// rather than a 4xx reconnect loop (mirrors GetWorkflowLogs, CYB-3575).
+		// A genuinely unknown node id on a live workflow still 400s.
+		phase := string(workflow.Status.Phase)
+		_, nodeKnown := workflow.Status.Nodes[nodeID]
+		if phase == "" || phase == "Pending" || nodeKnown {
+			writeGracefulLogStreamEnd(c, "pod-not-created")
+			return
+		}
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}
@@ -314,7 +354,7 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	node, hasNode := workflow.Status.Nodes[nodeID]
 	opts.Follow = hasNode && !node.Fulfilled()
 
-	stream, err := h.wfClient.GetWorkflowLogStream(
+	stream, err := client.GetWorkflowLogStream(
 		c.Request.Context(),
 		name,
 		podName,
@@ -322,6 +362,14 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		opts,
 	)
 	if err != nil {
+		// Pod recycled after the workflow object survived (CRD mode: k8s GetLogs
+		// → IsNotFound → argo.ErrNotFound). End the stream cleanly instead of a
+		// 500 that makes EventSource reconnect in a loop — the reconnect storm
+		// CYB-3579 fixes. Genuine faults (RBAC, API connectivity) still 500.
+		if errors.Is(err, argo.ErrNotFound) {
+			writeGracefulLogStreamEnd(c, "pod-recycled")
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}

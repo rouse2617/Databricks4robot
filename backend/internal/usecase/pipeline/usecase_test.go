@@ -255,6 +255,7 @@ type mockWorkflowClient struct {
 	getWorkflowFn       func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
 	getWorkflowStatusFn func(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error)
 	createWorkflowFn    func(ctx context.Context, wf *wfv1.Workflow, namespace string) error
+	listWorkflowsFn     func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
 	stopCalls           []string
 	stopErr             error
 }
@@ -274,7 +275,10 @@ func (m *mockWorkflowClient) GetWorkflowStatus(ctx context.Context, name, namesp
 func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
 	return nil
 }
-func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
+func (m *mockWorkflowClient) ListWorkflows(ctx context.Context, namespace string, labelSelector string) ([]wfv1.Workflow, error) {
+	if m.listWorkflowsFn != nil {
+		return m.listWorkflowsFn(ctx, namespace, labelSelector)
+	}
 	return nil, nil
 }
 func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
@@ -526,7 +530,54 @@ func (m *mockRuntimeConfigStore) Create(_ context.Context, namespace, deployment
 	return m.volumeName, nil
 }
 
+type mockRuntimeConfigStoreFactory struct {
+	store      RuntimeConfigStore
+	lastTarget *models.ExecutionTarget
+	err        error
+}
+
+func (f *mockRuntimeConfigStoreFactory) ForTarget(_ context.Context, target *models.ExecutionTarget) (RuntimeConfigStore, error) {
+	f.lastTarget = target
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.store, nil
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
+
+// CYB-3486: the runtime-config ConfigMap must be created on the TARGET's
+// cluster. When a per-cluster factory is wired, resolveRuntimeConfigStore must
+// route through it (threading the target) instead of the default-cluster
+// singleton; with no factory it falls back to the singleton (no-PG/test path).
+func TestResolveRuntimeConfigStore_FactoryFirstElseSingleton(t *testing.T) {
+	ctx := context.Background()
+	target := &models.ExecutionTarget{ID: "delivery-mid", ClusterID: "c-delivery"}
+	perTarget := &mockRuntimeConfigStore{volumeName: "per-target"}
+	singleton := &mockRuntimeConfigStore{volumeName: "singleton"}
+
+	factory := &mockRuntimeConfigStoreFactory{store: perTarget}
+	uc := &Usecase{runtimeConfigStore: singleton, runtimeConfigStoreFactory: factory}
+	got, err := uc.resolveRuntimeConfigStore(ctx, target)
+	if err != nil {
+		t.Fatalf("factory path: unexpected err: %v", err)
+	}
+	if got != perTarget {
+		t.Fatalf("factory path: expected per-target store, got %#v", got)
+	}
+	if factory.lastTarget != target {
+		t.Fatalf("factory path: target was not threaded to ForTarget")
+	}
+
+	ucNoFactory := &Usecase{runtimeConfigStore: singleton}
+	got2, err := ucNoFactory.resolveRuntimeConfigStore(ctx, target)
+	if err != nil {
+		t.Fatalf("singleton path: unexpected err: %v", err)
+	}
+	if got2 != singleton {
+		t.Fatalf("singleton path: expected singleton fallback, got %#v", got2)
+	}
+}
 
 func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 	ctx := context.Background()
@@ -973,8 +1024,13 @@ func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	manifest := *dep.Manifest
 	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
@@ -1046,8 +1102,9 @@ func TestDeploy_RuntimeAdapterSubmitPreservesRuntimeConfigOwnerLookup(t *testing
 	if createdThroughWorkflowClient {
 		t.Fatal("expected submit to use runtime adapter, not workflow client")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference from lookup, got %#v", store.lastOwner)
+	// CYB-3680: owner-less + created before the Workflow (no lookup needed).
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
 	}
 	if store.lastNamespace != "runtime-ns" || store.lastDeploymentID != dep.ID {
 		t.Fatalf("unexpected runtime config store target namespace=%q deployment=%q", store.lastNamespace, store.lastDeploymentID)
@@ -1127,8 +1184,13 @@ func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
 		t.Fatalf("expected forwarded runtime config volume in manifest, got %s", manifest)
@@ -1216,8 +1278,13 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	if store.lastProjection.VolumeName == "" {
 		t.Fatal("expected runtime config projection volume name")
 	}
-	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
-		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	// CYB-3680: content-addressed CMs are shared and owner-less; the CM is
+	// ensured BEFORE the Workflow so no owner UID can exist yet.
+	if store.lastOwner != nil {
+		t.Fatalf("expected owner-less runtime config (CYB-3680), got %#v", store.lastOwner)
+	}
+	if store.lastProjection.ContentHash == "" {
+		t.Fatal("expected content-addressed projection hash")
 	}
 	if got := store.lastProjection.Files["01-step-a-a.yaml"]; got != "threshold: 0.8\n" {
 		t.Fatalf("unexpected step-a config content %q", got)
@@ -1997,9 +2064,20 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
-func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
-	return m.FindAll(context.Background())
+func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models.PipelineRun, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	active := make([]models.PipelineRun, 0, len(items))
+	for _, it := range items {
+		if isActiveDeploymentStatus(it.Status) {
+			active = append(active, it)
+		}
+	}
+	return active, nil
 }
+
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())
@@ -3504,6 +3582,7 @@ func TestAttachBatchNodeProgress_FallsBackToWorkflowProgress(t *testing.T) {
 // every workflow has been refreshed at least once (the old always-from-0 scan
 // would never reach the third).
 func TestSyncActiveRunEvents_RotatesActiveWindowNoStarvation(t *testing.T) {
+	t.Setenv(watcherModeEnv, watcherModeLegacy) // rotation is the legacy path (CYB-3681)
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
 		byID: map[string]*models.PipelineRun{
@@ -3842,6 +3921,38 @@ func TestListRunSummaries_NormalizesActiveStaleTerminalFields(t *testing.T) {
 	}
 	if items[0].Message != "" {
 		t.Fatalf("expected stale active summary message cleared, got %q", items[0].Message)
+	}
+}
+
+// CYB-3491: an unfiltered ListRunSummaries must never full-scan pipeline_runs.
+// It now routes through the bounded paginated path (ListSummaries with a
+// default page size) instead of the old unbounded FindAllSummaries.
+func TestListRunSummaries_UnfilteredIsBounded(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Succeeded",
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	if _, _, err := uc.ListRunSummaries(ctx); err != nil {
+		t.Fatalf("ListRunSummaries (no filter): %v", err)
+	}
+
+	// The unfiltered call must go through ListSummaries (bounded), not the old
+	// FindAllSummaries full-scan.
+	if len(runRepo.listFilters) != 1 {
+		t.Fatalf("expected exactly one bounded ListSummaries call, got %d", len(runRepo.listFilters))
+	}
+	if got := runRepo.listFilters[0].PageSize; got != defaultUnfilteredRunSummaryPageSize {
+		t.Fatalf("unfiltered list PageSize = %d, want %d (bounded default)", got, defaultUnfilteredRunSummaryPageSize)
 	}
 }
 
@@ -4883,6 +4994,92 @@ func TestReconcileMisclassified_RevivesLegacyUnschedulableVerdict(t *testing.T) 
 	}
 }
 
+// CYB-3672: past-revival-age terminal misclassified runs must NOT call Argo
+// GetWorkflow — the workflow was TTL-GCed long ago, every lookup returns 404
+// and floods argo-server's ERROR log. Observed on shared argo-server: ~1 req/s
+// steady load per legacy stranded run across all namespaces.
+func TestReconcileMisclassified_SkipsArgo_WhenPastRevivalAge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 60 days old ≫ staleActiveRunMaxAge, so age gate must reject.
+	createdAt := now.Add(-60 * 24 * time.Hour)
+	finished := createdAt.Add(1 * time.Hour)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "youxin-1782182330729-legacy",
+				Status:       "Error",
+				Message:      "", // empty; also covers real-diagnostic case since we don't touch message
+				FinishedAt:   &finished,
+				CreatedAt:    createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	getCalls := 0
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		getCalls++
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	uc.reconcileMisclassifiedRunFromArgo(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
+	if getCalls != 0 {
+		t.Fatalf("past-revival-age terminal run must not call Argo GetWorkflow, got %d", getCalls)
+	}
+	// Status + message untouched.
+	if runRepo.byID["run-1"].Status != "Error" {
+		t.Fatalf("status must be preserved, got %q", runRepo.byID["run-1"].Status)
+	}
+	if runRepo.byID["run-1"].Message != "" {
+		t.Fatalf("message must not be stomped, got %q", runRepo.byID["run-1"].Message)
+	}
+}
+
+// CYB-3672 negative: within-revival-age terminal misclassified runs must still
+// call Argo — they might genuinely need reviving (e.g., "Kubernetes 调度失败"
+// verdict on a workflow that's actually still Running).
+func TestReconcileMisclassified_CallsArgo_WithinRevivalAge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 30 min old, well within staleActiveRunMaxAge — Argo must be consulted.
+	createdAt := now.Add(-30 * time.Minute)
+	finished := createdAt.Add(1 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-fresh",
+				ArgoWorkflowUID: "uid-1",
+				Status:          "Error",
+				Message:         "Kubernetes 调度失败：节点 x Pending 1h",
+				FinishedAt:      &finished,
+				CreatedAt:       createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	getCalls := 0
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		getCalls++
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-fresh", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	uc.reconcileMisclassifiedRunFromArgo(ctx, runRepo.byID["run-1"], nodeProjectTerminalArchive)
+	if getCalls != 1 {
+		t.Fatalf("fresh terminal run must call Argo GetWorkflow once, got %d", getCalls)
+	}
+}
+
 func TestRefreshRunForList_MarksLongInvalidImageNamePendingError(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
@@ -5310,6 +5507,101 @@ func TestPersistRunObservation_MisclassifiedFailureStillRevivable(t *testing.T) 
 
 	if runRepo.byID["run-1"].Status != "Running" {
 		t.Fatalf("misclassified (stale-message) run should stay revivable, got %q", runRepo.byID["run-1"].Status)
+	}
+}
+
+// TestNeedsWatcherAnomalyReconcile_SkipsAgedRunWithRecentUpdatedAt covers the
+// self-perpetuating reconcile loop: an old TTL-cleaned run whose UpdatedAt keeps
+// getting bumped by ordinary observation writes must not be picked back into the
+// anomaly reconcile set. runObservedRecently is expected to use only lifecycle
+// timestamps (FinishedAt → StartedAt → CreatedAt), not UpdatedAt.
+func TestNeedsWatcherAnomalyReconcile_SkipsAgedRunWithRecentUpdatedAt(t *testing.T) {
+	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	oldFinished := now.AddDate(0, -1, 0) // ~30 days ago
+	oldCreated := now.AddDate(0, -1, -1)
+	freshFinished := now.Add(-30 * time.Minute)
+	// UpdatedAt is recent — simulating a repo Save from any code path that
+	// touched the row (persistRunObservation, syncBackfillItemStatusFromRun,
+	// UpdateLedgerState, etc.). Under the old ref chain this would drag the
+	// run back into the anomaly set forever.
+	recentUpdated := now.Add(-2 * time.Hour)
+
+	cases := []struct {
+		name        string
+		run         models.PipelineRun
+		want        bool
+		description string
+	}{
+		{
+			name: "aged TTL-cleaned run with recent UpdatedAt is not observed recently",
+			run: models.PipelineRun{
+				ID:           "run-aged",
+				WorkflowName: "youxin-1782-aged",
+				Status:       "Expired",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "pending",
+				CreatedAt:    oldCreated,
+				UpdatedAt:    recentUpdated,
+				FinishedAt:   &oldFinished,
+			},
+			want:        false,
+			description: "FinishedAt is the reference, not UpdatedAt",
+		},
+		{
+			name: "aged run with nil FinishedAt still not selected via UpdatedAt fallback",
+			run: models.PipelineRun{
+				ID:           "run-aged-no-fin",
+				WorkflowName: "youxin-1782-nofin",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "",
+				CreatedAt:    oldCreated,
+				UpdatedAt:    recentUpdated,
+			},
+			want:        false,
+			description: "falls through to CreatedAt (StartedAt nil), which is 30d ago; UpdatedAt is skipped",
+		},
+		{
+			name: "recently finished run is still eligible for reconcile",
+			run: models.PipelineRun{
+				ID:           "run-fresh",
+				WorkflowName: "wf-fresh",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "pending",
+				CreatedAt:    now.Add(-6 * time.Hour),
+				UpdatedAt:    now.Add(-1 * time.Minute),
+				FinishedAt:   &freshFinished,
+			},
+			want:        true,
+			description: "FinishedAt is inside the 7-day window",
+		},
+		{
+			name: "ledger already resolved to no_ledger short-circuits regardless of dates",
+			run: models.PipelineRun{
+				ID:           "run-noledger",
+				WorkflowName: "wf-noledger",
+				Status:       "Failed",
+				Message:      staleWorkflowTTLCleanupMessage,
+				LedgerState:  "no_ledger",
+				CreatedAt:    now.Add(-1 * time.Hour),
+				UpdatedAt:    now.Add(-1 * time.Minute),
+				FinishedAt:   &freshFinished,
+			},
+			want:        false,
+			description: "no_ledger is a definitive answer — do not re-poll Argo",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := needsWatcherAnomalyReconcile(&tc.run, now)
+			if got != tc.want {
+				t.Fatalf("needsWatcherAnomalyReconcile(%s) = %v, want %v (%s)",
+					tc.name, got, tc.want, tc.description)
+			}
+		})
 	}
 }
 

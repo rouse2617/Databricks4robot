@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -173,6 +174,252 @@ func TestSubmitRuntimeWorkflow_NilClientFallsToAdapter(t *testing.T) {
 // PR #404 review). getWorkflowWithUID must call GetWorkflow on the passed-in
 // client, not on any singleton. When we later thread the factory-resolved
 // client through Deploy, this test proves the downstream read follows.
+// TestResolveArgoClientForRun_FactoryRoutesByExecutionTarget verifies the
+// run-facing resolver reads ClusterID off the run's ExecutionTarget snapshot
+// (CYB-3486 PR 4d.5).
+func TestResolveArgoClientForRun_FactoryRoutesByExecutionTarget(t *testing.T) {
+	delivery := &mockWorkflowClient{}
+	factory := &stubArgoFactory{byID: map[string]argo.WorkflowClient{"cluster-delivery": delivery}}
+	uc := &Usecase{argoFactory: factory}
+	run := &models.PipelineRun{
+		ID:              "r1",
+		ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"},
+	}
+	got, err := uc.resolveArgoClientForRun(context.Background(), run)
+	if err != nil {
+		t.Fatalf("resolveArgoClientForRun: %v", err)
+	}
+	if got != delivery {
+		t.Errorf("wrong client returned")
+	}
+	if len(factory.seen) != 1 || factory.seen[0] != "cluster-delivery" {
+		t.Errorf("factory saw wrong cluster IDs: %v", factory.seen)
+	}
+}
+
+// TestResolveArgoClientForRun_NoTargetSnapshotDefaults covers legacy runs
+// that lack an ExecutionTarget snapshot (or its ClusterID is blank): must
+// fall through to cluster-default so the singleton path stays intact.
+func TestResolveArgoClientForRun_NoTargetSnapshotDefaults(t *testing.T) {
+	def := &mockWorkflowClient{}
+	factory := &stubArgoFactory{byID: map[string]argo.WorkflowClient{"cluster-default": def}}
+	uc := &Usecase{argoFactory: factory}
+	cases := []struct {
+		name string
+		run  *models.PipelineRun
+	}{
+		{"nil-run", nil},
+		{"nil-target", &models.PipelineRun{ID: "r1"}},
+		{"blank-cluster-id", &models.PipelineRun{ID: "r2", ExecutionTarget: &models.ExecutionTarget{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			factory.seen = nil
+			got, err := uc.resolveArgoClientForRun(context.Background(), tc.run)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if got != def {
+				t.Errorf("expected cluster-default client")
+			}
+			if len(factory.seen) != 1 || factory.seen[0] != "cluster-default" {
+				t.Errorf("factory saw %v", factory.seen)
+			}
+		})
+	}
+}
+
+func TestResolveArgoClientForRun_FactoryErrorWrapped(t *testing.T) {
+	factory := &stubArgoFactory{err: errors.New("cluster misconfigured"), forced: true}
+	uc := &Usecase{argoFactory: factory}
+	run := &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-broken"}}
+	_, err := uc.resolveArgoClientForRun(context.Background(), run)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrWorkflowUnavailable) {
+		t.Errorf("want ErrWorkflowUnavailable, got %v", err)
+	}
+}
+
+func TestResolveArgoClientForRun_NoFactoryFallsToSingleton(t *testing.T) {
+	singleton := &mockWorkflowClient{}
+	uc := &Usecase{wfClient: singleton} // no factory
+	got, err := uc.resolveArgoClientForRun(context.Background(), &models.PipelineRun{
+		ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"},
+	})
+	if err != nil {
+		t.Fatalf("no-factory path: %v", err)
+	}
+	if got != singleton {
+		t.Errorf("no-factory path must return uc.wfClient")
+	}
+}
+
+// TestGroupRunIndicesByCluster verifies the watcher fan-out helper
+// partitions runs correctly by their ExecutionTarget snapshot's ClusterID,
+// including the cluster-default fallback for legacy runs (CYB-3486 4d.5.b).
+func TestGroupRunIndicesByCluster(t *testing.T) {
+	runs := []models.PipelineRun{
+		{ID: "r1", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-default"}},
+		{ID: "r2", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}},
+		{ID: "r3"}, // no target snapshot → cluster-default fallback
+		{ID: "r4", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}},
+		{ID: "r5", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-default"}},
+	}
+	got := groupRunIndicesByCluster(runs, []int{0, 1, 2, 3, 4}, testClusterOf)
+	if want := 2; len(got) != want {
+		t.Fatalf("expected %d cluster groups, got %d: %v", want, len(got), got)
+	}
+	if def := got["cluster-default"]; len(def) != 3 {
+		t.Errorf("cluster-default group: want 3 (r1,r3,r5), got %v", def)
+	}
+	if delv := got["cluster-delivery"]; len(delv) != 2 {
+		t.Errorf("cluster-delivery group: want 2 (r2,r4), got %v", delv)
+	}
+}
+
+// TestGroupRunIndicesByCluster_RespectsProvidedIndices ensures the helper
+// only groups the indices passed in — not all runs in the slice. This is the
+// contract the caller relies on: the cursor picks a window first, we group
+// only within the window.
+func TestGroupRunIndicesByCluster_RespectsProvidedIndices(t *testing.T) {
+	runs := []models.PipelineRun{
+		{ID: "r0", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-a"}},
+		{ID: "r1", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-b"}},
+		{ID: "r2", ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-c"}},
+	}
+	// Only pick r0 and r2 — r1 (cluster-b) must NOT appear in output.
+	got := groupRunIndicesByCluster(runs, []int{0, 2}, testClusterOf)
+	if _, has := got["cluster-b"]; has {
+		t.Errorf("cluster-b was not in the picked window; grouping must not include it: %v", got)
+	}
+	if len(got["cluster-a"]) != 1 || got["cluster-a"][0] != 0 {
+		t.Errorf("cluster-a should contain only index 0, got %v", got["cluster-a"])
+	}
+	if len(got["cluster-c"]) != 1 || got["cluster-c"][0] != 2 {
+		t.Errorf("cluster-c should contain only index 2, got %v", got["cluster-c"])
+	}
+}
+
+// testClusterOf mirrors the pre-fix runClusterID pure logic (ExecutionTarget
+// object only) — used by groupRunIndicesByCluster tests where the resolver is
+// injected. The real production resolver is resolveRunClusterID, tested below.
+func testClusterOf(r *models.PipelineRun) string {
+	if r != nil && r.ExecutionTarget != nil {
+		if id := strings.TrimSpace(r.ExecutionTarget.ClusterID); id != "" {
+			return id
+		}
+	}
+	return "cluster-default"
+}
+
+// TestResolveRunClusterID_ObjectFirst: a populated ExecutionTarget wins and
+// no target lookup happens.
+func TestResolveRunClusterID_ObjectFirst(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{}}
+	uc := &Usecase{targetRepo: repo}
+	run := &models.PipelineRun{ExecutionTarget: &models.ExecutionTarget{ClusterID: "cluster-delivery"}}
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Errorf("want cluster-delivery, got %q", got)
+	}
+}
+
+// TestResolveRunClusterID_LookupByTargetID is the CYB-3486 4d.5 regression:
+// watcher/summary runs have only ExecutionTargetID (no nested object), and the
+// cluster must be resolved via the target lookup instead of falling back to
+// cluster-default.
+func TestResolveRunClusterID_LookupByTargetID(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"delivery-clust-dev": {ID: "delivery-clust-dev", ClusterID: "cluster-delivery"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	run := &models.PipelineRun{ExecutionTargetID: "delivery-clust-dev"} // no ExecutionTarget object
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Fatalf("REGRESSION: want cluster-delivery via target lookup, got %q", got)
+	}
+	// Second call must hit the cache (delete the repo row; still resolves).
+	delete(repo.byID, "delivery-clust-dev")
+	if got := uc.resolveRunClusterID(context.Background(), run); got != "cluster-delivery" {
+		t.Errorf("cache miss: want cluster-delivery from cache, got %q", got)
+	}
+}
+
+// TestResolveRunClusterID_Fallbacks: nil run, no target id, and target-not-found
+// all resolve to cluster-default (and a not-found is NOT cached).
+func TestResolveRunClusterID_Fallbacks(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	if got := uc.resolveRunClusterID(ctx, nil); got != "cluster-default" {
+		t.Errorf("nil run: want cluster-default, got %q", got)
+	}
+	if got := uc.resolveRunClusterID(ctx, &models.PipelineRun{}); got != "cluster-default" {
+		t.Errorf("no target id: want cluster-default, got %q", got)
+	}
+	// target id present but not in repo → default, and not cached
+	run := &models.PipelineRun{ExecutionTargetID: "ghost"}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-default" {
+		t.Errorf("missing target: want cluster-default, got %q", got)
+	}
+	if _, cached := uc.targetClusterCache.Load("ghost"); cached {
+		t.Errorf("a not-found target must not be cached (transient errors would pin it)")
+	}
+	// now add it → resolves (proves the miss wasn't cached)
+	repo.byID["ghost"] = &models.ExecutionTarget{ID: "ghost", ClusterID: "cluster-x"}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-x" {
+		t.Errorf("after adding target: want cluster-x, got %q", got)
+	}
+}
+
+// TestUpdateExecutionTarget_InvalidatesClusterCache: editing a pool to a
+// different cluster must drop the memoized execution_target_id → cluster_id
+// entry, or resolveRunClusterID keeps routing that target's runs (status reads,
+// stop / retry, logs) to the OLD cluster for the process lifetime.
+func TestUpdateExecutionTarget_InvalidatesClusterCache(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"t1": {ID: "t1", ClusterID: "cluster-a"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	run := &models.PipelineRun{ExecutionTargetID: "t1"}
+
+	// Prime the cache → cluster-a.
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-a" {
+		t.Fatalf("prime: want cluster-a, got %q", got)
+	}
+	// Move the pool to another cluster.
+	if err := uc.UpdateExecutionTarget(ctx, &models.ExecutionTarget{
+		ID: "t1", ClusterID: "cluster-b",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-b" {
+		t.Errorf("stale cache after cluster change: want cluster-b, got %q", got)
+	}
+}
+
+// TestDeleteExecutionTarget_InvalidatesClusterCache: deleting a pool drops its
+// cached cluster so a re-created target id can't inherit the old mapping.
+func TestDeleteExecutionTarget_InvalidatesClusterCache(t *testing.T) {
+	repo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{
+		"t1": {ID: "t1", ClusterID: "cluster-a"},
+	}}
+	uc := &Usecase{targetRepo: repo}
+	ctx := context.Background()
+	run := &models.PipelineRun{ExecutionTargetID: "t1"}
+
+	if got := uc.resolveRunClusterID(ctx, run); got != "cluster-a" {
+		t.Fatalf("prime: want cluster-a, got %q", got)
+	}
+	if err := uc.DeleteExecutionTarget(ctx, "t1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, cached := uc.targetClusterCache.Load("t1"); cached {
+		t.Errorf("cache entry must be dropped after delete")
+	}
+}
+
 func TestGetWorkflowWithUID_UsesProvidedClient(t *testing.T) {
 	var providedCalled bool
 	provided := &mockWorkflowClient{

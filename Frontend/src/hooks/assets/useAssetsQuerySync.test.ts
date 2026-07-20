@@ -54,11 +54,11 @@ function defaultQueryState(): QueryState {
 }
 
 function hydratedRouter(): RouterState {
-	return { urlHydrated: true, currentPath: "/assets" };
+	return { urlHydrated: true };
 }
 
 function unhydratedRouter(): RouterState {
-	return { urlHydrated: false, currentPath: "/assets" };
+	return { urlHydrated: false };
 }
 
 function setUrl(url: string) {

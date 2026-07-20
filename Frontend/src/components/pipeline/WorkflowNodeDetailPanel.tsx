@@ -57,6 +57,10 @@ import {
 } from "../../api/workflowApi";
 import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
 import {
+	gkeConsoleCoordsForNamespace,
+	gkePodConsoleUrl,
+} from "../../lib/gkePodConsole";
+import {
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
 } from "../../lib/statusLabels";
@@ -629,7 +633,21 @@ function PodTab({
 				</Descriptions.Item>
 				<Descriptions.Item label="Pod">
 					{displayPodName ? (
-						<CopyableEllipsisText text={displayPodName} />
+						<Space direction="vertical" size={2} style={{ width: "100%" }}>
+							<CopyableEllipsisText text={displayPodName} />
+							{(() => {
+								const consoleUrl = gkePodConsoleUrl(namespace, displayPodName);
+								return consoleUrl ? (
+									<Typography.Link
+										href={consoleUrl}
+										target="_blank"
+										rel="noreferrer noopener"
+									>
+										在 GCP Console 查看 Pod ↗
+									</Typography.Link>
+								) : null;
+							})()}
+						</Space>
 					) : (
 						"—"
 					)}
@@ -1624,10 +1642,13 @@ export function WorkflowNodeDetailPanel({
 	activeTab = "summary",
 	onActiveTabChange,
 	pipelineNode,
+	argoNamespace,
 }: {
 	node: WorkflowNodeStatus | null;
 	workflow: WorkflowDetail | null;
 	pipelineNode?: PipelineNodeDef | null;
+	/** The run's argo namespace — used to build the GKE console pod deep link. */
+	argoNamespace?: string;
 	open: boolean;
 	onClose: () => void;
 	onRetryWorkflow?: () => void;
@@ -1636,6 +1657,35 @@ export function WorkflowNodeDetailPanel({
 	activeTab?: WorkflowNodeDetailTabKey;
 	onActiveTabChange?: (key: WorkflowNodeDetailTabKey) => void;
 }) {
+	// CYB-3573: the accurate (v2) pod name only comes from the per-node pod
+	// diagnostics resolver — node.podName may carry the dotted argo node id,
+	// which is NOT a real pod name. Fetch it here so the header deep link is
+	// correct. Gated on the namespace mapping to a known cluster (no fetch when
+	// no GKE link is possible). Hooks must run before the early return below.
+	const workflowName = workflow?.name;
+	const nodeId = node?.id;
+	const [headerPodName, setHeaderPodName] = useState<string | null>(null);
+	useEffect(() => {
+		setHeaderPodName(null);
+		if (
+			!workflowName ||
+			!nodeId ||
+			!gkeConsoleCoordsForNamespace(argoNamespace)
+		)
+			return undefined;
+		let cancelled = false;
+		getNodePodDiagnostics(workflowName, nodeId)
+			.then((d) => {
+				if (!cancelled) setHeaderPodName(d?.podName ?? null);
+			})
+			.catch(() => {
+				if (!cancelled) setHeaderPodName(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowName, nodeId, argoNamespace]);
+
 	if (!node || !workflow) return null;
 
 	const drawerExtra = [
@@ -1653,6 +1703,25 @@ export function WorkflowNodeDetailPanel({
 		drawerExtra.unshift(
 			<Button key="retry" icon={<ReloadOutlined />} onClick={onRetryWorkflow}>
 				{nodeFailed ? "重试失败节点" : "重试工作流"}
+			</Button>,
+		);
+	}
+	// CYB-3570 / CYB-3573: one-click deep link to this step's pod in the GKE
+	// console, shown in the drawer header (above every tab, incl. 概览).
+	// Uses the resolved v2 pod name from diagnostics (headerPodName); the URL
+	// builder rejects a non-pod name (e.g. a dotted node id) so a broken link
+	// is never rendered. Absent until the fetch resolves → no button.
+	const podConsoleUrl = gkePodConsoleUrl(argoNamespace, headerPodName);
+	if (podConsoleUrl) {
+		drawerExtra.unshift(
+			<Button
+				key="gke-console"
+				icon={<CloudServerOutlined />}
+				href={podConsoleUrl}
+				target="_blank"
+				rel="noreferrer noopener"
+			>
+				GCP 查看 Pod
 			</Button>,
 		);
 	}

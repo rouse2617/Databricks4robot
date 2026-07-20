@@ -174,14 +174,48 @@ func (f *dbClientFactory) load(ctx context.Context, clusterID string) (*cachedEn
 // K8sAPIEndpoint means "use the process env vars" — this is how the default
 // cluster keeps working without requiring admins to backfill env-derived
 // fields into the DB row.
+//
+// Auth dispatch (CYB-3486 auth.1): the cluster row's AuthType selects the
+// auth mechanism. Empty and "gke_wif" both take the GKE metadata-token WIF
+// path. Non-GCP customer support (ACK / EKS / bearer token) will land as
+// additional cases here without changing consumers.
 func buildConfigFromCluster(c *models.Cluster) (*rest.Config, error) {
+	cfg, err := buildBaseConfigFromCluster(c)
+	if err != nil {
+		return nil, err
+	}
+	// Per-cluster K8s client rate limits. Without this the clients run at
+	// client-go defaults (QPS=5 / Burst=10), which throttles every call to the
+	// cluster API at ~5 req/s — the real cap on batch submission throughput.
+	// Stored on the cluster row so they're editable online from the admin UI
+	// (the factory Invalidate()s on cluster update, so changes apply within
+	// seconds without a restart). CYB-3486.
+	cfg.QPS, cfg.Burst = c.ResolveClientLimits()
+	return cfg, nil
+}
+
+func buildBaseConfigFromCluster(c *models.Cluster) (*rest.Config, error) {
 	// Default-cluster compatibility path: empty API endpoint → env-derived.
+	// Auth is implicit from env (the singleton startup path). This is unchanged.
 	if c.K8sAPIEndpoint == "" {
 		return buildConfig("")
 	}
-	// Non-default clusters must carry an audience for WIF metadata-token
-	// auth. Bearer-token / kubeconfig-file paths are intentionally not
-	// supported per-cluster right now (defense against key sprawl); WIF only.
+	authType := c.AuthType
+	if authType == "" {
+		authType = "gke_wif"
+	}
+	switch authType {
+	case "gke_wif":
+		return buildConfigGKEWIF(c)
+	default:
+		return nil, fmt.Errorf("%w: cluster %q auth_type=%q not supported by this backend build",
+			ErrClusterMisconfigured, c.Name, authType)
+	}
+}
+
+// buildConfigGKEWIF builds a rest.Config for a cluster reachable via the GKE
+// workload-identity metadata endpoint. This is the historical single path.
+func buildConfigGKEWIF(c *models.Cluster) (*rest.Config, error) {
 	if c.K8sAudience == "" {
 		return nil, fmt.Errorf("%w: cluster %q missing k8s_audience", ErrClusterMisconfigured, c.Name)
 	}

@@ -13,6 +13,8 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
@@ -181,7 +183,10 @@ func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, 
 	}
 	return out, nil
 }
-func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
+// summaries is a private test helper (formerly the FindAllSummaries interface
+// method, dropped as dead production code) — it returns lightweight copies the
+// mock's ListSummaries then filters.
+func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 	out := make([]models.PipelineRun, 0, len(m.byID))
 	for _, r := range m.byID {
 		copy := *r
@@ -192,13 +197,14 @@ func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.Pipe
 		copy.ExecutionTarget = nil
 		out = append(out, copy)
 	}
-	return out, nil
+	return out
 }
+func (m *mockPipelineRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+
 func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
-	items, err := m.FindAllSummaries(context.Background())
-	if err != nil {
-		return nil, 0, err
-	}
+	items := m.summaries()
 	filtered := make([]models.PipelineRun, 0, len(items))
 	for _, item := range items {
 		if filter.BatchJobID != "" {
@@ -402,7 +408,14 @@ type mockWorkflowClient struct {
 	retryErr       error
 }
 
-func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
+func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, wf *wfv1.Workflow, _ string) error {
+	// Mirror the real CRD client contract: on successful submit, the server-
+	// assigned UID is copied back onto the caller's workflow so Deploy doesn't
+	// have to re-read it via GetWorkflow. Without this the ErrWorkflowSubmit-
+	// Incomplete guard fires and every deploy through the mock returns 500.
+	if wf != nil && wf.UID == "" {
+		wf.UID = types.UID("mock-uid-" + wf.Name)
+	}
 	return nil
 }
 func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (wfv1.WorkflowPhase, error) {
@@ -415,8 +428,15 @@ func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, name, namespace s
 func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
 	return nil, nil
 }
-func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
-	return &wfv1.Workflow{}, nil
+func (m *mockWorkflowClient) GetWorkflow(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+	// Return the UID but leave Status.Phase empty: Deploy's post-submit re-read
+	// needs a UID (an empty one would overwrite what CreateWorkflow stamped and
+	// trip ErrWorkflowSubmitIncomplete), but leaving Phase empty preserves what
+	// GetRun paths compute from other signals — otherwise every mock-backed run
+	// would collapse to Succeeded regardless of the test's fixture state.
+	return &wfv1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("mock-uid-" + name)},
+	}, nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, name, namespace string) error {
 	m.stopCalls = append(m.stopCalls, namespace+"/"+name)
@@ -557,10 +577,13 @@ func setupRouter(h *Handler) *gin.Engine {
 }
 
 type mockBatchSubtaskReconciler struct {
-	reconcileCalls int
-	syncCalls      int
-	syncJobCalls   int
-	syncJobIDs     []string
+	reconcileCalls  int
+	syncCalls       int
+	syncJobCalls    int
+	syncJobIDs      []string
+	advanceCalls    int
+	advanceRunIDs   []string
+	advanceStatuses []string
 }
 
 func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, string) error {
@@ -576,6 +599,15 @@ func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) 
 func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
 	m.syncJobCalls++
 	m.syncJobIDs = append(m.syncJobIDs, jobID)
+	return nil
+}
+
+func (m *mockBatchSubtaskReconciler) AdvanceItemForRun(_ context.Context, run *models.PipelineRun) error {
+	m.advanceCalls++
+	if run != nil {
+		m.advanceRunIDs = append(m.advanceRunIDs, run.ID)
+		m.advanceStatuses = append(m.advanceStatuses, run.Status)
+	}
 	return nil
 }
 

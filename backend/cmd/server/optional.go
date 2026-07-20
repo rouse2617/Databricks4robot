@@ -404,7 +404,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 	}
 
 	// ── Config watcher for hot-reload of registries ──
-	configWatcher, err := config.NewConfigWatcher("config", inf.tagRegistry, inf.algoRegistry, inf.actionLabelReg)
+	configWatcher, err := config.NewConfigWatcher("config", inf.algoRegistry, inf.actionLabelReg)
 	if err != nil {
 		slog.Warn("config watcher failed to start, hot-reload disabled", "err", err)
 	} else {

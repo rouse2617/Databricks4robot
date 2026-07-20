@@ -1,0 +1,1140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dispatch Flowcharts · cyber-databrew</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --bg-1: #ffffff;
+    --bg-2: #eef1f7;
+    --line: #d6dbe6;
+    --fg: #1c2230;
+    --fg-dim: #4a5466;
+    --fg-faint: #7c8497;
+    --accent: #0878aa;
+    --accent-2: #6f47c4;
+    --ok: #137a48;
+    --warn: #9a6800;
+    --err: #c0284d;
+    --code-bg: #0e1320;
+    --code-fg: #d6e2f5;
+    --primary-btn-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0f17;
+      --bg-1: #111726;
+      --bg-2: #1a2233;
+      --line: #243049;
+      --fg: #d8e1f0;
+      --fg-dim: #8b9ab5;
+      --fg-faint: #586682;
+      --accent: #6bd7ff;
+      --accent-2: #b48cff;
+      --ok: #5ee29c;
+      --warn: #ffc759;
+      --err: #ff6b8a;
+      --code-bg: #0a0e16;
+      --code-fg: #d6e2f5;
+      --primary-btn-fg: #001520;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC", sans-serif;
+    padding: 32px 24px 96px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace; }
+  code.inline { background: var(--bg-2); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; border: 1px solid var(--line); }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  small { color: var(--fg-dim); }
+  .linkbar { margin: 4px 0 22px; font-size: 13px; color: var(--fg-dim); }
+
+  /* Tabs */
+  .tabs {
+    display: flex; gap: 4px; margin: 0 0 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tab {
+    padding: 8px 16px; cursor: pointer; border: 1px solid transparent;
+    border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px;
+    color: var(--fg-dim); background: transparent; transition: all .15s;
+    font-size: 13px;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab.active { background: var(--bg-1); border-color: var(--line); color: var(--accent); }
+
+  /* Card */
+  .chart-wrap {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 14px;
+    padding: 28px 24px 20px; margin-bottom: 28px; overflow-x: auto;
+  }
+  .chart-wrap svg { display: block; margin: 0 auto; }
+  .chart-caption { max-width: 920px; margin: 14px auto 0; color: var(--fg-dim); font-size: 13px; }
+
+  /* Legend */
+  .legend {
+    display: flex; gap: 22px; flex-wrap: wrap; padding: 6px 0 0;
+    font-size: 12px; color: var(--fg-dim);
+  }
+  .legend .swatch {
+    display: inline-block; width: 14px; height: 14px; vertical-align: middle; margin-right: 6px;
+    border-radius: 3px; border: 1px solid var(--line);
+  }
+  .legend .swatch.proc { background: var(--bg-2); }
+  .legend .swatch.io { background: var(--bg-1); }
+  .legend .swatch.term { background: var(--ok)33; border-color: var(--ok); }
+  .legend .swatch.dlq { background: var(--err)33; border-color: var(--err); }
+  .legend .swatch.retry { background: var(--warn)33; border-color: var(--warn); }
+  .legend .swatch.start { background: var(--accent)33; border-color: var(--accent); }
+  .legend .arrow { display: inline-block; width: 24px; height: 0; border-top: 2px solid var(--fg-dim); vertical-align: middle; margin: 0 8px; }
+
+  /* Detail panel */
+  .panel {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 22px; margin-bottom: 18px;
+  }
+  .panel h3 { margin: 12px 0 6px; color: var(--accent); font-size: 14px; }
+  .panel .meta { color: var(--fg-dim); font-size: 12px; }
+
+  /* SVG node styles */
+  .node rect, .node ellipse, .node polygon { transition: filter .15s; cursor: pointer; }
+  .node:hover rect, .node:hover ellipse, .node:hover polygon { filter: drop-shadow(0 0 4px var(--accent)); }
+  .node text { fill: var(--fg); font-size: 12.5px; font-family: -apple-system, sans-serif; }
+  .node .small { font-size: 10.5px; fill: var(--fg-dim); }
+  .node.start rect { fill: var(--accent)22; stroke: var(--accent); stroke-width: 1.5; }
+  .node.proc rect { fill: var(--bg-2); stroke: var(--line); }
+  .node.io rect { fill: var(--bg-1); stroke: var(--line); stroke-dasharray: 3 2; }
+  .node.dec ellipse { fill: color-mix(in srgb, var(--accent-2) 18%, var(--bg-1)); stroke: var(--accent-2); stroke-width: 1.5; }
+  .node.term rect { fill: var(--ok)22; stroke: var(--ok); stroke-width: 1.5; }
+  .node.term-fail rect { fill: var(--err)22; stroke: var(--err); stroke-width: 1.5; }
+  .node.warn rect { fill: var(--warn)22; stroke: var(--warn); stroke-width: 1.5; }
+  .edge { stroke: var(--fg-faint); stroke-width: 1.4; fill: none; }
+  .edge.yes { stroke: var(--ok); }
+  .edge.no { stroke: var(--err); }
+  .edge.warn { stroke: var(--warn); }
+  .edge-label { fill: var(--fg-dim); font-size: 11px; font-family: -apple-system, sans-serif; }
+  .edge-label.yes { fill: var(--ok); }
+  .edge-label.no { fill: var(--err); }
+  .edge-label.warn { fill: var(--warn); font-weight: 600; }
+
+  @media (max-width: 700px) {
+    .chart-wrap svg { min-width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Dispatch Flowcharts</h1>
+<div class="linkbar">
+  <a href="dispatch-pipeline.html">→ 综合管线视图 + 动画模拟</a> &nbsp;|&nbsp;
+  <small>本页是决策分支与错误路径的流向图。点节点高亮路径，hover 看描述。</small>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-chart="submit">submit · error onion</button>
+  <button class="tab" data-chart="webhook">webhook · idempotency</button>
+  <button class="tab" data-chart="watcher">watcher · LIST + RV gate</button>
+  <button class="tab" data-chart="reconciler">reconciler · self-heal</button>
+  <button class="tab" data-chart="submitter">submitter · cycle</button>
+</div>
+
+<div id="submit" class="chart-section">
+
+<h2>① submitItem · 错误洋葱（CYB-3678 review P1-1 v2）</h2>
+
+<div class="chart-wrap">
+  <svg viewBox="0 0 1100 1180" xmlns="http://www.w3.org/2000/svg" style="min-width:1100px;max-width:1100px;">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" />
+      </marker>
+      <marker id="ar-yes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)" />
+      </marker>
+      <marker id="ar-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--err)" />
+      </marker>
+      <marker id="ar-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--warn)" />
+      </marker>
+    </defs>
+
+    <!-- Start: submit cycle spawns a step -->
+    <g class="node start">
+      <rect x="430" y="10" width="240" height="44" rx="22" />
+      <text x="550" y="36" text-anchor="middle">submitOneCandidate 起始</text>
+    </g>
+    <!-- arrow down -->
+    <path d="M 550 54 L 550 88" class="edge" marker-end="url(#ar)" />
+    <text x="556" y="76" class="edge-label">ticker / kick</text>
+
+    <!-- FindItemByID + check status -->
+    <g class="node io">
+      <rect x="430" y="88" width="240" height="36" rx="5" />
+      <text x="550" y="111" text-anchor="middle">FindItemByID(itemID)</text>
+    </g>
+    <path d="M 550 124 L 550 158" class="edge" marker-end="url(#ar)" />
+
+    <!-- decision: still pending? -->
+    <g class="node dec">
+      <ellipse cx="550" cy="186" rx="110" ry="26" />
+      <text x="550" y="190" text-anchor="middle">item.status == "pending"?</text>
+    </g>
+    <path d="M 440 186 L 320 186" class="edge no" marker-end="url(#ar-no)" />
+    <text x="380" y="180" text-anchor="middle" class="edge-label no">no</text>
+    <g class="node">
+      <rect x="120" y="160" width="200" height="50" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="220" y="184" text-anchor="middle" fill="var(--ok)">outcomeSkip</text>
+      <text x="220" y="200" text-anchor="middle" class="small">(gone / already advanced)</text>
+    </g>
+
+    <path d="M 550 212 L 550 246" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="558" y="232" class="edge-label yes">yes</text>
+
+    <!-- Paused? -->
+    <g class="node dec">
+      <ellipse cx="550" cy="274" rx="105" ry="26" />
+      <text x="550" y="278" text-anchor="middle">isJobPaused(jobID)?</text>
+    </g>
+    <path d="M 445 274 L 320 274" class="edge warn" marker-end="url(#ar-warn)" />
+    <text x="380" y="268" class="edge-label warn">yes</text>
+    <g class="node warn">
+      <rect x="120" y="248" width="200" height="50" rx="6" />
+      <text x="220" y="272" text-anchor="middle">outcomeSkip</text>
+      <text x="220" y="288" text-anchor="middle" class="small">(留 pending · resume 踢醒)</text>
+    </g>
+
+    <path d="M 550 300 L 550 334" class="edge no" marker-end="url(#ar-no)" />
+    <text x="558" y="320" class="edge-label no">no</text>
+
+    <!-- submitItem body -->
+    <g class="node proc">
+      <rect x="430" y="334" width="240" height="40" rx="5" />
+      <text x="550" y="358" text-anchor="middle">submitItem(ctx, job, item, ver)</text>
+    </g>
+
+    <!-- already has runID? -->
+    <g class="node dec">
+      <ellipse cx="550" cy="408" rx="120" ry="26" />
+      <text x="550" y="412" text-anchor="middle">item.runID 已有 (crash-resume)?</text>
+    </g>
+    <path d="M 550 434 L 550 468" class="edge no" marker-end="url(#ar-no)" />
+    <text x="558" y="454" class="edge-label no">no</text>
+    <path d="M 670 408 L 870 408" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="710" y="402" class="edge-label yes">yes</text>
+
+    <g class="node io">
+      <rect x="870" y="380" width="200" height="56" rx="5" />
+      <text x="970" y="402" text-anchor="middle">UpsertBatchSubtaskRun</text>
+      <text x="970" y="418" text-anchor="middle" class="small">deterministic wf name 落库</text>
+    </g>
+    <path d="M 970 436 L 970 468" class="edge" marker-end="url(#ar)" />
+
+    <g class="node io">
+      <rect x="870" y="468" width="200" height="40" rx="5" />
+      <text x="970" y="492" text-anchor="middle">UpdateItemPipelineRun (pending)</text>
+    </g>
+    <path d="M 870 488 L 670 488" class="edge" marker-end="url(#ar)" />
+
+    <!-- deploy -->
+    <g class="node io">
+      <rect x="430" y="468" width="240" height="40" rx="5" />
+      <text x="550" y="492" text-anchor="middle">DeployByTemplateID (Argo)</text>
+    </g>
+
+    <path d="M 550 508 L 550 542" class="edge" marker-end="url(#ar)" />
+
+    <!-- Deploy result decision -->
+    <g class="node dec">
+      <ellipse cx="550" cy="574" rx="130" ry="28" />
+      <text x="550" y="578" text-anchor="middle">err == nil ?</text>
+    </g>
+
+    <path d="M 420 574 L 280 574" class="edge no" marker-end="url(#ar-no)" />
+    <text x="350" y="568" class="edge-label no">err</text>
+    <path d="M 550 602 L 550 636" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="558" y="622" class="edge-label yes">ok</text>
+
+    <!-- OK path -->
+    <g class="node term">
+      <rect x="430" y="636" width="240" height="42" rx="5" />
+      <text x="550" y="658" text-anchor="middle" fill="var(--ok)">UpdateItemPipelineRun</text>
+      <text x="550" y="672" text-anchor="middle" class="small">(runID, wf, "submitted")</text>
+    </g>
+    <path d="M 550 678 L 550 712" class="edge" marker-end="url(#ar)" />
+    <g class="node term">
+      <rect x="430" y="712" width="240" height="42" rx="5" />
+      <text x="550" y="734" text-anchor="middle" fill="var(--ok)">CommitBatchSubtaskDeploy</text>
+      <text x="550" y="748" text-anchor="middle" class="small">outcomeOK</text>
+    </g>
+
+    <!-- ERROR branching from err -->
+    <g class="node dec" id="err-decision">
+      <ellipse cx="100" cy="624" rx="100" ry="26" />
+      <text x="100" y="628" text-anchor="middle">isWorkflowAlreadyExists?</text>
+    </g>
+    <path d="M 180 600 L 200 600" class="edge yes" marker-end="url(#ar-yes)" />
+    <!-- (AlreadyExists column comes from "err" path on left) -->
+    <path d="M 280 574 C 200 574 200 624 200 624" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="240" y="566" class="edge-label yes">AlreadyExists</text>
+
+    <g class="node proc">
+      <rect x="10" y="678" width="190" height="42" rx="5" />
+      <text x="105" y="700" text-anchor="middle">RefreshRunFromWorkflowByName</text>
+      <text x="105" y="714" text-anchor="middle" class="small">UID 回填</text>
+    </g>
+    <path d="M 100 650 L 100 678" class="edge" marker-end="url(#ar)" />
+
+    <g class="node dec">
+      <ellipse cx="105" cy="754" rx="95" ry="22" />
+      <text x="105" y="758" text-anchor="middle">refreshed</text>
+      <text x="105" y="772" text-anchor="middle" class="small">&amp; runAlreadySubmitted?</text>
+    </g>
+    <path d="M 105 720 L 105 754" class="edge" marker-end="url(#ar)" />
+
+    <g class="node term">
+      <rect x="10" y="800" width="190" height="42" rx="5" />
+      <text x="105" y="822" text-anchor="middle" fill="var(--ok)">mark submitted</text>
+      <text x="105" y="836" text-anchor="middle" class="small">outcomeOK</text>
+    </g>
+    <path d="M 105 776 L 105 800" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="115" y="790" class="edge-label yes">yes</text>
+
+    <path d="M 130 754 L 250 754" class="edge warn" marker-end="url(#ar-warn)" />
+    <text x="170" y="748" class="edge-label warn">no (CR 不可读, TTL 清理)</text>
+    <g class="node warn">
+      <rect x="240" y="738" width="230" height="36" rx="5" />
+      <text x="355" y="760" text-anchor="middle">mark submitted</text>
+    </g>
+    <text x="355" y="775" text-anchor="middle" class="small">watcher 兜底 → orphan grading</text>
+
+    <!-- ErrWorkflowSubmitIncomplete -->
+    <g class="node dec" id="incomp-decision">
+      <ellipse cx="290" cy="900" rx="120" ry="26" />
+      <text x="290" y="904" text-anchor="middle">ErrWorkflowSubmitIncomplete?</text>
+    </g>
+    <path d="M 200 624 C 200 900 290 900 290 900" class="edge" marker-end="url(#ar)" stroke="var(--fg-faint)" stroke-dasharray="3 3"/>
+
+    <g class="node warn">
+      <rect x="410" y="884" width="220" height="38" rx="5" />
+      <text x="520" y="906" text-anchor="middle">留 pending · 下 cycle 重试</text>
+      <text x="520" y="918" text-anchor="middle" class="small">(deterministic name → AlreadyExists)</text>
+    </g>
+    <path d="M 410 912 L 410 884 L 410 912" class="edge warn" marker-end="url(#ar-warn)" />
+    <path d="M 290 926 L 290 956" class="edge warn" marker-end="url(#ar-warn)" />
+    <text x="298" y="942" class="edge-label warn">yes</text>
+
+    <!-- classifySubmitError -->
+    <g class="node dec" id="classify-decision">
+      <ellipse cx="290" cy="1010" rx="135" ry="30" />
+      <text x="290" y="1010" text-anchor="middle">classifySubmitError(err)</text>
+      <text x="290" y="1024" text-anchor="middle" class="small">ErrInvalidArgument · Template/Asset NotFound</text>
+    </g>
+    <path d="M 290 956 L 290 980" class="edge" marker-end="url(#ar)" />
+
+    <path d="M 425 1010 L 690 1010" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="540" y="1004" class="edge-label yes">permanent</text>
+
+    <g class="node term-fail">
+      <rect x="690" y="990" width="240" height="44" rx="5" />
+      <text x="810" y="1010" text-anchor="middle" fill="var(--err)">DLQ · "permanent"</text>
+      <text x="810" y="1024" text-anchor="middle" class="small">RecordBatchSubtaskFailure</text>
+    </g>
+
+    <path d="M 290 1040 L 290 1070" class="edge" marker-end="url(#ar)" />
+    <text x="298" y="1058" class="edge-label no">transient</text>
+
+    <g class="node dec">
+      <ellipse cx="290" cy="1110" rx="120" ry="26" />
+      <text x="290" y="1114" text-anchor="middle">IncrementItemSubmitAttempts</text>
+      <text x="290" y="1128" text-anchor="middle" class="small">attempts &lt; 5?</text>
+    </g>
+
+    <g class="node warn">
+      <rect x="430" y="1090" width="220" height="40" rx="5" />
+      <text x="540" y="1112" text-anchor="middle">留 pending · 下 cycle 重试</text>
+      <text x="540" y="1126" text-anchor="middle" class="small">outcomeTransient</text>
+    </g>
+    <path d="M 410 1110 L 430 1110" class="edge warn" marker-end="url(#ar-warn)" />
+
+    <path d="M 290 1136 L 290 1150" class="edge yes" marker-end="url(#ar-yes)" />
+    <text x="298" y="1146" class="edge-label yes">attempts ≥ 5</text>
+
+    <g class="node term-fail">
+      <rect x="160" y="1150" width="240" height="22" rx="5" />
+      <text x="280" y="1166" text-anchor="middle" fill="var(--err)">DLQ · "max_submit_attempts"</text>
+    </g>
+
+    <!-- Long arc from err-decision (left) over to incomp-decision (center) -->
+    <path d="M 200 650 C 200 750 290 900 290 900" stroke="var(--fg-faint)" stroke-dasharray="3 3" fill="none" />
+
+  </svg>
+
+  <div class="chart-caption">
+    <strong>关键设计</strong>: 错误分类<strong>默认 transient</strong>（误判为 permanent 会让一票无辜 item 殉葬），attempts ≥ 5 才入 DLQ。
+    AlreadyExists → UID 回填是常见情况（crash-resume, 上一轮 submit 半完成）。ErrWorkflowSubmitIncomplete 不当失败，下 cycle AlreadyExists 自愈。
+    整个<strong>不包外层事务</strong>（pgx pool starvation 复盘）。
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch start"></span>起点</span>
+    <span><span class="swatch proc"></span>过程</span>
+    <span><span class="swatch io"></span>I/O（Argo / DB）</span>
+    <span><span class="swatch"></span><span class="arrow"></span>菱形（决策）<strong style="margin-left:14px">边缘（edge）</strong></span>
+    <span style="color:var(--ok);"><span class="arrow" style="border-color:var(--ok);"></span>yes / 成功</span>
+    <span style="color:var(--err);"><span class="arrow" style="border-color:var(--err);"></span>no / 失败</span>
+    <span style="color:var(--warn);"><span class="arrow" style="border-color:var(--warn);"></span>warn / 重试</span>
+    <span><span class="swatch term"></span>成功终态</span>
+    <span><span class="swatch dlq"></span>DLQ 终态</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>submitItem 源位置</h3>
+  <div class="meta">backend/internal/usecase/backfill/submitter.go:submitItem · submitter_cluster.go:classifySubmitError</div>
+  <pre>func (uc *Usecase) submitItem(ctx, job, item, templateVersion) (submitOutcome, error) {
+    runID := item.PipelineRunID   // crash-resume 入口
+    workflowName := item.WorkflowName
+
+    // ① 已经存在 runID 时: 检查 Argo 实际是否跑起来了
+    if runID != "" {
+        existing, getErr := uc.deployer.GetRun(ctx, runID)
+        if getErr == nil &amp;&amp; runAlreadySubmitted(existing) {
+            wf := existing.WorkflowName  // 如果为空退回到 item 上的
+            return outcomeOK,
+                uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
+        }
+    }
+
+    // ② 没有 runID: 落 ledger 行 + 拿 deterministic name
+    if runID == "" {
+        runID, workflowName, initErr = uc.deployer.UpsertBatchSubtaskRun(...)
+        // ...
+        uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "pending")
+    }
+
+    dep, err := uc.deployer.DeployByTemplateID(ctx, job.TemplateID, "", []string{item.AssetID}, deployOpts)
+    if err != nil {
+        switch {                                            // 错误洋葱
+        case isWorkflowAlreadyExists(err):
+            // AlreadyExists: 回填 UID (crash-resume)
+            refreshed, _ := uc.deployer.RefreshRunFromWorkflowByName(ctx, workflowName, "")
+            if refreshed == nil || !runAlreadySubmitted(refreshed) {
+                // TTL 清理后 CR 不可读 - 标 submitted, 让 watcher 兜底
+                return outcomeOK, uc.repo.UpdateItemPipelineRun(...)
+            }
+            return outcomeOK, uc.repo.UpdateItemPipelineRun(...)
+        case errors.Is(err, pipelineUC.ErrWorkflowSubmitIncomplete):
+            // 不当失败: 下 cycle 通过 AlreadyExists 自愈
+            return outcomeTransient, err
+        case classifySubmitError(err) == outcomeTransient:
+            attempts, _ := uc.repo.IncrementItemSubmitAttempts(ctx, item.ID)
+            if attempts &lt; maxSubmitAttempts { return outcomeTransient, err }
+            // poison: 进 DLQ
+            metrics.DispatcherDLQTotal.WithLabelValues("max_submit_attempts").Inc()
+            return outcomePermanent, uc.repo.UpdateItemPipelineRun(... "failed")
+        default:
+            // permanent (transpile / template / asset)
+            metrics.DispatcherDLQTotal.WithLabelValues("permanent").Inc()
+            return outcomePermanent, uc.deployer.RecordBatchSubtaskFailure(...)
+        }
+    }
+    return outcomeOK, uc.repo.UpdateItemPipelineRun(... "submitted")
+}</pre>
+</div>
+
+</div>
+
+<div id="webhook" class="chart-section" style="display:none;">
+
+<h2>② webhook · O(1) idempotent advance（CYB-3078 fast path）</h2>
+
+<div class="chart-wrap">
+  <svg viewBox="0 0 900 920" xmlns="http://www.w3.org/2000/svg" style="min-width:900px;max-width:900px;">
+    <defs>
+      <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" /></marker>
+      <marker id="ar2-yes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)" /></marker>
+      <marker id="ar2-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--err)" /></marker>
+    </defs>
+
+    <g class="node start">
+      <rect x="320" y="10" width="260" height="40" rx="20" />
+      <text x="450" y="34" text-anchor="middle">Argo 推送 terminal webhook</text>
+    </g>
+    <path d="M 450 50 L 450 80" class="edge" marker-end="url(#ar2)" />
+
+    <g class="node proc">
+      <rect x="320" y="80" width="260" height="40" rx="6" />
+      <text x="450" y="104" text-anchor="middle">HandleRunWebhook</text>
+    </g>
+    <path d="M 450 120 L 450 150" class="edge" marker-end="url(#ar2)" />
+
+    <g class="node proc">
+      <rect x="320" y="150" width="260" height="40" rx="6" />
+      <text x="450" y="174" text-anchor="middle">AdvanceItemForRun(run)</text>
+    </g>
+
+    <!-- Gate 1: terminal? -->
+    <g class="node dec">
+      <ellipse cx="450" cy="232" rx="120" ry="24" />
+      <text x="450" y="236" text-anchor="middle">isTerminalRunStatus(run)?</text>
+    </g>
+    <path d="M 330 232 L 220 232" class="edge no" marker-end="url(#ar2-no)" />
+    <text x="270" y="226" class="edge-label no">no</text>
+    <g class="node">
+      <rect x="50" y="206" width="170" height="50" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="135" y="230" text-anchor="middle" fill="var(--ok)">silent no-op · 200</text>
+      <text x="135" y="244" text-anchor="middle" class="small">(no batch job link /</text>
+      <text x="135" y="256" text-anchor="middle" class="small">no terminal status)</text>
+    </g>
+
+    <path d="M 450 256 L 450 286" class="edge yes" marker-end="url(#ar2-yes)" />
+    <text x="458" y="272" class="edge-label yes">yes</text>
+
+    <!-- Gate 2: item exists -->
+    <g class="node io">
+      <rect x="320" y="286" width="260" height="36" rx="5" />
+      <text x="450" y="308" text-anchor="middle">FindItemByPipelineRunID(run.ID)</text>
+    </g>
+    <path d="M 450 322 L 450 352" class="edge" marker-end="url(#ar2)" />
+
+    <g class="node dec">
+      <ellipse cx="450" cy="382" rx="100" ry="22" />
+      <text x="450" y="386" text-anchor="middle">item == nil ?</text>
+    </g>
+    <path d="M 550 382 L 700 382" class="edge yes" marker-end="url(#ar2-yes)" />
+    <text x="600" y="376" class="edge-label yes">yes</text>
+    <g class="node">
+      <rect x="700" y="356" width="170" height="50" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="785" y="378" text-anchor="middle" fill="var(--ok)">silent no-op</text>
+      <text x="785" y="394" text-anchor="middle" class="small">孤儿 run · watcher</text>
+      <text x="785" y="406" text-anchor="middle" class="small">orphan grading 处理</text>
+    </g>
+
+    <path d="M 450 404 L 450 436" class="edge no" marker-end="url(#ar2-no)" />
+    <text x="458" y="422" class="edge-label no">no</text>
+
+    <!-- Single CTE -->
+    <g class="node proc" id="cte">
+      <rect x="280" y="436" width="340" height="60" rx="6" stroke="var(--accent)" stroke-width="2" />
+      <text x="450" y="462" text-anchor="middle" fill="var(--accent)">AdvanceItemAndCountAtomic (1 CTE)</text>
+      <text x="450" y="478" text-anchor="middle" class="small">item 推 terminal + bump counter</text>
+    </g>
+    <path d="M 450 496 L 450 526" class="edge" marker-end="url(#ar2)" />
+
+    <!-- Gate 3: rows affected -->
+    <g class="node dec">
+      <ellipse cx="450" cy="558" rx="120" ry="26" />
+      <text x="450" y="558" text-anchor="middle">item UPDATE rows = 1?</text>
+      <text x="450" y="572" text-anchor="middle" class="small">(看 WHERE 是否守住)</text>
+    </g>
+
+    <path d="M 570 558 L 700 558" class="edge yes" marker-end="url(#ar2-yes)" />
+    <text x="600" y="552" class="edge-label yes">yes (首次)</text>
+    <g class="node term">
+      <rect x="700" y="528" width="170" height="60" rx="6" />
+      <text x="785" y="550" text-anchor="middle" fill="var(--ok)">counter +1</text>
+      <text x="785" y="566" text-anchor="middle" class="small">item.status = terminal</text>
+      <text x="785" y="580" text-anchor="middle" class="small">200 给 Argo</text>
+    </g>
+
+    <path d="M 450 584 L 450 614" class="edge warn" marker-end="url(#ar2)" stroke="var(--warn)" />
+    <text x="458" y="602" class="edge-label warn">no (重复投递)</text>
+
+    <g class="node">
+      <rect x="280" y="614" width="340" height="56" rx="6" fill="var(--warn)22" stroke="var(--warn)" />
+      <text x="450" y="636" text-anchor="middle" fill="var(--warn)">counter 不动 (idempotent)</text>
+      <text x="450" y="652" text-anchor="middle" class="small">item 已 terminal · CTE 命中 0 row</text>
+    </g>
+
+    <g class="node term-fail">
+      <rect x="280" y="700" width="340" height="50" rx="6" />
+      <text x="450" y="724" text-anchor="middle" fill="var(--err)">cyb-3078 hot path 终态</text>
+      <text x="450" y="738" text-anchor="middle" class="small">finalize 由 reconciler 60s 一回</text>
+    </g>
+    <path d="M 450 670 L 450 700" class="edge" marker-end="url(#ar2)" />
+    <path d="M 785 588 L 785 700" class="edge" marker-end="url(#ar2)" />
+
+    <!-- Decorate -->
+    <g class="node">
+      <rect x="40" y="436" width="220" height="60" rx="6" fill="var(--bg-2)" stroke="var(--line)" />
+      <text x="150" y="458" text-anchor="middle" fill="var(--warn)">对比: 老 SyncJob 路径</text>
+      <text x="150" y="476" text-anchor="middle" class="small">O(N²) · 6k items 24s/query</text>
+      <text x="150" y="488" text-anchor="middle" class="small">→ DB 池塌 → 60s gateway 504</text>
+    </g>
+    <path d="M 260 466 L 280 466" class="edge" marker-end="url(#ar2)" stroke-dasharray="3 2" />
+
+  </svg>
+
+  <div class="chart-caption">
+    <strong>关键不变量</strong>: 守门在 SQL 里（<code class="inline">WHERE status NOT IN (terminal)</code>），不是应用层。重复投递天然 no-op，counter 不被 double-count。Webhook 热路径 <strong>O(1)</strong> per event。
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch start"></span>Argo 事件</span>
+    <span><span class="swatch proc"></span>handler/uc</span>
+    <span><span class="swatch io"></span>DB 调用</span>
+    <span><span class="swatch warn"></span>重复投递无副作用</span>
+    <span><span class="swatch term"></span>终态</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>AdvanceItemAndCountAtomic SQL</h3>
+  <div class="meta">backend/internal/postgres/backfill_repo.go · backend/internal/repository/backfill_repository.go (interface)</div>
+  <pre>-- item-side WHERE gates on "currently NON-terminal" — this is the
+-- single source of idempotency. A redelivered webhook finds the row
+-- already terminal, matches 0 rows in `upd`, and the job-side UPDATE
+-- runs against an empty IN() set so the counter is not touched.
+WITH upd AS (
+  UPDATE backfill_items
+  SET status = $2,
+      workflow_name = COALESCE(NULLIF($3, ''), workflow_name),
+      error_message = CASE WHEN $2 = 'completed' THEN '' ELSE COALESCE(NULLIF($4, ''), error_message) END,
+      finished_at = NOW(),
+      started_at  = COALESCE(started_at, NOW())
+  WHERE id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+  RETURNING job_id
+)
+UPDATE backfill_jobs
+SET completed_count = completed_count + (CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END),
+    failed_count    = failed_count    + (CASE WHEN $2 IN ('failed', 'cancelled') THEN 1 ELSE 0 END),
+    updated_at = NOW()
+WHERE id IN (SELECT job_id FROM upd)</pre>
+  <p style="color:var(--fg-dim); font-size:13px;">
+    完整 PG 序列化确保两条 UPDATE 在同一 transaction 里 → <strong>item 推进和 counter bump 要么都发生，要么都失败</strong>。普通 <code class="inline">IncrementCompleted</code> 没有这个守门（会重复 +1），所以这是新方法而不是 wrapper。
+  </p>
+</div>
+
+</div>
+
+<div id="watcher" class="chart-section" style="display:none;">
+
+<h2>③ watcher · LIST + RV gate（CYB-3681）</h2>
+
+<div class="chart-wrap">
+  <svg viewBox="0 0 1100 980" xmlns="http://www.w3.org/2000/svg" style="min-width:1100px;max-width:1100px;">
+    <defs>
+      <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" /></marker>
+      <marker id="ar3-yes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)" /></marker>
+      <marker id="ar3-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--err)" /></marker>
+      <marker id="ar3-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--warn)" /></marker>
+    </defs>
+
+    <g class="node start">
+      <rect x="400" y="10" width="300" height="40" rx="20" />
+      <text x="550" y="34" text-anchor="middle">watcher tick 启动 (DB-active runs)</text>
+    </g>
+    <path d="M 550 50 L 550 80" class="edge" marker-end="url(#ar3)" />
+
+    <g class="node proc">
+      <rect x="400" y="80" width="300" height="40" rx="6" />
+      <text x="550" y="104" text-anchor="middle">group by (cluster, namespace)</text>
+    </g>
+    <path d="M 550 120 L 550 150" class="edge" marker-end="url(#ar3)" />
+
+    <g class="node io">
+      <rect x="350" y="150" width="400" height="44" rx="5" />
+      <text x="550" y="170" text-anchor="middle">ListWorkflows(ns,</text>
+      <text x="550" y="186" text-anchor="middle" class="small">"workflows.argoproj.io/completed=false")</text>
+    </g>
+    <path d="M 550 194 L 550 226" class="edge" marker-end="url(#ar3)" />
+
+    <g class="node dec">
+      <ellipse cx="550" cy="258" rx="115" ry="24" />
+      <text x="550" y="262" text-anchor="middle">LIST 成功 ?</text>
+    </g>
+    <path d="M 435 258 L 280 258" class="edge no" marker-end="url(#ar3-no)" />
+    <text x="350" y="252" class="edge-label no">no</text>
+
+    <g class="node warn">
+      <rect x="80" y="232" width="200" height="58" rx="6" />
+      <text x="180" y="254" text-anchor="middle" fill="var(--warn)">legacyRefreshGroup</text>
+      <text x="180" y="268" text-anchor="middle" class="small">bounded per-run GET</text>
+      <text x="180" y="282" text-anchor="middle" class="small">下 tick 再 LIST</text>
+    </g>
+
+    <path d="M 550 282 L 550 312" class="edge yes" marker-end="url(#ar3-yes)" />
+    <text x="558" y="298" class="edge-label yes">yes</text>
+
+    <g class="node proc">
+      <rect x="380" y="312" width="340" height="36" rx="5" />
+      <text x="550" y="334" text-anchor="middle">map "ns/name" → *Workflow</text>
+    </g>
+    <path d="M 550 348 L 550 380" class="edge" marker-end="url(#ar3)" />
+
+    <g class="node dec">
+      <ellipse cx="550" cy="410" rx="100" ry="24" />
+      <text x="550" y="414" text-anchor="middle">run 在 list 里命中 ?</text>
+    </g>
+    <path d="M 650 410 L 800 410" class="edge yes" marker-end="url(#ar3-yes)" />
+    <text x="685" y="404" class="edge-label yes">yes</text>
+
+    <path d="M 450 410 L 320 410" class="edge no" marker-end="url(#ar3-no)" />
+    <text x="375" y="404" class="edge-label no">no</text>
+
+    <!-- Apply gate -->
+    <g class="node dec" id="rv-gate">
+      <ellipse cx="925" cy="410" rx="110" ry="26" />
+      <text x="925" y="410" text-anchor="middle">recalibrate OR</text>
+      <text x="925" y="424" text-anchor="middle" class="small">markWorkflowApplied(runID, rv) ?</text>
+    </g>
+
+    <path d="M 800 410 L 815 410" class="edge yes" marker-end="url(#ar3-yes)" />
+
+    <g class="node proc">
+      <rect x="800" y="470" width="260" height="46" rx="5" />
+      <text x="930" y="492" text-anchor="middle">applyWorkflowToRun</text>
+      <text x="930" y="506" text-anchor="middle" class="small">(写 DB · terminalArchive)</text>
+    </g>
+    <path d="M 925 436 L 925 470" class="edge yes" marker-end="url(#ar3-yes)" />
+    <text x="935" y="452" class="edge-label yes">yes · 变 / 每 10 tick 强制</text>
+
+    <g class="node">
+      <rect x="800" y="544" width="260" height="50" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="930" y="566" text-anchor="middle" fill="var(--ok)">0 DB write (rv 一致)</text>
+      <text x="930" y="582" text-anchor="middle" class="small">forgetWorkflowApplied</text>
+    </g>
+    <path d="M 925 436 L 925 462 L 925 544" class="edge" stroke-dasharray="3 2" marker-end="url(#ar3)" />
+    <text x="940" y="490" class="edge-label">no · rv 一致</text>
+
+    <!-- Residual path (缺席的 run) -->
+    <g class="node dec">
+      <ellipse cx="220" cy="478" rx="100" ry="26" />
+      <text x="220" y="478" text-anchor="middle">residuals &lt; limit?</text>
+      <text x="220" y="492" text-anchor="middle" class="small">残量 targeted GET 上限</text>
+    </g>
+    <path d="M 320 410 L 220 452" class="edge no" marker-end="url(#ar3)" />
+
+    <g class="node io">
+      <rect x="120" y="540" width="200" height="50" rx="5" />
+      <text x="220" y="562" text-anchor="middle">refreshPipelineRunStatus</text>
+      <text x="220" y="578" text-anchor="middle" class="small">单 run 终态 / 404</text>
+    </g>
+    <path d="M 220 504 L 220 540" class="edge yes" marker-end="url(#ar3-yes)" />
+
+    <g class="node">
+      <rect x="120" y="618" width="200" height="46" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="220" y="640" text-anchor="middle" fill="var(--ok)">forgetWorkflowApplied</text>
+      <text x="220" y="654" text-anchor="middle" class="small">(终态 → 释放 RV map)</text>
+    </g>
+    <path d="M 220 590 L 220 618" class="edge" marker-end="url(#ar3)" />
+
+    <!-- Reconciliation note -->
+    <g class="node">
+      <rect x="80" y="700" width="940" height="100" rx="8" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="550" y="724" text-anchor="middle" fill="var(--accent)">recalibrateEvery = 10</text>
+      <text x="550" y="746" text-anchor="middle" class="small">每 10 个 scan 强制 reapply 全部 listed wf —— 绕过 RV gate 自愈</text>
+      <text x="550" y="764" text-anchor="middle" class="small">理由: gate 写错了不会永久漂移；进程重启 = 一次 recalibrate (memory-only)</text>
+      <text x="550" y="782" text-anchor="middle" class="small">selector 正向匹配 (.argoproj.io/completed=false) → apiserver 丢这个 selector 只会多扫、不会漏</text>
+    </g>
+    <path d="M 550 232 L 50 232 L 50 700 L 80 700" class="edge" stroke-dasharray="3 2" marker-end="url(#ar3)" />
+
+  </svg>
+
+  <div class="chart-caption">
+    <strong>关键设计</strong>: 用 Arge controller 打的 <code class="inline">completed=false</code> label 正向匹配 → 一次 LIST 拿到整个 active set 而不是 N 次 GET。
+    RV gate 让 unchanged wf 0 DB write。<strong>recalibrateEvery=10</strong> 是 gate 的"安全网"——证明这种优化类逻辑的常见自愈设计。
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch start"></span>tick 起点</span>
+    <span><span class="swatch io"></span>K8s API</span>
+    <span><span class="swatch warn"></span>降级 / 限制</span>
+    <span><span class="swatch term"></span>0 cost / 自愈</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>bulkSyncClusterRuns 源</h3>
+  <div class="meta">backend/internal/usecase/pipeline/watcher_bulk.go</div>
+  <pre>func (uc *Usecase) bulkSyncClusterRuns(ctx, runs, group, residualLimit, recalibrate) int {
+    // 1. resolve cluster clientset
+    client, err := uc.resolveArgoClientForRun(ctx, &amp;runs[group[0]])
+
+    // 2. 1× ListWorkflows per namespace in group (几乎总是 1 个)
+    namespaces := map[string]bool{}
+    for _, i := range group { namespaces[runs[i].ArgoNamespace] = true }
+    listed := map[string]*wfv1.Workflow{}
+    listOK := true
+    for ns := range namespaces {
+        items, err := client.ListWorkflows(ctx, ns, activeWorkflowSelector)
+        if err != nil {
+            listOK = false ; break   // 失败 → 整 tick 降级
+        }
+        for i := range items { listed[ns+"/"+items[i].Name] = &amp;items[i] }
+    }
+    if !listOK { return uc.legacyRefreshGroup(...) }   // bounded per-run GET
+
+    // 3. apply matches (RV gate)
+    synced, residuals := 0, 0
+    for _, i := range group {
+        run := &amp;runs[i]
+        if wf, ok := listed[ns+"/+strings.TrimSpace(run.WorkflowName)]; ok {
+            if recalibrate || uc.markWorkflowApplied(run.ID, wf.ResourceVersion) {
+                uc.applyWorkflowToRun(ctx, run, wf, nodeProjectTerminalArchive)
+                if !isActiveDeploymentStatus(run.Status) { uc.forgetWorkflowApplied(run.ID) }
+                synced++
+            }
+            continue
+        }
+        // 4. absentees → bounded targeted GET
+        if residuals &lt; residualLimit {
+            uc.refreshPipelineRunStatus(ctx, run)
+            uc.forgetWorkflowApplied(run.ID)
+            residuals++
+            synced++
+        }
+    }
+    return synced
+}</pre>
+</div>
+
+</div>
+
+<div id="reconciler" class="chart-section" style="display:none;">
+
+<h2>④ reconciler · 60s 自愈兜底（StartJobReconciler）</h2>
+
+<div class="chart-wrap">
+  <svg viewBox="0 0 1000 760" xmlns="http://www.w3.org/2000/svg" style="min-width:1000px;max-width:1000px;">
+    <defs>
+      <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" /></marker>
+      <marker id="ar4-yes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)" /></marker>
+      <marker id="ar4-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--err)" /></marker>
+    </defs>
+
+    <g class="node start">
+      <rect x="350" y="10" width="300" height="40" rx="20" />
+      <text x="500" y="34" text-anchor="middle">60s tick · StartJobReconciler</text>
+    </g>
+    <path d="M 500 50 L 500 80" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node io">
+      <rect x="350" y="80" width="300" height="40" rx="6" />
+      <text x="500" y="104" text-anchor="middle">扫所有 non-terminal backfill jobs</text>
+    </g>
+    <path d="M 500 120 L 500 152" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node proc">
+      <rect x="350" y="152" width="300" height="40" rx="6" />
+      <text x="500" y="176" text-anchor="middle">对每个 job 走 syncJobProgressForce</text>
+    </g>
+    <path d="M 500 192 L 500 224" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node io">
+      <rect x="350" y="224" width="300" height="40" rx="6" />
+      <text x="500" y="248" text-anchor="middle">SummarizeItemStatuses(jobID)</text>
+      <text x="500" y="262" text-anchor="middle" class="small" y="0">全 batch 聚合 (O(N), tick 间隔离)</text>
+    </g>
+    <path d="M 500 264 L 500 296" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node proc">
+      <rect x="350" y="296" width="300" height="50" rx="6" />
+      <text x="500" y="320" text-anchor="middle" fill="var(--accent)">UpdateJobProgress(覆写)</text>
+      <text x="500" y="336" text-anchor="middle" class="small">completed = sum ✓ ; failed = sum ✗</text>
+    </g>
+    <path d="M 500 346 L 500 378" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node dec">
+      <ellipse cx="500" cy="408" rx="135" ry="26" />
+      <text x="500" y="412" text-anchor="middle">pending + in-flight == 0 ?</text>
+    </g>
+    <path d="M 365 408 L 220 408" class="edge no" marker-end="url(#ar4-no)" />
+    <text x="290" y="402" class="edge-label no">no</text>
+    <g class="node">
+      <rect x="40" y="382" width="180" height="52" rx="6" fill="var(--warn)22" stroke="var(--warn)" />
+      <text x="130" y="404" text-anchor="middle" fill="var(--warn)">下个 60s 再来</text>
+      <text x="130" y="420" text-anchor="middle" class="small">job 还活跃 · 跳过</text>
+    </g>
+
+    <path d="M 500 434 L 500 466" class="edge yes" marker-end="url(#ar4-yes)" />
+    <text x="508" y="452" class="edge-label yes">yes · all terminal</text>
+
+    <g class="node proc">
+      <rect x="380" y="466" width="240" height="46" rx="6" />
+      <text x="500" y="488" text-anchor="middle">UpdateJobProgress(... "Completed" | "Failed")</text>
+      <text x="500" y="502" text-anchor="middle" class="small">翻 job 终态</text>
+    </g>
+    <path d="M 500 512 L 500 544" class="edge" marker-end="url(#ar4)" />
+
+    <g class="node proc">
+      <rect x="350" y="544" width="300" height="50" rx="6" />
+      <text x="500" y="568" text-anchor="middle" fill="var(--accent)">notifyJobTerminalIfNeeded (atomic claim)</text>
+      <text x="500" y="584" text-anchor="middle" class="small">一次性完成通知 · 并发安全</text>
+    </g>
+
+    <g class="node term">
+      <rect x="350" y="620" width="300" height="50" rx="6" />
+      <text x="500" y="644" text-anchor="middle" fill="var(--ok)">终态锁定</text>
+      <text x="500" y="660" text-anchor="middle" class="small">Counter 由 webhook 推 + reconciler 覆写协同一致</text>
+    </g>
+    <path d="M 500 594 L 500 620" class="edge" marker-end="url(#ar4)" />
+
+    <!-- Drift healing note -->
+    <g class="node">
+      <rect x="700" y="80" width="280" height="120" rx="8" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="840" y="106" text-anchor="middle" fill="var(--warn)">drift 自愈路径</text>
+      <text x="840" y="126" text-anchor="middle" class="small">webhook 丢事件 / race /</text>
+      <text x="840" y="140" text-anchor="middle" class="small">Argo 跨过 pod 数量</text>
+      <text x="840" y="160" text-anchor="middle" class="small">→ counter <strong style="color:var(--err)">drift</strong></text>
+      <text x="840" y="178" text-anchor="middle" class="small">下一 tick reconciler</text>
+      <text x="840" y="192" text-anchor="middle" class="small"><strong style="color:var(--ok)">覆写</strong> 回权威 summary</text>
+    </g>
+
+  </svg>
+
+  <div class="chart-caption">
+    <strong>关键不变量</strong>: <code class="inline">UpdateJobProgress</code> 是<strong>覆写</strong>，不是累加。和 webhook 的 <code class="inline">+=1</code> 互补 — webhook 推快路径，reconciler 校准权威。一分钟收敛任何 drift。
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch start"></span>60s tick</span>
+    <span><span class="swatch io"></span>DB</span>
+    <span><span class="swatch proc"></span>uc 协调</span>
+    <span><span class="swatch term"></span>终态</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>60s 自愈的逻辑链</h3>
+  <div class="meta">backend/internal/usecase/backfill/usecase.go:StartJobReconciler · syncJobProgressForce</div>
+  <p>webhook 是 push（O(1)），reconciler 是 pull（全扫 + 覆写）。两者职责不重叠：</p>
+  <ul>
+    <li>webhook 负责 counter 立即推进（≤1s 延迟）</li>
+    <li>reconciler 负责 counter 始终来自权威（防止 drift 累积）</li>
+    <li>counter 永远 = <code class="inline">SummarizeItemStatuses(jobs).{completed,failed}</code> 在每个 60s 节点</li>
+  </ul>
+  <p>这就是为什么 webhook 的 <code class="inline">+=1</code> + reconciler 的 <code class="inline">=</code> 配合得很好 — 像一个 CRDT 的"逻辑时钟 + 校准基线"组合。</p>
+</div>
+
+</div>
+
+<div id="submitter" class="chart-section" style="display:none;">
+
+<h2>⑤ submitter cycle · 主循环 & governor（CYB-3677 + CYB-3678）</h2>
+
+<div class="chart-wrap">
+  <svg viewBox="0 0 1200 1100" xmlns="http://www.w3.org/2000/svg" style="min-width:1200px;max-width:1200px;">
+    <defs>
+      <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" /></marker>
+      <marker id="ar5-yes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)" /></marker>
+      <marker id="ar5-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--warn)" /></marker>
+      <marker id="ar5-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--err)" /></marker>
+    </defs>
+
+    <g class="node start">
+      <rect x="450" y="10" width="300" height="40" rx="20" />
+      <text x="600" y="34" text-anchor="middle">StartSubmitter (后台 goroutine)</text>
+    </g>
+
+    <!-- Boot jitter -->
+    <g class="node dec">
+      <ellipse cx="600" cy="78" rx="80" ry="20" />
+      <text x="600" y="82" text-anchor="middle">bootJitter ?</text>
+    </g>
+    <path d="M 600 50 L 600 58" class="edge" marker-end="url(#ar5)" />
+    <path d="M 600 98 L 600 130" class="edge" marker-end="url(#ar5)" />
+
+    <!-- Eager cycle + ticker + kick -->
+    <g class="node proc">
+      <rect x="450" y="130" width="300" height="44" rx="6" />
+      <text x="600" y="152" text-anchor="middle">一次 eager cycle (取代 ResumeIncompleteBatches)</text>
+    </g>
+    <path d="M 600 174 L 600 200" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node dec">
+      <ellipse cx="600" cy="226" rx="120" ry="22" />
+      <text x="600" y="230" text-anchor="middle">stop | ticker.C | submitKick ?</text>
+    </g>
+    <path d="M 480 226 L 320 226" class="edge no" marker-end="url(#ar5-no)" />
+    <text x="400" y="220" class="edge-label no">stop</text>
+    <g class="node">
+      <rect x="100" y="206" width="220" height="40" rx="6" fill="var(--ok)22" stroke="var(--ok)" />
+      <text x="210" y="228" text-anchor="middle" fill="var(--ok)">wg.Wait · return</text>
+    </g>
+
+    <path d="M 600 248 L 600 280" class="edge" marker-end="url(#ar5-yes)" />
+    <text x="608" y="266" class="edge-label yes">ticker / kick</text>
+
+    <g class="node proc">
+      <rect x="450" y="280" width="300" height="44" rx="6" />
+      <text x="600" y="300" text-anchor="middle">cycleCtx, _ := WithTimeout(ctx, 10m)</text>
+      <text x="600" y="314" text-anchor="middle" class="small">(单 cycle deadline)</text>
+    </g>
+    <path d="M 600 324 L 600 356" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node proc">
+      <rect x="450" y="356" width="300" height="40" rx="6" />
+      <text x="600" y="378" text-anchor="middle">refreshDispatcherConfigs (CYB-3679 调优)</text>
+    </g>
+    <path d="M 600 396 L 600 426" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node io">
+      <rect x="450" y="426" width="300" height="40" rx="6" />
+      <text x="600" y="448" text-anchor="middle">FindSubmittableJobs(ctx, 50)</text>
+    </g>
+    <path d="M 600 466 L 600 498" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node proc">
+      <rect x="450" y="498" width="300" height="44" rx="6" />
+      <text x="600" y="520" text-anchor="middle">groups := map[cluster][]BackfillJob</text>
+      <text x="600" y="534" text-anchor="middle" class="small">按 ResolveTargetClusterID 分组</text>
+    </g>
+    <path d="M 600 542 L 600 574" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node proc">
+      <rect x="350" y="574" width="500" height="44" rx="6" />
+      <text x="600" y="596" text-anchor="middle">每个 cluster 一个 goroutine: runClusterChannel(ctx, cluster, cjobs)</text>
+    </g>
+
+    <!-- runClusterChannel body -->
+    <g class="node dec">
+      <ellipse cx="600" cy="666" rx="140" ry="26" />
+      <text x="600" y="666" text-anchor="middle">dispatcherConfig.Paused?</text>
+      <text x="600" y="680" text-anchor="middle" class="small">在线调优闸门</text>
+    </g>
+    <path d="M 600 618 L 600 640" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node">
+      <rect x="60" y="638" width="220" height="58" rx="6" fill="var(--warn)22" stroke="var(--warn)" />
+      <text x="170" y="660" text-anchor="middle" fill="var(--warn)">Paused → 该 cluster skip</text>
+      <text x="170" y="676" text-anchor="middle" class="small">ChannelPaused metric set 1</text>
+    </g>
+    <path d="M 460 666 L 280 666" class="edge yes" marker-end="url(#ar5-yes)" />
+    <text x="370" y="660" class="edge-label yes">yes</text>
+
+    <path d="M 600 692 L 600 720" class="edge no" marker-end="url(#ar5-no)" />
+    <text x="608" y="708" class="edge-label no">no</text>
+
+    <g class="node io">
+      <rect x="380" y="720" width="440" height="40" rx="6" />
+      <text x="600" y="742" text-anchor="middle">WithSubmitterClusterLock(cluster_key)</text>
+    </g>
+    <path d="M 600 760 L 600 790" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node dec">
+      <ellipse cx="600" cy="822" rx="110" ry="24" />
+      <text x="600" y="826" text-anchor="middle">advisory 拿到 ?</text>
+    </g>
+    <path d="M 490 822 L 320 822" class="edge warn" marker-end="url(#ar5-warn)" />
+    <text x="395" y="816" class="edge-label warn">no</text>
+    <g class="node">
+      <rect x="100" y="800" width="220" height="48" rx="6" fill="var(--warn)22" stroke="var(--warn)" />
+      <text x="210" y="822" text-anchor="middle">skip · debug log</text>
+      <text x="210" y="838" text-anchor="middle" class="small">(别人在跑)</text>
+    </g>
+
+    <path d="M 600 846 L 600 878" class="edge yes" marker-end="url(#ar5-yes)" />
+    <text x="608" y="864" class="edge-label yes">yes</text>
+
+    <g class="node proc">
+      <rect x="350" y="878" width="500" height="44" rx="6" />
+      <text x="600" y="898" text-anchor="middle">submitJobBatch × N jobs · gov 限流</text>
+      <text x="600" y="912" text-anchor="middle" class="small">token-bucket wait + sem, AIMD effective</text>
+    </g>
+
+    <g class="node dec">
+      <ellipse cx="600" cy="966" rx="155" ry="24" />
+      <text x="600" y="970" text-anchor="middle">consecutiveTransient ≥ 10 ?</text>
+    </g>
+    <path d="M 600 922 L 600 942" class="edge" marker-end="url(#ar5)" />
+
+    <g class="node warn">
+      <rect x="780" y="940" width="260" height="50" rx="6" />
+      <text x="910" y="962" text-anchor="middle" fill="var(--warn)">breaker trip · break out</text>
+      <text x="910" y="978" text-anchor="middle" class="small">ChannelBreakerTotal++</text>
+    </g>
+    <path d="M 755 966 L 780 966" class="edge warn" marker-end="url(#ar5-warn)" />
+    <text x="758" y="958" class="edge-label warn">yes</text>
+
+    <path d="M 600 990 L 600 1020" class="edge" marker-end="url(#ar5)" />
+    <text x="608" y="1006" class="edge-label no">no</text>
+
+    <g class="node proc">
+      <rect x="380" y="1020" width="440" height="44" rx="6" />
+      <text x="600" y="1040" text-anchor="middle">gov.endCycle() · AIMD 收敛</text>
+      <text x="600" y="1056" text-anchor="middle" class="small">distress /2 · healthy ×1.5 · 限 [floor, configured]</text>
+    </g>
+
+    <!-- refill feedback loop -->
+    <g class="node">
+      <rect x="100" y="1020" width="240" height="40" rx="6" fill="var(--accent)22" stroke="var(--accent)" />
+      <text x="220" y="1042" text-anchor="middle" fill="var(--accent)">self-kick (refill = true)</text>
+    </g>
+    <path d="M 380 1042 L 340 1042" class="edge yes" marker-end="url(#ar5-yes)" />
+    <text x="355" y="1036" class="edge-label yes">任何 job attempted==limit</text>
+
+  </svg>
+
+  <div class="chart-caption">
+    <strong>关键设计</strong>: 每 15s 周期 + 可踢醒 + 单 cycle deadline + boot jitter 防雷击群 + per-cluster 隔离 + governor 双层限流 + breaker 10 次熔断 + self-kick 防饥饿。
+    token bucket <strong>永</strong>不被 AIMD 触碰（注释明说，避免 rate-fluctuation）。
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch start"></span>循环入口</span>
+    <span><span class="swatch proc"></span>过程</span>
+    <span><span class="swatch io"></span>外部依赖</span>
+    <span><span class="swatch warn"></span>限流 / 熔断 / 降级</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>clusterGovernor AIMD</h3>
+  <div class="meta">submitter_cluster.go:clusterGovernor · endCycle</div>
+  <pre>// 每 cycle endCycle 调一次
+func (g *clusterGovernor) endCycle() {
+    g.mu.Lock()
+    defer g.mu.Unlock()
+    if g.total == 0 { return }
+    distress := g.throttled || g.slow*2 &gt; g.total
+    if distress {
+        g.effective /= 2
+        if g.effective &lt; g.floor { g.effective = g.floor }
+    } else {
+        g.effective = g.effective * 3 / 2
+        if g.effective &gt; g.configured { g.effective = g.configured }
+    }
+    g.slow, g.total, g.throttled = 0, 0, false
+}</pre>
+  <p style="color:var(--fg-dim); font-size:13px;">
+    AIMD: <strong>A</strong>dditive <strong>I</strong>ncrease / <strong>M</strong>ultiplicative <strong>D</strong>ecrease。经典拥塞控制（TCP 风格）。effective 是 in-flight concurrency（不是 rate），与 token bucket <strong>解耦</strong>。
+  </p>
+  <ul>
+    <li><strong>floor</strong> = <code class="inline">configured / 4</code>（最少保 25% 带宽）</li>
+    <li><strong>configured</strong> 来自 CYB-3679 在线调优表</li>
+    <li>healthy 时 ×1.5（不是 +1 — AIMD 不该过分冒险）</li>
+  </ul>
+</div>
+
+</div>
+
+<script>
+  // Tab switching
+  const tabs = document.querySelectorAll('.tab');
+  const sections = document.querySelectorAll('.chart-section');
+  tabs.forEach(t => {
+    t.addEventListener('click', () => {
+      tabs.forEach(x => x.classList.remove('active'));
+      sections.forEach(s => s.style.display = 'none');
+      t.classList.add('active');
+      document.getElementById(t.dataset.chart).style.display = '';
+      // scroll chart into view
+      document.getElementById(t.dataset.chart).scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  });
+</script>
+
+</body>
+</html>

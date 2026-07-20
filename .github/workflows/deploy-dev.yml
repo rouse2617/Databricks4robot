@@ -156,10 +156,16 @@ jobs:
 
       - name: Deploy to Cloud Run dev
         run: |
+          # DEPLOY_NO_TRAFFIC=true: create the revision idle. The deploy-migrate
+          # job below routes traffic to it AFTER Atlas migrations succeed. See
+          # CYB-3486d1c — without --no-traffic, the new revision took 100%
+          # traffic instantly and the migrate job ran against an already-live
+          # broken revision (schema mismatch → "column does not exist").
           IMAGE=${{ env.IMAGE }} \
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
           CLOUDRUN_ENV=development \
+          DEPLOY_NO_TRAFFIC=true \
           bash deploy/cloudrun/backend-dev.sh
 
       # The dev service has no real DATABREW_TOKEN / JWT_SECRET, so ENV=production
@@ -180,7 +186,12 @@ jobs:
   # deploy/cloudrun/create-migrate-jobs.sh; this job only updates its image
   # reference, executes it, and finally routes traffic.
   deploy-migrate:
-    needs: deploy-backend
+    # CYB-3486d1c: needs BOTH deploy-backend (image ready, revision exists idle)
+    # AND changes (so needs.changes.outputs.schema is available here — the
+    # `Build & push migrate image on VM` / `Update Job image reference` steps
+    # are gated on that output, and previously they silently skipped whenever
+    # migrate ran in a fresh dispatch that had no direct edge to `changes`).
+    needs: [deploy-backend, changes]
     name: Apply Atlas migrations & route traffic → Cloud Run dev
     runs-on: ubuntu-latest
     concurrency:

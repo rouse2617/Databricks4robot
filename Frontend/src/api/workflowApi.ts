@@ -321,6 +321,7 @@ export interface NodePodDiagnostics {
 	podIp?: string;
 	serviceAccountName?: string;
 	restartCount: number;
+	garbageCollected?: boolean;
 	containers: WorkflowNodeContainer[];
 	podConditions: WorkflowPodCondition[];
 	podEvents: WorkflowPodEvent[];

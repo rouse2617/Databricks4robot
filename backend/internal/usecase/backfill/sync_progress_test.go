@@ -27,6 +27,34 @@ type pausedSyncRepo struct {
 	// return false) so tests can exercise the CYB-3071 notification path.
 	notifyMu sync.Mutex
 	notified bool
+
+	attemptsMu     sync.Mutex
+	submitAttempts map[string]int
+
+	// extraJobs lets multi-job fixtures (CYB-3678 sharding) resolve every
+	// job by id, not just the primary one.
+	extraJobs []models.BackfillJob
+}
+
+func (r *pausedSyncRepo) IncrementItemSubmitAttempts(_ context.Context, itemID string) (int, error) {
+	r.attemptsMu.Lock()
+	defer r.attemptsMu.Unlock()
+	if r.submitAttempts == nil {
+		r.submitAttempts = map[string]int{}
+	}
+	r.submitAttempts[itemID]++
+	return r.submitAttempts[itemID], nil
+}
+
+func (r *pausedSyncRepo) ResetFailedItems(_ context.Context, jobID string) (int64, error) {
+	var n int64
+	for i := range r.items {
+		if r.items[i].JobID == jobID && r.items[i].Status == "failed" {
+			r.items[i].Status = "pending"
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
@@ -34,6 +62,12 @@ func (r *pausedSyncRepo) FindAllJobs(context.Context) ([]models.BackfillJob, err
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
+	for i := range r.extraJobs {
+		if r.extraJobs[i].ID == id {
+			cp := r.extraJobs[i]
+			return &cp, nil
+		}
+	}
 	if r.job != nil && r.job.ID == id {
 		if r.findJobByIDHook != nil {
 			r.findJobByIDHook()
@@ -89,7 +123,13 @@ func (r *pausedSyncRepo) FindItemByID(_ context.Context, id string) (*models.Bac
 	}
 	return nil, nil
 }
-func (r *pausedSyncRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
+func (r *pausedSyncRepo) FindItemByPipelineRunID(_ context.Context, pipelineRunID string) (*models.BackfillItem, error) {
+	for i := range r.items {
+		if r.items[i].PipelineRunID != nil && *r.items[i].PipelineRunID == pipelineRunID {
+			cp := r.items[i]
+			return &cp, nil
+		}
+	}
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindItemByJobAndAssetID(context.Context, string, string) (*models.BackfillItem, error) {
@@ -128,6 +168,13 @@ func (r *pausedSyncRepo) UpdateItemStatus(_ context.Context, id, status, wf, err
 		}
 	}
 	return nil
+}
+
+// AdvanceItemAndCountAtomic mirrors UpdateItemStatus for tests that don't
+// exercise the webhook fast path — the fast-path semantics (idempotency,
+// counter increment) are covered by the postgres integration test.
+func (r *pausedSyncRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID, newStatus, workflowName, errMsg string) error {
+	return r.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
 }
 func (r *pausedSyncRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
 	for i := range r.items {
@@ -213,6 +260,9 @@ func (r *pausedSyncRepo) CountPipelineRunsByBatchJobID(context.Context, string) 
 func (r *pausedSyncRepo) CountRunsWithNodeRowsByBatchJobID(context.Context, string) (int, error) {
 	return 0, nil
 }
+func (r *pausedSyncRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
+}
 func (r *pausedSyncRepo) FindItemsByAssetID(context.Context, string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
@@ -227,9 +277,10 @@ func (m *syncTestRunRepo) Save(context.Context, *models.PipelineRun) error { ret
 func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
-func (m *syncTestRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
+func (m *syncTestRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+
 func (m *syncTestRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.lastListFilter = &filter
 	if m.summaries == nil {
@@ -628,5 +679,82 @@ func TestSyncJobProgress_DoesNotOverwriteConcurrentPause(t *testing.T) {
 	}
 	if repo.job.CompletedCount != 1 {
 		t.Fatalf("expected completedCount=1, got %d", repo.job.CompletedCount)
+	}
+}
+
+// AdvanceItemForRun is the webhook fast path — an O(1) replacement for the old
+// SyncJob-per-child-terminal cascade that collapsed the DB under large batches.
+// These tests pin down the routing logic: a batch-child terminal run advances
+// its item via AdvanceItemAndCountAtomic (no full-batch aggregate), everything
+// else early-exits with nil (not an error).
+func TestAdvanceItemForRun_TerminalBatchChild_CallsAtomicAdvance(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-succeeded"
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{ID: jobID, Status: "running", TotalCount: 1},
+		items: []models.BackfillItem{{
+			ID:            "item-1",
+			JobID:         jobID,
+			AssetID:       "asset-1",
+			Status:        "submitted",
+			PipelineRunID: strPtr(runID),
+		}},
+	}
+	uc := New(repo, nil)
+
+	err := uc.AdvanceItemForRun(ctx, &models.PipelineRun{
+		ID:              runID,
+		Status:          "Succeeded",
+		ArgoWorkflowUID: "uid-1",
+		WorkflowName:    "wf-1",
+		BatchJobID:      strPtr(jobID),
+	})
+	if err != nil {
+		t.Fatalf("AdvanceItemForRun: %v", err)
+	}
+	if got := repo.items[0].Status; got != "completed" {
+		t.Fatalf("item status = %q, want completed (fast-path advance)", got)
+	}
+}
+
+// Non-batch run: no batch_job_id → no ledger to advance → nil (no error).
+func TestAdvanceItemForRun_NonBatchRun_NoOp(t *testing.T) {
+	uc := New(&pausedSyncRepo{}, nil)
+	err := uc.AdvanceItemForRun(context.Background(), &models.PipelineRun{
+		ID: "run-x", Status: "Succeeded", ArgoWorkflowUID: "uid-x",
+		// BatchJobID intentionally nil
+	})
+	if err != nil {
+		t.Fatalf("expected no-op nil, got %v", err)
+	}
+}
+
+// Non-terminal run (Pending/Running): still in flight, don't advance the item.
+// The old cascade also gated on isTerminalRunStatus, so this preserves parity.
+func TestAdvanceItemForRun_NonTerminalRun_NoOp(t *testing.T) {
+	uc := New(&pausedSyncRepo{}, nil)
+	for _, s := range []string{"Pending", "Running", ""} {
+		err := uc.AdvanceItemForRun(context.Background(), &models.PipelineRun{
+			ID: "run-x", Status: s, ArgoWorkflowUID: "uid-x", BatchJobID: strPtr("job-x"),
+		})
+		if err != nil {
+			t.Fatalf("status %q: expected no-op nil, got %v", s, err)
+		}
+	}
+}
+
+// A batch-child terminal run whose item link was stripped (e.g. after PauseJob's
+// reset) must not error — nothing to advance is a valid state.
+func TestAdvanceItemForRun_UnlinkedItem_NoOp(t *testing.T) {
+	uc := New(&pausedSyncRepo{
+		job: &models.BackfillJob{ID: "job-1", Status: "running", TotalCount: 1},
+	}, nil)
+	err := uc.AdvanceItemForRun(context.Background(), &models.PipelineRun{
+		ID: "run-orphan", Status: "Failed", ArgoWorkflowUID: "uid-orphan",
+		BatchJobID: strPtr("job-1"),
+	})
+	if err != nil {
+		t.Fatalf("expected no-op nil for unlinked run, got %v", err)
 	}
 }

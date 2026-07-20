@@ -301,4 +301,66 @@ var (
 			Buckets: []float64{0, 1, 10, 50, 100, 500, 1000, 5000, 10000, 50000, 100000, 500000},
 		},
 	)
+
+	// DispatcherTemplateFallbackTotal counts batch submissions where the
+	// pinned template version was missing from both the template_version
+	// column and filter_json, forcing a fallback to the template's current
+	// active version (CYB-3677). Non-zero on legacy rows only; growth on new
+	// batches indicates the pinning write path regressed.
+	// CYB-3678 per-cluster dispatch instrumentation.
+	DispatcherSubmitDurationSeconds = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "backend_dispatcher_submit_duration_seconds",
+			Help:    "Per-item workflow submission latency (AIMD input)",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
+	DispatcherEffectiveConcurrency = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_effective_concurrency",
+			Help: "Governor-adjusted in-flight submit concurrency per cluster",
+		},
+		[]string{"cluster"},
+	)
+	DispatcherChannelPaused = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_channel_paused",
+			Help: "1 when a cluster's dispatch channel is paused by dispatcher config (CYB-3679)",
+		},
+		[]string{"cluster"},
+	)
+	DispatcherChannelBreakerTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_channel_breaker_total",
+			Help: "Cluster channels skipped after consecutive transient failures",
+		},
+		[]string{"cluster"},
+	)
+	DispatcherDLQTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_dlq_total",
+			Help: "Batch items dead-lettered (failed), by reason",
+		},
+		[]string{"reason"},
+	)
+
+	DispatcherTemplateFallbackTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "backend_dispatcher_template_fallback_total",
+			Help: "Batch submissions that fell back to the active template version (pin missing)",
+		},
+	)
+
+	// DispatcherStaleItems gauges the watcher→reconciler gap: how many
+	// pipeline_runs are terminal (Succeeded/Failed/Error) while their linked
+	// backfill_item still shows pending or submitted. Without a webhook, the
+	// reconciler is the only backstop; if this gauge stays >0 after a full
+	// reconciler cycle (60s), there are items the reconciler cannot reach
+	// (no pipeline_run_id, orphan, or bug).
+	DispatcherStaleItems = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_stale_items",
+			Help: "Number of terminal pipeline_runs whose backfill_items have not yet been synced (watcher→reconciler gap)",
+		},
+	)
 )

@@ -82,6 +82,12 @@ type ExecutionTarget struct {
 	ResourceDefaults     map[string]interface{} `json:"resourceDefaults,omitempty"`
 	QuotaPolicy          map[string]interface{} `json:"quotaPolicy,omitempty"`
 	Labels               map[string]interface{} `json:"labels,omitempty"`
+	// Pool scheduling config (scheduler name, pod labels/annotations,
+	// priorityClass, nodeSelector, tolerations) lives in ResourceDefaults under
+	// the "scheduling" key — read by internal/usecase/pipeline/scheduling.go.
+	// CYB-3486 pool: kept in the JSONB (not dedicated columns) so new pool
+	// attributes don't need a schema migration, and the backend injects them
+	// verbatim without hardcoding any koord / ElasticQuota / scheduler names.
 	CreatedAt            time.Time              `json:"createdAt,omitempty"`
 	UpdatedAt            time.Time              `json:"updatedAt,omitempty"`
 }

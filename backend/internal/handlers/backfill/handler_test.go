@@ -18,6 +18,11 @@ import (
 
 type missingJobRepo struct{}
 
+func (missingJobRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (missingJobRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+
 func (missingJobRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
 func (missingJobRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
@@ -32,6 +37,9 @@ func (missingJobRepo) ClaimJobNotification(_ context.Context, _ string) (bool, e
 }
 func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
 func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
+func (missingJobRepo) AdvanceItemAndCountAtomic(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 func (missingJobRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
 	return nil
 }
@@ -96,6 +104,9 @@ func (missingJobRepo) FindIncompleteJobs(_ context.Context) ([]models.BackfillJo
 
 func (missingJobRepo) FindActiveJobs(_ context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (missingJobRepo) CountStaleBackfillItems(_ context.Context) (int, error) {
+	return 0, nil
 }
 
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {

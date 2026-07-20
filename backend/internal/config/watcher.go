@@ -10,9 +10,16 @@ import (
 )
 
 // ConfigWatcher watches the config directory and reloads registries on file changes.
+//
+// The tag registry is deliberately NOT hot-reloaded here (CYB-3263). Since
+// open-vocabulary tag validation (CYB-3246) landed, asset_tags is the runtime
+// source of truth for tag data; tag_registry.yaml provides only the
+// enum/propagation/source contracts, loaded once at startup. Watching and
+// live-reloading the YAML created a second, drifting source of truth that could
+// silently change validation behavior without a deploy — so the tag branch was
+// removed. algo/action-label registries remain hot-reloadable.
 type ConfigWatcher struct {
 	watcher             *fsnotify.Watcher
-	tagRegistry         *TagRegistry
 	algoRegistry        *AlgoRegistry
 	actionLabelRegistry *ActionLabelRegistry
 	done                chan struct{}
@@ -21,7 +28,7 @@ type ConfigWatcher struct {
 
 // NewConfigWatcher creates a watcher that monitors the given directory
 // and reloads the provided registries when config files change.
-func NewConfigWatcher(configDir string, tagReg *TagRegistry, algoReg *AlgoRegistry, actionLabelReg *ActionLabelRegistry) (*ConfigWatcher, error) {
+func NewConfigWatcher(configDir string, algoReg *AlgoRegistry, actionLabelReg *ActionLabelRegistry) (*ConfigWatcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -32,7 +39,6 @@ func NewConfigWatcher(configDir string, tagReg *TagRegistry, algoReg *AlgoRegist
 	}
 	cw := &ConfigWatcher{
 		watcher:             w,
-		tagRegistry:         tagReg,
 		algoRegistry:        algoReg,
 		actionLabelRegistry: actionLabelReg,
 		done:                make(chan struct{}),
@@ -66,7 +72,7 @@ func (cw *ConfigWatcher) loop() {
 				continue
 			}
 			base := filepath.Base(event.Name)
-			if base == "algo_registry.yaml" || base == "tag_registry.yaml" || base == "action_label_registry.yaml" {
+			if base == "algo_registry.yaml" || base == "action_label_registry.yaml" {
 				pending[base] = struct{}{}
 				timer.Reset(debounce)
 			}
@@ -78,12 +84,6 @@ func (cw *ConfigWatcher) loop() {
 		case <-timer.C:
 			for name := range pending {
 				switch name {
-				case "tag_registry.yaml":
-					if err := cw.tagRegistry.Reload(); err != nil {
-						slog.Error("tag_registry reload failed", "err", err)
-					} else {
-						slog.Info("tag_registry reloaded")
-					}
 				case "algo_registry.yaml":
 					if err := cw.algoRegistry.Reload(); err != nil {
 						slog.Error("algo_registry reload failed", "err", err)
