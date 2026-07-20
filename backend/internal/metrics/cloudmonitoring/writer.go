@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	computemetadata "cloud.google.com/go/compute/metadata"
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	metricpb "google.golang.org/genproto/googleapis/api/metric"
@@ -32,11 +33,15 @@ type Writer struct {
 
 // NewWriter creates a monitoring client using Application Default Credentials
 // (the same ADC that PubSub, Storage, and BigQuery clients use in this repo).
-// projectID is the GCP project to write metrics into (e.g. "green-valley-442103").
+// When projectID is empty it falls back to the GCP metadata server so the
+// code works on Cloud Run without relying on GOOGLE_CLOUD_PROJECT.
 func NewWriter(ctx context.Context, projectID string) (*Writer, error) {
 	client, err := monitoring.NewMetricClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudmonitoring: new client: %w", err)
+	}
+	if projectID == "" {
+		projectID, _ = computemetadata.ProjectID()
 	}
 	return &Writer{client: client, projectID: projectID}, nil
 }

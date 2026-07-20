@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
@@ -216,16 +215,10 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
 	// CYB-3691: write stale-items gauge to GCP Cloud Monitoring (best-effort).
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
-		projectID = os.Getenv("GCP_PROJECT")
-	}
-	if projectID == "" {
-		projectID = os.Getenv("GCLOUD_PROJECT")
-	}
-	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(), projectID); mwErr == nil {
+	// projectID is passed empty; the writer falls back to the metadata server.
+	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(), ""); mwErr == nil {
 		backfillUC.SetMonWriter(mw)
-		slog.Info("cloud monitoring writer initialized", "project", projectID)
+		slog.Info("cloud monitoring writer initialized")
 	} else {
 		slog.Warn("cloud monitoring writer unavailable", "err", mwErr)
 	}

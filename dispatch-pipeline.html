@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Batch Dispatch Pipeline · cyber-databrew</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --bg-1: #ffffff;
+    --bg-2: #eef1f7;
+    --line: #d6dbe6;
+    --fg: #1c2230;
+    --fg-dim: #4a5466;
+    --fg-faint: #7c8497;
+    --accent: #0878aa;
+    --accent-2: #6f47c4;
+    --ok: #137a48;
+    --warn: #9a6800;
+    --err: #c0284d;
+    --code-bg: #0e1320;
+    --code-fg: #d6e2f5;
+    --primary-btn-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0f17;
+      --bg-1: #111726;
+      --bg-2: #1a2233;
+      --line: #243049;
+      --fg: #d8e1f0;
+      --fg-dim: #8b9ab5;
+      --fg-faint: #586682;
+      --accent: #6bd7ff;
+      --accent-2: #b48cff;
+      --ok: #5ee29c;
+      --warn: #ffc759;
+      --err: #ff6b8a;
+      --code-bg: #0a0e16;
+      --code-fg: #d6e2f5;
+      --primary-btn-fg: #001520;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 32px 24px 96px;
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; border: 1px solid var(--line); }
+  code.inline { background: var(--bg-2); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  h1 { font-size: 26px; }
+  h2 { font-size: 18px; margin-top: 36px; }
+  h3 { font-size: 15px; margin-top: 22px; color: var(--accent); }
+  small { color: var(--fg-dim); }
+
+  /* Hero */
+  .hero {
+    display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: flex-end; justify-content: space-between;
+    padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 24px;
+  }
+  .hero .title { display: flex; flex-direction: column; gap: 6px; }
+  .hero .title h1 { display: flex; gap: 10px; align-items: baseline; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg-2); color: var(--accent); border: 1px solid var(--line); vertical-align: middle; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; }
+  .stat {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 2px; min-width: 120px;
+  }
+  .stat .label { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat .value { font-size: 18px; color: var(--fg); }
+  .stat .value .unit { font-size: 12px; color: var(--fg-dim); margin-left: 3px; }
+
+  /* Controls */
+  .controls {
+    display: flex; gap: 10px; align-items: center; margin: 6px 0 18px;
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+  }
+  .controls .group { display: flex; gap: 8px; align-items: center; }
+  .controls .label { color: var(--fg-dim); font-size: 12px; }
+  button.btn {
+    background: var(--bg-2); color: var(--fg); border: 1px solid var(--line); padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; transition: all .15s;
+  }
+  button.btn:hover { background: var(--line); }
+  button.btn.primary { background: var(--accent); color: var(--primary-btn-fg); border-color: transparent; font-weight: 600; }
+  button.btn.primary:hover { filter: brightness(1.1); }
+  .speed { display: flex; gap: 6px; }
+  .speed button { padding: 4px 8px; font-size: 12px; }
+  .speed button.active { background: var(--accent); color: var(--primary-btn-fg); border-color: transparent; }
+
+  /* SVG diagram */
+  .diagram-wrap {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px 18px 14px; margin-bottom: 28px; overflow-x: auto;
+  }
+  .diagram-wrap svg { display: block; min-width: 1100px; width: 100%; height: auto; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; padding: 4px 6px 0; font-size: 12px; color: var(--fg-dim); }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .legend .dot.pending { background: var(--accent); }
+  .legend .dot.submitted { background: var(--accent-2); }
+  .legend .dot.done { background: var(--ok); }
+  .legend .dot.fail { background: var(--err); }
+
+  /* Phase cards */
+  .phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 980px) { .phases { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 540px) { .phases { grid-template-columns: 1fr; } }
+  .phase {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 14px 12px; cursor: pointer; transition: border-color .15s, transform .15s;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .phase:hover { border-color: var(--accent); }
+  .phase.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .phase .phase-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+  .phase .phase-head h3 { margin: 0; color: var(--fg); font-size: 14.5px; }
+  .phase .phase-tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--bg-2); color: var(--fg-dim); }
+  .phase .phase-summary { color: var(--fg-dim); font-size: 12.5px; }
+  .phase .phase-detail { display: none; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; font-size: 13px; }
+  .phase.open .phase-detail { display: block; }
+  .phase .phase-detail ul { margin: 6px 0 6px 18px; padding: 0; }
+  .phase .phase-detail li { margin: 3px 0; }
+  .phase .phase-detail code.file { background: var(--bg-2); padding: 1px 6px; border-radius: 4px; font-size: 12px; display: inline-block; margin: 2px 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--bg-2); color: var(--fg-dim); border: 1px solid var(--line); }
+  .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .chip.err { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, transparent); }
+
+  /* Detail panel (right side under phases) */
+  .panel {
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 22px; margin-top: 22px;
+  }
+  .panel h2 { margin-top: 0; }
+  .panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 800px) { .panel-grid { grid-template-columns: 1fr; } }
+
+  /* Subtle animations */
+  @keyframes pulse { 0%, 100% { opacity: .85; } 50% { opacity: 1; } }
+  @keyframes blink { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+
+  /* Print friendly */
+  @media print {
+    body { padding: 0; }
+    .controls, .no-print { display: none; }
+    .phase .phase-detail { display: block; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="title">
+    <h1>Batch Dispatch Pipeline
+      <span class="badge">dev · #471–#495</span>
+    </h1>
+    <small>用户提交 100-step 批量任务 → 数据库持久化 → 周期提交 → Argo 执行 → 状态回血。可点 phase 卡片看底层代码路径。</small>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="label">热路径</span><span class="value">O(1)<span class="unit">/event</span></span></div>
+    <div class="stat"><span class="label">Submit cadence</span><span class="value">15<span class="unit">s</span></span></div>
+    <div class="stat"><span class="label">Reconciler</span><span class="value">60<span class="unit">s</span></span></div>
+    <div class="stat"><span class="label">Pod retention</span><span class="value">24<span class="unit">h</span></span></div>
+    <div class="stat"><span class="label">Watcher recalibrate</span><span class="value">10<span class="unit">/tick</span></span></div>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="group">
+    <button class="btn primary" id="play">▶ Play</button>
+    <button class="btn" id="pause">⏸ Pause</button>
+    <button class="btn" id="reset">↺ Reset</button>
+  </div>
+  <div class="group">
+    <span class="label">speed</span>
+    <div class="speed">
+      <button data-speed="0.5">0.5×</button>
+      <button data-speed="1" class="active">1×</button>
+      <button data-speed="2">2×</button>
+      <button data-speed="4">4×</button>
+    </div>
+  </div>
+  <div class="group" style="margin-left:auto;">
+    <span class="label" id="status">idle — click Play</span>
+  </div>
+</div>
+
+<div class="diagram-wrap">
+  <svg viewBox="0 0 1200 360" xmlns="http://www.w3.org/2000/svg" id="diagram">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-faint)" />
+      </marker>
+      <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
+      </marker>
+      <filter id="glow"><feGaussianBlur stdDeviation="2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+    </defs>
+
+    <!-- Phase columns backdrop -->
+    <g id="phase-bg" font-family="-apple-system, sans-serif">
+      <!-- 8 phases: each 140 wide, 20 spacing -->
+      <!-- x centers: 90, 230, 380, 530, 680, 830, 980, 1120 -->
+      <!-- A -->
+      <rect x="20" y="50" width="140" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="90" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE A</text>
+      <text x="90" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">用户提交</text>
+      <text x="90" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">Persist only</text>
+      <text x="90" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">batch.go</text>
+
+      <!-- B -->
+      <rect x="170" y="50" width="130" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="235" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE B</text>
+      <text x="235" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">Submitter cycle</text>
+      <text x="235" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">15s + kick</text>
+      <text x="235" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">submitter.go</text>
+
+      <!-- C -->
+      <rect x="310" y="50" width="150" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="385" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE C</text>
+      <text x="385" y="96" text-anchor="middle" fill="var(--fg)" font-size="12.5" font-weight="600">Per-cluster channel</text>
+      <text x="385" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">gov + breaker</text>
+      <text x="385" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">submitter_cluster.go</text>
+
+      <!-- D -->
+      <rect x="470" y="50" width="130" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="535" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE D</text>
+      <text x="535" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">submitItem</text>
+      <text x="535" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">error onion</text>
+      <text x="535" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">submitter.go</text>
+
+      <!-- E -->
+      <rect x="610" y="50" width="130" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="675" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE E</text>
+      <text x="675" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">Argo 调度</text>
+      <text x="675" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">step pods run</text>
+      <text x="675" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">k8s cluster</text>
+
+      <!-- F -->
+      <rect x="750" y="50" width="130" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="815" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE F</text>
+      <text x="815" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">Webhook</text>
+      <text x="815" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">O(1) advance</text>
+      <text x="815" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">handler.go + repo</text>
+
+      <!-- G -->
+      <rect x="890" y="50" width="130" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="955" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE G</text>
+      <text x="955" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">Watcher bulk</text>
+      <text x="955" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">LIST + RV gate</text>
+      <text x="955" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">watcher_bulk.go</text>
+
+      <!-- H -->
+      <rect x="1030" y="50" width="140" height="280" rx="10" fill="var(--bg-1)" stroke="var(--line)" />
+      <text x="1100" y="76" text-anchor="middle" fill="var(--accent)" font-size="11">PHASE H</text>
+      <text x="1100" y="96" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="600">Reconciler</text>
+      <text x="1100" y="116" text-anchor="middle" fill="var(--fg-dim)" font-size="11">60s self-heal</text>
+      <text x="1100" y="138" text-anchor="middle" fill="var(--fg-dim)" font-size="10.5">usecase.go</text>
+    </g>
+
+    <!-- Connecting flow line at lane y=200 -->
+    <line id="flow" x1="160" y1="200" x2="1030" y2="200" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 4" />
+    <line id="flow-active" x1="160" y1="200" x2="160" y2="200" stroke="var(--accent)" stroke-width="3" filter="url(#glow)" />
+
+    <!-- Token bucket visualization in phase C -->
+    <g id="bucket" transform="translate(330, 175)">
+      <rect x="0" y="0" width="20" height="50" rx="3" fill="var(--code-bg)" stroke="var(--line)" />
+      <rect id="bucket-fill" x="2" y="48" width="16" height="0" fill="var(--ok)" opacity="0.8" />
+      <text x="10" y="65" text-anchor="middle" fill="var(--fg-dim)" font-size="9">token</text>
+    </g>
+
+    <!-- Breaker visualization in phase C (bottom) -->
+    <g id="breaker" transform="translate(330, 270)">
+      <rect x="0" y="0" width="100" height="40" rx="5" fill="var(--code-bg)" stroke="var(--line)" />
+      <text x="50" y="14" text-anchor="middle" fill="var(--fg-dim)" font-size="9">BREAKER</text>
+      <rect id="breaker-bar" x="6" y="20" width="0" height="14" fill="var(--warn)" rx="2" />
+      <text id="breaker-text" x="50" y="32" text-anchor="middle" fill="var(--warn)" font-size="9">0 / 10</text>
+    </g>
+
+    <!-- Step container in phase E -->
+    <g id="pods" transform="translate(625, 175)">
+      <rect x="0" y="0" width="100" height="60" rx="6" fill="var(--code-bg)" stroke="var(--line)" />
+      <text x="50" y="14" text-anchor="middle" fill="var(--fg-dim)" font-size="9">100 step pods</text>
+      <g id="pod-dots"></g>
+    </g>
+
+    <!-- DB ledger in phase A -->
+    <g id="db" transform="translate(40, 240)">
+      <rect x="0" y="0" width="100" height="60" rx="6" fill="var(--code-bg)" stroke="var(--line)" />
+      <text x="50" y="20" text-anchor="middle" fill="var(--fg-dim)" font-size="10">DB Ledger</text>
+      <text x="50" y="36" text-anchor="middle" fill="var(--fg)" font-size="11" font-weight="600">jobs:running</text>
+      <text x="50" y="50" text-anchor="middle" fill="var(--accent-2)" font-size="10.5">items×100 pending</text>
+    </g>
+
+    <!-- Counter in phase F -->
+    <g id="counter" transform="translate(770, 240)">
+      <rect x="0" y="0" width="100" height="60" rx="6" fill="var(--code-bg)" stroke="var(--line)" />
+      <text x="50" y="14" text-anchor="middle" fill="var(--fg-dim)" font-size="9">counters</text>
+      <text id="counter-comp" x="50" y="32" text-anchor="middle" fill="var(--ok)" font-size="12" font-weight="600">0 ✓</text>
+      <text id="counter-fail" x="50" y="50" text-anchor="middle" fill="var(--err)" font-size="12" font-weight="600">0 ✗</text>
+    </g>
+
+    <!-- Steppers (will be animated via JS) -->
+    <g id="steppers"></g>
+  </svg>
+
+  <div class="legend">
+    <span><span class="dot pending"></span> pending item</span>
+    <span><span class="dot submitted"></span> submitted (in-flight)</span>
+    <span><span class="dot done"></span> terminal: completed</span>
+    <span><span class="dot fail"></span> terminal: failed / DLQ</span>
+  </div>
+</div>
+
+<div class="phases" id="phases">
+  <div class="phase" data-phase="A">
+    <div class="phase-head">
+      <h3>A · 用户提交</h3>
+      <span class="phase-tag">persist only</span>
+    </div>
+    <div class="phase-summary">POST 落到 DB，Argo 此时还没被通知</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/pipeline/batch.go</code>
+      <ul>
+        <li><code>backfill_jobs</code> 立刻 <code>status='running'</code></li>
+        <li><code>template_version</code> 在列里钉死（CYB-3677 P0）</li>
+        <li><strong>100 个 <code>backfill_items</code> 一次性 fan out</strong>，全 <code>pending</code></li>
+        <li>不调 Argo（persist-only）</li>
+      </ul>
+      <div class="chips">
+        <span class="chip">migration: 058_grace_video_asset_id.sql (早期)</span>
+        <span class="chip">子类型: grace_video asset_id 支持</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="B">
+    <div class="phase-head">
+      <h3>B · Submitter cycle</h3>
+      <span class="phase-tag">15s + kick</span>
+    </div>
+    <div class="phase-summary">周期循环；可踢醒；按 cluster 分组</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/backfill/submitter.go:StartSubmitter</code>
+      <ul>
+        <li>ticker 15s + <code>submitKick</code> channel（materialize/resume/rerun 触发）</li>
+        <li>每次 cycle 独立 <code>context.WithTimeout(ctx, 10m)</code></li>
+        <li><strong>boot jitter</strong>：多实例上线错开首个 cycle</li>
+        <li><code>FindSubmittableJobs(ctx, 50)</code> 一次性取一批 jobs（带 <code>template_version</code>）</li>
+        <li>按 <code>ResolveTargetClusterID</code> 分组成 per-cluster 并发</li>
+      </ul>
+      <div class="chips">
+        <span class="chip">回滚: <code>BATCH_DISPATCH_MODE=legacy</code></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="C">
+    <div class="phase-head">
+      <h3>C · Per-cluster channel</h3>
+      <span class="phase-tag">governor + breaker</span>
+    </div>
+    <div class="phase-summary">token bucket + AIMD + 连续失败熔断</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/backfill/submitter_cluster.go</code>
+      <ul>
+        <li><strong>advisory lock</strong>: <code>pg_try_advisory_lock(cluster_key)</code> 跨实例互斥；拿不到 skip，错误则裸跑</li>
+        <li><strong>token bucket</strong>: <code>rate.Limiter(10 wf/s, burst 20)</code>，硬上限</li>
+        <li><strong>AIMD</strong>: <code>effective</code> ∈ [floor, configured]，distress /2，healthy ×1.5</li>
+        <li><strong>breaker</strong>: 连续 10 次 transient 整 cycle 跳出该 cluster</li>
+        <li><code>applyConfig</code> 接受 CYB-3679 在线调优</li>
+      </ul>
+      <div class="chips">
+        <span class="chip">DLQ label: <code>permanent</code></span>
+        <span class="chip">DLQ label: <code>max_submit_attempts</code></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="D">
+    <div class="phase-head">
+      <h3>D · submitItem</h3>
+      <span class="phase-tag">error onion</span>
+    </div>
+    <div class="phase-summary">错误分类 → transient / permanent / DLQ</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/backfill/submitter.go:submitItem</code>
+      <ul>
+        <li>1: <code>UpsertBatchSubtaskRun</code> 落库 deterministic workflow name</li>
+        <li>2: <code>DeployByTemplateID</code> 提交到 Argo</li>
+        <li><strong>"AlreadyExists"</strong> → <code>RefreshRunFromWorkflowByName</code> UID 回填；CR 不可读（TTL）→ watcher 兜底</li>
+        <li><strong>ErrWorkflowSubmitIncomplete</strong> → 留 pending 下 cycle 重试</li>
+        <li><strong>classifySubmitError</strong>：
+          <ul>
+            <li><code>ErrInvalidArgument / TemplateNotFound / AssetNotFound</code> 或消息含 transpile/parse/不支持 → <span class="chip err">permanent</span></li>
+            <li>其他 → <span class="chip warn">transient</span>，attempts &lt; 5 重试，≥ 5 → <span class="chip err">DLQ max</span></li>
+          </ul>
+        </li>
+        <li>3: <code>UpdateItemPipelineRun(item.ID, dep.ID, wf, "submitted")</code></li>
+      </ul>
+      <p style="color:var(--fg-dim); font-size:12px;">关键不变量: <strong>不包外层事务</strong>（避免 pgx 连接池被 Argo 卡调用拖死）</p>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="E">
+    <div class="phase-head">
+      <h3>E · Argo 调度</h3>
+      <span class="phase-tag">cluster</span>
+    </div>
+    <div class="phase-summary">step pods 在目标集群跑</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/k8s/runtime_config.go (#483)</code> + Argo controller
+      <ul>
+        <li>Workflow CR 由 Argo controller reconcile</li>
+        <li>100 step pods 起在 target cluster</li>
+        <li><strong>mount</strong> 内容寻址 CM（CYB-3680）：
+          <ul>
+            <li><code>hash-named</code> CM，无 owner，跨 run 共享</li>
+            <li>先 upsert 到 <code>runtime_config_blobs</code>（DB 是 source of truth），再 ensure CM</li>
+            <li><code>last-referenced</code> annotation 防 janitor 误删活跃 config</li>
+          </ul>
+        </li>
+        <li><strong>PodGC</strong>: <code>OnWorkflowSuccess + DeleteDelayDuration=24h</code>（CYB-3667）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="F">
+    <div class="phase-head">
+      <h3>F · Webhook (O(1))</h3>
+      <span class="phase-tag">hot path</span>
+    </div>
+    <div class="phase-summary">Argo 终态通知 → 1 个 CTE 推进 counter</div>
+    <div class="phase-detail">
+      <code class="file">handler.go → AdvanceItemForRun → AdvanceItemAndCountAtomic</code>
+      <ul>
+        <li>取消 <code>SyncJob</code>（O(N²) full-batch scan）</li>
+        <li><strong>1 个 CTE</strong>：先把 item 从非 terminal 推进，同时 bump job counter</li>
+        <li><code>WHERE status NOT IN ('completed','failed','cancelled')</code> 守门：重复投递命中 0 row → counter 不动（idempotent）</li>
+        <li>收 Argo webhook 立即 200；counter 自愈交 reconciler</li>
+      </ul>
+      <pre>WITH upd AS (
+  UPDATE backfill_items
+  SET status=$2, workflow_name=..., error_message=..., finished_at
+  WHERE id=$1 AND status NOT IN (terminal)
+  RETURNING job_id
+)
+UPDATE backfill_jobs
+SET completed_count = completed_count + (case $2='completed'),
+    failed_count    = failed_count    + (case $2 in failed|cancel),
+    updated_at = now()
+WHERE id IN (SELECT job_id FROM upd)</pre>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="G">
+    <div class="phase-head">
+      <h3>G · Watcher bulk</h3>
+      <span class="phase-tag">LIST + RV gate</span>
+    </div>
+    <div class="phase-summary">一次 LIST 每个 namespace，按 RV 守门</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/pipeline/watcher_bulk.go</code>
+      <ul>
+        <li><strong>selector</strong>: <code>workflows.argoproj.io/completed=false</code>（Argo controller 在第一次 reconcile 时打的 label）</li>
+        <li>每 (cluster, namespace) 一次 <code>ListWorkflows</code>；LIST 失败 → legacy 降级 per-run GET（bounded）</li>
+        <li>命中 wf → <code>applyWorkflowToRun</code>，前提是 <code>markWorkflowApplied(runID, resourceVersion)</code> 通过</li>
+        <li>缺席 wf（刚终态/未打 label）→ 残量 targeted GET（bounded）</li>
+        <li><strong>recalibrateEvery=10</strong>：每 10 tick 强制 reapply 全部（RV gate 自愈）</li>
+      </ul>
+      <div class="chips">
+        <span class="chip">回滚: <code>WATCHER_MODE=legacy</code></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-phase="H">
+    <div class="phase-head">
+      <h3>H · Reconciler</h3>
+      <span class="phase-tag">self-heal</span>
+    </div>
+    <div class="phase-summary">60s 一回兜底；counter 覆写自愈</div>
+    <div class="phase-detail">
+      <code class="file">backend/internal/usecase/backfill/usecase.go:StartJobReconciler</code>
+      <ul>
+        <li>60s tick 扫所有 non-terminal jobs</li>
+        <li><code>SummarizeItemStatuses</code> 全 batch 聚合</li>
+        <li><code>UpdateJobProgress(comp, fail, status)</code> <strong>覆写</strong> counter（drift 自愈）</li>
+        <li>全 terminal → 翻 job 终态 + <code>notifyJobTerminalIfNeeded</code>（atomic claim）</li>
+        <li>webhook 丢事件 / race 在一分钟内收敛</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Side-effect: pod 回收 (CYB-3667 主线)</h2>
+  <div class="panel-grid">
+    <div>
+      <h3>成功 pod</h3>
+      <p><code class="inline">PodGC.Strategy = OnWorkflowSuccess</code> + <code class="inline">DeleteDelayDuration = "24h"</code></p>
+      <ul>
+        <li>Argo controller 立刻排队删除，但 24h 后才执行</li>
+        <li>24h 内：kubectl logs / describe / GKE console 链接全可</li>
+        <li>24h 后：pod 真没了 → <code class="inline">/diagnostics</code> 返 200 + <code class="inline">{garbageCollected:true}</code>，前端 "查看 Pod" 按钮仍渲染</li>
+      </ul>
+    </div>
+    <div>
+      <h3>失败 pod</h3>
+      <p>无限保留（运维取证用）</p>
+      <ul>
+        <li>跟成功 pod 走不同分支</li>
+        <li>没有 24h 计时，TTL 由 Workflow 对象自身（30 天）控制</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>回滚闸门</h2>
+  <p>整套新机制都有 <code class="inline">*_MODE=legacy</code> 紧急回滚（每个 release 留一版本）:</p>
+  <ul>
+    <li><code class="inline">BATCH_DISPATCH_MODE=legacy</code> → 退回老 executeItem 路径</li>
+    <li><code class="inline">WATCHER_MODE=legacy</code> → 退回 per-run rotating-window GET</li>
+  </ul>
+
+  <h2>关键不变量 (设计核心)</h2>
+  <div class="panel-grid">
+    <ul>
+      <li>Submit 热路径 <strong>不</strong>包外层事务</li>
+      <li>Webhook 热路径 <strong>不</strong>batch scan</li>
+      <li>Watch 热路径用 resourceVersion gate 跳过未变更</li>
+      <li>跨实例互斥由 PG session advisory lock 覆盖 per-cluster</li>
+    </ul>
+    <ul>
+      <li>幂等性由 deterministic name + AlreadyExists + RV gate 兜底</li>
+      <li>全部 fallback 由 60s reconciler 自愈</li>
+      <li>每 10 个 watcher tick 强制 recalibrate 防止 gate 漂移</li>
+      <li>pod 24h 保留 + GC 后 stub 兜底</li>
+    </ul>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Animation legend</h2>
+  <p style="color:var(--fg-dim); font-size:13px;">点 <strong>Play</strong> 看 100 个 step 沿管线从 persist → submit → exec → terminal 走一圈。Phase C 的 token bucket 流量，breaker 计数器，Phase E 的 100 pod 跑完渐绿/变红，Phase F 的 counter 累计，Phase G 的 watcher 命中。</p>
+</div>
+
+<script>
+(() => {
+  const PHASE_X = { A: 90, B: 235, C: 385, D: 535, E: 675, F: 815, G: 955, H: 1100 };
+  const LANE_Y = 200;
+  const PHASE_RADIUS = 5;
+  const N = 100;
+  // Pull current theme colors so animation tracks light/dark mode
+  const cs = getComputedStyle(document.documentElement);
+  const COLORS = {
+    accent: cs.getPropertyValue('--accent').trim(),
+    accent2: cs.getPropertyValue('--accent-2').trim(),
+    ok: cs.getPropertyValue('--ok').trim(),
+    err: cs.getPropertyValue('--err').trim(),
+    warn: cs.getPropertyValue('--warn').trim(),
+    flow: cs.getPropertyValue('--accent').trim(),
+  };
+  const steppersG = document.getElementById('steppers');
+  const flowActive = document.getElementById('flow-active');
+  const bucketFill = document.getElementById('bucket-fill');
+  const breakerBar = document.getElementById('breaker-bar');
+  const breakerText = document.getElementById('breaker-text');
+  const counterComp = document.getElementById('counter-comp');
+  const counterFail = document.getElementById('counter-fail');
+  const podDots = document.getElementById('pod-dots');
+  const statusEl = document.getElementById('status');
+
+  // Build pod dots (100 small squares in phase E)
+  const podRects = [];
+  for (let i = 0; i < N; i++) {
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    const col = i % 20, row = Math.floor(i / 20);
+    r.setAttribute('x', 6 + col * 4.5);
+    r.setAttribute('y', 24 + row * 6);
+    r.setAttribute('width', 3.5);
+    r.setAttribute('height', 4.5);
+    r.setAttribute('rx', 0.8);
+    r.setAttribute('fill', 'var(--accent)');
+    r.setAttribute('opacity', 0.4);
+    podDots.appendChild(r);
+    podRects.push(r);
+  }
+
+  // Phase cards interactivity
+  const phaseEls = document.querySelectorAll('.phase');
+  phaseEls.forEach(el => {
+    el.addEventListener('click', () => el.classList.toggle('open'));
+    el.addEventListener('mouseenter', () => {
+      const p = el.dataset.phase;
+      flashFlow(p);
+    });
+  });
+
+  function flashFlow(p) {
+    const x = PHASE_X[p];
+    if (!x) return;
+    flowActive.setAttribute('x1', 160);
+    flowActive.setAttribute('x2', x);
+    flowActive.setAttribute('stroke', 'var(--accent)');
+    setTimeout(() => {
+      flowActive.setAttribute('stroke', 'var(--accent)');
+      flowActive.setAttribute('x2', 160);
+    }, 1200);
+  }
+
+  // Animation state machine
+  const state = {
+    running: false,
+    speed: 1,
+    requestId: null,
+    last: 0,
+    t: 0, // overall simulation time in seconds
+    events: [],
+  };
+
+  function makeStep(id, schedule) {
+    schedule = schedule || {};
+    return {
+      id,
+      x: PHASE_X.A, y: LANE_Y,
+      phase: 'A',
+      color: schedule.fail ? 'var(--err)' : 'var(--accent)',
+      doneColor: schedule.fail ? 'var(--err)' : 'var(--ok)',
+      status: 'pending',
+      ...schedule,
+    };
+  }
+
+  function reset() {
+    cancelAnimationFrame(state.requestId);
+    while (steppersG.firstChild) steppersG.removeChild(steppersG.firstChild);
+    state.events = [];
+    state.t = 0;
+    state.running = false;
+    statusEl.textContent = 'idle — click Play';
+    flowActive.setAttribute('x1', 160);
+    flowActive.setAttribute('x2', 160);
+    bucketFill.setAttribute('height', 0);
+    bucketFill.setAttribute('y', 48);
+    breakerBar.setAttribute('width', 0);
+    breakerText.textContent = '0 / 10';
+    breakerBar.setAttribute('fill', 'var(--warn)');
+    counterComp.textContent = '0 ✓';
+    counterFail.textContent = '0 ✗';
+    for (const r of podRects) {
+      r.setAttribute('fill', 'var(--accent)');
+      r.setAttribute('opacity', 0.4);
+    }
+  }
+
+  // Simulation: each step is a state machine
+  // timings (in seconds, at 1x)
+  //  A → B: 0.4    B → C: 0.6   C → D: 0.6   D → E: 0.6
+  //  E is "exec", stays 1.5–3s
+  //  E → F: 0.6    F → G: 0.4   G → H: 0.4
+  const PHASES = ['A','B','C','D','E','F','G','H'];
+  const STEP_DUR = { AB: 0.4, BC: 0.6, CD: 0.6, DE: 0.6, EF: 0.6, FG: 0.4, GH: 0.4 };
+  function phaseDuration(from, to) { return STEP_DUR[from+to]; }
+
+  function start() {
+    if (state.running) return;
+    state.running = true;
+    state.last = performance.now();
+    statusEl.textContent = 'simulating 100 steps…';
+    // Spawn 100 steps staggered every 30ms (= 0.03s at 1x)
+    for (let i = 0; i < N; i++) {
+      const fail = (i % 17 === 0); // ~6% failure for visual variety
+      const ev = {
+        step: null,
+        scheduledAt: i * 0.04, // 0.04s apart
+        fail,
+        done: false,
+      };
+      // Create the step immediately but it starts at A
+      ev.step = makeStep(i, { fail });
+      state.events.push(ev);
+      // Create dot in DOM
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('r', PHASE_RADIUS);
+      dot.setAttribute('cx', PHASE_X.A);
+      dot.setAttribute('cy', LANE_Y);
+      dot.setAttribute('fill', ev.step.color);
+      dot.setAttribute('opacity', 0);
+      dot.setAttribute('id', 'step-' + i);
+      steppersG.appendChild(dot);
+      ev.dot = dot;
+    }
+    state.requestId = requestAnimationFrame(tick);
+  }
+
+  function stop() {
+    state.running = false;
+    cancelAnimationFrame(state.requestId);
+    statusEl.textContent = 'paused';
+  }
+
+  function tick(now) {
+    const dt = (now - state.last) / 1000;
+    state.last = now;
+    if (state.running) {
+      state.t += dt * state.speed;
+    }
+    let completedCount = 0, failedCount = 0;
+    let breakerAccum = 0;
+    let flowHead = 160;
+    // Track current phase to animate the active flow line
+    let anyActive = false;
+    let activeX = 160;
+    for (const ev of state.events) {
+      if (ev.done) {
+        if (ev.fail) failedCount++; else completedCount++;
+        continue;
+      }
+      const localT = state.t - ev.scheduledAt;
+      if (localT < 0) {
+        // not yet spawned
+        ev.dot.setAttribute('opacity', 0);
+        continue;
+      }
+      // Decide current phase and position
+      let cumulative = 0;
+      let from = 'A', to = 'B';
+      let phaseIndex = 0;
+      let x = PHASE_X.A, y = LANE_Y;
+      let inExec = false;
+      const execDur = 1.0 + (ev.id % 5) * 0.3; // varied exec times
+      if (localT < cumulative) {} // noop
+      cumulative += STEP_DUR.AB;
+      if (localT <= cumulative) { from='A'; to='B'; const k = 1 - (cumulative - localT) / STEP_DUR.AB; x = PHASE_X.A + (PHASE_X.B - PHASE_X.A) * k; }
+      else {
+        cumulative += STEP_DUR.BC;
+        if (localT <= cumulative) { from='B'; to='C'; const k = 1 - (cumulative - localT) / STEP_DUR.BC; x = PHASE_X.B + (PHASE_X.C - PHASE_X.B) * k; }
+        else {
+          cumulative += STEP_DUR.CD;
+          if (localT <= cumulative) { from='C'; to='D'; const k = 1 - (cumulative - localT) / STEP_DUR.CD; x = PHASE_X.C + (PHASE_X.D - PHASE_X.C) * k; }
+          else {
+            cumulative += STEP_DUR.DE;
+            if (localT <= cumulative) { from='D'; to='E'; const k = 1 - (cumulative - localT) / STEP_DUR.DE; x = PHASE_X.D + (PHASE_X.E - PHASE_X.D) * k; }
+            else {
+              cumulative += execDur;
+              if (localT <= cumulative) {
+                // in E (executing)
+                x = PHASE_X.E + (Math.random() - 0.5) * 1.5; // tiny wiggle
+                inExec = true;
+                const pct = (localT - (cumulative - execDur)) / execDur;
+                // update corresponding pod dot
+                if (ev.id < podRects.length) {
+                  podRects[ev.id].setAttribute('fill', ev.fail ? 'var(--err)' : 'var(--accent)');
+                  podRects[ev.id].setAttribute('opacity', 0.4 + 0.6 * pct);
+                }
+              } else {
+                cumulative += STEP_DUR.EF;
+                if (localT <= cumulative) { from='E'; to='F'; const k = 1 - (cumulative - localT) / STEP_DUR.EF; x = PHASE_X.E + (PHASE_X.F - PHASE_X.E) * k; }
+                else {
+                  cumulative += STEP_DUR.FG;
+                  if (localT <= cumulative) { from='F'; to='G'; const k = 1 - (cumulative - localT) / STEP_DUR.FG; x = PHASE_X.F + (PHASE_X.G - PHASE_X.F) * k; }
+                  else {
+                    cumulative += STEP_DUR.GH;
+                    if (localT <= cumulative) { from='G'; to='H'; const k = 1 - (cumulative - localT) / STEP_DUR.GH; x = PHASE_X.G + (PHASE_X.H - PHASE_X.G) * k; }
+                    else {
+                      // done
+                      ev.done = true;
+                      x = PHASE_X.H;
+                      if (ev.id < podRects.length) {
+                        podRects[ev.id].setAttribute('fill', ev.fail ? 'var(--err)' : 'var(--ok)');
+                        podRects[ev.id].setAttribute('opacity', 1);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      ev.step.x = x;
+      ev.step.y = y;
+      ev.step.phase = (ev.done ? 'H' : to);
+      ev.dot.setAttribute('cx', x);
+      ev.dot.setAttribute('cy', y);
+      if (ev.fail && inExec) ev.dot.setAttribute('fill', 'var(--err)');
+      else if (ev.done) ev.dot.setAttribute('fill', ev.fail ? 'var(--err)' : 'var(--ok)');
+      else if (inExec) ev.dot.setAttribute('fill', ev.fail ? 'var(--err)' : 'var(--accent-2)');
+      else ev.dot.setAttribute('fill', 'var(--accent)');
+      ev.dot.setAttribute('opacity', ev.done ? 0.85 : 1);
+      // Track active phase x for flow line
+      if (!anyActive || x > activeX) { anyActive = true; activeX = x; }
+    }
+    // Counters
+    counterComp.textContent = `${completedCount} ✓`;
+    counterFail.textContent = `${failedCount} ✗`;
+    // Token bucket visual in phase C
+    const bucketLevel = (state.t % 2) * 30; // 0–30 oscillating
+    bucketFill.setAttribute('height', bucketLevel);
+    bucketFill.setAttribute('y', 48 - bucketLevel);
+    // Breaker accumulate based on simulated transient rate
+    breakerAccum = Math.min(10, Math.floor(failedCount / 1.5));
+    breakerBar.setAttribute('width', breakerAccum * 8.8);
+    breakerText.textContent = `${breakerAccum} / 10`;
+    breakerBar.setAttribute('fill', breakerAccum >= 10 ? 'var(--err)' : 'var(--warn)');
+    // Flow head
+    if (anyActive) {
+      flowActive.setAttribute('x1', 160);
+      flowActive.setAttribute('x2', activeX);
+    }
+    // Status
+    if (state.events.every(e => e.done)) {
+      statusEl.textContent = `done · ${completedCount} 完成 / ${failedCount} 失败`;
+      state.running = false;
+      return;
+    }
+    state.requestId = requestAnimationFrame(tick);
+  }
+
+  document.getElementById('play').addEventListener('click', () => {
+    if (state.events.length === 0) start();
+    else if (!state.running) { state.running = true; state.last = performance.now(); state.requestId = requestAnimationFrame(tick); statusEl.textContent = 'resuming…'; }
+  });
+  document.getElementById('pause').addEventListener('click', stop);
+  document.getElementById('reset').addEventListener('click', reset);
+  document.querySelectorAll('.speed button').forEach(b => {
+    b.addEventListener('click', () => {
+      state.speed = parseFloat(b.dataset.speed);
+      document.querySelectorAll('.speed button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+
+  // Auto-open first phase on load
+  document.querySelector('.phase[data-phase="A"]').classList.add('open');
+})();
+</script>
+
+</body>
+</html>
