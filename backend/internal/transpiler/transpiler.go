@@ -199,8 +199,19 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 			// runs stop accumulating in etcd. Failed workflows keep their pods
 			// for operator diagnostics (logs, exit codes); the workflow object
 			// itself is still cleaned up later by TTLStrategy.
+			//
+			// DeleteDelayDuration keeps a successful workflow's step pods around
+			// for 24h before the argo controller actually removes them. Post-run
+			// forensics (GCP console "查看 Pod", kubectl describe, kubectl logs
+			// live-stream) work for the operator's normal after-hours window;
+			// after 24h the pod is gone and #494's stub diagnostics take over so
+			// the UI stays consistent. Trades some etcd footprint (roughly a
+			// day of successful pod objects) for a real usability win — the
+			// previous "GC immediately on success" broke every deep link the
+			// moment a pod finished.
 			PodGC: &wfv1.PodGC{
-				Strategy: wfv1.PodGCOnWorkflowSuccess,
+				Strategy:            wfv1.PodGCOnWorkflowSuccess,
+				DeleteDelayDuration: "24h",
 			},
 		},
 	}

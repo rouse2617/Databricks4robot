@@ -546,6 +546,21 @@ func TestTranspilePodGC(t *testing.T) {
 	if wf.Spec.PodGC.Strategy != wfv1.PodGCOnWorkflowSuccess {
 		t.Fatalf("podGC strategy = %q, want %q", wf.Spec.PodGC.Strategy, wfv1.PodGCOnWorkflowSuccess)
 	}
+	// Post-CYB-3667 tightening: keep step pods around for 24h after a workflow
+	// succeeds so the GCP-console deep link, kubectl logs / kubectl describe, and
+	// the frontend "查看 Pod" button keep working through a normal after-hours
+	// operator window. Bare OnWorkflowSuccess (no delay) tore pods down the
+	// instant a workflow finished and broke every deep link (see #494).
+	if got, want := wf.Spec.PodGC.DeleteDelayDuration, "24h"; got != want {
+		t.Fatalf("podGC deleteDelayDuration = %q, want %q", got, want)
+	}
+	if _, err := wf.Spec.PodGC.GetDeleteDelayDuration(); err != nil {
+		// Guardrail: string form must parse into a time.Duration so the argo
+		// controller accepts it. Anything the SDK's own parser rejects here
+		// would silently drop back to immediate GC in the cluster.
+		t.Fatalf("podGC deleteDelayDuration %q does not parse as time.Duration: %v",
+			wf.Spec.PodGC.DeleteDelayDuration, err)
+	}
 }
 
 func TestTranspileRetryStrategy(t *testing.T) {
