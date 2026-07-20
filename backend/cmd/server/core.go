@@ -216,12 +216,16 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 
 	// CYB-3691: write stale-items gauge to GCP Cloud Monitoring (best-effort).
-	// GOOGLE_CLOUD_PROJECT is set automatically by Cloud Run; fallback to
-	// "green-valley-442103" for local dev. The SA needs monitoring.metricWriter.
-	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(),
-		os.Getenv("GOOGLE_CLOUD_PROJECT")); mwErr == nil {
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		projectID = os.Getenv("GCP_PROJECT")
+	}
+	if projectID == "" {
+		projectID = os.Getenv("GCLOUD_PROJECT")
+	}
+	if mw, mwErr := cloudmonitoring.NewWriter(context.Background(), projectID); mwErr == nil {
 		backfillUC.SetMonWriter(mw)
-		slog.Info("cloud monitoring writer initialized")
+		slog.Info("cloud monitoring writer initialized", "project", projectID)
 	} else {
 		slog.Warn("cloud monitoring writer unavailable", "err", mwErr)
 	}
