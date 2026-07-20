@@ -207,6 +207,9 @@ func (m *mockBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ st
 func (m *mockBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (m *mockBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
+}
 func (m *mockBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
@@ -917,6 +920,9 @@ func (r *trackingBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models
 
 func (r *trackingBackfillRepo) FindActiveJobs(ctx context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (r *trackingBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
 }
 
 func TestPauseJob_SetsPausedStatus(t *testing.T) {

@@ -1071,3 +1071,19 @@ func (r *BackfillRepo) FindActiveJobs(ctx context.Context, limit int) ([]models.
 	}
 	return jobs, nil
 }
+
+// CountStaleBackfillItems returns how many backfill_items are still pending/submitted
+// while their linked pipeline_run is already terminal. Measures the watcher→reconciler
+// gap; used for monitoring (backend_dispatcher_stale_items gauge).
+func (r *BackfillRepo) CountStaleBackfillItems(ctx context.Context) (int, error) {
+	const q = `SELECT COUNT(*) FROM backfill_items bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+WHERE bi.status IN ('pending', 'submitted')
+  AND pr.status IN ('Succeeded', 'Failed', 'Error')`
+	db := dbFromCtx(ctx, r.c.db)
+	var n int
+	if err := db.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.CountStaleBackfillItems: %w", err)
+	}
+	return n, nil
+}

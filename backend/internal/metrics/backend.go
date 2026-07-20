@@ -350,4 +350,17 @@ var (
 			Help: "Batch submissions that fell back to the active template version (pin missing)",
 		},
 	)
+
+	// DispatcherStaleItems gauges the watcher→reconciler gap: how many
+	// pipeline_runs are terminal (Succeeded/Failed/Error) while their linked
+	// backfill_item still shows pending or submitted. Without a webhook, the
+	// reconciler is the only backstop; if this gauge stays >0 after a full
+	// reconciler cycle (60s), there are items the reconciler cannot reach
+	// (no pipeline_run_id, orphan, or bug).
+	DispatcherStaleItems = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_stale_items",
+			Help: "Number of terminal pipeline_runs whose backfill_items have not yet been synced (watcher→reconciler gap)",
+		},
+	)
 )

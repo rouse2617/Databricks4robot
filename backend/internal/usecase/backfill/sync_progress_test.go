@@ -260,6 +260,9 @@ func (r *pausedSyncRepo) CountPipelineRunsByBatchJobID(context.Context, string) 
 func (r *pausedSyncRepo) CountRunsWithNodeRowsByBatchJobID(context.Context, string) (int, error) {
 	return 0, nil
 }
+func (r *pausedSyncRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
+}
 func (r *pausedSyncRepo) FindItemsByAssetID(context.Context, string) ([]models.BackfillItem, error) {
 	return nil, nil
 }

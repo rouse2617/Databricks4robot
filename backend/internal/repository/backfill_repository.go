@@ -69,6 +69,11 @@ type BackfillRepository interface {
 	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
 	// oldest first, regardless of whether items are still pending. Used by the
 	// reconcile backstop to finalize + notify jobs whose children have finished.
+	// CountStaleBackfillItems returns how many backfill_items are still
+	// pending/submitted while their linked pipeline_run is already terminal
+	// (watcher→reconciler gap). Used for monitoring; the reconciler itself
+	// resolves the gap on the next cycle.
+	CountStaleBackfillItems(ctx context.Context) (int, error)
 	FindActiveJobs(ctx context.Context, limit int) ([]models.BackfillJob, error)
 }
 

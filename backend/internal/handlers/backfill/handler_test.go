@@ -105,6 +105,9 @@ func (missingJobRepo) FindIncompleteJobs(_ context.Context) ([]models.BackfillJo
 func (missingJobRepo) FindActiveJobs(_ context.Context, _ int) ([]models.BackfillJob, error) {
 	return nil, nil
 }
+func (missingJobRepo) CountStaleBackfillItems(_ context.Context) (int, error) {
+	return 0, nil
+}
 
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)

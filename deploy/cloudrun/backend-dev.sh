@@ -50,6 +50,11 @@ ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
 VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
 
+# Enable GMP (Google Managed Prometheus) scraping on Cloud Run.
+# When true, GCP automatically scrapes /metrics and ingests into Cloud Monitoring.
+# Cost: ~$0.04/month for the ~20 dispatcher metrics on dev.
+PROMETHEUS_SCRAPE="${PROMETHEUS_SCRAPE:-true}"
+
 # Optional overrides for Cloud Run reachability.
 DB_HOST_OVERRIDE="${DB_HOST_OVERRIDE:-172.27.160.7}"
 DB_PORT_OVERRIDE="${DB_PORT_OVERRIDE:-5432}"
@@ -554,6 +559,10 @@ fi
 
 if [[ -n "${VPC_CONNECTOR}" ]]; then
   deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
+fi
+
+if [[ "${PROMETHEUS_SCRAPE}" == "true" ]]; then
+  deploy_args+=(--update-annotations "run.googleapis.com/prometheus_scrape=true,run.googleapis.com/prometheus_port=8080")
 fi
 
 gcloud "${deploy_args[@]}"

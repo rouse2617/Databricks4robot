@@ -174,6 +174,9 @@ func (s *stubBackfillRepo) CountPipelineRunsByBatchJobID(context.Context, string
 func (s *stubBackfillRepo) CountRunsWithNodeRowsByBatchJobID(context.Context, string) (int, error) {
 	return 0, nil
 }
+func (s *stubBackfillRepo) CountStaleBackfillItems(context.Context) (int, error) {
+	return 0, nil
+}
 func (s *stubBackfillRepo) FindItemsByAssetID(_ context.Context, assetID string) ([]models.BackfillItem, error) {
 	var out []models.BackfillItem
 	for _, item := range s.items {

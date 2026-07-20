@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
@@ -277,6 +278,13 @@ func (uc *Usecase) StopJobReconciler() {
 // convergence — missing-run repair (formerly done on GetJob/node-summary
 // reads) plus counter/settle sync. Reads never do this work anymore.
 func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
+	// Emit stale-items gauge before the reconciler resolves the gap, so it
+	// reflects the watcher→reconciler delay (max ~60s in a healthy cycle).
+	if uc.repo != nil {
+		if n, err := uc.repo.CountStaleBackfillItems(ctx); err == nil {
+			metrics.DispatcherStaleItems.Set(float64(n))
+		}
+	}
 	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
 	if err != nil {
 		slog.Warn("job reconciler: find active jobs failed", "err", err)
