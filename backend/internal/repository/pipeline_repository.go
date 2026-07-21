@@ -103,6 +103,13 @@ type PipelineRunRepository interface {
 	// uses it instead of "most-recent N" so a burst of just-completed runs
 	// can't crowd older still-active runs out of the refresh set (CYB-3681).
 	FindActiveRunSummaries(ctx context.Context, limit int) ([]models.PipelineRun, error)
+	// FindActiveRunSummariesAfter is the paginated variant: same filter and
+	// (created_at DESC, id DESC) sort, but resumes strictly AFTER the supplied
+	// (afterCreatedAt, afterID) tuple. Empty afterID starts at the newest end.
+	// The watcher advances this cursor across scans so a set larger than one
+	// scan's cap is still covered — critical when several concurrent large
+	// batches push the active total past cap.
+	FindActiveRunSummariesAfter(ctx context.Context, afterCreatedAt time.Time, afterID string, limit int) ([]models.PipelineRun, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindSummaryByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)

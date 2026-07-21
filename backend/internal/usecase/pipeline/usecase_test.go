@@ -2078,6 +2078,41 @@ func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models
 	return active, nil
 }
 
+func (m *mockRunRepo) FindActiveRunSummariesAfter(_ context.Context, afterCreatedAt time.Time, afterID string, limit int) ([]models.PipelineRun, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	// Reproduce the postgres implementation's newest-first (created_at, id) DESC
+	// ordering + cursor semantics in memory so unit tests exercise the same
+	// contract the paginated loader relies on.
+	active := make([]models.PipelineRun, 0, len(items))
+	for _, it := range items {
+		if !isActiveDeploymentStatus(it.Status) {
+			continue
+		}
+		if afterID != "" {
+			if it.CreatedAt.After(afterCreatedAt) {
+				continue
+			}
+			if it.CreatedAt.Equal(afterCreatedAt) && it.ID >= afterID {
+				continue
+			}
+		}
+		active = append(active, it)
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if !active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].CreatedAt.After(active[j].CreatedAt)
+		}
+		return active[i].ID > active[j].ID
+	})
+	if limit > 0 && len(active) > limit {
+		active = active[:limit]
+	}
+	return active, nil
+}
+
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())

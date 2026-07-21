@@ -1159,6 +1159,66 @@ LIMIT $2`
 	return out, nil
 }
 
+// FindActiveRunSummariesAfter is the paginated variant of
+// FindActiveRunSummaries — same status filter and newest-first sort, but
+// resumes AFTER the (createdAt, id) tuple of the last-seen row. Passing zero
+// createdAt + empty id starts at the newest end.
+//
+// The watcher uses this to rotate through more active runs than a single
+// scan's cap can carry: cap=3000 with 30k active runs would otherwise leave
+// older-than-3000-newest runs stale forever (a 3-concurrent-batch scenario
+// on this deployment). The recent-500 union in loadRunsForWatcherSync still
+// covers fresh work every tick, so pagination only affects the rotating
+// tail — no starvation of live batches.
+func (r *PipelineRunRepo) FindActiveRunSummariesAfter(
+	ctx context.Context, afterCreatedAt time.Time, afterID string, limit int,
+) ([]models.PipelineRun, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	// Composite (created_at, id) cursor: created_at anchors newest-first
+	// order (index idx_pipeline_runs_status_created_at); id breaks ties on
+	// bulk-inserted rows sharing a timestamp so pagination doesn't skip or
+	// re-emit rows.
+	var (
+		q    string
+		args []interface{}
+	)
+	if afterID == "" {
+		q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+ORDER BY pr.created_at DESC, pr.id DESC
+LIMIT $2`
+		args = []interface{}{activeRunStatuses, limit}
+	} else {
+		q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+  AND (pr.created_at, pr.id) < ($2, $3)
+ORDER BY pr.created_at DESC, pr.id DESC
+LIMIT $4`
+		args = []interface{}{activeRunStatuses, afterCreatedAt, afterID, limit}
+	}
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummariesAfter: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummariesAfter scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, nil
+}
+
 func (r *PipelineRunRepo) findAllPipelineRuns(
 	ctx context.Context,
 	cols string,

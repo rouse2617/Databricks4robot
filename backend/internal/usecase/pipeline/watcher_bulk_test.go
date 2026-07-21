@@ -29,6 +29,30 @@ func TestWatcherBulkModeEnabled(t *testing.T) {
 	}
 }
 
+// watcherResidualConcurrency's default (20) must be conservative enough to
+// stay well under a typical per-cluster client-go QPS (50 on this deployment,
+// see #470). Env override must accept positive ints; anything else falls back
+// to the default so a bad WATCHER_RESIDUAL_CONCURRENCY value doesn't silently
+// serialize the loop (CYB-3746).
+func TestWatcherResidualConcurrency(t *testing.T) {
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("default = %d, want 20", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "40")
+	if got := watcherResidualConcurrency(); got != 40 {
+		t.Fatalf("env=40 = %d, want 40", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "0")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("env=0 (invalid, non-positive) = %d, want default 20", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "not-a-number")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("env=<garbage> = %d, want default 20", got)
+	}
+}
+
 func TestMarkWorkflowApplied_RVGate(t *testing.T) {
 	uc := &Usecase{}
 	if !uc.markWorkflowApplied("run-1", "100") {

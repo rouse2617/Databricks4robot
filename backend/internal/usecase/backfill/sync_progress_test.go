@@ -280,6 +280,9 @@ func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error)
 func (m *syncTestRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *syncTestRunRepo) FindActiveRunSummariesAfter(context.Context, time.Time, string, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
 
 func (m *syncTestRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	m.lastListFilter = &filter

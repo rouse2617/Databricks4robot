@@ -77,6 +77,18 @@ type Usecase struct {
 	// In-memory by design — restart means one full re-apply (recalibration).
 	watcherRVMu      sync.Mutex
 	watcherAppliedRV map[string]string
+	// watcherLoadCursor paginates loadRunsForWatcherSync's active-run fetch
+	// across scans so a total active set larger than watcherActiveRunLoadCap
+	// still gets covered eventually (CYB-3746). The cursor is
+	// (createdAt, id) DESC: each scan resumes strictly older than the last
+	// row returned; wraps back to newest when the page returns short. The
+	// recent-N union in loadRunsForWatcherSync still guarantees a fresh
+	// batch is refreshed every tick, so pagination only affects the older
+	// rotating tail — no live-batch starvation. In-memory (restart resets
+	// to newest, same eventual-coverage semantic as watcherAppliedRV).
+	watcherLoadCursorMu        sync.Mutex
+	watcherLoadCursorCreatedAt time.Time
+	watcherLoadCursorID        string
 	// targetClusterCache memoizes execution_target_id → cluster_id so the
 	// watcher / status-refresh paths can resolve a run's cluster without an
 	// ExecutionTarget object populated on the run (ListSummaries doesn't load
@@ -3533,10 +3545,35 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	//
 	// The CYB-3491 concern (unbounded 39s scan) stays addressed: both halves
 	// are status-indexed and hard-capped.
-	active, err := uc.runRepo.FindActiveRunSummaries(ctx, watcherActiveRunLoadCap)
+	// Load the active-run rotating page from the current cursor. CYB-3746:
+	// a single-page cap of watcherActiveRunLoadCap is smaller than the total
+	// active set under multi-batch load (3 × 9999-item batches ≈ 30k active),
+	// so paging AFTER the last-seen (createdAt, id) is how the loader covers
+	// everything eventually instead of pinning the newest window forever.
+	uc.watcherLoadCursorMu.Lock()
+	cursorCreatedAt := uc.watcherLoadCursorCreatedAt
+	cursorID := uc.watcherLoadCursorID
+	uc.watcherLoadCursorMu.Unlock()
+	active, err := uc.runRepo.FindActiveRunSummariesAfter(ctx, cursorCreatedAt, cursorID, watcherActiveRunLoadCap)
 	if err != nil {
 		return nil, err
 	}
+	// Advance cursor on a full page; wrap to newest when the page returns
+	// short (either the tail was reached, or the active set shrank below the
+	// cursor). The wrap is what makes rotation cyclic instead of one-way.
+	uc.watcherLoadCursorMu.Lock()
+	if len(active) == watcherActiveRunLoadCap && len(active) > 0 {
+		last := active[len(active)-1]
+		uc.watcherLoadCursorCreatedAt = last.CreatedAt
+		uc.watcherLoadCursorID = last.ID
+	} else {
+		uc.watcherLoadCursorCreatedAt = time.Time{}
+		uc.watcherLoadCursorID = ""
+	}
+	uc.watcherLoadCursorMu.Unlock()
+	// Recent-500 union is unchanged: it always includes the freshest activity
+	// (any status), so a just-created run in an in-flight batch is refreshed
+	// every tick even while the rotating page is elsewhere.
 	recent, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
 	if err != nil {
 		return nil, err

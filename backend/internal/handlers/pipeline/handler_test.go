@@ -202,6 +202,9 @@ func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 func (m *mockPipelineRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *mockPipelineRunRepo) FindActiveRunSummariesAfter(context.Context, time.Time, string, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
 
 func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	items := m.summaries()

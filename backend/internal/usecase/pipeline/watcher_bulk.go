@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -159,7 +160,22 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
 	}
 
+	// Snapshot-hit apply is serialized (no network — just DB writes with
+	// pooled connections; keeping it inline avoids goroutine setup for the
+	// common case). Residual GETs are the slow path (K8s round-trip + DB
+	// writes per run) — those we fan out via a bounded worker pool so a
+	// tick's residual budget is drained in parallel rather than dragged
+	// through serially. CYB-3746: the per-cluster serialization comment
+	// upstairs predates PR #470's per-cluster QPS lift; QPS=50 has ample
+	// headroom for a 20-way fanout without stampeding the client-side rate
+	// limiter, and the effect on a 600-item budget is ~20× faster (~20 min
+	// → ~1 min per scan).
 	synced, residuals := 0, 0
+	var (
+		wg       sync.WaitGroup
+		syncedMu sync.Mutex
+		sem      = make(chan struct{}, watcherResidualConcurrency())
+	)
 	for _, i := range group {
 		run := &runs[i]
 		ns := run.ArgoNamespace
@@ -182,11 +198,33 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 			continue
 		}
 		residuals++
-		uc.refreshPipelineRunStatus(ctx, run)
-		uc.forgetWorkflowApplied(run.ID)
-		synced++
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(run *models.PipelineRun) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			uc.refreshPipelineRunStatus(ctx, run)
+			uc.forgetWorkflowApplied(run.ID)
+			syncedMu.Lock()
+			synced++
+			syncedMu.Unlock()
+		}(run)
 	}
+	wg.Wait()
 	return synced
+}
+
+// watcherResidualConcurrency reads the bounded fanout size for residual GETs
+// (env WATCHER_RESIDUAL_CONCURRENCY, default 20). Kept small enough to stay
+// under the per-cluster client-go QPS/burst (50/100 on this deployment) even
+// with brief bursts, and large enough to drain a 600-item budget in ~1 min.
+func watcherResidualConcurrency() int {
+	if raw := strings.TrimSpace(os.Getenv("WATCHER_RESIDUAL_CONCURRENCY")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 20
 }
 
 // legacyRefreshGroup is the bounded per-run fallback used when a cluster's
