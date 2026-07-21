@@ -20,6 +20,10 @@ type fakeRepo struct {
 	claimReturns []Rule
 	successes    []recordCall
 	failures     []recordCall
+	setEnabled   []struct {
+		id string
+		on bool
+	}
 }
 type recordCall struct {
 	id, status, cursor, batchID, err string
@@ -39,6 +43,16 @@ func (f *fakeRepo) RecordSuccess(_ context.Context, id, status, cursor, batchID 
 	f.successes = append(f.successes, recordCall{id: id, status: status, cursor: cursor, batchID: batchID, at: at})
 	return nil
 }
+func (f *fakeRepo) SetEnabled(_ context.Context, id string, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setEnabled = append(f.setEnabled, struct {
+		id string
+		on bool
+	}{id, on})
+	return nil
+}
+
 func (f *fakeRepo) RecordFailure(_ context.Context, id, errMsg string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -328,6 +342,62 @@ func TestResolveWindow_AllModes(t *testing.T) {
 		if _, err := resolveWindow(rule, TriggerConfig{}, now); err == nil {
 			t.Fatal("expected error on unknown mode")
 		}
+	}
+}
+
+// TestExecuteRule_OneShotDisablesAfterSuccess covers the gemini-review point:
+// range and ids rules must auto-disable after a successful run so a scheduled
+// cycle doesn't keep re-running them with the same window / same ids.
+func TestExecuteRule_OneShotDisablesAfterSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	for _, mode := range []TriggerMode{TriggerRange, TriggerIDs} {
+		t.Run(string(mode), func(t *testing.T) {
+			from, to := now.Add(-time.Hour), now
+			tc := TriggerConfig{}
+			if mode == TriggerRange {
+				tc.From, tc.To = &from, &to
+			} else {
+				tc.IDs = []string{"x", "y"}
+			}
+			rule := Rule{
+				ID: "r-oneshot-" + string(mode), Name: string(mode),
+				TemplateID: "tpl", TargetID: "target",
+				SourceType: "rest", SourceConfig: json.RawMessage(`{}`),
+				TriggerMode:   mode,
+				TriggerConfig: triggerJSON(t, tc),
+			}
+			repo := &fakeRepo{}
+			batches := &fakeBatches{returnID: "b1"}
+			uc := newUC(repo, fakeSource{ids: []string{"x", "y"}}, batches, &fakeNotifier{}, now)
+			if err := uc.executeRule(context.Background(), rule); err != nil {
+				t.Fatal(err)
+			}
+			// One-shot rule should have been disabled.
+			if len(repo.setEnabled) != 1 || repo.setEnabled[0].on {
+				t.Fatalf("expected one setEnabled(false) for %s, got %+v", mode, repo.setEnabled)
+			}
+		})
+	}
+	// Incremental / rolling MUST NOT be disabled after a successful run.
+	for _, mode := range []TriggerMode{TriggerIncremental, TriggerRolling} {
+		t.Run(string(mode), func(t *testing.T) {
+			rule := Rule{
+				ID: "r-recurring-" + string(mode), Name: string(mode),
+				TemplateID: "tpl", TargetID: "target",
+				SourceType: "rest", SourceConfig: json.RawMessage(`{}`),
+				TriggerMode:   mode,
+				TriggerConfig: triggerJSON(t, TriggerConfig{IntervalSeconds: 3600, InitialLookbackSeconds: 60, LookbackSeconds: 60}),
+			}
+			repo := &fakeRepo{}
+			batches := &fakeBatches{returnID: "b1"}
+			uc := newUC(repo, fakeSource{ids: []string{"a"}}, batches, &fakeNotifier{}, now)
+			if err := uc.executeRule(context.Background(), rule); err != nil {
+				t.Fatal(err)
+			}
+			if len(repo.setEnabled) != 0 {
+				t.Fatalf("recurring mode %s must not be disabled, got %+v", mode, repo.setEnabled)
+			}
+		})
 	}
 }
 

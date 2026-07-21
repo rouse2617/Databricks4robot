@@ -251,6 +251,36 @@ func TestUpdate_PreservesCreateMeta(t *testing.T) {
 	}
 }
 
+// TestUpdate_DoesNotReenablePaused covers the gemini-review point: an Update
+// payload without `enabled` must not silently re-enable a paused rule.
+func TestUpdate_DoesNotReenablePaused(t *testing.T) {
+	repo := newStubRepo(schedtask.Rule{
+		ID: "sched_paused", Name: "p", Enabled: false,
+		TemplateID: "tpl", TargetID: "tgt",
+		SourceType: "rest", TriggerMode: "incremental",
+	})
+	r := setupRouter(repo)
+	// Payload omits `enabled` entirely — must keep enabled=false.
+	w := do(t, r, "PUT", "/api/v1/scheduled-tasks/sched_paused", map[string]any{
+		"name": "still-paused", "templateId": "tpl", "targetId": "tgt",
+		"sourceType": "rest", "triggerMode": "incremental",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update code=%d body=%s", w.Code, w.Body.String())
+	}
+	if repo.rules["sched_paused"].Enabled {
+		t.Fatal("PUT without enabled must not resume a paused rule")
+	}
+	// Explicit enabled:true still wins.
+	w = do(t, r, "PUT", "/api/v1/scheduled-tasks/sched_paused", map[string]any{
+		"name": "now-on", "templateId": "tpl", "targetId": "tgt",
+		"sourceType": "rest", "triggerMode": "incremental", "enabled": true,
+	})
+	if w.Code != http.StatusOK || !repo.rules["sched_paused"].Enabled {
+		t.Fatalf("explicit enabled:true should resume; code=%d enabled=%v", w.Code, repo.rules["sched_paused"].Enabled)
+	}
+}
+
 func TestPauseResume_TogglesEnabled(t *testing.T) {
 	repo := newStubRepo(schedtask.Rule{ID: "sched_1", Enabled: true, SourceType: "rest", TriggerMode: "incremental"})
 	r := setupRouter(repo)

@@ -20,6 +20,10 @@ type Repo interface {
 	ClaimDueRules(ctx context.Context, now time.Time, defaultIntervalSeconds int) ([]Rule, error)
 	RecordSuccess(ctx context.Context, id string, status string, cursor string, batchID string, at time.Time) error
 	RecordFailure(ctx context.Context, id string, errMsg string) error
+	// SetEnabled flips a rule's enabled flag. Used to auto-disable one-shot
+	// rules (range / ids) after a successful run so they don't linger as
+	// enabled with no work to do.
+	SetEnabled(ctx context.Context, id string, enabled bool) error
 }
 
 // BatchCreator abstracts pipeline.CreateBatchJob so the scheduler package
@@ -164,6 +168,7 @@ func (uc *Usecase) executeRule(ctx context.Context, rule Rule) error {
 		// Range/ids modes are one-shot; disable after a successful (even
 		// empty) run so they don't linger with run_now_requested_at cleared
 		// and no interval to gate them. incremental/rolling stay enabled.
+		uc.disableIfOneShot(ctx, rule)
 		return nil
 	}
 
@@ -181,7 +186,21 @@ func (uc *Usecase) executeRule(ctx context.Context, rule Rule) error {
 		slog.Warn("schedtask: record success failed", "ruleID", rule.ID, "err", err)
 	}
 	slog.Info("schedtask: batch created", "ruleID", rule.ID, "batchID", batchID, "assetCount", len(ids))
+	uc.disableIfOneShot(ctx, rule)
 	return nil
+}
+
+// disableIfOneShot flips a rule to enabled=false after a successful run when
+// its mode is genuinely one-shot (range / ids) — otherwise a scheduled cycle
+// would keep re-running it with the same window/ids. Best-effort: repo error
+// is logged and swallowed, matching how observation failures are handled.
+func (uc *Usecase) disableIfOneShot(ctx context.Context, rule Rule) {
+	if rule.TriggerMode != TriggerRange && rule.TriggerMode != TriggerIDs {
+		return
+	}
+	if err := uc.repo.SetEnabled(ctx, rule.ID, false); err != nil {
+		slog.Warn("schedtask: disable one-shot rule failed", "ruleID", rule.ID, "err", err)
+	}
 }
 
 func (uc *Usecase) recordAndNotifyFailure(ctx context.Context, rule Rule, err error) error {

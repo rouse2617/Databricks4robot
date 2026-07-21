@@ -254,7 +254,10 @@ func (r *restSource) doRequest(ctx context.Context, client *http.Client, q url.V
 		return nil, fmt.Errorf("restsource: GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	// Cap the response body so a misconfigured / hostile upstream can't OOM the
+	// backend by returning a huge payload (id_path extraction still runs in
+	// memory). 10MB is well above any realistic Grace-shaped page.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("restsource: %s → %d: %s", u, resp.StatusCode, truncate(body, 200))
 	}
@@ -439,13 +442,19 @@ func extractInt(body []byte, path string) int {
 	return int(n)
 }
 
-// isLater compares two opaque cursor strings. RFC3339 timestamps compare
-// lexicographically in order; numeric-string cursors (e.g. unix seconds of
-// equal width) also do — this is good enough for both time formats we
-// support without teaching the source about the schema.
+// isLater compares two opaque cursor strings. When both parse as RFC3339
+// timestamps we compare them via time.After so different timezone offsets
+// (e.g. "…Z" vs "…+08:00" for the same instant) compare correctly. Otherwise
+// we fall back to lexicographical order, which is what unix-second or
+// equal-width numeric cursors want.
 func isLater(a, b string) bool {
 	if b == "" {
 		return a != ""
+	}
+	if ta, err := time.Parse(time.RFC3339, a); err == nil {
+		if tb, err := time.Parse(time.RFC3339, b); err == nil {
+			return ta.After(tb)
+		}
 	}
 	return a > b
 }

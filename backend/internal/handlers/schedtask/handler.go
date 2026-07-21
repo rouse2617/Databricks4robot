@@ -191,6 +191,14 @@ func (h *Handler) Update(c *gin.Context) {
 	// Preserve create metadata; only mutable fields are replaced.
 	rule.CreatedBy = existing.CreatedBy
 	rule.CreatedAt = existing.CreatedAt
+	// A PUT that omits `enabled` must not silently re-enable a paused rule —
+	// requestToRule defaults enabled=true when the field is nil, which would
+	// resume dispatch just because someone edited another field. Preserve the
+	// existing flag when the payload didn't carry one. (Explicit
+	// `enabled:false` in the body still wins.)
+	if req.Enabled == nil {
+		rule.Enabled = existing.Enabled
+	}
 	if err := h.repo.Update(c.Request.Context(), &rule); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
