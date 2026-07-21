@@ -3,8 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/subtask"
 )
@@ -196,7 +199,7 @@ func scanSubTask(row rowScanner) (subtask.Task, error) {
 		&createdBy, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 			return subtask.Task{}, nil
 		}
 		return subtask.Task{}, err
