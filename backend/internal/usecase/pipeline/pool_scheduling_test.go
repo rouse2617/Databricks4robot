@@ -46,7 +46,7 @@ func TestExecutionTargetPodLabels(t *testing.T) {
 	tg := targetWithScheduling(map[string]interface{}{
 		"podLabels": map[string]interface{}{
 			"quota.scheduling.koordinator.sh/name": "cyberorigin-delivery-low",
-			"team": "vision",
+			"team":                                 "vision",
 		},
 	})
 	got := executionTargetPodLabels(tg)
@@ -79,7 +79,7 @@ func TestMergePoolPodLabels(t *testing.T) {
 	tg := targetWithScheduling(map[string]interface{}{
 		"podLabels": map[string]interface{}{
 			"quota.scheduling.koordinator.sh/name": "eq-low",
-			"shared": "pool", // pool wins on conflict
+			"shared":                               "pool", // pool wins on conflict
 		},
 	})
 	got := mergePoolPodLabels(base, tg)

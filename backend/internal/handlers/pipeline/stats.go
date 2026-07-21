@@ -77,10 +77,10 @@ func (h *Handler) UpdatePipeline(c *gin.Context) {
 	if conflict {
 		latest, _, _ := h.uc.CheckPipelineVersionConflict(c.Request.Context(), pipelineID, 0)
 		c.JSON(409, gin.H{
-			"error":           "version_conflict",
-			"message":         "Pipeline has been modified by another user",
-			"currentVersion":  latest.Version,
-			"requestedBase":   req.BaseVersion,
+			"error":          "version_conflict",
+			"message":        "Pipeline has been modified by another user",
+			"currentVersion": latest.Version,
+			"requestedBase":  req.BaseVersion,
 		})
 		return
 	}
@@ -94,7 +94,7 @@ func (h *Handler) UpdatePipeline(c *gin.Context) {
 
 // PipelineStatsResponse is the response body for GetStats
 type PipelineStatsResponse struct {
-	UserStats      *models.PipelineUserStats `json:"userStats"`
+	UserStats       *models.PipelineUserStats        `json:"userStats"`
 	Recommendations []*models.PipelineRecommendation `json:"recommendations"`
-	FetchedAt      time.Time                 `json:"fetchedAt"`
+	FetchedAt       time.Time                        `json:"fetchedAt"`
 }

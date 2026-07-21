@@ -54,8 +54,8 @@ tags:
     description: Pipeline orchestration (Argo Workflows)
   - name: Runs
     description: Product execution records served through the Run Kernel boundary, including the run ledger, runtime operations, and run tree projections
-  - name: ScheduledTasks
-    description: In-app scheduled auto-dispatch rules (CYB-3744) — periodically pull asset-ids from a configured source and create a batch on a pipeline template. Replaces the external grace-sync Cloud Run Job.
+  - name: SubscriptionTasks
+    description: Pub/Sub subscription-based auto-dispatch (CYB-3778) — consume asset-ids from a GCP Pub/Sub subscription and create batch jobs on a pipeline template.
 components:
   securitySchemes:
     DatabrewToken:
@@ -3334,120 +3334,42 @@ components:
               itemId: { type: string }
               reason: { type: string }
 
-    # ── Scheduled Tasks (CYB-3744) ───────────────────────────
-    ScheduledTask:
+    # ── Subscription Tasks (CYB-3778) ───────────────────────────
+    SubscriptionTask:
       type: object
-      required: [id, name, enabled, templateId, targetId, sourceType, triggerMode, createdAt, updatedAt]
+      required: [id, name, enabled, templateId, targetId, projectId, subscriptionId, createdAt, updatedAt]
       properties:
-        id: { type: string, description: 'Rule id (sched_<uuid>)' }
-        name: { type: string, description: 'Unique display name' }
+        id: { type: string, description: 'Task id (sub_<uuid>)' }
+        name: { type: string }
         enabled: { type: boolean }
-        templateId: { type: string, description: 'Pipeline template id' }
+        templateId: { type: string }
         templateVersion: { type: integer, nullable: true }
-        targetId: { type: string, description: 'Execution target id' }
-        scheduling:
-          type: object
-          additionalProperties: true
-          description: 'resource_defaults.scheduling shape (nodeSelector/tolerations)'
-        sourceType:
-          type: string
-          enum: [rest]
-        sourceConfig:
-          $ref: '#/components/schemas/ScheduledTaskRestSource'
-        triggerMode:
-          type: string
-          enum: [incremental, rolling, range, ids]
-        triggerConfig:
-          $ref: '#/components/schemas/ScheduledTaskTriggerConfig'
-        cursor: { type: string, description: 'Watermark for incremental mode; opaque string.' }
+        targetId: { type: string }
+        projectId: { type: string, description: 'GCP project id for Pub/Sub' }
+        subscriptionId: { type: string, description: 'Pub/Sub subscription id' }
+        pullIntervalSeconds: { type: integer, default: 10 }
+        maxMessagesPerPull: { type: integer, default: 1000 }
         lastRunAt: { type: string, format: date-time, nullable: true }
-        lastRunStatus:
-          type: string
-          enum: [succeeded, failed, empty, skipped]
-        lastBatchId: { type: string, description: 'backfill_jobs.id of most recent batch' }
+        lastRunStatus: { type: string, enum: [succeeded, failed, empty] }
+        lastBatchId: { type: string }
         lastError: { type: string }
         lastSuccessAt: { type: string, format: date-time, nullable: true }
-        runNowRequestedAt: { type: string, format: date-time, nullable: true }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    ScheduledTaskCreateRequest:
+    SubscriptionTaskCreateRequest:
       type: object
-      required: [name, templateId, targetId, sourceType, triggerMode]
+      required: [name, templateId, targetId, projectId, subscriptionId]
       properties:
         name: { type: string }
         enabled: { type: boolean, default: true }
         templateId: { type: string }
         templateVersion: { type: integer }
         targetId: { type: string }
-        scheduling: { type: object, additionalProperties: true }
-        sourceType: { type: string, enum: [rest] }
-        sourceConfig: { $ref: '#/components/schemas/ScheduledTaskRestSource' }
-        triggerMode: { type: string, enum: [incremental, rolling, range, ids] }
-        triggerConfig: { $ref: '#/components/schemas/ScheduledTaskTriggerConfig' }
-    ScheduledTaskRestSource:
-      type: object
-      description: |
-        Config-driven REST-JSON source. Grace's /grace/video_steps is expressible
-        as one config (different endpoints/APIs are different configs, no code).
-        Credentials are only referenced by `secret_ref` (env var name); the value
-        itself is NEVER stored here or returned in responses.
-      properties:
-        base_url: { type: string, example: 'https://grace.example.com/api' }
-        path: { type: string, example: '/grace/video_steps' }
-        method: { type: string, default: GET, enum: [GET] }
-        auth:
-          type: object
-          properties:
-            type: { type: string, enum: [basic, bearer, header_key, none] }
-            username: { type: string, description: 'basic only; NOT a secret' }
-            secret_ref: { type: string, description: 'env var name holding the credential' }
-            header_name: { type: string, description: 'header_key only' }
-        query:
-          type: object
-          properties:
-            static:
-              type: object
-              additionalProperties:
-                type: array
-                items: { type: string }
-            filter_param: { type: string, example: filter }
-            time_field: { type: string, example: last_status_at }
-            time_format: { type: string, enum: [rfc3339, unix], default: rfc3339 }
-            time_query_start: { type: string }
-            time_query_end: { type: string }
-        paging:
-          type: object
-          properties:
-            mode: { type: string, enum: [page_size, none], default: page_size }
-            page_param: { type: string, default: page }
-            size_param: { type: string, default: size }
-            page_size: { type: integer, default: 200 }
-            total_path: { type: string, example: total }
-            data_path: { type: string, example: data }
-        id_path:
-          type: string
-          example: 'data[].video_id'
-          description: 'Simple "arrKey[].field" path for extracting ids from the response.'
-        headers:
-          type: object
-          additionalProperties: { type: string }
-        user_agent: { type: string }
-        timeout_seconds: { type: integer, default: 30 }
-    ScheduledTaskTriggerConfig:
-      type: object
-      description: Mode-specific config; only fields for the selected `triggerMode` are consumed.
-      properties:
-        intervalSeconds: { type: integer, description: 'incremental + rolling' }
-        lookbackSeconds: { type: integer, description: 'rolling; incremental first-run fallback' }
-        initialLookbackSeconds: { type: integer, description: 'incremental first run when cursor is empty' }
-        from: { type: string, format: date-time }
-        to: { type: string, format: date-time }
-        ids:
-          type: array
-          items: { type: string }
-        notifyOnEmpty: { type: boolean, default: false }
-        stuckThresholdSeconds: { type: integer }
+        projectId: { type: string }
+        subscriptionId: { type: string }
+        pullIntervalSeconds: { type: integer, default: 10 }
+        maxMessagesPerPull: { type: integer, default: 1000 }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
@@ -8971,15 +8893,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 
-  # ─── Scheduled Tasks (CYB-3744) ──────────────────────────────
-  # In-app self-service auto-dispatch rules. Replaces the external grace-sync
-  # Cloud Run Job. A rule fires on its own interval, fetches asset-ids from a
-  # configured source (v1: generic REST-JSON), and creates a batch on a
+  # ─── Subscription Tasks (CYB-3778) ────────────────────────────
+  # Pub/Sub-driven auto-dispatch rules. External publishers push asset IDs to a
+  # GCP Pub/Sub topic; Databrew subscribes and auto-creates batch jobs on a
   # pipeline template. Produced batches surface under /api/v1/backfill.
-  /scheduled-tasks:
+  /subscription-tasks:
     get:
-      tags: [ScheduledTasks]
-      summary: List scheduled-task rules
+      tags: [SubscriptionTasks]
+      summary: List subscription-task rules
       description: |
         Returns rules ordered by name with client-side filters. Response wrapper
         is `{items, total, page, pageSize}`.
@@ -8992,9 +8913,6 @@ paths:
         - in: query
           name: enabled
           schema: { type: string, enum: [true, false] }
-        - in: query
-          name: sourceType
-          schema: { type: string, enum: [rest] }
         - in: query
           name: page
           schema: { type: integer, minimum: 1, default: 1 }
@@ -9012,38 +8930,38 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/ScheduledTask' }
+                    items: { $ref: '#/components/schemas/SubscriptionTask' }
                   total: { type: integer }
                   page: { type: integer }
                   pageSize: { type: integer }
     post:
-      tags: [ScheduledTasks]
-      summary: Create a scheduled-task rule
+      tags: [SubscriptionTasks]
+      summary: Create a subscription-task rule
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ScheduledTaskCreateRequest' }
+            schema: { $ref: '#/components/schemas/SubscriptionTaskCreateRequest' }
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
         '400':
           description: Invalid request
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
-  /scheduled-tasks/{id}:
+  /subscription-tasks/{id}:
     parameters:
       - in: path
         name: id
         required: true
         schema: { type: string }
     get:
-      tags: [ScheduledTasks]
+      tags: [SubscriptionTasks]
       summary: Get one rule
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       responses:
@@ -9051,47 +8969,47 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
         '404':
           description: Not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
     put:
-      tags: [ScheduledTasks]
+      tags: [SubscriptionTasks]
       summary: Update a rule (definition; observation fields untouched)
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ScheduledTaskCreateRequest' }
+            schema: { $ref: '#/components/schemas/SubscriptionTaskCreateRequest' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
         '404':
           description: Not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
-      tags: [ScheduledTasks]
+      tags: [SubscriptionTasks]
       summary: Delete a rule
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       responses:
         '204':
           description: Deleted
-  /scheduled-tasks/{id}/pause:
+  /subscription-tasks/{id}/pause:
     parameters:
       - in: path
         name: id
         required: true
         schema: { type: string }
     post:
-      tags: [ScheduledTasks]
+      tags: [SubscriptionTasks]
       summary: Pause a rule (sets enabled=false)
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       responses:
@@ -9099,15 +9017,15 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
-  /scheduled-tasks/{id}/resume:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
+  /subscription-tasks/{id}/resume:
     parameters:
       - in: path
         name: id
         required: true
         schema: { type: string }
     post:
-      tags: [ScheduledTasks]
+      tags: [SubscriptionTasks]
       summary: Resume a rule (sets enabled=true)
       security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
       responses:
@@ -9115,35 +9033,4 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
-  /scheduled-tasks/{id}/run-now:
-    parameters:
-      - in: path
-        name: id
-        required: true
-        schema: { type: string }
-    post:
-      tags: [ScheduledTasks]
-      summary: Request an immediate run
-      description: |
-        Marks the rule to run on the next scheduler tick regardless of interval.
-        Body is optional in v1; the `mode` field is reserved for a future
-        ad-hoc override (range/ids).
-      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                mode:
-                  type: string
-                  enum: [range, ids]
-                  description: Reserved (v1 accepts + validates; not yet consumed).
-      responses:
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ScheduledTask' }
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }

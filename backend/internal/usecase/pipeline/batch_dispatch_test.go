@@ -21,8 +21,9 @@ type dispatchBatchRepo struct {
 	progressCalls int
 }
 
-
-func (m *dispatchBatchRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
+func (m *dispatchBatchRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
 
 func (m *dispatchBatchRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
@@ -188,8 +189,9 @@ func TestCreateBatchJobLegacyModeKeepsGoroutine(t *testing.T) {
 
 // ── CYB-3677: error paths ────────────────────────────────────────────────────
 
-
-type errTemplateRepo struct{ repository.PipelineTemplateRepository }
+type errTemplateRepo struct {
+	repository.PipelineTemplateRepository
+}
 
 func (r *errTemplateRepo) FindByID(context.Context, string) (*models.PipelineTemplate, error) {
 	return nil, context.DeadlineExceeded

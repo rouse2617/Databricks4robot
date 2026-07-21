@@ -26,7 +26,7 @@ type SourceResolver interface {
 // ---------------------------------------------------------------------------
 
 type GraceResolver struct {
-	devURL, devUsername, devPassword     string
+	devURL, devUsername, devPassword    string
 	prodURL, prodUsername, prodPassword string
 }
 
@@ -46,8 +46,8 @@ type graceStorageMeta struct {
 
 // StorageMediumMetadata (GCS branch) — "video" is a raw GCS string, not a nested object.
 type graceStorageMedium struct {
-	Video      string                         `json:"video"`
-	AlgoInputs map[string]graceVariantMeta    `json:"algo_inputs"`
+	Video      string                      `json:"video"`
+	AlgoInputs map[string]graceVariantMeta `json:"algo_inputs"`
 }
 
 type graceVariantMeta struct {
@@ -57,9 +57,9 @@ type graceVariantMeta struct {
 // GET /grace/videos/{uuid}/algo-input
 // → Direct VideoVariantMetadata: {uri, width, height, fps, …}
 type graceAlgoVariantResp struct {
-	URI    string  `json:"uri"`
-	Width  *int    `json:"width,omitempty"`
-	Height *int    `json:"height,omitempty"`
+	URI    string   `json:"uri"`
+	Width  *int     `json:"width,omitempty"`
+	Height *int     `json:"height,omitempty"`
 	FPS    *float64 `json:"fps,omitempty"`
 }
 

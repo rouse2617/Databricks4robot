@@ -97,7 +97,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		apiKeyHandler,
 		tagRegistryHandler,
 		clusterHandler,
-		core.scheduledTask,
+		core.subscriptionTask,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

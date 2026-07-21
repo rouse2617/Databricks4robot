@@ -22,9 +22,9 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	schedtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/schedtask"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
+	subtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/subtask"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
@@ -103,7 +103,7 @@ type coreHandlers struct {
 	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
-	scheduledTask     *schedtaskH.Handler
+	subscriptionTask  *subtaskH.Handler
 	storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
 	// CYB-3384: assetRepo is retained so setupOptional can hand a facet

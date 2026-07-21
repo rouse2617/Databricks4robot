@@ -79,7 +79,7 @@ func (rb *logRingBuffer) age() time.Duration {
 
 // ringBufferStore holds ring buffers for active log streams.
 type ringBufferStore struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	buffers map[string]*logRingBuffer
 }
 
@@ -272,7 +272,7 @@ func streamWorkflowLogs(
 		fmt.Fprint(writer, frame)
 		return false
 	}
-	frame  = formatSSEFrame(emitter.scanID+1, "end", gin.H{"reason": "stream-complete"})
+	frame = formatSSEFrame(emitter.scanID+1, "end", gin.H{"reason": "stream-complete"})
 	fmt.Fprint(writer, frame)
 	return false
 }

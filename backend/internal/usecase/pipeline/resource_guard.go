@@ -429,7 +429,6 @@ func workflowNodeDisplayName(node wfv1.NodeStatus) string {
 	return "unknown"
 }
 
-
 func formatImageStartupRunMessage(nodeName string, pendingFor time.Duration, imageMessage string) string {
 	nodeName = strings.TrimSpace(nodeName)
 	if nodeName == "" {

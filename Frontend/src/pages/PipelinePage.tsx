@@ -59,9 +59,9 @@ const ComponentManager = lazy(async () => {
 	return { default: mod.ComponentManager };
 });
 
-const ScheduledTasksPanel = lazy(async () => {
-	const mod = await import("../components/pipeline/ScheduledTasksPanel");
-	return { default: mod.ScheduledTasksPanel };
+const SubscriptionTasksPanel = lazy(async () => {
+	const mod = await import("../components/pipeline/SubscriptionTasksPanel");
+	return { default: mod.SubscriptionTasksPanel };
 });
 
 function confirmLeaveWithUnsavedChanges(
@@ -121,7 +121,7 @@ const TAB_DISPLAY_NAMES: Record<PipelineTab, string> = {
 	design: "设计",
 	pipelines: "流水线",
 	executions: "执行记录",
-	schedules: "定时任务",
+	schedules: "订阅任务",
 	components: "组件",
 };
 
@@ -250,11 +250,11 @@ export default function PipelinePage({
 					},
 					{
 						key: "schedules",
-						label: tabLabel("定时任务", "自助配置定时自动下发规则"),
+						label: tabLabel("订阅任务", "通过 Pub/Sub 订阅自动下发"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel">
 								<Suspense fallback={<TabFallback />}>
-									<ScheduledTasksPanel />
+									<SubscriptionTasksPanel />
 								</Suspense>
 							</div>
 						),

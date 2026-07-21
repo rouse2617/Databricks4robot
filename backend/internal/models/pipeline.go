@@ -67,8 +67,8 @@ type ExecutionTarget struct {
 	// Cluster is the legacy free-text field kept for backward compatibility.
 	// Prefer ClusterID + join to clusters(name) going forward; this field will
 	// be removed once all callers migrate.
-	Cluster   string `json:"cluster"`
-	Namespace string `json:"namespace"`
+	Cluster              string                 `json:"cluster"`
+	Namespace            string                 `json:"namespace"`
 	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
 	ArgoServerURL        string                 `json:"argoServerUrl,omitempty"`
 	ArgoAuthSecretRef    string                 `json:"argoAuthSecretRef,omitempty"`
@@ -88,31 +88,31 @@ type ExecutionTarget struct {
 	// CYB-3486 pool: kept in the JSONB (not dedicated columns) so new pool
 	// attributes don't need a schema migration, and the backend injects them
 	// verbatim without hardcoding any koord / ElasticQuota / scheduler names.
-	CreatedAt            time.Time              `json:"createdAt,omitempty"`
-	UpdatedAt            time.Time              `json:"updatedAt,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
 // PipelineRun is the first-class execution record for a pipeline run. Legacy
 // deployment endpoints can still project this data as PipelineDeployment.
 type PipelineRun struct {
-	ID                 string                   `json:"id"`
-	TemplateID         *string                  `json:"templateId,omitempty"`
-	TemplateName       string                   `json:"templateName,omitempty"`
-	PipelineName       string                   `json:"pipelineName"`
-	TemplateVersion    *int                     `json:"templateVersion,omitempty"`
-	WorkflowName       string                   `json:"workflowName"`
-	ExecutionTargetID  string                   `json:"executionTargetId"`
-	TargetSnapshot     map[string]interface{}   `json:"targetSnapshot,omitempty"`
-	Status             string                   `json:"status"`
-	NodeCount          int                      `json:"nodeCount"`
-	AssetIDs           []string                 `json:"assetIds,omitempty"`
-	AssetCount         int                      `json:"assetCount"`
-	NoAssetRun         bool                     `json:"noAssetRun"`
-	Manifest           *string                  `json:"manifest,omitempty"`
-	PipelineJSON       map[string]interface{}   `json:"pipelineJSON,omitempty"`
-	ArgoNamespace      string                   `json:"argoNamespace"`
-	ArgoWorkflowUID    string                   `json:"argoWorkflowUid,omitempty"`
-	Message            string                   `json:"message,omitempty"`
+	ID                string                 `json:"id"`
+	TemplateID        *string                `json:"templateId,omitempty"`
+	TemplateName      string                 `json:"templateName,omitempty"`
+	PipelineName      string                 `json:"pipelineName"`
+	TemplateVersion   *int                   `json:"templateVersion,omitempty"`
+	WorkflowName      string                 `json:"workflowName"`
+	ExecutionTargetID string                 `json:"executionTargetId"`
+	TargetSnapshot    map[string]interface{} `json:"targetSnapshot,omitempty"`
+	Status            string                 `json:"status"`
+	NodeCount         int                    `json:"nodeCount"`
+	AssetIDs          []string               `json:"assetIds,omitempty"`
+	AssetCount        int                    `json:"assetCount"`
+	NoAssetRun        bool                   `json:"noAssetRun"`
+	Manifest          *string                `json:"manifest,omitempty"`
+	PipelineJSON      map[string]interface{} `json:"pipelineJSON,omitempty"`
+	ArgoNamespace     string                 `json:"argoNamespace"`
+	ArgoWorkflowUID   string                 `json:"argoWorkflowUid,omitempty"`
+	Message           string                 `json:"message,omitempty"`
 	// Progress mirrors Argo's workflow-level status.progress ("done/total"
 	// steps, e.g. "37/100"). CYB-3490: this is the continuous, near-realtime
 	// projection for batch list views; per-node rows are only archived at

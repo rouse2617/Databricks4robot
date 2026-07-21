@@ -466,7 +466,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		Page:                page,
 		PageSize:            pageSize,
 		RefreshActive:       refreshActive,
-		SummaryOnly:    summaryView,
+		SummaryOnly:         summaryView,
 	}
 	if batchJobID != "" && refreshActive && h.batchRuns != nil {
 		_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)

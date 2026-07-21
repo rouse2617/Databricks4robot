@@ -10,9 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	runsUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/runs"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	runsUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/runs"
 )
 
 type Handler struct {

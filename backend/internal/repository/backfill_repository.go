@@ -63,9 +63,6 @@ type BackfillRepository interface {
 	FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error)
 	FindItemByJobAndAssetID(ctx context.Context, jobID, assetID string) (*models.BackfillItem, error)
 
-
-
-
 	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
 	// oldest first, regardless of whether items are still pending. Used by the
 	// reconcile backstop to finalize + notify jobs whose children have finished.

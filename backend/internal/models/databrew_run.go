@@ -10,24 +10,24 @@ const (
 
 // DatabrewRun is the unified execution record for all Argo-backed runs.
 type DatabrewRun struct {
-	ID                  string     `json:"id"`
-	Type                string     `json:"type"`
-	Name                string     `json:"name"`
-	Status              string     `json:"status"`
-	StatusLabel         string     `json:"statusLabel,omitempty"`
-	Runtime             string     `json:"runtime"`
-	RuntimeNamespace    string     `json:"runtimeNamespace"`
-	RuntimeResourceName string     `json:"runtimeResourceName"`
-	RuntimeUID          string     `json:"runtimeUid,omitempty"`
-	Owner               string     `json:"owner,omitempty"`
-	CreatedBy           string     `json:"createdBy,omitempty"`
-	Message             string     `json:"message,omitempty"`
-	Summary             any        `json:"summary,omitempty"`
+	ID                  string      `json:"id"`
+	Type                string      `json:"type"`
+	Name                string      `json:"name"`
+	Status              string      `json:"status"`
+	StatusLabel         string      `json:"statusLabel,omitempty"`
+	Runtime             string      `json:"runtime"`
+	RuntimeNamespace    string      `json:"runtimeNamespace"`
+	RuntimeResourceName string      `json:"runtimeResourceName"`
+	RuntimeUID          string      `json:"runtimeUid,omitempty"`
+	Owner               string      `json:"owner,omitempty"`
+	CreatedBy           string      `json:"createdBy,omitempty"`
+	Message             string      `json:"message,omitempty"`
+	Summary             any         `json:"summary,omitempty"`
 	Actions             *RunActions `json:"actions,omitempty"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	StartedAt           *time.Time `json:"startedAt,omitempty"`
-	FinishedAt          *time.Time `json:"finishedAt,omitempty"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	CreatedAt           time.Time   `json:"createdAt"`
+	StartedAt           *time.Time  `json:"startedAt,omitempty"`
+	FinishedAt          *time.Time  `json:"finishedAt,omitempty"`
+	UpdatedAt           time.Time   `json:"updatedAt"`
 }
 
 // RunActions describes which lifecycle operations are available for a run.
@@ -56,16 +56,16 @@ type DatabrewRunListResult struct {
 
 // ComponentBuildRun stores component build extension fields.
 type ComponentBuildRun struct {
-	RunID            string `json:"runId"`
-	ComponentID      string `json:"componentId,omitempty"`
-	RepoURL          string `json:"repoUrl,omitempty"`
-	GitRef           string `json:"gitRef,omitempty"`
-	CommitSHA        string `json:"commitSha,omitempty"`
-	Dockerfile       string `json:"dockerfile,omitempty"`
-	BuildContext     string `json:"buildContext,omitempty"`
-	ImageRepository  string `json:"imageRepository,omitempty"`
-	ImageTag         string `json:"imageTag,omitempty"`
-	ImageDigest      string `json:"imageDigest,omitempty"`
+	RunID           string `json:"runId"`
+	ComponentID     string `json:"componentId,omitempty"`
+	RepoURL         string `json:"repoUrl,omitempty"`
+	GitRef          string `json:"gitRef,omitempty"`
+	CommitSHA       string `json:"commitSha,omitempty"`
+	Dockerfile      string `json:"dockerfile,omitempty"`
+	BuildContext    string `json:"buildContext,omitempty"`
+	ImageRepository string `json:"imageRepository,omitempty"`
+	ImageTag        string `json:"imageTag,omitempty"`
+	ImageDigest     string `json:"imageDigest,omitempty"`
 }
 
 // RAGBuildRun stores RAG build extension fields.

@@ -37,8 +37,8 @@ func (f *fakeReadOnlyKeyRepo) FindByPrefix(_ context.Context, prefix string) (*m
 	}, nil
 }
 func (f *fakeReadOnlyKeyRepo) List(context.Context) ([]models.APIKey, error) { return nil, nil }
-func (f *fakeReadOnlyKeyRepo) Revoke(context.Context, string) error         { return nil }
-func (f *fakeReadOnlyKeyRepo) TouchLastUsed(context.Context, string) error  { return nil }
+func (f *fakeReadOnlyKeyRepo) Revoke(context.Context, string) error          { return nil }
+func (f *fakeReadOnlyKeyRepo) TouchLastUsed(context.Context, string) error   { return nil }
 
 // CYB-3296 regression guard: every mutating asset route must reject a read-only
 // principal with 403. Before the fix, POST /assets/:id/actions, PATCH/DELETE

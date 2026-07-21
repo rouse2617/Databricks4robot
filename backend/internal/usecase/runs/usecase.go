@@ -21,14 +21,14 @@ import (
 var ErrRunNotFound = errors.New("run not found")
 
 type Usecase struct {
-	runRepo            repository.DatabrewRunRepository
-	componentBuildRepo repository.ComponentBuildRunRepository
-	ragBuildRepo       repository.RAGBuildRunRepository
+	runRepo              repository.DatabrewRunRepository
+	componentBuildRepo   repository.ComponentBuildRunRepository
+	ragBuildRepo         repository.RAGBuildRunRepository
 	componentReleaseRepo repository.ComponentReleaseRepository
-	pipelineUC         *pipelineUC.Usecase
-	wfClient           argo.WorkflowClient
-	podClient          k8s.PodClient
-	defaultNamespace   string
+	pipelineUC           *pipelineUC.Usecase
+	wfClient             argo.WorkflowClient
+	podClient            k8s.PodClient
+	defaultNamespace     string
 }
 
 func New(

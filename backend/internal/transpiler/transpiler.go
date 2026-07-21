@@ -36,12 +36,12 @@ type Volume struct {
 
 // Options controls how the pipeline is transpiled.
 type Options struct {
-	Name                  string
-	Namespace             string
-	ServiceAccount        string
-	ImagePullSecrets      []string
-	TemplateNodeSelector  map[string]string
-	TemplateTolerations   []corev1.Toleration
+	Name                 string
+	Namespace            string
+	ServiceAccount       string
+	ImagePullSecrets     []string
+	TemplateNodeSelector map[string]string
+	TemplateTolerations  []corev1.Toleration
 	// GpuStepNodeSelector is merged onto template.NodeSelector only for steps
 	// whose resources request nvidia.com/gpu (see applySchedulingHints — same
 	// requiresGPU gate as the built-in GKE accelerator hint). This lets a pool

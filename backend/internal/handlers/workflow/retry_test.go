@@ -8,15 +8,15 @@ import (
 
 func TestWorkflowCanRetry(t *testing.T) {
 	failedNode := wfv1.NodeStatus{
-		ID:   "task-1",
-		Name: "task-1",
-		Type: wfv1.NodeTypePod,
+		ID:    "task-1",
+		Name:  "task-1",
+		Type:  wfv1.NodeTypePod,
 		Phase: wfv1.NodeFailed,
 	}
 	pendingNode := wfv1.NodeStatus{
-		ID:   "task-2",
-		Name: "task-2",
-		Type: wfv1.NodeTypePod,
+		ID:    "task-2",
+		Name:  "task-2",
+		Type:  wfv1.NodeTypePod,
 		Phase: wfv1.NodePending,
 	}
 

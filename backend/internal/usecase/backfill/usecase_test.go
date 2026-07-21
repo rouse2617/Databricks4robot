@@ -684,10 +684,13 @@ type trackingBackfillRepo struct {
 	runsWithNodeRows   int
 }
 
+func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
 
-func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
-
-func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) {
+	return 0, nil
+}
 
 func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJob) error {
 	r.mu.Lock()

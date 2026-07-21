@@ -183,6 +183,7 @@ func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, 
 	}
 	return out, nil
 }
+
 // summaries is a private test helper (formerly the FindAllSummaries interface
 // method, dropped as dead production code) — it returns lightweight copies the
 // mock's ListSummaries then filters.
@@ -597,7 +598,6 @@ func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, strin
 func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) (string, error) {
 	return "", nil
 }
-
 
 func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
 	m.syncJobCalls++
