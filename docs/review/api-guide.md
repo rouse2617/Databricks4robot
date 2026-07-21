@@ -1705,6 +1705,16 @@ curl -X POST "$BASE/api/v1/mcap-files" \
 
 响应 `201`：返回完整 `McapFile` JSON。
 
+**自动打 tag(CYB-3797)**:后端在同一个事务里从 `metadata` 里 extract 3 个字段自动生成 tag 行:
+
+| Metadata 路径 | Tag key | 说明 |
+|---|---|---|
+| `metadata.vibecap_tasks[]`(数组 或 JSON-encoded 字符串)| `task` | 数组每个值一行 tag |
+| `metadata.source_platform` | `source` | 单条 |
+| `metadata.location.address` | `city` | 反向 comma-split 找 `X市`,过滤 `超市/大厦/商店/商场/广场/医院` POI 名 |
+
+所有自动 tag 用 `source_type="system"` + `source_name="mcap_ingest"`,方便审计和未来变更 rule 后重新提取。 未知 metadata key(如 `weather` / `collector_height`)不会成为 tag,`metadata` JSONB 原样保留。 值 shape 异常(如 `vibecap_tasks` 不是数组也不是 JSON string)那条 tag skip,mcap POST 仍然 201。
+
 ### 5.2 列出 MCAP 文件
 
 ```bash

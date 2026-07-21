@@ -19,12 +19,13 @@ import (
 )
 
 type Handler struct {
-	repo      repository.McapFileRepository
-	tx        repository.TxRunner
-	eventRepo repository.AssetEventRepository
-	assetRepo repository.AssetRepository // CYB-1217: 1:1 raw_mcap asset creation
-	bytesSrc  BytesSource
-	nowFn     func() time.Time
+	repo         repository.McapFileRepository
+	tx           repository.TxRunner
+	eventRepo    repository.AssetEventRepository
+	assetRepo    repository.AssetRepository    // CYB-1217: 1:1 raw_mcap asset creation
+	assetTagRepo repository.AssetTagRepository // CYB-3797: auto-extract metadata → tag on ingest
+	bytesSrc     BytesSource
+	nowFn        func() time.Time
 }
 
 func New(repo repository.McapFileRepository) *Handler {
@@ -49,6 +50,16 @@ func (h *Handler) SetEventRepo(eventRepo repository.AssetEventRepository) {
 // placeholder raw_mcap asset in the same transaction (CYB-1217: 1:1).
 func (h *Handler) SetAssetRepo(assetRepo repository.AssetRepository) {
 	h.assetRepo = assetRepo
+}
+
+// SetAssetTagRepo wires the asset-tag repository so CreateFile can extract
+// known metadata fields (vibecap_tasks / source_platform / location.address)
+// into `task` / `source` / `city` tag rows in the same transaction as the
+// mcap and raw_mcap-asset writes (CYB-3797). Unset ⇒ the extract step is
+// silently skipped, preserving old behavior for callers that haven't wired
+// the repo.
+func (h *Handler) SetAssetTagRepo(assetTagRepo repository.AssetTagRepository) {
+	h.assetTagRepo = assetTagRepo
 }
 
 // SetBytesSource wires a byte source for GET /mcap-files/:id/bytes.
@@ -113,6 +124,20 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 			}
 			if err := h.assetRepo.InsertNew(txCtx, placeholder); err != nil {
 				return err
+			}
+			// CYB-3797: auto-extract known metadata fields (vibecap_tasks /
+			// source_platform / location.address) into task / source / city
+			// tags so newly uploaded mcap arrive already tagged, eliminating
+			// the "backfill chases moving target" pattern of CYB-3714.
+			// Unknown metadata keys are ignored; shape mismatches skip the
+			// individual tag with a WARN log but do not abort the mcap
+			// create. Only runs when assetTagRepo is wired.
+			if h.assetTagRepo != nil {
+				for _, tag := range extractMetadataTags(placeholder.AssetID, f.TenantID, f.ProjectID, f.Metadata) {
+					if err := h.assetTagRepo.Upsert(txCtx, tag); err != nil {
+						return err
+					}
+				}
 			}
 			// CYB-3297 Phase D: emit an asset-scoped event so the ES subscriber
 			// indexes the placeholder raw_mcap immediately. The mcap_file_created

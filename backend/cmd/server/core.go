@@ -85,6 +85,9 @@ func setupCore(inf *infra) *coreHandlers {
 	mcapHandler.SetTxRunner(pg)
 	mcapHandler.SetEventRepo(assetEventRepo)
 	mcapHandler.SetAssetRepo(assetRepo)
+	// CYB-3797: enable auto-extract of vibecap_tasks / source_platform /
+	// location.address into task / source / city tags on every mcap POST.
+	mcapHandler.SetAssetTagRepo(assetTagRepo)
 	if inf.mcapBytesSource != nil {
 		mcapHandler.SetBytesSource(inf.mcapBytesSource)
 	}
