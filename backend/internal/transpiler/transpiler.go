@@ -42,6 +42,14 @@ type Options struct {
 	ImagePullSecrets      []string
 	TemplateNodeSelector  map[string]string
 	TemplateTolerations   []corev1.Toleration
+	// GpuStepNodeSelector is merged onto template.NodeSelector only for steps
+	// whose resources request nvidia.com/gpu (see applySchedulingHints — same
+	// requiresGPU gate as the built-in GKE accelerator hint). This lets a pool
+	// pin only its GPU steps to a specific node pool (e.g. a dedicated dev GPU
+	// pool) without disturbing sibling CPU steps in the same pipeline, which
+	// would otherwise inherit a GPU-only pool label from the target's
+	// TemplateNodeSelector and get stuck by the pool's GPU taint. Nil = no-op.
+	GpuStepNodeSelector   map[string]string
 	TTLSecondsAfter       int32
 	RetryStrategy         *RetryStrategy
 	ActiveDeadlineSeconds int64
@@ -541,7 +549,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 
 	tmpl.Container.Resources = buildK8sResources(node.Component.Resources)
 	applyTemplateSchedulingDefaults(&tmpl, opts)
-	applySchedulingHints(&tmpl, node.Component.Resources)
+	applySchedulingHints(&tmpl, node.Component.Resources, opts)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -782,7 +790,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 
 	tmpl.Script.Resources = buildK8sResources(node.Component.Resources)
 	applyTemplateSchedulingDefaults(&tmpl, opts)
-	applySchedulingHints(&tmpl, node.Component.Resources)
+	applySchedulingHints(&tmpl, node.Component.Resources, opts)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -910,7 +918,7 @@ func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{Limits: limits, Requests: requests}
 }
 
-func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
+func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements, opts *Options) {
 	if tmpl == nil || !requiresGPU(res) {
 		return
 	}
@@ -919,6 +927,18 @@ func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
 	}
 	if isL4ComputeTier(res.ComputeTier) {
 		tmpl.NodeSelector["cloud.google.com/gke-accelerator"] = "nvidia-l4"
+	}
+	// Merge target-level GPU-only nodeSelector (e.g. pin to a specific GPU node
+	// pool). Same GPU-only gate as the L4 hint above, so CPU siblings in the
+	// same pipeline are untouched — that's the whole reason this field is
+	// separate from Options.TemplateNodeSelector.
+	if opts != nil {
+		for key, value := range opts.GpuStepNodeSelector {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+				continue
+			}
+			tmpl.NodeSelector[key] = value
+		}
 	}
 	appendTemplateToleration(tmpl, corev1.Toleration{
 		Key:      "nvidia.com/gpu",

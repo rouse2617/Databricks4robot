@@ -4139,6 +4139,7 @@ func (uc *Usecase) Deploy(
 		ServiceAccount:       target.ServiceAccount,
 		TemplateNodeSelector: executionTargetTemplateNodeSelector(target),
 		TemplateTolerations:  executionTargetTemplateTolerations(target),
+		GpuStepNodeSelector:  executionTargetGpuStepNodeSelector(target),
 		TTLSecondsAfter:      uc.argoWorkflowTTLSecondsAfter(),
 		WorkflowParams:       wfParams,
 		GlobalEnv:            globalEnv,

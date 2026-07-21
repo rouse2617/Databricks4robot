@@ -203,6 +203,151 @@ func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value strin
 	t.Fatalf("missing toleration %s=%s in %#v", key, value, tmpl.Tolerations)
 }
 
+// GpuStepNodeSelector must merge onto a GPU step's NodeSelector alongside the
+// auto-added GKE accelerator hint, giving the pool the ability to pin its GPU
+// workload to a specific node pool.
+func TestTranspileAppliesGpuStepNodeSelectorToGpuStep(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pin",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:  "gpu",
+				Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Resources: &ResourceRequirements{
+					CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "gpu-pin",
+		GpuStepNodeSelector: map[string]string{
+			"cloud.google.com/gke-nodepool": "g2-l4-dev-pool",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu" {
+			continue
+		}
+		if got := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; got != "g2-l4-dev-pool" {
+			t.Fatalf("gke-nodepool selector = %q, want g2-l4-dev-pool", got)
+		}
+		// The GKE accelerator hint must still be there (GPU-only auto path).
+		if got := tmpl.NodeSelector["cloud.google.com/gke-accelerator"]; got != "nvidia-l4" {
+			t.Fatalf("gke-accelerator selector = %q, want nvidia-l4", got)
+		}
+		return
+	}
+	t.Fatal("step-gpu template not found")
+}
+
+// GpuStepNodeSelector must NOT leak onto CPU steps — that's the whole point of
+// the separate field. If it did, a mixed GPU+CPU pipeline's CPU pods would
+// inherit a GPU-only pool label and get rejected by that pool's GPU taint.
+func TestTranspileDoesNotApplyGpuStepNodeSelectorToCpuStep(t *testing.T) {
+	p := &Pipeline{
+		Name: "mixed",
+		Nodes: []Node{
+			{
+				ID: "cpu-step",
+				Component: Component{
+					Name:  "cpu",
+					Image: "busybox:latest",
+					Resources: &ResourceRequirements{
+						CPU: "2000m", Memory: "4Gi",
+					},
+				},
+			},
+			{
+				ID: "gpu-step",
+				Component: Component{
+					Name:  "gpu",
+					Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+					Resources: &ResourceRequirements{
+						CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+					},
+				},
+			},
+		},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "mixed",
+		GpuStepNodeSelector: map[string]string{
+			"cloud.google.com/gke-nodepool": "g2-l4-dev-pool",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCPU, sawGPU bool
+	for _, tmpl := range wf.Spec.Templates {
+		switch tmpl.Name {
+		case "step-cpu":
+			sawCPU = true
+			if _, ok := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; ok {
+				t.Fatalf("CPU step must not inherit GpuStepNodeSelector; got %#v", tmpl.NodeSelector)
+			}
+		case "step-gpu":
+			sawGPU = true
+			if got := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; got != "g2-l4-dev-pool" {
+				t.Fatalf("GPU step gke-nodepool selector = %q, want g2-l4-dev-pool", got)
+			}
+		}
+	}
+	if !sawCPU || !sawGPU {
+		t.Fatalf("expected both step-cpu and step-gpu templates; sawCPU=%v sawGPU=%v", sawCPU, sawGPU)
+	}
+}
+
+// A GpuStepNodeSelector entry with an empty key or value must be silently
+// dropped (defensive; mirrors the TemplateNodeSelector guard).
+func TestTranspileGpuStepNodeSelectorSkipsEmptyEntries(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-empty",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:  "gpu",
+				Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Resources: &ResourceRequirements{
+					CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "gpu-empty",
+		GpuStepNodeSelector: map[string]string{
+			"":                              "ignored",
+			"cloud.google.com/gke-nodepool": "",
+			"real":                          "value",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu" {
+			continue
+		}
+		if got := tmpl.NodeSelector["real"]; got != "value" {
+			t.Fatalf("real selector = %q, want value", got)
+		}
+		if _, ok := tmpl.NodeSelector[""]; ok {
+			t.Fatalf("empty key must not be applied; got %#v", tmpl.NodeSelector)
+		}
+		if got, ok := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; ok && got == "" {
+			t.Fatalf("empty value must not be applied; got %#v", tmpl.NodeSelector)
+		}
+		return
+	}
+	t.Fatal("step-gpu template not found")
+}
+
 func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
 	p := &Pipeline{
 		Name: "target-scheduling",

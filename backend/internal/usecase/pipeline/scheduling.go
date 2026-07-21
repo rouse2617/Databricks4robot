@@ -30,6 +30,32 @@ func executionTargetTemplateNodeSelector(target *models.ExecutionTarget) map[str
 	return out
 }
 
+// executionTargetGpuStepNodeSelector reads a GPU-step-only nodeSelector from
+// the target's scheduling config (resource_defaults key "gpuStepNodeSelector"
+// or "gpuNodeSelector"). The transpiler merges these labels onto GPU steps
+// only (guarded by requiresGPU), so a pool can pin its GPU workload to a
+// dedicated GPU node pool without disturbing sibling CPU steps in the same
+// pipeline. Empty = no-op = old behavior.
+func executionTargetGpuStepNodeSelector(target *models.ExecutionTarget) map[string]string {
+	out := map[string]string{}
+	for key, value := range stringMapValue(jsonMapEnv("PIPELINE_GPU_STEP_NODE_SELECTOR_JSON")) {
+		out[key] = value
+	}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		raw, ok := mapValue(source, "gpuStepNodeSelector", "gpuNodeSelector")
+		if !ok {
+			continue
+		}
+		for key, value := range stringMapValue(raw) {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func executionTargetTemplateTolerations(target *models.ExecutionTarget) []corev1.Toleration {
 	var out []corev1.Toleration
 	for _, item := range mapSliceValue(jsonMapSliceEnv("PIPELINE_TEMPLATE_TOLERATIONS_JSON")) {
