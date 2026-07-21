@@ -60,6 +60,13 @@ tags:
   batch:
     description: "采集批次号"
     type: string
+  source:
+    description: "数据采集平台 (vibecap / grace / cybercap / ...)"
+    type: string
+  city:
+    description: "采集地点(城市)"
+    type: string
+    max_length: 32
   notes:
     description: "自由备注"
     type: string
