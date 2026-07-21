@@ -12,7 +12,12 @@ import ErrorBoundary from "../components/ErrorBoundary";
 
 import "../styles/pipeline.css";
 
-type PipelineTab = "design" | "pipelines" | "executions" | "components";
+type PipelineTab =
+	| "design"
+	| "pipelines"
+	| "executions"
+	| "schedules"
+	| "components";
 
 interface PipelinePageProps {
 	defaultTab?: PipelineTab;
@@ -54,6 +59,11 @@ const ComponentManager = lazy(async () => {
 	return { default: mod.ComponentManager };
 });
 
+const ScheduledTasksPanel = lazy(async () => {
+	const mod = await import("../components/pipeline/ScheduledTasksPanel");
+	return { default: mod.ScheduledTasksPanel };
+});
+
 function confirmLeaveWithUnsavedChanges(
 	modal: ReturnType<typeof App.useApp>["modal"],
 ): Promise<boolean> {
@@ -89,6 +99,7 @@ const CANONICAL_TABS: ReadonlySet<PipelineTab> = new Set([
 	"design",
 	"pipelines",
 	"executions",
+	"schedules",
 	"components",
 ]);
 
@@ -110,6 +121,7 @@ const TAB_DISPLAY_NAMES: Record<PipelineTab, string> = {
 	design: "设计",
 	pipelines: "流水线",
 	executions: "执行记录",
+	schedules: "定时任务",
 	components: "组件",
 };
 
@@ -232,6 +244,17 @@ export default function PipelinePage({
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--executions">
 								<Suspense fallback={<TabFallback />}>
 									<ExecutionRecordsPanel active={activeTab === "executions"} />
+								</Suspense>
+							</div>
+						),
+					},
+					{
+						key: "schedules",
+						label: tabLabel("定时任务", "自助配置定时自动下发规则"),
+						children: (
+							<div className="pipeline-tab-content pipeline-tab-content--panel">
+								<Suspense fallback={<TabFallback />}>
+									<ScheduledTasksPanel />
 								</Suspense>
 							</div>
 						),
