@@ -8,8 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	psv1 "cloud.google.com/go/pubsub/apiv1"
+	"cloud.google.com/go/pubsub/apiv1/pubsubpb"
 )
+
+// pullTimeout bounds a single one-shot Pull RPC. The apiv1 Pull returns as soon
+// as any messages are available (or the server's short long-poll elapses), so
+// this is only a backstop — unlike the high-level Synchronous Receive, it does
+// not sit and wait to fill MaxMessages.
+const pullTimeout = 20 * time.Second
+
+// ackTimeout bounds the Ack/Nack RPCs, which run after batch creation on a
+// context detached from the pull deadline.
+const ackTimeout = 10 * time.Second
 
 type PullResult struct {
 	IDs  []string
@@ -17,81 +28,102 @@ type PullResult struct {
 	Nack func()
 }
 
+// PubSubClient wraps a single apiv1 SubscriberClient. The subscription resource
+// name carries the project, so one client serves every project.
 type PubSubClient struct {
-	mu      sync.Mutex
-	clients map[string]*pubsub.Client
+	mu     sync.Mutex
+	client *psv1.SubscriberClient
 }
 
 func NewPubSubClient() *PubSubClient {
-	return &PubSubClient{clients: make(map[string]*pubsub.Client)}
+	return &PubSubClient{}
 }
 
-func (pc *PubSubClient) getClient(ctx context.Context, projectID string) (*pubsub.Client, error) {
+func (pc *PubSubClient) getClient(ctx context.Context) (*psv1.SubscriberClient, error) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	if c, ok := pc.clients[projectID]; ok {
-		return c, nil
+	if pc.client != nil {
+		return pc.client, nil
 	}
-	c, err := pubsub.NewClient(ctx, projectID)
+	c, err := psv1.NewSubscriberClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pubsub client for %s: %w", projectID, err)
+		return nil, fmt.Errorf("pubsub subscriber client: %w", err)
 	}
-	pc.clients[projectID] = c
+	pc.client = c
 	return c, nil
 }
 
+// Pull does a single synchronous pull of up to maxMessages, returning
+// immediately once the server responds. Malformed messages are Acked here so
+// they don't redeliver; valid ones are returned with an Ack/Nack that the
+// caller invokes after batch creation succeeds/fails.
 func (pc *PubSubClient) Pull(ctx context.Context, projectID, subscriptionID string, maxMessages int) (*PullResult, error) {
-	client, err := pc.getClient(ctx, projectID)
+	client, err := pc.getClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	sub := client.Subscription(subscriptionID)
-	sub.ReceiveSettings.MaxOutstandingMessages = maxMessages
-	sub.ReceiveSettings.Synchronous = true
+	sub := fmt.Sprintf("projects/%s/subscriptions/%s", projectID, subscriptionID)
 
-	pullCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+
+	resp, err := client.Pull(pullCtx, &pubsubpb.PullRequest{
+		Subscription: sub,
+		MaxMessages:  int32(maxMessages),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pubsub pull: %w", err)
+	}
 
 	var (
-		mu   sync.Mutex
-		ids  []string
-		msgs []*pubsub.Message
+		ids       []string
+		ackIDs    []string
+		badAckIDs []string
 	)
-
-	err = sub.Receive(pullCtx, func(_ context.Context, msg *pubsub.Message) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		id, parseErr := extractAssetID(msg.Data)
+	for _, rm := range resp.GetReceivedMessages() {
+		id, parseErr := extractAssetID(rm.GetMessage().GetData())
 		if parseErr != nil {
-			slog.Warn("subtask: bad message, acking to skip", "err", parseErr, "msgID", msg.ID)
-			msg.Ack()
-			return
+			slog.Warn("subtask: bad message, acking to skip", "err", parseErr, "msgID", rm.GetMessage().GetMessageId())
+			badAckIDs = append(badAckIDs, rm.GetAckId())
+			continue
 		}
-
 		ids = append(ids, id)
-		msgs = append(msgs, msg)
+		ackIDs = append(ackIDs, rm.GetAckId())
+	}
 
-		if len(ids) >= maxMessages {
-			cancel()
+	// Ack malformed messages immediately (best-effort) so they don't redeliver.
+	if len(badAckIDs) > 0 {
+		if err := client.Acknowledge(ctx, &pubsubpb.AcknowledgeRequest{Subscription: sub, AckIds: badAckIDs}); err != nil {
+			slog.Warn("subtask: ack of bad messages failed", "err", err, "count", len(badAckIDs))
 		}
-	})
-	cancel()
-
-	if err != nil && ctx.Err() == nil && len(ids) == 0 {
-		return nil, fmt.Errorf("pubsub receive: %w", err)
 	}
 
 	return &PullResult{
 		IDs: ids,
 		Ack: func() {
-			for _, m := range msgs {
-				m.Ack()
+			if len(ackIDs) == 0 {
+				return
+			}
+			ackCtx, c := context.WithTimeout(context.WithoutCancel(ctx), ackTimeout)
+			defer c()
+			if err := client.Acknowledge(ackCtx, &pubsubpb.AcknowledgeRequest{Subscription: sub, AckIds: ackIDs}); err != nil {
+				slog.Warn("subtask: ack failed", "err", err, "count", len(ackIDs))
 			}
 		},
 		Nack: func() {
-			for _, m := range msgs {
-				m.Nack()
+			if len(ackIDs) == 0 {
+				return
+			}
+			nackCtx, c := context.WithTimeout(context.WithoutCancel(ctx), ackTimeout)
+			defer c()
+			// Nack == set the ack deadline to 0, forcing immediate redelivery.
+			if err := client.ModifyAckDeadline(nackCtx, &pubsubpb.ModifyAckDeadlineRequest{
+				Subscription:       sub,
+				AckIds:             ackIDs,
+				AckDeadlineSeconds: 0,
+			}); err != nil {
+				slog.Warn("subtask: nack failed", "err", err, "count", len(ackIDs))
 			}
 		},
 	}, nil
@@ -100,10 +132,10 @@ func (pc *PubSubClient) Pull(ctx context.Context, projectID, subscriptionID stri
 func (pc *PubSubClient) Close() {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	for _, c := range pc.clients {
-		c.Close()
+	if pc.client != nil {
+		_ = pc.client.Close()
+		pc.client = nil
 	}
-	pc.clients = make(map[string]*pubsub.Client)
 }
 
 type assetMessage struct {
