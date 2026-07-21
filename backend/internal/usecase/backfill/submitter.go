@@ -317,19 +317,32 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 	// Idempotency guard: the run may already be live in Argo (uid persisted)
 	// while the item is still pending — e.g. a crash between the run commit
 	// and the item update. Mark submitted, done.
+	//
+	// staleRun flags the other case: the item points at a run that is NOT live
+	// in flight — a never-launched placeholder (no uid/startedAt) or a prior
+	// terminal attempt. Reusing it would re-Deploy with the SAME deterministic
+	// workflow name, which Argo rejects as AlreadyExists; the handler then
+	// marks the item "submitted" without ever launching a workflow, so the item
+	// strands (the "stopped, resumed, stuck again" report). Mint a fresh attempt
+	// instead — the same mechanism manual Rerun uses (ForceNewAttempt).
+	staleRun := false
 	if runID != "" {
-		if existing, getErr := uc.deployer.GetRun(ctx, runID); getErr == nil && runAlreadySubmitted(existing) {
-			wf := strings.TrimSpace(existing.WorkflowName)
-			if wf == "" {
-				wf = workflowName
+		if existing, getErr := uc.deployer.GetRun(ctx, runID); getErr == nil && existing != nil {
+			if runAlreadySubmitted(existing) {
+				wf := strings.TrimSpace(existing.WorkflowName)
+				if wf == "" {
+					wf = workflowName
+				}
+				return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
 			}
-			return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
+			staleRun = true
 		}
 	}
 
-	// Ensure the run ledger row exists (deterministic, job-scoped workflow
-	// name is minted here).
-	if runID == "" {
+	// Ensure a deployable run ledger row exists. First-time submits mint one
+	// normally (deterministic, job-scoped workflow name). A stale placeholder
+	// forces a brand-new attempt so Deploy gets a fresh, un-poisoned name.
+	if runID == "" || staleRun {
 		var initErr error
 		runID, workflowName, initErr = uc.deployer.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      job.TemplateID,
@@ -338,6 +351,7 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			BatchJobID:      job.ID,
 			AssetID:         item.AssetID,
 			Status:          "Pending",
+			ForceNewAttempt: staleRun,
 		})
 		if initErr != nil {
 			return outcomeTransient, initErr // infra: retry next cycle

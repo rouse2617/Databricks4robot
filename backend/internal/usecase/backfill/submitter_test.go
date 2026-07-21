@@ -90,6 +90,7 @@ type fakeDeployer struct {
 
 	upserts        []string
 	upsertVersions []int
+	upsertForceNew []bool
 	deploys        []string
 	deployVersions []int
 	commits        []string
@@ -118,6 +119,7 @@ func (d *fakeDeployer) UpsertBatchSubtaskRun(_ context.Context, in pipelineUC.Ba
 	defer d.mu.Unlock()
 	d.upserts = append(d.upserts, in.AssetID)
 	d.upsertVersions = append(d.upsertVersions, in.TemplateVersion)
+	d.upsertForceNew = append(d.upsertForceNew, in.ForceNewAttempt)
 	return "run-" + in.AssetID, "wf-batch-" + in.AssetID, nil
 }
 
@@ -414,6 +416,36 @@ func TestSubmitter_AlreadyLiveRunSkipsDeploy(t *testing.T) {
 	}
 	if len(d.deploys) != 0 {
 		t.Fatalf("deploys = %v, want none (run already live)", d.deploys)
+	}
+}
+
+// A stale placeholder run (no uid / never launched — e.g. left behind by a
+// pause→resume) must NOT be reused: reusing its deterministic workflow name
+// makes Deploy hit AlreadyExists, and the handler then marks the item
+// "submitted" without ever launching a workflow, so it strands (the "stopped,
+// clicked resume, stuck again" report). The submitter must mint a FRESH attempt
+// (ForceNewAttempt, the same mechanism manual Rerun uses) and actually deploy.
+func TestSubmitter_StalePlaceholderRunForcesFreshAttempt(t *testing.T) {
+	ctx := context.Background()
+	runID := "run-stale"
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending", PipelineRunID: &runID, WorkflowName: strPtr("wf-batch-asset-1")},
+	})
+	// Placeholder: the run row exists but never launched — no uid, no StartedAt,
+	// non-terminal. runAlreadySubmitted() is false for it.
+	d.runsByID[runID] = &models.PipelineRun{ID: runID, WorkflowName: "wf-batch-asset-1", Status: "Pending"}
+
+	uc.runSubmitterCycle(ctx)
+
+	if len(d.upsertForceNew) != 1 || !d.upsertForceNew[0] {
+		t.Fatalf("upsertForceNew = %v, want [true] (stale placeholder must force a fresh attempt)", d.upsertForceNew)
+	}
+	if len(d.deploys) != 1 || d.deploys[0] != "asset-1" {
+		t.Fatalf("deploys = %v, want [asset-1] (must actually launch, not strand)", d.deploys)
+	}
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted", got)
 	}
 }
 
