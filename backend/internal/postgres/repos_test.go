@@ -427,7 +427,8 @@ func TestAssetRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "a1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 39 columns (including algo_inputs_uris/annot_inputs_uris JSONB)
+	// Get now scans 46 columns after CYB-3715 (39 + 7 mcap-file mirror
+	// columns inserted before created_at).
 	db.queryRow = &fakeRow{values: []any{
 		"a1", "m1", int64(10), int64(20), (*string)(nil),
 		"ready", "segment", int64(1200),
@@ -439,6 +440,11 @@ func TestAssetRepo(t *testing.T) {
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
+		// CYB-3715: camera_model, device_id, collector_id, scene_id,
+		// data_source, collection_method, source_platform — all NULL
+		// for this fixture (no producer-identity path exercised here).
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -1105,6 +1111,12 @@ func buildAssetRow(
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil), // logical_asset_id, revision, is_current
+		// CYB-3715: 7 mcap-file mirror columns — all NULL for these
+		// generic asset-shape fixture rows. Individual tests can copy
+		// the row and overwrite these positions when exercising the
+		// flatten path.
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),

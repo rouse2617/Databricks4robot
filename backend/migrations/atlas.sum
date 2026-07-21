@@ -1,4 +1,4 @@
-h1:eOmPmkPMi0EOi3/15dHRkCVHHJNyGCDx1589kKF9v5c=
+h1:iC+BMDESAX7Kz7gRSD9RHHnNankxAM4cRq7L4y5UOU0=
 20260708104125_baseline_from_dev.sql h1:4Au3WycWryjm8C+s2O0DaYIj6iRQNFnoC70uJ4bL2fg=
 20260708223517_add_databrew_runs_family.sql h1:I4rHssD4Du7x5eaJAYZG0hcHioeE7CltyS/dv3eE03Q=
 20260708223937_drop_dead_pipeline_tables.sql h1:PPRe63ihj3bok43hQycuSEoQtj/0QP1Szauhxz+Sv2U=
@@ -20,3 +20,4 @@ h1:eOmPmkPMi0EOi3/15dHRkCVHHJNyGCDx1589kKF9v5c=
 20260721150926_scheduled_tasks.sql h1:PJ8G6aTo8PUWy0eNwTAfyjR8pvGnQfH8yxtznfyf3Ls=
 20260721185015_subscription_tasks.sql h1:1EbRDpBvUbyZ/PR79Bz0nGnY0+k7sY7qfFw7/w8FnuE=
 20260721230213_subscription_task_multi_pipeline.sql h1:O7QTXlWx+59+ExjeDsU5TZi0g1tEar7AshCtTtgzESQ=
+20260722100000_flatten_mcap_columns_to_assets.sql h1:p2YEzbTii9QMkg0wHvlSZ2KbkdMJ0WWqYT+l5t4IqEI=

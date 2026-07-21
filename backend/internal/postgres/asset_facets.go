@@ -23,10 +23,17 @@ type AssetFacetBucket struct {
 // column metadata so an unrecognized field is rejected upstream (before it
 // reaches Postgres) and never becomes an injection vector.
 var facetSelectExpr = map[string]string{
-	"asset_type":      `asset_type`,
-	"lifecycle_state": `lifecycle_state`,
-	"owner":           `owner`,
-	"env":             `metadata->>'env'`,
+	"asset_type":        `asset_type`,
+	"lifecycle_state":   `lifecycle_state`,
+	"owner":             `owner`,
+	"env":               `metadata->>'env'`,
+	// CYB-3715 mirror columns — direct column names, no JSONB path. Uuid
+	// fields are omitted (see planner.PGSupportedFacetFields for the
+	// filter-only rationale).
+	"camera_model":      `camera_model`,
+	"data_source":       `data_source`,
+	"collection_method": `collection_method`,
+	"source_platform":   `source_platform`,
 }
 
 // FacetCounts returns terms-aggregation buckets on the given field, applied

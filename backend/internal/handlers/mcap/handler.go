@@ -103,6 +103,17 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 		// extension). The asset will be updated later via POST /api/v1/assets.
 		if h.assetRepo != nil {
 			now := h.nowFn()
+			// CYB-3715: mirror the 7 mcap-file producer-identity fields
+			// onto the raw_mcap asset so /queries/run can filter/facet
+			// them without joining to mcap_files or asset_tags. source_platform
+			// is lifted from metadata.source_platform (CYB-3714 keeps it on
+			// tags.source too — both paths coexist).
+			var srcPlatform string
+			if f.Metadata != nil {
+				if v, ok := f.Metadata["source_platform"].(string); ok {
+					srcPlatform = v
+				}
+			}
 			placeholder := &models.Asset{
 				AssetID:          f.McapFileID,
 				McapFileID:       f.McapFileID,
@@ -118,6 +129,13 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 				ProjectID:        f.ProjectID,
 				Metadata:         map[string]interface{}{},
 				Files:            map[string]string{},
+				CameraModel:      f.CameraModel,
+				DeviceID:         f.DeviceID,
+				CollectorID:      f.CollectorID,
+				SceneID:          f.SceneID,
+				DataSource:       f.DataSource,
+				CollectionMethod: f.CollectionMethod,
+				SourcePlatform:   srcPlatform,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 				Version:          1,

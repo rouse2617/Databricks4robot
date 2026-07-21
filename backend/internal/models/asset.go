@@ -106,6 +106,18 @@ type Asset struct {
 	TenantID            string                 `json:"tenant_id,omitempty"`
 	ProjectID           string                 `json:"project_id,omitempty"`
 
+	// CYB-3715: flatten of mcap-file top-level fields so /queries/run can
+	// filter/facet by producer identity without JSONB path or asset_tags
+	// join. Populated on ingest via handlers/mcap/handler.go createFileTx
+	// and backfilled from mcap_files at migration time.
+	CameraModel      string `json:"camera_model,omitempty"`
+	DeviceID         string `json:"device_id,omitempty"`
+	CollectorID      string `json:"collector_id,omitempty"`
+	SceneID          string `json:"scene_id,omitempty"`
+	DataSource       string `json:"data_source,omitempty"`
+	CollectionMethod string `json:"collection_method,omitempty"`
+	SourcePlatform   string `json:"source_platform,omitempty"`
+
 	// Multi-version identity (CYB-1013). Legacy rows may have empty/zero values.
 	LogicalAssetID string `json:"logical_asset_id,omitempty"`
 	Revision       int64  `json:"revision,omitempty"`

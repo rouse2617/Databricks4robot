@@ -258,6 +258,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
+  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
@@ -308,6 +309,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
+  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1`
@@ -317,29 +319,39 @@ WHERE asset_id = $1`
 // scanOneAsset scans a single asset row from a QueryRow result.
 func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.Asset, error) {
 	var (
-		a               models.Asset
-		lifecycleState  string
-		mcapFileID      *string
-		segLoc          *string
-		parentID        *string
-		rootID          *string
-		tenantID        *string
-		projectID       *string
-		segIndex        *int
-		parentStartOff  *int64
-		parentEndOff    *int64
-		splitMethod     *string
-		splitAlgoName   *string
-		splitAlgoVer    *string
-		splitRunID      *string
-		splitReason     *string
-		metadataBytes   []byte
-		filesBytes      []byte
-		algoInputsURIs  []byte
-		annotInputsURIs []byte
-		logicalID       *string
-		revision        *int64
-		isCurrent       *bool
+		a                models.Asset
+		lifecycleState   string
+		mcapFileID       *string
+		segLoc           *string
+		parentID         *string
+		rootID           *string
+		tenantID         *string
+		projectID        *string
+		segIndex         *int
+		parentStartOff   *int64
+		parentEndOff     *int64
+		splitMethod      *string
+		splitAlgoName    *string
+		splitAlgoVer     *string
+		splitRunID       *string
+		splitReason      *string
+		metadataBytes    []byte
+		filesBytes       []byte
+		algoInputsURIs   []byte
+		annotInputsURIs  []byte
+		logicalID        *string
+		revision         *int64
+		isCurrent        *bool
+		// CYB-3715: 7 mcap-file mirror columns. All nullable; scanned as
+		// *string so callers see empty string when NULL (matches the model
+		// convention where absence == "").
+		cameraModel      *string
+		deviceID         *string
+		collectorID      *string
+		sceneID          *string
+		dataSource       *string
+		collectionMethod *string
+		sourcePlatform   *string
 	)
 	err := row.Scan(
 		&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -352,6 +364,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		&tenantID, &projectID,
 		&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 		&logicalID, &revision, &isCurrent,
+		&cameraModel, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -415,6 +428,29 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	if len(annotInputsURIs) > 0 {
 		_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
 	}
+	// CYB-3715: hydrate 7 mirror columns onto the asset. Nil pointer ⇒
+	// column was NULL in DB ⇒ leave as empty string.
+	if cameraModel != nil {
+		a.CameraModel = *cameraModel
+	}
+	if deviceID != nil {
+		a.DeviceID = *deviceID
+	}
+	if collectorID != nil {
+		a.CollectorID = *collectorID
+	}
+	if sceneID != nil {
+		a.SceneID = *sceneID
+	}
+	if dataSource != nil {
+		a.DataSource = *dataSource
+	}
+	if collectionMethod != nil {
+		a.CollectionMethod = *collectionMethod
+	}
+	if sourcePlatform != nil {
+		a.SourcePlatform = *sourcePlatform
+	}
 	finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 	a.SyncLegacyFields()
 	return &a, nil
@@ -432,6 +468,9 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	prepAssetForWrite(a)
 
+	// CYB-3715: 7 mirror columns added — camera_model / device_id /
+	// collector_id / scene_id / data_source / collection_method /
+	// source_platform. Uuid fields go through bindAssetUUID (empty ⇒ NULL).
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
@@ -441,6 +480,7 @@ INSERT INTO assets(
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
   tenant_id, project_id,
   is_deleted,
+  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -450,7 +490,8 @@ INSERT INTO assets(
   $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
   $25,$26,
   FALSE,
-  $27,$28,$29
+  $27,$28,$29,$30,$31,$32,$33,
+  $34,$35,$36
 )
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
@@ -478,6 +519,13 @@ ON CONFLICT (asset_id) DO UPDATE SET
   annot_inputs_uris=EXCLUDED.annot_inputs_uris,
   tenant_id=EXCLUDED.tenant_id,
   project_id=EXCLUDED.project_id,
+  camera_model=EXCLUDED.camera_model,
+  device_id=EXCLUDED.device_id,
+  collector_id=EXCLUDED.collector_id,
+  scene_id=EXCLUDED.scene_id,
+  data_source=EXCLUDED.data_source,
+  collection_method=EXCLUDED.collection_method,
+  source_platform=EXCLUDED.source_platform,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version
 WHERE assets.version = EXCLUDED.version - 1`
@@ -492,6 +540,8 @@ WHERE assets.version = EXCLUDED.version - 1`
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
+		nullableText(a.CameraModel), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
@@ -507,6 +557,11 @@ WHERE assets.version = EXCLUDED.version - 1`
 func (r *AssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
 	prepAssetForWrite(a)
 
+	// CYB-3715: added 7 mcap-file mirror columns (camera_model / device_id /
+	// collector_id / scene_id / data_source / collection_method /
+	// source_platform). Uuid fields are stored as uuid; the Go side keeps
+	// them as strings so callers can pass "" for absent — bindAssetUUID
+	// converts "" → nil.
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
@@ -517,6 +572,7 @@ INSERT INTO assets(
   tenant_id, project_id,
   is_deleted,
   logical_asset_id, revision, is_current,
+  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -527,7 +583,8 @@ INSERT INTO assets(
   $25,$26,
   FALSE,
   $27,$28,$29,
-  $30,$31,$32
+  $30,$31,$32,$33,$34,$35,$36,
+  $37,$38,$39
 )`
 
 	metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON, parentAssetID, rootAssetID, tenantID, projectID := bindAssetJSONAndRefs(a)
@@ -542,6 +599,8 @@ INSERT INTO assets(
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
 		logicalID, revision, isCurrent,
+		nullableText(a.CameraModel), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
@@ -552,6 +611,28 @@ INSERT INTO assets(
 		return fmt.Errorf("postgres AssetRepo.InsertNew: %w", err)
 	}
 	return nil
+}
+
+// nullableText converts a Go string to a *string suitable for a nullable
+// text column: empty ⇒ nil (SQL NULL), non-empty ⇒ pointer to the value.
+// Used for the CYB-3715 mirror columns whose absence should be NULL, not
+// empty string (partial indexes filter on IS NOT NULL).
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// bindAssetUUID coerces a text uuid to a driver value for a uuid column.
+// Empty string → NULL. Non-empty non-uuid input errors out at INSERT time
+// (rare — the mcap ingest path already validates upstream). Kept alongside
+// nullableText for parallel structure.
+func bindAssetUUID(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
