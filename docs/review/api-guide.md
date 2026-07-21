@@ -3579,3 +3579,63 @@ Notes:
 - The Argo hook is injected at transpile time only when `ARGO_RUN_WEBHOOK_URL` is set (empty = poll-only fallback). The token is sent from a K8s Secret (`databrew-run-webhook-token`) via `valueFrom.secretKeyRef`, never embedded in the manifest.
 - The polling watcher remains a reconcile backstop (`PIPELINE_RUN_WATCHER_INTERVAL_SEC`, default 30s); dropped pokes are eventually reconciled.
 - Smoke: `scripts/smoke-argo-push-dev.sh` (covers 401/400/404, plus 200 when passed a known workflow name).
+
+## Scheduled Tasks (CYB-3744)
+
+Self-service scheduled auto-dispatch rules. A rule fires on its own interval, fetches asset-ids from a configured source (v1: generic REST-JSON), and creates a batch on a pipeline template. Produced batches surface in the existing 执行记录 → 批量任务 view. Replaces the external `grace-sync` Cloud Run Job.
+
+**Base**: all endpoints under `/api/v1/scheduled-tasks`, authenticated via `X-Databrew-Token` (or the session cookie the frontend already uses).
+
+**Credentials for the source (basic/bearer/header_key) are referenced by `secret_ref` — an env var name — NEVER stored inline.** The env var is populated by Cloud Run `--set-secrets` from Secret Manager (same pipeline the rest of the backend uses).
+
+```bash
+BASE=https://cyber-databrew-dev.cyberorigin.ai
+TOK="$DATABREW_TOKEN"
+
+# List
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/scheduled-tasks?enabled=true"
+# -> {"items":[...], "total":N, "page":1, "pageSize":50}
+
+# Create (Grace video_steps → sea-v2 hourly incremental)
+curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/scheduled-tasks" -d '{
+    "name": "grace-sea-v2-hourly",
+    "enabled": true,
+    "templateId": "tpl_sea_v2",
+    "targetId": "cluster-default",
+    "sourceType": "rest",
+    "sourceConfig": {
+      "base_url": "https://grace.example.com/api",
+      "path": "/grace/video_steps",
+      "auth": { "type": "basic", "username": "grace-service", "secret_ref": "GRACE_PASSWORD" },      // pragma: allowlist secret
+      "query": {
+        "static": { "filter": ["step_key:eq:body_heatmap", "status:eq:success"] },
+        "filter_param": "filter",
+        "time_field": "last_status_at"
+      },
+      "paging": { "mode": "page_size", "page_size": 200, "total_path": "total", "data_path": "data" },
+      "id_path": "data[].video_id"
+    },
+    "triggerMode": "incremental",
+    "triggerConfig": { "intervalSeconds": 3600, "initialLookbackSeconds": 3600 }
+  }'
+# -> 201 { "id": "sched_...", ... }
+
+# Get / Update / Delete
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/scheduled-tasks/$ID"
+curl -sS -X PUT -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/scheduled-tasks/$ID" -d '{...same body as create...}'
+curl -sS -o /dev/null -w '%{http_code}\n' -X DELETE -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/scheduled-tasks/$ID"   # 204
+
+# Pause / Resume / Run-now
+curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/scheduled-tasks/$ID/pause"
+curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/scheduled-tasks/$ID/resume"
+curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/scheduled-tasks/$ID/run-now"   # 202
+```
+
+**Error paths**:
+- `400 INVALID_ARGUMENT` — missing required fields (name/templateId/targetId), unsupported `sourceType` (v1 only `rest`), unsupported `triggerMode`.
+- `404 SCHEDULED_TASK_NOT_FOUND` — get/update against an unknown id.
+
+**Smoke**: `scripts/smoke-scheduled-tasks-dev.sh` (happy path + 400 + 404).

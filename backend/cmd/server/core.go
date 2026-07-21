@@ -20,6 +20,7 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	schedtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/schedtask"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
@@ -28,6 +29,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/schedtask"
+	schedtaskSource "github.com/CyberOrigin2077/cyber-databrew/internal/schedtask/source"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -288,6 +291,32 @@ func setupCore(inf *infra) *coreHandlers {
 		storageHandler = storageH.NewHandler(inf.gcsClient)
 	}
 
+	// ── Scheduled tasks (CYB-3744): in-app self-service auto-dispatch. ──
+	// Replaces the external grace-sync Cloud Run Job — see openspec/changes/
+	// CYB-3744-scheduled-tasks/design.md. Best-effort: on repo build failure
+	// we log and continue with a nil handler, so a schedtask outage never
+	// blocks the rest of the API.
+	scheduledTaskRepo := postgres.NewScheduledTaskRepo(pg)
+	scheduledTaskHandler := schedtaskH.New(scheduledTaskRepo)
+	scheduledTaskUC := schedtask.New(
+		scheduledTaskRepo,
+		schedtask.NewDefaultSourceFactory(schedtaskSource.SecretResolver(schedtask.NewEnvSecretResolver())),
+		schedtask.BatchCreatorFn(func(ctx context.Context, tmpl, name string, ids []string, target string, ver int, owner string) (string, error) {
+			job, err := puc.CreateBatchJob(ctx, tmpl, name, ids, target, ver, 0, owner)
+			if err != nil {
+				return "", err
+			}
+			if job == nil {
+				return "", nil
+			}
+			return job.ID, nil
+		}),
+		schedtask.NewFeishuNotifierFromEnv(),
+		schedtask.Options{},
+	)
+	scheduledTaskUC.StartLoop(context.Background())
+	slog.Info("scheduled-task scheduler started (cyb-3744)")
+
 	return &coreHandlers{
 		asset:             assetHandler,
 		algo:              algoHandler,
@@ -302,6 +331,7 @@ func setupCore(inf *infra) *coreHandlers {
 		pipelineConfig:    pipelineConfigHandler,
 		pipelineComponent: pipelineComponentHandler,
 		backfill:          backfillHandler,
+		scheduledTask:     scheduledTaskHandler,
 		query:             queryHandler,
 		workflow:          workflowHandler,
 		storage:           storageHandler,

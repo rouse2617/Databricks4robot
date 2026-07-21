@@ -33,6 +33,7 @@ import (
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
+	schedtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/schedtask"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
@@ -77,6 +78,7 @@ func RegisterAll(
 	apiKeyHandler *apikeyH.Handler,
 	tagRegistryHandler *adminH.TagRegistryHandler,
 	clusterHandler *adminH.ClusterHandler,
+	scheduledTaskHandler *schedtaskH.Handler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -572,6 +574,20 @@ func RegisterAll(
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
 			api.POST("/backfill/results", backfillHandler.UploadResult)
+		}
+
+		// Scheduled tasks (CYB-3744): in-app self-service auto-dispatch rules.
+		// nil-safe: registered only when the handler is wired in cmd/server.
+		if scheduledTaskHandler != nil {
+			st := api.Group("/scheduled-tasks")
+			st.GET("", scheduledTaskHandler.List)
+			st.POST("", scheduledTaskHandler.Create)
+			st.GET("/:id", scheduledTaskHandler.Get)
+			st.PUT("/:id", scheduledTaskHandler.Update)
+			st.DELETE("/:id", scheduledTaskHandler.Delete)
+			st.POST("/:id/pause", scheduledTaskHandler.Pause)
+			st.POST("/:id/resume", scheduledTaskHandler.Resume)
+			st.POST("/:id/run-now", scheduledTaskHandler.RunNow)
 		}
 
 		// Storage (GCS signed URL proxy + source resolver)

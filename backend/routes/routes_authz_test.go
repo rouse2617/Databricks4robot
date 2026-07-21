@@ -72,6 +72,7 @@ func TestMutatingAssetRoutesRequireWriteScope(t *testing.T) {
 		evalHandler, actionHandler,
 		nil, nil, nil, nil, nil, nil, nil,
 		roRepo, nil, nil, nil,
+		nil, // scheduledTaskHandler (CYB-3744)
 	)
 
 	cases := []struct {
