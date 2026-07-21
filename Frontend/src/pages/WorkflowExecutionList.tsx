@@ -1096,7 +1096,9 @@ export function WorkflowExecutionList({
 				operation.key === "delete" ||
 				operation.key === "terminate" ||
 				operation.key === "resubmit" ||
-				operation.key === "retry"
+				operation.key === "retry" ||
+				operation.key === "stop" ||
+				operation.key === "suspend"
 			) {
 				setPendingOperation({ record, operation });
 				return;

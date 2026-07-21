@@ -2364,7 +2364,9 @@ export default function WorkflowDetailPage({
 				operation.key === "terminate" ||
 				operation.key === "resubmit" ||
 				operation.key === "rerun" ||
-				operation.key === "retry"
+				operation.key === "retry" ||
+				operation.key === "stop" ||
+				operation.key === "suspend"
 			) {
 				setConfirmOperation(operation);
 				return;
