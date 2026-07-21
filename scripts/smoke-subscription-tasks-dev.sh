@@ -5,8 +5,8 @@
 #   source scripts/dev-backend-env.sh          # exports BASE + DATABREW_TOKEN
 #   bash scripts/smoke-subscription-tasks-dev.sh
 #
-# Covers: create/list/get/pause/resume/delete happy path + 400 (missing
-# required) + 404 (unknown id). Leaves no rows behind on success.
+# Covers: create/get/pause/resume/delete happy path + 400 (missing required,
+# empty bindings, bad interval) + 404 (unknown id). Leaves no rows on success.
 set -euo pipefail
 
 : "${BASE:?source scripts/dev-backend-env.sh first (BASE not set)}"
@@ -28,10 +28,15 @@ check() { # $1=name, $2=expected-code, $3=actual-code, $4=optional-body
 code=$(curl -sS -o /tmp/smoke-st-400.txt -w '%{http_code}' -X POST "${HDR[@]}" "$URL" -d '{"name":"x"}')
 check "create missing required is 400" 400 "$code" "$(cat /tmp/smoke-st-400.txt)"
 
-# 400: bad pullIntervalSeconds
-body='{"name":"bad","templateId":"tpl","targetId":"t","projectId":"p","subscriptionId":"s","pullIntervalSeconds":0}'
+# 400: no pipeline bindings
+body='{"name":"bad","projectId":"p","subscriptionId":"s","pipelineBindings":[]}'
 code=$(curl -sS -o /tmp/smoke-st-400b.txt -w '%{http_code}' -X POST "${HDR[@]}" "$URL" -d "$body")
-check "create with pullInterval=0 is 400" 400 "$code" "$(cat /tmp/smoke-st-400b.txt)"
+check "create with empty bindings is 400" 400 "$code" "$(cat /tmp/smoke-st-400b.txt)"
+
+# 400: bad pullIntervalSeconds
+body='{"name":"bad","projectId":"p","subscriptionId":"s","pullIntervalSeconds":0,"pipelineBindings":[{"templateId":"t","targetId":"g"}]}'
+code=$(curl -sS -o /tmp/smoke-st-400c.txt -w '%{http_code}' -X POST "${HDR[@]}" "$URL" -d "$body")
+check "create with pullInterval=0 is 400" 400 "$code" "$(cat /tmp/smoke-st-400c.txt)"
 
 # Happy path: create → get → pause → resume → delete.
 NAME="smoke-subtask-$(date +%s)"
@@ -39,12 +44,14 @@ body=$(cat <<JSON
 {
   "name": "$NAME",
   "enabled": false,
-  "templateId": "tpl-smoke",
-  "targetId": "cluster-default",
-  "projectId": "co-prod-gv-cybercap",
+  "projectId": "green-valley-442103",
   "subscriptionId": "smoke-test-sub",
   "pullIntervalSeconds": 60,
-  "maxMessagesPerPull": 100
+  "maxMessagesPerPull": 100,
+  "pipelineBindings": [
+    {"templateId": "tpl-smoke-a", "targetId": "cluster-default"},
+    {"templateId": "tpl-smoke-b", "targetId": "cluster-default", "templateVersion": 2}
+  ]
 }
 JSON
 )

@@ -3582,7 +3582,7 @@ Notes:
 
 ## Subscription Tasks (CYB-3778)
 
-Pub/Sub-driven auto-dispatch rules. External publishers push asset IDs to a GCP Pub/Sub topic; Databrew subscribes and auto-creates batch jobs on a pipeline template. Produced batches surface in the existing 执行记录 → 批量任务 view.
+Pub/Sub-driven auto-dispatch rules. External publishers push asset IDs to a GCP Pub/Sub topic; Databrew subscribes and, for each message, dispatches a batch job to **every** bound pipeline template (fan-out). Produced batches surface in the existing 执行记录 → 批量任务 view.
 
 **Base**: all endpoints under `/api/v1/subscription-tasks`, authenticated via `X-Databrew-Token` (or the session cookie the frontend already uses).
 
@@ -3594,19 +3594,22 @@ TOK="$DATABREW_TOKEN"
 curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks?enabled=true"
 # -> {"items":[...], "total":N, "page":1, "pageSize":50}
 
-# Create
+# Create — one subscription fans out to multiple pipeline templates
 curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
   "$BASE/api/v1/subscription-tasks" -d '{
     "name": "youxin-ingest",
     "enabled": true,
-    "templateId": "tpl_sea_v2",
-    "targetId": "cluster-default",
-    "projectId": "co-prod-gv-cybercap",
+    "projectId": "green-valley-442103",
     "subscriptionId": "databrew-ingest-youxin-sub",
     "pullIntervalSeconds": 10,
-    "maxMessagesPerPull": 1000
+    "maxMessagesPerPull": 1000,
+    "pipelineBindings": [
+      { "templateId": "tpl_sea_v2", "targetId": "cluster-default" },
+      { "templateId": "tpl_hand_track", "targetId": "gpu-pool", "templateVersion": 3 }
+    ]
   }'
 # -> 201 { "id": "sub_...", ... }
+# Each pulled asset_id dispatches one batch per binding (2 batches here).
 
 # Get / Update / Delete
 curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$ID"
@@ -3621,7 +3624,7 @@ curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$I
 ```
 
 **Error paths**:
-- `400 INVALID_ARGUMENT` — missing required fields (name/templateId/targetId/projectId/subscriptionId), invalid pullIntervalSeconds or maxMessagesPerPull.
+- `400 INVALID_ARGUMENT` — missing required fields (name/projectId/subscriptionId), empty `pipelineBindings`, a binding missing templateId/targetId, or invalid pullIntervalSeconds/maxMessagesPerPull.
 - `404 SUBSCRIPTION_TASK_NOT_FOUND` — get/update against an unknown id.
 
 **Smoke**: `scripts/smoke-subscription-tasks-dev.sh` (happy path + 400 + 404).

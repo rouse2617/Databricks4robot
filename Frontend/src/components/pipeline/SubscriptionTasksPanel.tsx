@@ -1,6 +1,7 @@
 import {
   DeleteOutlined,
   EditOutlined,
+  MinusCircleOutlined,
   MoreOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -11,6 +12,7 @@ import {
   App,
   Button,
   Card,
+  Divider,
   Drawer,
   Dropdown,
   Form,
@@ -46,15 +48,19 @@ import {
 
 const { Text } = Typography;
 
-interface TaskFormValues {
-  name: string;
+interface BindingFormValue {
   templateId: string;
   templateVersion?: number;
   targetId: string;
+}
+
+interface TaskFormValues {
+  name: string;
   projectId: string;
   subscriptionId: string;
   pullIntervalSeconds?: number;
   maxMessagesPerPull?: number;
+  pipelineBindings: BindingFormValue[];
 }
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
@@ -62,6 +68,8 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
   failed: { color: "red", label: "失败" },
   empty: { color: "default", label: "无消息" },
 };
+
+const DEFAULT_PROJECT_ID = "green-valley-442103";
 
 export function SubscriptionTasksPanel() {
   const { modal } = App.useApp();
@@ -115,13 +123,27 @@ export function SubscriptionTasksPanel() {
     [targets],
   );
 
+  const templateOptions = useMemo(
+    () =>
+      templates.map((t) => ({
+        value: t.id,
+        label: `${t.name} (v${t.version ?? "?"})`,
+      })),
+    [templates],
+  );
+  const targetOptions = useMemo(
+    () => targets.map((t) => ({ value: t.id, label: t.name })),
+    [targets],
+  );
+
   const openCreate = () => {
     setEditingTask(null);
     form.resetFields();
     form.setFieldsValue({
       pullIntervalSeconds: 10,
       maxMessagesPerPull: 1000,
-      projectId: "co-prod-gv-cybercap",
+      projectId: DEFAULT_PROJECT_ID,
+      pipelineBindings: [{ templateId: "", targetId: "" }],
     });
     setDrawerOpen(true);
   };
@@ -130,13 +152,15 @@ export function SubscriptionTasksPanel() {
     setEditingTask(task);
     form.setFieldsValue({
       name: task.name,
-      templateId: task.templateId,
-      templateVersion: task.templateVersion ?? undefined,
-      targetId: task.targetId,
       projectId: task.projectId,
       subscriptionId: task.subscriptionId,
       pullIntervalSeconds: task.pullIntervalSeconds,
       maxMessagesPerPull: task.maxMessagesPerPull,
+      pipelineBindings: (task.pipelineBindings ?? []).map((b) => ({
+        templateId: b.templateId,
+        templateVersion: b.templateVersion ?? undefined,
+        targetId: b.targetId,
+      })),
     });
     setDrawerOpen(true);
   };
@@ -146,13 +170,15 @@ export function SubscriptionTasksPanel() {
       const vals = await form.validateFields();
       const body: SubscriptionTaskCreateRequest = {
         name: vals.name,
-        templateId: vals.templateId,
-        templateVersion: vals.templateVersion,
-        targetId: vals.targetId,
         projectId: vals.projectId,
         subscriptionId: vals.subscriptionId,
         pullIntervalSeconds: vals.pullIntervalSeconds ?? 10,
         maxMessagesPerPull: vals.maxMessagesPerPull ?? 1000,
+        pipelineBindings: (vals.pipelineBindings ?? []).map((b) => ({
+          templateId: b.templateId,
+          templateVersion: b.templateVersion,
+          targetId: b.targetId,
+        })),
       };
       if (editingTask) {
         await updateSubscriptionTask(editingTask.id, body);
@@ -172,7 +198,7 @@ export function SubscriptionTasksPanel() {
   const handleDelete = (task: SubscriptionTask) => {
     modal.confirm({
       title: `删除订阅任务「${task.name}」？`,
-      content: "删除后不可恢复",
+      content: "删除后不可恢复。GCP 上的 topic / subscription 不会被删除。",
       okText: "删除",
       okType: "danger",
       onOk: async () => {
@@ -198,11 +224,26 @@ export function SubscriptionTasksPanel() {
     }
   };
 
+  const describeBinding = useCallback(
+    (
+      templateId: string,
+      version: number | null | undefined,
+      targetId: string,
+    ) => {
+      const tpl = templateMap.get(templateId);
+      const tplName = tpl?.name ?? templateId.slice(0, 8);
+      const tplLabel = version ? `${tplName} v${version}` : tplName;
+      const tgtName = targetMap.get(targetId)?.name ?? targetId.slice(0, 8);
+      return `${tplLabel} → ${tgtName}`;
+    },
+    [templateMap, targetMap],
+  );
+
   const columns: ColumnsType<SubscriptionTask> = [
     {
       title: "名称",
       dataIndex: "name",
-      width: 180,
+      width: 160,
       ellipsis: true,
     },
     {
@@ -217,27 +258,29 @@ export function SubscriptionTasksPanel() {
         ),
     },
     {
-      title: "模板",
-      dataIndex: "templateId",
-      width: 160,
-      ellipsis: true,
-      render: (id: string, r) => {
-        const tpl = templateMap.get(id);
-        const name = tpl?.name ?? id.slice(0, 12);
-        return r.templateVersion ? `${name} v${r.templateVersion}` : name;
+      title: "流水线",
+      dataIndex: "pipelineBindings",
+      width: 150,
+      render: (bindings: SubscriptionTask["pipelineBindings"]) => {
+        const list = bindings ?? [];
+        if (list.length === 0) return <Text type="secondary">-</Text>;
+        const lines = list.map((b) =>
+          describeBinding(b.templateId, b.templateVersion, b.targetId),
+        );
+        return (
+          <Tooltip
+            title={lines.join("\n")}
+            styles={{ root: { whiteSpace: "pre-line" } }}
+          >
+            <Text>{list.length} 个模板</Text>
+          </Tooltip>
+        );
       },
-    },
-    {
-      title: "资源池",
-      dataIndex: "targetId",
-      width: 140,
-      ellipsis: true,
-      render: (id: string) => targetMap.get(id)?.name ?? id.slice(0, 12),
     },
     {
       title: "订阅",
       dataIndex: "subscriptionId",
-      width: 180,
+      width: 170,
       ellipsis: true,
       render: (sub: string, r) => (
         <Tooltip title={`${r.projectId} / ${sub}`}>
@@ -263,19 +306,28 @@ export function SubscriptionTasksPanel() {
     },
     {
       title: "最近批次",
-      dataIndex: "lastBatchId",
-      width: 100,
-      ellipsis: true,
-      render: (id: string) =>
-        id ? (
-          <Link to={`/pipeline/batch/${id}`}>
-            <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
-              {id.slice(0, 8)}
-            </Text>
-          </Link>
-        ) : (
-          <Text type="secondary">-</Text>
-        ),
+      dataIndex: "lastBatchIds",
+      width: 130,
+      render: (ids: string[] | undefined) => {
+        const list = ids ?? [];
+        if (list.length === 0) return <Text type="secondary">-</Text>;
+        return (
+          <Space size={4} wrap>
+            {list.slice(0, 2).map((id) => (
+              <Link key={id} to={`/pipeline/batch/${id}`}>
+                <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                  {id.slice(0, 8)}
+                </Text>
+              </Link>
+            ))}
+            {list.length > 2 && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                +{list.length - 2}
+              </Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: "最近成功",
@@ -356,7 +408,7 @@ export function SubscriptionTasksPanel() {
         dataSource={tasks}
         loading={loading}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1160 }}
         size="small"
       />
 
@@ -364,7 +416,7 @@ export function SubscriptionTasksPanel() {
         title={editingTask ? "编辑订阅任务" : "新建订阅任务"}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={520}
+        width={560}
         extra={
           <Button type="primary" onClick={handleSubmit}>
             {editingTask ? "保存" : "创建"}
@@ -381,68 +433,108 @@ export function SubscriptionTasksPanel() {
           </Form.Item>
 
           <Form.Item
-            name="templateId"
-            label="模板"
-            rules={[{ required: true, message: "请选择模板" }]}
-          >
-            <Select
-              showSearch
-              placeholder="选择流水线模板"
-              optionFilterProp="label"
-              options={templates.map((t) => ({
-                value: t.id,
-                label: `${t.name} (v${t.version ?? "?"})`,
-              }))}
-            />
-          </Form.Item>
-
-          <Form.Item name="templateVersion" label="模板版本">
-            <InputNumber
-              min={1}
-              placeholder="留空使用最新版本"
-              style={{ width: "100%" }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="targetId"
-            label="资源池"
-            rules={[{ required: true, message: "请选择资源池" }]}
-          >
-            <Select
-              showSearch
-              placeholder="选择执行目标"
-              optionFilterProp="label"
-              options={targets.map((t) => ({
-                value: t.id,
-                label: t.name,
-              }))}
-            />
-          </Form.Item>
-
-          <Form.Item
             name="projectId"
             label="GCP 项目 ID"
             rules={[{ required: true, message: "请输入 GCP 项目 ID" }]}
           >
-            <Input placeholder="e.g. co-prod-gv-cybercap" />
+            <Input placeholder="e.g. green-valley-442103" />
           </Form.Item>
 
           <Form.Item
             name="subscriptionId"
             label="Pub/Sub 订阅 ID"
+            tooltip="在 GCP 上创建好 topic + subscription 后，把 subscription ID 填在这里"
             rules={[{ required: true, message: "请输入订阅 ID" }]}
           >
             <Input placeholder="e.g. databrew-ingest-youxin-sub" />
           </Form.Item>
 
-          <Form.Item name="pullIntervalSeconds" label="拉取间隔（秒）">
-            <InputNumber min={1} max={3600} style={{ width: "100%" }} />
-          </Form.Item>
+          <Space size={16} style={{ display: "flex" }}>
+            <Form.Item
+              name="pullIntervalSeconds"
+              label="拉取间隔（秒）"
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={1} max={3600} style={{ width: "100%" }} />
+            </Form.Item>
+            <Form.Item
+              name="maxMessagesPerPull"
+              label="单次最大消息数"
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={1} max={10000} style={{ width: "100%" }} />
+            </Form.Item>
+          </Space>
 
-          <Form.Item name="maxMessagesPerPull" label="单次最大消息数">
-            <InputNumber min={1} max={10000} style={{ width: "100%" }} />
-          </Form.Item>
+          <Divider orientation="left" plain>
+            流水线绑定
+          </Divider>
+          <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+            每条消息会对下面的<b>每个模板各下发一个批次</b>。
+          </Text>
+
+          <Form.List name="pipelineBindings">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <Space
+                    key={key}
+                    align="baseline"
+                    style={{ display: "flex", marginBottom: 8 }}
+                  >
+                    <Form.Item
+                      {...rest}
+                      name={[name, "templateId"]}
+                      rules={[{ required: true, message: "选择模板" }]}
+                      style={{ marginBottom: 0, minWidth: 220 }}
+                    >
+                      <Select
+                        showSearch
+                        placeholder="模板"
+                        optionFilterProp="label"
+                        options={templateOptions}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      {...rest}
+                      name={[name, "templateVersion"]}
+                      style={{ marginBottom: 0 }}
+                    >
+                      <InputNumber
+                        min={1}
+                        placeholder="最新"
+                        style={{ width: 80 }}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      {...rest}
+                      name={[name, "targetId"]}
+                      rules={[{ required: true, message: "选择资源池" }]}
+                      style={{ marginBottom: 0, minWidth: 150 }}
+                    >
+                      <Select
+                        showSearch
+                        placeholder="资源池"
+                        optionFilterProp="label"
+                        options={targetOptions}
+                      />
+                    </Form.Item>
+                    {fields.length > 1 && (
+                      <MinusCircleOutlined onClick={() => remove(name)} />
+                    )}
+                  </Space>
+                ))}
+                <Button
+                  type="dashed"
+                  onClick={() => add({ templateId: "", targetId: "" })}
+                  block
+                  icon={<PlusOutlined />}
+                >
+                  添加模板
+                </Button>
+              </>
+            )}
+          </Form.List>
         </Form>
       </Drawer>
     </Card>

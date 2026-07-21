@@ -5,20 +5,24 @@ export type SubscriptionTaskRunStatus =
   | "failed"
   | "empty";
 
+export interface PipelineBinding {
+  templateId: string;
+  templateVersion?: number | null;
+  targetId: string;
+}
+
 export interface SubscriptionTask {
   id: string;
   name: string;
   enabled: boolean;
-  templateId: string;
-  templateVersion?: number | null;
-  targetId: string;
   projectId: string;
   subscriptionId: string;
   pullIntervalSeconds: number;
   maxMessagesPerPull: number;
+  pipelineBindings: PipelineBinding[];
   lastRunAt?: string | null;
   lastRunStatus?: SubscriptionTaskRunStatus;
-  lastBatchId?: string;
+  lastBatchIds?: string[];
   lastError?: string;
   lastSuccessAt?: string | null;
   createdBy?: string;
@@ -29,13 +33,11 @@ export interface SubscriptionTask {
 export interface SubscriptionTaskCreateRequest {
   name: string;
   enabled?: boolean;
-  templateId: string;
-  templateVersion?: number;
-  targetId: string;
   projectId: string;
   subscriptionId: string;
   pullIntervalSeconds?: number;
   maxMessagesPerPull?: number;
+  pipelineBindings: PipelineBinding[];
 }
 
 export interface SubscriptionTaskListResponse {

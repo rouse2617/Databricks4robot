@@ -31,16 +31,20 @@ type Handler struct {
 
 func New(repo Repo) *Handler { return &Handler{repo: repo} }
 
+type pipelineBindingRequest struct {
+	TemplateID      string `json:"templateId"`
+	TemplateVersion *int   `json:"templateVersion,omitempty"`
+	TargetID        string `json:"targetId"`
+}
+
 type taskRequest struct {
-	Name               string `json:"name"`
-	Enabled            *bool  `json:"enabled,omitempty"`
-	TemplateID         string `json:"templateId"`
-	TemplateVersion    *int   `json:"templateVersion,omitempty"`
-	TargetID           string `json:"targetId"`
-	ProjectID          string `json:"projectId"`
-	SubscriptionID     string `json:"subscriptionId"`
-	PullIntervalSec    *int   `json:"pullIntervalSeconds,omitempty"`
-	MaxMessagesPerPull *int   `json:"maxMessagesPerPull,omitempty"`
+	Name               string                   `json:"name"`
+	Enabled            *bool                    `json:"enabled,omitempty"`
+	ProjectID          string                   `json:"projectId"`
+	SubscriptionID     string                   `json:"subscriptionId"`
+	PullIntervalSec    *int                     `json:"pullIntervalSeconds,omitempty"`
+	MaxMessagesPerPull *int                     `json:"maxMessagesPerPull,omitempty"`
+	PipelineBindings   []pipelineBindingRequest `json:"pipelineBindings"`
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -210,17 +214,22 @@ func validateRequest(req taskRequest, forCreate bool) error {
 	if forCreate && strings.TrimSpace(req.Name) == "" {
 		return errors.New("name is required")
 	}
-	if strings.TrimSpace(req.TemplateID) == "" {
-		return errors.New("templateId is required")
-	}
-	if strings.TrimSpace(req.TargetID) == "" {
-		return errors.New("targetId is required")
-	}
 	if strings.TrimSpace(req.ProjectID) == "" {
 		return errors.New("projectId is required")
 	}
 	if strings.TrimSpace(req.SubscriptionID) == "" {
 		return errors.New("subscriptionId is required")
+	}
+	if len(req.PipelineBindings) == 0 {
+		return errors.New("at least one pipeline binding is required")
+	}
+	for i, b := range req.PipelineBindings {
+		if strings.TrimSpace(b.TemplateID) == "" {
+			return fmt.Errorf("pipelineBindings[%d].templateId is required", i)
+		}
+		if strings.TrimSpace(b.TargetID) == "" {
+			return fmt.Errorf("pipelineBindings[%d].targetId is required", i)
+		}
 	}
 	if req.PullIntervalSec != nil && *req.PullIntervalSec <= 0 {
 		return errors.New("pullIntervalSeconds must be positive")
@@ -244,16 +253,22 @@ func requestToTask(req taskRequest, id string) st.Task {
 	if req.MaxMessagesPerPull != nil {
 		maxMsg = *req.MaxMessagesPerPull
 	}
+	bindings := make([]st.PipelineBinding, 0, len(req.PipelineBindings))
+	for _, b := range req.PipelineBindings {
+		bindings = append(bindings, st.PipelineBinding{
+			TemplateID:      strings.TrimSpace(b.TemplateID),
+			TemplateVersion: b.TemplateVersion,
+			TargetID:        strings.TrimSpace(b.TargetID),
+		})
+	}
 	return st.Task{
 		ID:                 id,
 		Name:               strings.TrimSpace(req.Name),
 		Enabled:            enabled,
-		TemplateID:         strings.TrimSpace(req.TemplateID),
-		TemplateVersion:    req.TemplateVersion,
-		TargetID:           strings.TrimSpace(req.TargetID),
 		ProjectID:          strings.TrimSpace(req.ProjectID),
 		SubscriptionID:     strings.TrimSpace(req.SubscriptionID),
 		PullIntervalSec:    pullInterval,
 		MaxMessagesPerPull: maxMsg,
+		PipelineBindings:   bindings,
 	}
 }

@@ -3335,23 +3335,34 @@ components:
               reason: { type: string }
 
     # ── Subscription Tasks (CYB-3778) ───────────────────────────
+    PipelineBinding:
+      type: object
+      required: [templateId, targetId]
+      description: One (template, target) a message fans out to.
+      properties:
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true, description: 'Omit for latest' }
+        targetId: { type: string }
     SubscriptionTask:
       type: object
-      required: [id, name, enabled, templateId, targetId, projectId, subscriptionId, createdAt, updatedAt]
+      required: [id, name, enabled, projectId, subscriptionId, pipelineBindings, createdAt, updatedAt]
       properties:
         id: { type: string, description: 'Task id (sub_<uuid>)' }
         name: { type: string }
         enabled: { type: boolean }
-        templateId: { type: string }
-        templateVersion: { type: integer, nullable: true }
-        targetId: { type: string }
         projectId: { type: string, description: 'GCP project id for Pub/Sub' }
         subscriptionId: { type: string, description: 'Pub/Sub subscription id' }
         pullIntervalSeconds: { type: integer, default: 10 }
         maxMessagesPerPull: { type: integer, default: 1000 }
+        pipelineBindings:
+          type: array
+          description: One batch is dispatched per binding for every pulled message set.
+          items: { $ref: '#/components/schemas/PipelineBinding' }
         lastRunAt: { type: string, format: date-time, nullable: true }
         lastRunStatus: { type: string, enum: [succeeded, failed, empty] }
-        lastBatchId: { type: string }
+        lastBatchIds:
+          type: array
+          items: { type: string }
         lastError: { type: string }
         lastSuccessAt: { type: string, format: date-time, nullable: true }
         createdBy: { type: string }
@@ -3359,17 +3370,18 @@ components:
         updatedAt: { type: string, format: date-time }
     SubscriptionTaskCreateRequest:
       type: object
-      required: [name, templateId, targetId, projectId, subscriptionId]
+      required: [name, projectId, subscriptionId, pipelineBindings]
       properties:
         name: { type: string }
         enabled: { type: boolean, default: true }
-        templateId: { type: string }
-        templateVersion: { type: integer }
-        targetId: { type: string }
         projectId: { type: string }
         subscriptionId: { type: string }
         pullIntervalSeconds: { type: integer, default: 10 }
         maxMessagesPerPull: { type: integer, default: 1000 }
+        pipelineBindings:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PipelineBinding' }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,9 +21,10 @@ func NewSubscriptionTaskRepo(c *Client) *SubscriptionTaskRepo {
 	return &SubscriptionTaskRepo{c: c}
 }
 
-const subTaskCols = `id, name, enabled, template_id, template_version, target_id, scheduling,
+const subTaskCols = `id, name, enabled,
 	project_id, subscription_id, pull_interval_seconds, max_messages_per_pull,
-	last_run_at, last_run_status, last_batch_id, last_error, last_success_at,
+	pipeline_bindings,
+	last_run_at, last_run_status, last_batch_ids, last_error, last_success_at,
 	created_by, created_at, updated_at`
 
 func (r *SubscriptionTaskRepo) List(ctx context.Context) ([]subtask.Task, error) {
@@ -58,14 +60,18 @@ func (r *SubscriptionTaskRepo) Create(ctx context.Context, t *subtask.Task) erro
 	if t.ID == "" || t.Name == "" {
 		return fmt.Errorf("subscription_tasks: id and name are required")
 	}
-	_, err := r.c.db.ExecResult(ctx, `
+	bindings, err := marshalBindings(t.PipelineBindings)
+	if err != nil {
+		return fmt.Errorf("subscription_tasks: create %s: %w", t.ID, err)
+	}
+	_, err = r.c.db.ExecResult(ctx, `
 		INSERT INTO subscription_tasks (
-			id, name, enabled, template_id, template_version, target_id, scheduling,
-			project_id, subscription_id, pull_interval_seconds, max_messages_per_pull,
+			id, name, enabled, project_id, subscription_id,
+			pull_interval_seconds, max_messages_per_pull, pipeline_bindings,
 			created_by, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())`,
-		t.ID, t.Name, t.Enabled, t.TemplateID, nullableInt(t.TemplateVersion), t.TargetID, []byte("{}"),
-		t.ProjectID, t.SubscriptionID, t.PullIntervalSec, t.MaxMessagesPerPull,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), now())`,
+		t.ID, t.Name, t.Enabled, t.ProjectID, t.SubscriptionID,
+		t.PullIntervalSec, t.MaxMessagesPerPull, bindings,
 		t.CreatedBy,
 	)
 	if err != nil {
@@ -78,16 +84,20 @@ func (r *SubscriptionTaskRepo) Update(ctx context.Context, t *subtask.Task) erro
 	if t.ID == "" {
 		return fmt.Errorf("subscription_tasks: id is required")
 	}
-	_, err := r.c.db.ExecResult(ctx, `
+	bindings, err := marshalBindings(t.PipelineBindings)
+	if err != nil {
+		return fmt.Errorf("subscription_tasks: update %s: %w", t.ID, err)
+	}
+	_, err = r.c.db.ExecResult(ctx, `
 		UPDATE subscription_tasks SET
-			name = $2, enabled = $3, template_id = $4, template_version = $5,
-			target_id = $6, scheduling = $7,
-			project_id = $8, subscription_id = $9,
-			pull_interval_seconds = $10, max_messages_per_pull = $11,
+			name = $2, enabled = $3,
+			project_id = $4, subscription_id = $5,
+			pull_interval_seconds = $6, max_messages_per_pull = $7,
+			pipeline_bindings = $8,
 			updated_at = now()
 		WHERE id = $1`,
-		t.ID, t.Name, t.Enabled, t.TemplateID, nullableInt(t.TemplateVersion), t.TargetID, []byte("{}"),
-		t.ProjectID, t.SubscriptionID, t.PullIntervalSec, t.MaxMessagesPerPull,
+		t.ID, t.Name, t.Enabled, t.ProjectID, t.SubscriptionID,
+		t.PullIntervalSec, t.MaxMessagesPerPull, bindings,
 	)
 	if err != nil {
 		return fmt.Errorf("subscription_tasks: update %s: %w", t.ID, err)
@@ -148,16 +158,26 @@ func (r *SubscriptionTaskRepo) ClaimDueTasks(ctx context.Context, now time.Time)
 	return out, rows.Err()
 }
 
-func (r *SubscriptionTaskRepo) RecordSuccess(ctx context.Context, id string, status string, batchID string, at time.Time) error {
+func (r *SubscriptionTaskRepo) RecordSuccess(ctx context.Context, id string, status string, batchIDs []string, at time.Time) error {
+	// nil batchIDs → NULL → COALESCE keeps the previous value (empty runs must
+	// not clear the last successful batch list).
+	var bidsJSON []byte
+	if len(batchIDs) > 0 {
+		b, err := json.Marshal(batchIDs)
+		if err != nil {
+			return fmt.Errorf("subscription_tasks: record_success %s: marshal batch ids: %w", id, err)
+		}
+		bidsJSON = b
+	}
 	_, err := r.c.db.ExecResult(ctx, `
 		UPDATE subscription_tasks SET
 			last_run_status = $2,
-			last_batch_id = COALESCE(NULLIF($3, ''), last_batch_id),
+			last_batch_ids = COALESCE($3::jsonb, last_batch_ids),
 			last_error = '',
 			last_success_at = $4,
 			updated_at = now()
 		WHERE id = $1`,
-		id, status, batchID, at,
+		id, status, bidsJSON, at,
 	)
 	if err != nil {
 		return fmt.Errorf("subscription_tasks: record_success %s: %w", id, err)
@@ -180,22 +200,29 @@ func (r *SubscriptionTaskRepo) RecordFailure(ctx context.Context, id string, err
 	return nil
 }
 
+func marshalBindings(bindings []subtask.PipelineBinding) ([]byte, error) {
+	if bindings == nil {
+		bindings = []subtask.PipelineBinding{}
+	}
+	return json.Marshal(bindings)
+}
+
 func scanSubTask(row rowScanner) (subtask.Task, error) {
 	var (
-		t               subtask.Task
-		templateVersion sql.NullInt64
-		scheduling      []byte
-		lastRunAt       sql.NullTime
-		lastRunStatus   sql.NullString
-		lastBatchID     sql.NullString
-		lastError       sql.NullString
-		lastSuccessAt   sql.NullTime
-		createdBy       sql.NullString
+		t             subtask.Task
+		bindings      []byte
+		lastRunAt     sql.NullTime
+		lastRunStatus sql.NullString
+		lastBatchIDs  []byte
+		lastError     sql.NullString
+		lastSuccessAt sql.NullTime
+		createdBy     sql.NullString
 	)
 	err := row.Scan(
-		&t.ID, &t.Name, &t.Enabled, &t.TemplateID, &templateVersion, &t.TargetID, &scheduling,
+		&t.ID, &t.Name, &t.Enabled,
 		&t.ProjectID, &t.SubscriptionID, &t.PullIntervalSec, &t.MaxMessagesPerPull,
-		&lastRunAt, &lastRunStatus, &lastBatchID, &lastError, &lastSuccessAt,
+		&bindings,
+		&lastRunAt, &lastRunStatus, &lastBatchIDs, &lastError, &lastSuccessAt,
 		&createdBy, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -204,9 +231,15 @@ func scanSubTask(row rowScanner) (subtask.Task, error) {
 		}
 		return subtask.Task{}, err
 	}
-	if templateVersion.Valid {
-		v := int(templateVersion.Int64)
-		t.TemplateVersion = &v
+	if len(bindings) > 0 {
+		if err := json.Unmarshal(bindings, &t.PipelineBindings); err != nil {
+			return subtask.Task{}, fmt.Errorf("subscription_tasks: unmarshal pipeline_bindings for %s: %w", t.ID, err)
+		}
+	}
+	if len(lastBatchIDs) > 0 {
+		if err := json.Unmarshal(lastBatchIDs, &t.LastBatchIDs); err != nil {
+			return subtask.Task{}, fmt.Errorf("subscription_tasks: unmarshal last_batch_ids for %s: %w", t.ID, err)
+		}
 	}
 	if lastRunAt.Valid {
 		tt := lastRunAt.Time
@@ -214,9 +247,6 @@ func scanSubTask(row rowScanner) (subtask.Task, error) {
 	}
 	if lastRunStatus.Valid {
 		t.LastRunStatus = lastRunStatus.String
-	}
-	if lastBatchID.Valid {
-		t.LastBatchID = lastBatchID.String
 	}
 	if lastError.Valid {
 		t.LastError = lastError.String
@@ -229,13 +259,6 @@ func scanSubTask(row rowScanner) (subtask.Task, error) {
 		t.CreatedBy = createdBy.String
 	}
 	return t, nil
-}
-
-func nullableInt(v *int) any {
-	if v == nil {
-		return nil
-	}
-	return *v
 }
 
 func prefixed(cols, prefix string) string {

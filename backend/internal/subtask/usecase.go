@@ -9,7 +9,7 @@ import (
 
 type Repo interface {
 	ClaimDueTasks(ctx context.Context, now time.Time) ([]Task, error)
-	RecordSuccess(ctx context.Context, id string, status string, batchID string, at time.Time) error
+	RecordSuccess(ctx context.Context, id string, status string, batchIDs []string, at time.Time) error
 	RecordFailure(ctx context.Context, id string, errMsg string) error
 	SetEnabled(ctx context.Context, id string, enabled bool) error
 }
@@ -92,29 +92,42 @@ func (uc *Usecase) executeTask(ctx context.Context, task Task) error {
 	}
 
 	if len(result.IDs) == 0 {
-		if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusEmpty, "", uc.now()); err != nil {
+		if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusEmpty, nil, uc.now()); err != nil {
 			slog.Warn("subtask: record empty run failed", "taskID", task.ID, "err", err)
 		}
 		return nil
 	}
 
-	tmplVersion := 0
-	if task.TemplateVersion != nil {
-		tmplVersion = *task.TemplateVersion
-	}
-	batchName := task.Name + "-" + uc.now().UTC().Format("20060102-150405")
-	batchID, err := uc.batches.CreateBatch(ctx, task.TemplateID, batchName, result.IDs, task.TargetID, tmplVersion, "subscription-task:"+task.ID)
-	if err != nil {
+	if len(task.PipelineBindings) == 0 {
 		result.Nack()
-		return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("create batch: %w", err))
+		return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("no pipeline bindings configured"))
+	}
+
+	// Fan out: one batch per binding for the same asset set. All bindings must
+	// succeed before we Ack — any failure Nacks the whole message so it retries
+	// (at-least-once; a retry may re-dispatch bindings that already succeeded).
+	ts := uc.now().UTC().Format("20060102-150405")
+	batchIDs := make([]string, 0, len(task.PipelineBindings))
+	for i, b := range task.PipelineBindings {
+		tmplVersion := 0
+		if b.TemplateVersion != nil {
+			tmplVersion = *b.TemplateVersion
+		}
+		batchName := fmt.Sprintf("%s-%s-p%d", task.Name, ts, i+1)
+		batchID, err := uc.batches.CreateBatch(ctx, b.TemplateID, batchName, result.IDs, b.TargetID, tmplVersion, "subscription-task:"+task.ID)
+		if err != nil {
+			result.Nack()
+			return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("create batch for template %s: %w", b.TemplateID, err))
+		}
+		batchIDs = append(batchIDs, batchID)
 	}
 
 	result.Ack()
 
-	if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusSucceeded, batchID, uc.now()); err != nil {
+	if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusSucceeded, batchIDs, uc.now()); err != nil {
 		slog.Warn("subtask: record success failed", "taskID", task.ID, "err", err)
 	}
-	slog.Info("subtask: batch created", "taskID", task.ID, "batchID", batchID, "assetCount", len(result.IDs))
+	slog.Info("subtask: batches created", "taskID", task.ID, "batchIDs", batchIDs, "bindings", len(task.PipelineBindings), "assetCount", len(result.IDs))
 	return nil
 }
 

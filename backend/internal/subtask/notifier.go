@@ -32,12 +32,11 @@ func (n *FeishuNotifier) NotifyTaskFailure(ctx context.Context, task Task, err e
 	}
 	msg := fmt.Sprintf("❌ 订阅任务失败\n\n"+
 		"📌 任务: %s\n"+
-		"🎬 流水线: %s\n"+
-		"🎯 资源池: %s\n"+
+		"🎬 流水线: %d 个模板\n"+
 		"📡 订阅: %s/%s\n"+
 		"⏰ 时间: %s\n"+
 		"⚠️  错误: %s",
-		task.Name, task.TemplateID, task.TargetID,
+		task.Name, len(task.PipelineBindings),
 		task.ProjectID, task.SubscriptionID,
 		n.now().UTC().Format(time.RFC3339), truncateErr(err))
 	n.send(ctx, msg)
