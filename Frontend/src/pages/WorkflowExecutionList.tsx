@@ -890,13 +890,13 @@ export function WorkflowExecutionList({
 			};
 			const pipelineRunResponse = await listRuns({
 				view: "summary",
-				// CYB-3392b: was excludeBatch:true which dropped ALL runs
-				// tied to a batch (parent + children), so the CYB-3392 batch
-				// badge never had a row to render on. Switch to
-				// excludeBatchParents: only the aggregate parent row hides;
-				// children stay visible with a clickable badge that jumps
-				// to the batch detail page.
-				excludeBatchParents: true,
+				// CYB-3709: the single-execution tab shows only genuine single
+				// runs — exclude ALL batch rows (parents AND children). cyb-3392b
+				// had used excludeBatchParents to keep children here with a badge,
+				// but at 60k+ children that buries the ~4.4k single runs. Batch
+				// children remain listed in the batch detail view (batchJobId
+				// branch above), so nothing is lost.
+				excludeBatch: true,
 				status: statusFilter,
 				q: nameSearch.trim() || undefined,
 				page,
