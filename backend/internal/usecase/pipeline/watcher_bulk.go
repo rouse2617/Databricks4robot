@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
@@ -170,11 +171,13 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 	// headroom for a 20-way fanout without stampeding the client-side rate
 	// limiter, and the effect on a 600-item budget is ~20× faster (~20 min
 	// → ~1 min per scan).
-	synced, residuals := 0, 0
+	var synced atomic.Int64 // written from both the serial snapshot-hit path
+	// and the residual worker goroutines, so it must be atomic (data race
+	// otherwise when a group interleaves snapshot hits with residual GETs).
+	residuals := 0
 	var (
-		wg       sync.WaitGroup
-		syncedMu sync.Mutex
-		sem      = make(chan struct{}, watcherResidualConcurrency())
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, watcherResidualConcurrency())
 	)
 	for _, i := range group {
 		run := &runs[i]
@@ -188,7 +191,7 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 				if !isActiveDeploymentStatus(run.Status) {
 					uc.forgetWorkflowApplied(run.ID)
 				}
-				synced++
+				synced.Add(1)
 			}
 			continue
 		}
@@ -205,13 +208,11 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 			defer func() { <-sem }()
 			uc.refreshPipelineRunStatus(ctx, run)
 			uc.forgetWorkflowApplied(run.ID)
-			syncedMu.Lock()
-			synced++
-			syncedMu.Unlock()
+			synced.Add(1)
 		}(run)
 	}
 	wg.Wait()
-	return synced
+	return int(synced.Load())
 }
 
 // watcherResidualConcurrency reads the bounded fanout size for residual GETs

@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2031,6 +2032,7 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 // ── CYB-1537 — PR #77 review follow-up: runRepo primary lookup ─────────────
 
 type mockRunRepo struct {
+	mu           sync.Mutex
 	byID         map[string]*models.PipelineRun
 	summaryByID  map[string]*models.PipelineRun
 	byWf         map[string]*models.PipelineRun
@@ -2040,6 +2042,8 @@ type mockRunRepo struct {
 }
 
 func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byID == nil {
 		m.byID = map[string]*models.PipelineRun{}
 	}
@@ -2051,6 +2055,8 @@ func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
 	return nil
 }
 func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.findAllCalls++
 	if m.findAllErr != nil {
 		return nil, m.findAllErr
@@ -2114,7 +2120,9 @@ func (m *mockRunRepo) FindActiveRunSummariesAfter(_ context.Context, afterCreate
 }
 
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	m.mu.Lock()
 	m.listFilters = append(m.listFilters, filter)
+	m.mu.Unlock()
 	items, err := m.FindAll(context.Background())
 	if err != nil {
 		return nil, 0, err
@@ -2145,12 +2153,16 @@ func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRun
 	return filtered, len(filtered), nil
 }
 func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byID == nil {
 		return nil, nil
 	}
 	return m.byID[id], nil
 }
 func (m *mockRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.summaryByID != nil {
 		return m.summaryByID[id], nil
 	}
@@ -2160,12 +2172,16 @@ func (m *mockRunRepo) FindSummaryByID(_ context.Context, id string) (*models.Pip
 	return m.byID[id], nil
 }
 func (m *mockRunRepo) FindByWorkflowName(_ context.Context, name string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byWf == nil {
 		return nil, nil
 	}
 	return m.byWf[name], nil
 }
 func (m *mockRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, r := range m.byID {
 		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
 			for _, id := range r.AssetIDs {
@@ -2178,6 +2194,8 @@ func (m *mockRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJobID, as
 	return nil, nil
 }
 func (m *mockRunRepo) FindAllByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) ([]models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []models.PipelineRun
 	for _, r := range m.byID {
 		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
@@ -2191,6 +2209,8 @@ func (m *mockRunRepo) FindAllByBatchJobAndAssetID(_ context.Context, batchJobID,
 	return out, nil
 }
 func (m *mockRunRepo) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		delete(m.byID, id)
 		delete(m.byWf, r.WorkflowName)
@@ -2201,6 +2221,8 @@ func (m *mockRunRepo) DeleteByTemplateID(_ context.Context, _ string) error {
 	return nil
 }
 func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		r.Status = status
 		r.FinishedAt = finishedAt
@@ -2209,6 +2231,8 @@ func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishe
 }
 
 func (m *mockRunRepo) UpdateLedgerState(_ context.Context, id, ledgerState string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		r.LedgerState = ledgerState
 	}

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -242,17 +243,19 @@ func TestBulkSync_AbsentRunProbedViaGet(t *testing.T) {
 func TestBulkSync_ResidualLimitBoundsProbes(t *testing.T) {
 	uc, _, client, runs := bulkFixture(t, "wf-1", "wf-2", "wf-3")
 	client.listWorkflowsFn = func(context.Context, string, string) ([]wfv1.Workflow, error) { return nil, nil }
-	gets := 0
+	// Residual GETs now fan out concurrently (bounded pool), so the probe
+	// counter must be atomic — a plain int++ here races the workers.
+	var gets atomic.Int64
 	client.getWorkflowFn = func(_ context.Context, name, ns string) (*wfv1.Workflow, error) {
-		gets++
+		gets.Add(1)
 		wf := activeWorkflow(name, "1", wfv1.WorkflowRunning)
 		return &wf, nil
 	}
 	if n := uc.bulkSyncActiveRuns(context.Background(), runs, []int{0, 1, 2}, 2, false); n != 2 {
 		t.Fatalf("synced = %d, want 2 (residual budget)", n)
 	}
-	if gets != 2 {
-		t.Fatalf("gets = %d, want 2", gets)
+	if gets.Load() != 2 {
+		t.Fatalf("gets = %d, want 2", gets.Load())
 	}
 }
 
