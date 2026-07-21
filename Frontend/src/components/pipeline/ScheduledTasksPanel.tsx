@@ -13,6 +13,7 @@
 import {
 	DeleteOutlined,
 	EditOutlined,
+	MoreOutlined,
 	PauseCircleOutlined,
 	PlayCircleOutlined,
 	PlusOutlined,
@@ -20,14 +21,15 @@ import {
 	ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+	App,
 	Button,
 	Card,
 	Drawer,
+	Dropdown,
 	Form,
 	Input,
 	InputNumber,
 	message,
-	Popconfirm,
 	Select,
 	Space,
 	Table,
@@ -164,13 +166,84 @@ function jsonObjectValidator(fieldLabel: string) {
 	};
 }
 
+// Filled Badge-style tags (colored bg + border) read as first-class status
+// pills on white rather than thin outlines.
+const STATUS_TAG_STYLE: React.CSSProperties = {
+	borderRadius: 4,
+	fontWeight: 500,
+	padding: "0 8px",
+	margin: 0,
+};
 function StatusTag({ rule }: { rule: ScheduledTask }) {
-	if (!rule.enabled) return <Tag color="default">已暂停</Tag>;
+	if (!rule.enabled) {
+		return (
+			<Tag
+				style={{
+					...STATUS_TAG_STYLE,
+					background: "#f5f5f5",
+					color: "#595959",
+					borderColor: "#d9d9d9",
+				}}
+			>
+				已暂停
+			</Tag>
+		);
+	}
 	const s = rule.lastRunStatus;
-	if (s === "failed") return <Tag color="red">上次失败</Tag>;
-	if (s === "empty") return <Tag color="orange">上次无数据</Tag>;
-	if (s === "succeeded") return <Tag color="green">运行中</Tag>;
-	return <Tag color="blue">已启用</Tag>;
+	if (s === "failed") {
+		return (
+			<Tag
+				style={{
+					...STATUS_TAG_STYLE,
+					background: "#fff1f0",
+					color: "#a8071a",
+					borderColor: "#ffa39e",
+				}}
+			>
+				上次失败
+			</Tag>
+		);
+	}
+	if (s === "empty") {
+		return (
+			<Tag
+				style={{
+					...STATUS_TAG_STYLE,
+					background: "#fffbe6",
+					color: "#874d00",
+					borderColor: "#ffe58f",
+				}}
+			>
+				上次无数据
+			</Tag>
+		);
+	}
+	if (s === "succeeded") {
+		return (
+			<Tag
+				style={{
+					...STATUS_TAG_STYLE,
+					background: "#f6ffed",
+					color: "#237804",
+					borderColor: "#b7eb8f",
+				}}
+			>
+				运行中
+			</Tag>
+		);
+	}
+	return (
+		<Tag
+			style={{
+				...STATUS_TAG_STYLE,
+				background: "#e6f4ff",
+				color: "#0958d9",
+				borderColor: "#91caff",
+			}}
+		>
+			已启用
+		</Tag>
+	);
 }
 
 function formatWhen(ts?: string | null): string {
@@ -180,7 +253,15 @@ function formatWhen(ts?: string | null): string {
 	return d.toLocaleString();
 }
 
+// monoStyle keeps ids / timestamps aligned across rows without lifting a full
+// design system change; scoped inline so it's easy to spot when styling grows.
+const monoStyle: React.CSSProperties = {
+	fontFamily:
+		'ui-monospace, SFMono-Regular, Menlo, Consolas, "Roboto Mono", monospace',
+};
+
 export function ScheduledTasksPanel() {
+	const { modal } = App.useApp();
 	const [rules, setRules] = useState<ScheduledTask[]>([]);
 	const [total, setTotal] = useState(0);
 	const [loading, setLoading] = useState(false);
@@ -221,12 +302,31 @@ export function ScheduledTasksPanel() {
 	useEffect(() => {
 		let cancelled = false;
 		setSelectsLoading(true);
-		Promise.all([
-			listPipelines({ pageSize: 500, excludeAutoDrafts: true }).then(
-				(r) => r.items,
-			),
-			listExecutionTargets(),
-		])
+		// Backend caps page_size at 200 and — importantly — FALLS BACK to
+		// pageSize=20 when the request exceeds the cap (handlers/pagination.go:16),
+		// so passing 500 silently returned only 20 rows. Use pageSize=200 and
+		// paginate through the tail until we've collected `total` rows so the
+		// Select can offer every template, not just the first page.
+		const fetchAllPipelines = async () => {
+			const collected: PipelineTemplate[] = [];
+			let page = 1;
+			const pageSize = 200;
+			// Bounded loop: if total is somehow lying, cap at 10 pages (2000
+			// templates) so a runaway backend can't spin the tab forever.
+			for (let i = 0; i < 10; i++) {
+				const resp = await listPipelines({
+					page,
+					pageSize,
+					excludeAutoDrafts: true,
+				});
+				collected.push(...resp.items);
+				if (collected.length >= resp.total || resp.items.length < pageSize)
+					break;
+				page += 1;
+			}
+			return collected;
+		};
+		Promise.all([fetchAllPipelines(), listExecutionTargets()])
 			.then(([tmpls, tgts]) => {
 				if (cancelled) return;
 				setTemplates(tmpls);
@@ -388,6 +488,20 @@ export function ScheduledTasksPanel() {
 		[load],
 	);
 
+	const confirmDelete = useCallback(
+		(rule: ScheduledTask) => {
+			modal.confirm({
+				title: `确认删除规则「${rule.name}」?`,
+				content: "删除后此规则不再触发定时下发,已产生的批量任务不受影响。",
+				okText: "删除",
+				okType: "danger",
+				cancelText: "取消",
+				onOk: () => onDelete(rule),
+			});
+		},
+		[modal, onDelete],
+	);
+
 	const onTriggerModeChange = useCallback(
 		(mode: ScheduledTaskTriggerMode) => {
 			// Replace triggerConfig with the new mode's default ONLY when the
@@ -413,22 +527,42 @@ export function ScheduledTasksPanel() {
 
 	const columns: ColumnsType<ScheduledTask> = useMemo(
 		() => [
+			// Name column is bounded (was consuming all remaining width and pushing
+			// everything else into a squeezed sliver on the right). Id below the
+			// name is single-line ellipsized with a hover tooltip carrying the
+			// full id + a copy button — no more UUID line-wrap.
 			{
 				title: "名称",
 				dataIndex: "name",
+				width: 240,
 				render: (name: string, rule) => (
-					<Space direction="vertical" size={0}>
-						<Text strong>{name}</Text>
+					<Space direction="vertical" size={2} style={{ maxWidth: 220 }}>
+						<Text
+							strong
+							ellipsis={{ tooltip: name }}
+							style={{ display: "block", maxWidth: 220 }}
+						>
+							{name}
+						</Text>
 						<Text
 							type="secondary"
-							copyable={{ text: rule.id }}
-							style={{ fontSize: 12 }}
+							copyable={{ text: rule.id, tooltips: ["复制", "已复制"] }}
+							ellipsis={{ tooltip: rule.id }}
+							style={{
+								...monoStyle,
+								fontSize: 11,
+								display: "block",
+								maxWidth: 220,
+							}}
 						>
 							{rule.id}
 						</Text>
 					</Space>
 				),
 			},
+			// Pipeline / target: prefer the human name; the id is hidden behind a
+			// small "复制" affordance instead of a second visible line, so long
+			// names / long UUIDs stay on one row and columns don't fight for space.
 			{
 				title: "流水线",
 				dataIndex: "templateId",
@@ -436,17 +570,18 @@ export function ScheduledTasksPanel() {
 				render: (id: string) => {
 					const name = templateNameByID.get(id);
 					return (
-						<Space direction="vertical" size={0}>
-							<Text style={{ fontSize: 13 }}>{name ?? id}</Text>
-							{name ? (
-								<Text
-									type="secondary"
-									copyable={{ text: id }}
-									style={{ fontSize: 11 }}
-								>
-									{id.slice(0, 12)}…
-								</Text>
-							) : null}
+						<Space size={4}>
+							<Text
+								ellipsis={{ tooltip: name ?? id }}
+								style={{ maxWidth: 170 }}
+							>
+								{name ?? id}
+							</Text>
+							<Text
+								type="secondary"
+								copyable={{ text: id, tooltips: ["复制 id", "已复制"] }}
+								style={{ fontSize: 0 }}
+							/>
 						</Space>
 					);
 				},
@@ -454,32 +589,36 @@ export function ScheduledTasksPanel() {
 			{
 				title: "资源池",
 				dataIndex: "targetId",
-				width: 180,
+				width: 160,
 				render: (id: string) => {
 					const name = targetNameByID.get(id);
-					return name ? (
-						<Text style={{ fontSize: 13 }}>{name}</Text>
-					) : (
-						<Text
-							type="secondary"
-							copyable={{ text: id }}
-							style={{ fontSize: 12 }}
-						>
-							{id}
-						</Text>
+					return (
+						<Space size={4}>
+							<Text
+								ellipsis={{ tooltip: name ?? id }}
+								style={{ maxWidth: 110 }}
+							>
+								{name ?? id}
+							</Text>
+							<Text
+								type="secondary"
+								copyable={{ text: id, tooltips: ["复制 id", "已复制"] }}
+								style={{ fontSize: 0 }}
+							/>
+						</Space>
 					);
 				},
 			},
 			{
 				title: "触发模式",
 				dataIndex: "triggerMode",
-				width: 140,
+				width: 130,
 				render: (mode: ScheduledTaskTriggerMode) =>
 					TRIGGER_MODE_LABELS[mode] ?? mode,
 			},
 			{
 				title: "频率",
-				width: 100,
+				width: 90,
 				render: (_v, rule) => {
 					const s = rule.triggerConfig?.intervalSeconds;
 					if (!s) return "—";
@@ -488,6 +627,7 @@ export function ScheduledTasksPanel() {
 					return `每 ${s}s`;
 				},
 			},
+			// State tag now uses filled bg for readability on white; see StatusTag.
 			{
 				title: "状态",
 				width: 110,
@@ -495,22 +635,28 @@ export function ScheduledTasksPanel() {
 			},
 			{
 				title: "上次运行",
-				width: 220,
+				width: 240,
 				render: (_v, rule) => (
 					<Space direction="vertical" size={0}>
-						<Text style={{ fontSize: 12 }}>{formatWhen(rule.lastRunAt)}</Text>
+						<Text style={{ ...monoStyle, fontSize: 12 }}>
+							{formatWhen(rule.lastRunAt)}
+						</Text>
 						{rule.lastBatchId ? (
 							<Link
 								to={`/pipeline/batch/${encodeURIComponent(rule.lastBatchId)}`}
 								style={{ fontSize: 11 }}
 							>
-								批量 → {rule.lastBatchId.slice(0, 18)}…
+								批量 → {rule.lastBatchId.slice(0, 12)}…
 							</Link>
 						) : null}
 						{rule.lastError ? (
 							<Tooltip title={rule.lastError}>
-								<Text type="danger" style={{ fontSize: 11 }} ellipsis>
-									{rule.lastError.slice(0, 40)}
+								<Text
+									type="danger"
+									ellipsis
+									style={{ fontSize: 11, display: "block", maxWidth: 220 }}
+								>
+									{rule.lastError.slice(0, 60)}
 								</Text>
 							</Tooltip>
 						) : null}
@@ -522,7 +668,7 @@ export function ScheduledTasksPanel() {
 				width: 160,
 				render: (_v, rule) =>
 					rule.lastSuccessAt ? (
-						<Text style={{ fontSize: 12 }}>
+						<Text style={{ ...monoStyle, fontSize: 12 }}>
 							{formatWhen(rule.lastSuccessAt)}
 						</Text>
 					) : (
@@ -531,53 +677,70 @@ export function ScheduledTasksPanel() {
 						</Text>
 					),
 			},
+			// Operations: 高频外露 (编辑 · 立即),低频/危险收入更多菜单
+			// (启用/暂停 + 删除). Dropdown items handle their own guards
+			// (danger label, confirm modal for delete).
 			{
 				title: "操作",
-				width: 240,
+				width: 150,
 				fixed: "right",
-				render: (_v, rule) => (
-					<Space size={4} wrap>
-						<Tooltip title="立即运行">
+				render: (_v, rule) => {
+					const menuItems = [
+						{
+							key: "toggle",
+							icon: rule.enabled ? (
+								<PauseCircleOutlined />
+							) : (
+								<PlayCircleOutlined />
+							),
+							label: rule.enabled ? "暂停" : "启用",
+							onClick: () => void onToggle(rule),
+						},
+						{ type: "divider" as const },
+						{
+							key: "delete",
+							icon: <DeleteOutlined />,
+							label: "删除",
+							danger: true,
+							onClick: () => confirmDelete(rule),
+						},
+					];
+					return (
+						<Space size={4}>
 							<Button
 								size="small"
-								icon={<ThunderboltOutlined />}
-								onClick={() => void onRunNow(rule)}
+								icon={<EditOutlined />}
+								onClick={() => openEdit(rule)}
 							>
-								立即
+								编辑
 							</Button>
-						</Tooltip>
-						<Button
-							size="small"
-							icon={
-								rule.enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />
-							}
-							onClick={() => void onToggle(rule)}
-						>
-							{rule.enabled ? "暂停" : "启用"}
-						</Button>
-						<Button
-							size="small"
-							icon={<EditOutlined />}
-							onClick={() => openEdit(rule)}
-						>
-							编辑
-						</Button>
-						<Popconfirm
-							title={`确认删除规则「${rule.name}」?`}
-							okText="删除"
-							okType="danger"
-							cancelText="取消"
-							onConfirm={() => void onDelete(rule)}
-						>
-							<Button size="small" danger icon={<DeleteOutlined />}>
-								删除
-							</Button>
-						</Popconfirm>
-					</Space>
-				),
+							<Tooltip title="立即运行">
+								<Button
+									size="small"
+									type="primary"
+									ghost
+									icon={<ThunderboltOutlined />}
+									onClick={() => void onRunNow(rule)}
+								>
+									立即
+								</Button>
+							</Tooltip>
+							<Dropdown menu={{ items: menuItems }} trigger={["click"]}>
+								<Button size="small" icon={<MoreOutlined />} />
+							</Dropdown>
+						</Space>
+					);
+				},
 			},
 		],
-		[onDelete, onRunNow, onToggle, openEdit, templateNameByID, targetNameByID],
+		[
+			confirmDelete,
+			onRunNow,
+			onToggle,
+			openEdit,
+			templateNameByID,
+			targetNameByID,
+		],
 	);
 
 	return (
@@ -613,7 +776,8 @@ export function ScheduledTasksPanel() {
 				columns={columns}
 				dataSource={rules}
 				pagination={false}
-				scroll={{ x: 1200 }}
+				scroll={{ x: 1500 }}
+				tableLayout="fixed"
 				size="middle"
 			/>
 
