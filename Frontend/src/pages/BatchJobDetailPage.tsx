@@ -1,8 +1,8 @@
 import {
 	ArrowLeftOutlined,
 	DownloadOutlined,
-	PauseCircleOutlined,
 	PlayCircleOutlined,
+	PoweroffOutlined,
 	RedoOutlined,
 	ReloadOutlined,
 	WarningOutlined,
@@ -685,20 +685,22 @@ export default function BatchJobDetailPage() {
 			});
 			if (pauseStopRunning && (result.stoppedCount ?? 0) > 0) {
 				message.success(
-					`批次已暂停，已停止 ${result.stoppedCount} 条运行中的子任务`,
+					`已停止批次，正在停止 ${result.stoppedCount} 条运行中的子任务`,
 				);
 			} else if (pauseStopRunning && (result.stopFailedCount ?? 0) > 0) {
 				message.warning(
-					`批次已暂停，但有 ${result.stopFailedCount} 条子任务停止失败`,
+					`已停止批次，但有 ${result.stopFailedCount} 条子任务停止失败`,
 				);
+			} else if (pauseStopRunning) {
+				message.success("已停止批次（无运行中的子任务）");
 			} else {
-				message.success("批次已暂停");
+				message.success("已停止下发（运行中的子任务继续执行）");
 			}
 			setPauseModalOpen(false);
 			setPauseStopRunning(false);
 			await refresh({ force: true });
 		} catch (err) {
-			message.error(`暂停失败：${String(err)}`);
+			message.error(`停止失败：${String(err)}`);
 		} finally {
 			setActionLoading(null);
 		}
@@ -908,11 +910,12 @@ export default function BatchJobDetailPage() {
 					<Space wrap>
 						{actualStatus === "running" ? (
 							<Button
-								icon={<PauseCircleOutlined />}
+								danger
+								icon={<PoweroffOutlined />}
 								loading={actionLoading === "pause"}
 								onClick={() => setPauseModalOpen(true)}
 							>
-								暂停
+								停止
 							</Button>
 						) : null}
 						{actualStatus === "paused" ? (
@@ -1554,15 +1557,16 @@ export default function BatchJobDetailPage() {
 			</Modal>
 
 			<Modal
-				title="暂停批次"
+				title="停止批次"
 				open={pauseModalOpen}
 				onCancel={() => {
 					setPauseModalOpen(false);
 					setPauseStopRunning(false);
 				}}
 				onOk={() => void submitPause()}
-				okText="确认暂停"
+				okText="确认停止"
 				cancelText="取消"
+				okButtonProps={{ danger: true }}
 				confirmLoading={actionLoading === "pause"}
 				destroyOnHidden
 			>
@@ -1572,12 +1576,19 @@ export default function BatchJobDetailPage() {
 					style={{ display: "flex", flexDirection: "column", gap: 12 }}
 				>
 					<Radio value={false}>
-						仅暂停调度（不再启动新的子任务，运行中的继续执行）
+						停止下发（不再下发新子任务，运行中的继续跑完，可恢复）
 					</Radio>
 					<Radio value={true}>
-						暂停并停止运行中的子任务（向 Argo 发送停止信号）
+						全部停止（连运行中的子任务一起停，可恢复重投）
 					</Radio>
 				</Radio.Group>
+				<Text
+					type="secondary"
+					style={{ display: "block", marginTop: 12, fontSize: 12 }}
+				>
+					两种都可稍后点「继续」恢复。「全部停止」对运行中的子任务发送 Argo
+					优雅停止信号（非删除），恢复时这些子任务从头重新下发。
+				</Text>
 			</Modal>
 		</div>
 	);

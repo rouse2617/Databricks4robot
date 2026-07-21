@@ -1,12 +1,13 @@
 import {
-	PauseCircleOutlined,
 	PlayCircleOutlined,
+	PoweroffOutlined,
 	RedoOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
 import {
 	App,
 	Button,
+	Dropdown,
 	Empty,
 	Input,
 	Progress,
@@ -53,7 +54,7 @@ interface BatchJobListProps {
 }
 
 export function BatchJobList({ active = true }: BatchJobListProps) {
-	const { message } = App.useApp();
+	const { message, modal } = App.useApp();
 	const navigate = useNavigate();
 	const [jobs, setJobs] = useState<BatchJob[]>([]);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
@@ -118,13 +119,23 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	const runAction = async (
 		jobId: string,
 		action: "pause" | "resume" | "retry",
+		opts?: { stopRunning?: boolean },
 	) => {
 		setActionLoading(`${jobId}:${action}`);
 		try {
-			if (action === "pause") await pauseBatchJob(jobId);
+			if (action === "pause")
+				await pauseBatchJob(jobId, { stopRunning: opts?.stopRunning ?? false });
 			if (action === "resume") await resumeBatchJob(jobId);
 			if (action === "retry") await retryFailedBatchItems(jobId);
-			message.success("操作已提交");
+			if (action === "pause") {
+				message.success(
+					opts?.stopRunning
+						? "已停止批次（含运行中的子任务，可恢复）"
+						: "已停止下发（运行中的继续执行，可恢复）",
+				);
+			} else {
+				message.success("操作已提交");
+			}
 			await refresh();
 		} catch (err) {
 			message.error(`操作失败：${String(err)}`);
@@ -254,15 +265,45 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 						查看子任务
 					</Button>
 					{record.status === "running" ? (
-						<Button
-							type="link"
-							size="small"
-							icon={<PauseCircleOutlined />}
-							loading={actionLoading === `${record.id}:pause`}
-							onClick={() => void runAction(record.id, "pause")}
+						<Dropdown
+							trigger={["click"]}
+							menu={{
+								items: [
+									{ key: "soft", label: "停止下发" },
+									{ key: "hard", label: "全部停止", danger: true },
+								],
+								onClick: ({ key }) => {
+									// 软停无害(可恢复、不停在飞的)→ 直接执行;
+									// 硬停会停掉运行中的子任务 → 二次确认(与详情页一致)。
+									if (key === "hard") {
+										modal.confirm({
+											title: "全部停止该批次？",
+											content:
+												"会对运行中的子任务发送 Argo 优雅停止信号（非删除），这些子任务恢复时从头重新下发。可稍后点「继续」恢复。",
+											okText: "确认停止",
+											okButtonProps: { danger: true },
+											cancelText: "取消",
+											onOk: () =>
+												runAction(record.id, "pause", { stopRunning: true }),
+										});
+									} else {
+										void runAction(record.id, "pause", {
+											stopRunning: false,
+										});
+									}
+								},
+							}}
 						>
-							暂停
-						</Button>
+							<Button
+								type="link"
+								size="small"
+								danger
+								icon={<PoweroffOutlined />}
+								loading={actionLoading === `${record.id}:pause`}
+							>
+								停止
+							</Button>
+						</Dropdown>
 					) : null}
 					{record.status === "paused" ? (
 						<Button
