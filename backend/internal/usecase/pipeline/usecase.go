@@ -2364,7 +2364,15 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	// derivation too. Conservative: only SUCCEEDED is derived — any non-succeeded
 	// business pod yields false, so failure/retry paths are untouched.
 	if isActiveDeploymentStatus(status) {
-		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok {
+		// CYB-3707: only finalize off the business pods when the node set is
+		// complete. An in-flight argo-server /retry deletes the failed step's
+		// node from wf.Status.Nodes so the controller can re-create it; during
+		// that window the remaining pods can all be "succeeded" and
+		// allBusinessPodsSucceeded would spuriously report done — promoting a
+		// still-failed / mid-retry run to Succeeded and locking further retries.
+		// Require the step-pod count to match the pipeline's step count first.
+		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok &&
+			(run.NodeCount <= 0 || businessStepPodCount(wf) >= run.NodeCount) {
 			status = string(wfv1.WorkflowSucceeded)
 			message = ""
 			if businessFinishedAt != nil {
@@ -2593,6 +2601,26 @@ func allBusinessPodsSucceeded(wf *wfv1.Workflow) (*time.Time, bool) {
 		}
 	}
 	return latestFinishedAt, sawBusinessPod
+}
+
+// businessStepPodCount returns how many real step pods (excluding the injected
+// databrew-exit-notify hook) exist in the workflow, regardless of phase. Used
+// by applyWorkflowToRun to detect a retry that has deleted a failed step's node
+// from wf.Status.Nodes (CYB-3707): a count below the pipeline's step count means
+// the node set is incomplete, so allBusinessPodsSucceeded must not be trusted to
+// finalize the run as Succeeded.
+func businessStepPodCount(wf *wfv1.Workflow) int {
+	if wf == nil {
+		return 0
+	}
+	count := 0
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod || node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {
@@ -3062,6 +3090,41 @@ func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *mode
 	}
 	uc.persistRunObservation(ctx, run)
 	return true
+}
+
+// recoverStuckSucceededRun corrects a run that a prior revival race (CYB-3707)
+// left persisted as Succeeded while its durable asset-node ledger still shows a
+// failed/errored leaf. Bounded to the single-run detail read path. The resulting
+// Succeeded→Failed correction is terminal→terminal and is permitted by
+// persistRunObservation (only →active regressions are guarded). A run whose
+// ledger agrees it succeeded (or cannot be inferred) is left untouched.
+func (uc *Usecase) recoverStuckSucceededRun(ctx context.Context, run *models.PipelineRun) {
+	if run == nil || uc.assetNodeRepo == nil || !isSucceededRunStatus(run.Status) {
+		return
+	}
+	result, err := uc.assetNodeRepo.ListByRunID(ctx, run.ID, models.PipelineRunAssetNodeListOptions{Limit: 500})
+	if err != nil || result == nil || len(result.Items) == 0 {
+		return
+	}
+	status, message, ok := inferTerminalRunFromAssetNodes(result.Items)
+	if !ok || !isTerminalFailureRunStatus(status) {
+		return
+	}
+	slog.Warn("recoverStuckSucceededRun correcting mislabeled succeeded run",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"oldStatus", run.Status,
+		"newStatus", status,
+	)
+	run.Status = status
+	if trimmed := strings.TrimSpace(message); trimmed != "" {
+		run.Message = trimmed
+	}
+	if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		now := uc.nowUTC()
+		run.FinishedAt = &now
+	}
+	uc.persistRunObservation(ctx, run)
 }
 
 func inferRunStatusFromAssetNodes(nodes []models.PipelineRunAssetNode) (string, bool) {
@@ -4799,6 +4862,10 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
+	// CYB-3707: un-stick a run left mislabeled Succeeded by the prior revival
+	// race when its durable ledger shows a failed leaf, so the retry control
+	// returns and the failed step can be re-run.
+	uc.recoverStuckSucceededRun(ctx, run)
 	uc.enrichRun(ctx, run, true)
 	if run.Status != initialStatus || run.Message != initialMessage {
 		slog.Warn("GetRun status changed",
