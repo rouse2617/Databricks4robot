@@ -37,6 +37,13 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+	type ExecutionTarget,
+	listExecutionTargets,
+	listPipelines,
+	type PipelineTemplate,
+} from "../../api/pipelineApi";
 import {
 	createScheduledTask,
 	deleteScheduledTask,
@@ -178,6 +185,12 @@ export function ScheduledTasksPanel() {
 	const [total, setTotal] = useState(0);
 	const [loading, setLoading] = useState(false);
 	const [q, setQ] = useState("");
+	// Templates + targets are loaded once, cached, and reused for both the
+	// picker Selects in the drawer and the id→name display in the table so
+	// users don't stare at raw UUIDs.
+	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
+	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
+	const [selectsLoading, setSelectsLoading] = useState(false);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [editing, setEditing] = useState<ScheduledTask | null>(null);
 	const [saving, setSaving] = useState(false);
@@ -201,6 +214,50 @@ export function ScheduledTasksPanel() {
 	useEffect(() => {
 		void load();
 	}, [load]);
+
+	// One-shot load of templates + targets. The lists are small (dozens);
+	// loading them eagerly keeps the drawer instant and lets the table render
+	// human names in place of raw UUIDs.
+	useEffect(() => {
+		let cancelled = false;
+		setSelectsLoading(true);
+		Promise.all([
+			listPipelines({ pageSize: 500, excludeAutoDrafts: true }).then(
+				(r) => r.items,
+			),
+			listExecutionTargets(),
+		])
+			.then(([tmpls, tgts]) => {
+				if (cancelled) return;
+				setTemplates(tmpls);
+				setTargets(tgts);
+			})
+			.catch((err) => {
+				if (!cancelled) {
+					message.error(
+						err instanceof Error ? err.message : "加载模板/资源池选项失败",
+					);
+				}
+			})
+			.finally(() => {
+				if (!cancelled) setSelectsLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// id → display "name (id-prefix…)" for pretty-printing in the table.
+	const templateNameByID = useMemo(() => {
+		const m = new Map<string, string>();
+		for (const t of templates) m.set(t.id, t.name);
+		return m;
+	}, [templates]);
+	const targetNameByID = useMemo(() => {
+		const m = new Map<string, string>();
+		for (const t of targets) m.set(t.id, t.name);
+		return m;
+	}, [targets]);
 
 	const openCreate = useCallback(() => {
 		setEditing(null);
@@ -372,8 +429,47 @@ export function ScheduledTasksPanel() {
 					</Space>
 				),
 			},
-			{ title: "流水线", dataIndex: "templateId", width: 200 },
-			{ title: "资源池", dataIndex: "targetId", width: 180 },
+			{
+				title: "流水线",
+				dataIndex: "templateId",
+				width: 220,
+				render: (id: string) => {
+					const name = templateNameByID.get(id);
+					return (
+						<Space direction="vertical" size={0}>
+							<Text style={{ fontSize: 13 }}>{name ?? id}</Text>
+							{name ? (
+								<Text
+									type="secondary"
+									copyable={{ text: id }}
+									style={{ fontSize: 11 }}
+								>
+									{id.slice(0, 12)}…
+								</Text>
+							) : null}
+						</Space>
+					);
+				},
+			},
+			{
+				title: "资源池",
+				dataIndex: "targetId",
+				width: 180,
+				render: (id: string) => {
+					const name = targetNameByID.get(id);
+					return name ? (
+						<Text style={{ fontSize: 13 }}>{name}</Text>
+					) : (
+						<Text
+							type="secondary"
+							copyable={{ text: id }}
+							style={{ fontSize: 12 }}
+						>
+							{id}
+						</Text>
+					);
+				},
+			},
 			{
 				title: "触发模式",
 				dataIndex: "triggerMode",
@@ -399,14 +495,17 @@ export function ScheduledTasksPanel() {
 			},
 			{
 				title: "上次运行",
-				width: 190,
+				width: 220,
 				render: (_v, rule) => (
 					<Space direction="vertical" size={0}>
 						<Text style={{ fontSize: 12 }}>{formatWhen(rule.lastRunAt)}</Text>
 						{rule.lastBatchId ? (
-							<Text type="secondary" style={{ fontSize: 11 }}>
-								batch: {rule.lastBatchId.slice(0, 18)}…
-							</Text>
+							<Link
+								to={`/pipeline/batch/${encodeURIComponent(rule.lastBatchId)}`}
+								style={{ fontSize: 11 }}
+							>
+								批量 → {rule.lastBatchId.slice(0, 18)}…
+							</Link>
 						) : null}
 						{rule.lastError ? (
 							<Tooltip title={rule.lastError}>
@@ -417,6 +516,20 @@ export function ScheduledTasksPanel() {
 						) : null}
 					</Space>
 				),
+			},
+			{
+				title: "上次成功",
+				width: 160,
+				render: (_v, rule) =>
+					rule.lastSuccessAt ? (
+						<Text style={{ fontSize: 12 }}>
+							{formatWhen(rule.lastSuccessAt)}
+						</Text>
+					) : (
+						<Text type="secondary" style={{ fontSize: 12 }}>
+							—
+						</Text>
+					),
 			},
 			{
 				title: "操作",
@@ -464,7 +577,7 @@ export function ScheduledTasksPanel() {
 				),
 			},
 		],
-		[onDelete, onRunNow, onToggle, openEdit],
+		[onDelete, onRunNow, onToggle, openEdit, templateNameByID, targetNameByID],
 	);
 
 	return (
@@ -534,19 +647,39 @@ export function ScheduledTasksPanel() {
 					<Space size="middle" style={{ display: "flex" }}>
 						<Form.Item
 							name="templateId"
-							label="流水线 (template id)"
-							rules={[{ required: true, message: "必填" }]}
+							label="流水线"
+							rules={[{ required: true, message: "必选" }]}
 							style={{ flex: 1 }}
 						>
-							<Input placeholder="tpl-..." />
+							<Select
+								showSearch
+								loading={selectsLoading}
+								placeholder="从流水线管理里选一个模板"
+								optionFilterProp="label"
+								options={templates.map((t) => ({
+									value: t.id,
+									label: `${t.name}${
+										t.activeVersion ? " · v" + t.activeVersion : ""
+									}`,
+								}))}
+							/>
 						</Form.Item>
 						<Form.Item
 							name="targetId"
-							label="资源池 (target id)"
-							rules={[{ required: true, message: "必填" }]}
+							label="资源池"
+							rules={[{ required: true, message: "必选" }]}
 							style={{ flex: 1 }}
 						>
-							<Input placeholder="cluster-default / video-proc-prod / ..." />
+							<Select
+								showSearch
+								loading={selectsLoading}
+								placeholder="选一个执行目标"
+								optionFilterProp="label"
+								options={targets.map((t) => ({
+									value: t.id,
+									label: `${t.name}${t.namespace ? " · " + t.namespace : ""}`,
+								}))}
+							/>
 						</Form.Item>
 					</Space>
 					<Space size="middle" style={{ display: "flex" }}>
