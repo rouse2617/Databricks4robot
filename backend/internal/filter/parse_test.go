@@ -489,6 +489,37 @@ func TestParseFilter_UnknownFieldReturnsError(t *testing.T) {
 	}
 }
 
+// CYB-3715: flatten columns should be filterable as top-level asset fields
+// so /queries/run stops returning 422 UNSUPPORTED_FIELD on them.
+func TestParseFilter_CYB3715FlattenFields(t *testing.T) {
+	cases := []struct {
+		field   string
+		storage string
+	}{
+		{"camera_model", "camera_model"},
+		{"device_id", "device_id"},
+		{"collector_id", "collector_id"},
+		{"scene_id", "scene_id"},
+		{"data_source", "data_source"},
+		{"collection_method", "collection_method"},
+		{"source_platform", "source_platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			f, err := ParseFilter(tc.field + ":eq:x")
+			if err != nil {
+				t.Fatalf("ParseFilter %q: %v", tc.field, err)
+			}
+			if f.Field != tc.field {
+				t.Fatalf("Field: expected %q, got %q", tc.field, f.Field)
+			}
+			if f.StorageField != tc.storage {
+				t.Fatalf("StorageField: expected %q, got %q", tc.storage, f.StorageField)
+			}
+		})
+	}
+}
+
 func TestParseFilter_VirtualFieldAlgoStatus(t *testing.T) {
 	// algo_status is in the whitelist as virtual; it should pass validation
 	// and ParseFilter should return a Filter with IsVirtual=true.
