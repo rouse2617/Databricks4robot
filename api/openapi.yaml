@@ -835,7 +835,14 @@ components:
       type: object
       properties:
         schema_version: { type: string }
-        mode: { type: string }
+        mode: { type: string, enum: [structured, keyword, semantic, similar] }
+        q:
+          type: string
+          description: |
+            Free-text keyword for fulltext modes (keyword / semantic / similar).
+            When mode is one of those three AND q is non-empty, the server
+            synthesizes a `_fulltext ilike q` predicate on top of `where`
+            (AND-wrapped). Ignored for `mode=structured`.
         scope:
           type: object
           properties:

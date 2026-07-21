@@ -409,7 +409,20 @@ curl -sS -X POST "$BASE/api/v1/queries/run?include_history=true" \
     "page": {"page": 1, "page_size": 20}
   }'
 
-# keyword / semantic / similar 也统一从 Query API 进入
+# keyword / semantic / similar — 两种等价写法(CYB-3713):
+# (A) 顶级 q 字段(推荐,简洁):Normalize 会自动注入 `_fulltext ilike q` 到 where 树。
+curl -sS -X POST "$BASE/api/v1/queries/run" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_version": "v1",
+    "mode": "keyword",
+    "q": "warehouse rain",
+    "scope": {"resource": "assets"},
+    "page": {"page": 1, "page_size": 20}
+  }'
+
+# (B) 显式 _fulltext predicate(高级用法,可与其他 predicate 组合):
 curl -sS -X POST "$BASE/api/v1/queries/run" \
   -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
@@ -423,6 +436,12 @@ curl -sS -X POST "$BASE/api/v1/queries/run" \
     "page": {"page": 1, "page_size": 20, "offset": 0, "limit": 20}
   }'
 ```
+
+**关键点(CYB-3713)**:
+- `q` 仅在 `mode ∈ {keyword, semantic, similar}` 时生效,`structured` 会被丢弃
+- 空 `q` 保持"无过滤"行为(向后兼容),配合 `where` 使用
+- 覆盖字段:`asset_id`, `asset_type`, `owner`, `reviewer`, `mcap_file_id`, `notes` tag。 `mcap_files.metadata` JSONB **不在覆盖范围**(另行 CYB-3714 / CYB-3715 追踪)
+- ES 不可用时自动 fallback PG `ILIKE`,`debug_plan.warnings` 里会有 `"keyword search degraded to postgres ilike"`
 
 错误语义：
 - `400 INVALID_ARGUMENT`：请求结构不合法（如 `scope.resource` 非法、排序方向非法）

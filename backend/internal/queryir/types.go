@@ -2,15 +2,33 @@ package queryir
 
 // QueryRequest is the canonical v1 query request envelope.
 type QueryRequest struct {
-	SchemaVersion string       `json:"schema_version" binding:"required"`
-	Mode          string       `json:"mode,omitempty"`
-	Scope         QueryScope   `json:"scope"`
-	Select        QuerySelect  `json:"select"`
-	Where         *QueryExpr   `json:"where,omitempty"`
-	Sort          []QuerySort  `json:"sort,omitempty"`
-	Page          QueryPage    `json:"page"`
-	Facets        []QueryFacet `json:"facets,omitempty"`
-	Debug         QueryDebug   `json:"debug"`
+	SchemaVersion string `json:"schema_version" binding:"required"`
+	Mode          string `json:"mode,omitempty"`
+	// Q is the free-text keyword for fulltext modes (keyword / semantic /
+	// similar). Normalize() synthesizes a `_fulltext ilike Q` predicate on
+	// top of Where when Q is non-empty AND the mode belongs to the fulltext
+	// set — this feeds the existing ES/PG dispatch. Ignored for structured
+	// mode. See CYB-3713 for the plumbing fix that added this field.
+	Q      string       `json:"q,omitempty"`
+	Scope  QueryScope   `json:"scope"`
+	Select QuerySelect  `json:"select"`
+	Where  *QueryExpr   `json:"where,omitempty"`
+	Sort   []QuerySort  `json:"sort,omitempty"`
+	Page   QueryPage    `json:"page"`
+	Facets []QueryFacet `json:"facets,omitempty"`
+	Debug  QueryDebug   `json:"debug"`
+}
+
+// IsFulltextMode reports whether the request's Mode selects a fulltext
+// dispatch (ES recall + buildSearchModeQuery on the ES side, PG
+// buildFulltextClause on the fallback path). The three modes accept `Q`
+// during Normalize; other modes ignore it.
+func IsFulltextMode(mode string) bool {
+	switch mode {
+	case "keyword", "semantic", "similar":
+		return true
+	}
+	return false
 }
 
 type QueryScope struct {

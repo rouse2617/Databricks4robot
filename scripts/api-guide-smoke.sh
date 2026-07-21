@@ -392,6 +392,30 @@ expect_code_get "search lineage invalid direction -> 400" "/api/v1/search/assets
 post "queries run (structured)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (include_history)" "/api/v1/queries/run?include_history=true" '{"schema_version":"v1","scope":{"resource":"assets","include_history":true},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null
+
+# CYB-3713 regression pack: keyword mode `q` param must be honored (was
+# silently dropped, returning full unfiltered list). Compare filtered vs
+# unfiltered totals to prove the injection is live.
+KW_BODY=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+	-d '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":1}}' 2>/dev/null || echo '{}')
+KW_TOTAL_UNFILTERED=$(echo "$KW_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+
+for KWQ in "nonexistent-xxx-cyb-3713-regression-do-not-match" "备餐操作"; do
+	RAW=$(curl -sS --max-time 20 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+		-d "{\"schema_version\":\"v1\",\"mode\":\"keyword\",\"q\":\"${KWQ}\",\"scope\":{\"resource\":\"assets\"},\"page\":{\"page\":1,\"page_size\":1}}" 2>/dev/null || echo $'\n000')
+	RESP_CODE=$(echo "$RAW" | tail -n1)
+	RESP_BODY=$(echo "$RAW" | sed '$d')
+	TOTAL=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+	if [[ "$RESP_CODE" != "200" ]]; then
+		bad "queries run keyword q=${KWQ}"
+	elif [[ "$TOTAL" == "$KW_TOTAL_UNFILTERED" ]]; then
+		# Total == unfiltered means q was ignored — the pre-fix regression.
+		FAIL=$((FAIL + 1))
+		echo "  FAIL queries run keyword q=${KWQ}: total ${TOTAL} equals unfiltered ${KW_TOTAL_UNFILTERED} (q silently dropped — CYB-3713 regression)"
+	else
+		ok "queries run keyword q=${KWQ} (total=${TOTAL} != unfiltered ${KW_TOTAL_UNFILTERED})"
+	fi
+done
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
 
