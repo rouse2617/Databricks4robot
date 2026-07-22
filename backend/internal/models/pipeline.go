@@ -468,9 +468,12 @@ type PipelineRunListFilter struct {
 	Query               string
 	PipelineNodeID      string
 	NodeStatus          string
-	Page                int
-	PageSize            int
-	RefreshActive       bool
+	// CreatedBy filters to runs whose owner equals this exact string (e.g.
+	// "subscription-task:<id>" to list a subscription task's single runs).
+	CreatedBy     string
+	Page          int
+	PageSize      int
+	RefreshActive bool
 	// SummaryOnly drops per-run nodes (and other heavy fields) for lightweight
 	// list views. When false the default list keeps nodes so callers can show
 	// per-run estimated cost.

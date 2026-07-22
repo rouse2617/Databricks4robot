@@ -434,6 +434,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	excludeBatchParents := strings.EqualFold(c.Query("excludeBatchParents"), "true") || c.Query("excludeBatchParents") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	query := strings.TrimSpace(c.Query("q"))
+	createdBy := strings.TrimSpace(c.Query("createdBy"))
 	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
 	nodeStatus := strings.TrimSpace(c.Query("nodeStatus"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
@@ -461,6 +462,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		ExcludeBatchParents: excludeBatchParents,
 		Status:              statusFilter,
 		Query:               query,
+		CreatedBy:           createdBy,
 		PipelineNodeID:      pipelineNodeID,
 		NodeStatus:          nodeStatus,
 		Page:                page,

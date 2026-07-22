@@ -79,6 +79,11 @@ check "list batches by createdBy is 200" 200 "$code" "$(cat /tmp/smoke-st-hist.t
 code=$(curl -sS -o /tmp/smoke-st-items.txt -w '%{http_code}' "${HDR[@]}" "${BASE}/api/v1/backfill/batch_definitely_not_here/items")
 check "items of unknown batch is 200 (empty list)" 200 "$code" "$(cat /tmp/smoke-st-items.txt)"
 
+# CYB-3801: single runs dispatched by a task (1-asset messages) are reverse-looked
+# up by owner. Empty here (smoke task never dispatched) — assert the endpoint answers.
+code=$(curl -sS -o /tmp/smoke-st-runs.txt -w '%{http_code}' "${HDR[@]}" "${BASE}/api/v1/runs?createdBy=subscription-task:$ID&excludeBatch=true")
+check "list runs by createdBy is 200" 200 "$code" "$(cat /tmp/smoke-st-runs.txt)"
+
 # 404: unknown id
 code=$(curl -sS -o /dev/null -w '%{http_code}' "${HDR[@]}" "$URL/sub_definitely_not_here")
 check "get unknown id is 404" 404 "$code"

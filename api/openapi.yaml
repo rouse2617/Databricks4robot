@@ -6783,6 +6783,10 @@ paths:
           schema: { type: string }
           description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
         - in: query
+          name: createdBy
+          schema: { type: string }
+          description: Exact-match filter on the run's owner (e.g. `subscription-task:<id>` to list a subscription task's single runs).
+        - in: query
           name: pipelineNodeId
           schema: { type: string }
         - in: query
@@ -7531,6 +7535,10 @@ paths:
           name: q
           schema: { type: string }
           description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: createdBy
+          schema: { type: string }
+          description: Exact-match filter on the run's owner (e.g. `subscription-task:<id>` to list a subscription task's single runs).
         - in: query
           name: pipelineNodeId
           schema: { type: string }

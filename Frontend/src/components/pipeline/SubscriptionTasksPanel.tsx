@@ -41,8 +41,10 @@ import {
   deleteSubscriptionTask,
   type DispatchBatch,
   type DispatchBatchItem,
+  type DispatchRun,
   listDispatchBatchItems,
   listSubscriptionTaskBatches,
+  listSubscriptionTaskRuns,
   listSubscriptionTasks,
   pauseSubscriptionTask,
   resumeSubscriptionTask,
@@ -94,6 +96,19 @@ const ITEM_STATUS_COLOR: Record<string, string> = {
   cancelled: "default",
 };
 
+// A unified dispatch-history row: either a batch (≥2 assets, expandable to its
+// per-asset items) or a single run (1 asset).
+interface HistoryRow {
+  key: string;
+  kind: "run" | "batch";
+  id: string;
+  name: string;
+  status: string;
+  assetSummary: string;
+  createdAt: string;
+  to: string;
+}
+
 export function SubscriptionTasksPanel() {
   const { modal } = App.useApp();
   const [tasks, setTasks] = useState<SubscriptionTask[]>([]);
@@ -102,11 +117,12 @@ export function SubscriptionTasksPanel() {
   const [editingTask, setEditingTask] = useState<SubscriptionTask | null>(null);
   const [form] = Form.useForm<TaskFormValues>();
 
-  // Dispatch-history drawer (CYB-3798): which batches a task dispatched, and
-  // which assets each batch ran.
+  // Dispatch-history drawer: batches (CYB-3798) + single runs (CYB-3801) a task
+  // dispatched, merged; batches expand to their per-asset items.
   const [historyTask, setHistoryTask] = useState<SubscriptionTask | null>(null);
   const [batches, setBatches] = useState<DispatchBatch[]>([]);
-  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [runs, setRuns] = useState<DispatchRun[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [itemsByBatch, setItemsByBatch] = useState<
     Record<string, DispatchBatchItem[]>
   >({});
@@ -168,6 +184,38 @@ export function SubscriptionTasksPanel() {
     () => targets.map((t) => ({ value: t.id, label: t.name })),
     [targets],
   );
+
+  // Merge batches + single runs into one newest-first history list.
+  const historyRows = useMemo<HistoryRow[]>(() => {
+    const rows: HistoryRow[] = [
+      ...batches.map((b) => ({
+        key: `b:${b.id}`,
+        kind: "batch" as const,
+        id: b.id,
+        name: b.name || b.id.slice(0, 12),
+        status: b.status,
+        assetSummary: `${b.completedCount}/${b.totalCount} 成功${
+          b.failedCount ? `，${b.failedCount} 失败` : ""
+        }`,
+        createdAt: b.createdAt,
+        to: `/pipeline/batch/${b.id}`,
+      })),
+      ...runs.map((r) => ({
+        key: `r:${r.id}`,
+        kind: "run" as const,
+        id: r.id,
+        name: r.pipelineName || r.id.slice(0, 12),
+        status: r.status,
+        assetSummary: r.assetIds?.[0] ?? "1 资产",
+        createdAt: r.createdAt,
+        to: `/runs/${r.id}`,
+      })),
+    ];
+    rows.sort((a, b) =>
+      a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,
+    );
+    return rows;
+  }, [batches, runs]);
 
   const openCreate = () => {
     setEditingTask(null);
@@ -263,14 +311,20 @@ export function SubscriptionTasksPanel() {
   const openHistory = useCallback(async (task: SubscriptionTask) => {
     setHistoryTask(task);
     setBatches([]);
+    setRuns([]);
     setItemsByBatch({});
-    setBatchesLoading(true);
+    setHistoryLoading(true);
     try {
-      setBatches(await listSubscriptionTaskBatches(task.id));
+      const [b, r] = await Promise.all([
+        listSubscriptionTaskBatches(task.id),
+        listSubscriptionTaskRuns(task.id),
+      ]);
+      setBatches(b);
+      setRuns(r);
     } catch {
-      message.error("加载下发批次失败");
+      message.error("加载下发历史失败");
     } finally {
-      setBatchesLoading(false);
+      setHistoryLoading(false);
     }
   }, []);
 
@@ -544,7 +598,7 @@ export function SubscriptionTasksPanel() {
             流水线绑定
           </Divider>
           <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-            每条消息会对下面的<b>每个模板各下发一个批次</b>。
+            每条消息会对下面的<b>每个模板各下发一次</b>（1 个资产→单 run，多个→批次）。
           </Text>
 
           <Form.List name="pipelineBindings">
@@ -627,7 +681,7 @@ export function SubscriptionTasksPanel() {
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="流水线绑定">
-                {(historyTask.pipelineBindings ?? []).length} 个模板（每条消息各下发一个批次）
+                {(historyTask.pipelineBindings ?? []).length} 个模板（1 资产→run，多资产→批次）
               </Descriptions.Item>
               <Descriptions.Item label="最近状态">
                 {historyTask.lastRunStatus
@@ -637,25 +691,34 @@ export function SubscriptionTasksPanel() {
               </Descriptions.Item>
             </Descriptions>
             <Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
-              该订阅任务下发过的批次，展开可看每批跑过的资产。
+              该订阅任务下发过的批次（≥2 资产）和单个 run（1 资产）。批次可展开看每批跑过的资产。
             </Text>
-            <Table<DispatchBatch>
-              rowKey="id"
+            <Table<HistoryRow>
+              rowKey="key"
               size="small"
-              loading={batchesLoading}
-              dataSource={batches}
+              loading={historyLoading}
+              dataSource={historyRows}
               pagination={{ pageSize: 10, hideOnSinglePage: true }}
-              locale={{ emptyText: "还没有下发过批次" }}
+              locale={{ emptyText: "还没有下发过" }}
               columns={[
                 {
-                  title: "批次",
+                  title: "类型",
+                  dataIndex: "kind",
+                  width: 64,
+                  render: (k: HistoryRow["kind"]) =>
+                    k === "batch" ? (
+                      <Tag color="blue">批次</Tag>
+                    ) : (
+                      <Tag color="geekblue">单 run</Tag>
+                    ),
+                },
+                {
+                  title: "名称",
                   dataIndex: "name",
                   ellipsis: true,
-                  render: (name: string, b) => (
-                    <Link to={`/pipeline/batch/${b.id}`}>
-                      <Text style={{ fontSize: 12 }}>
-                        {name || b.id.slice(0, 12)}
-                      </Text>
+                  render: (name: string, row) => (
+                    <Link to={row.to}>
+                      <Text style={{ fontSize: 12 }}>{name}</Text>
                     </Link>
                   ),
                 },
@@ -664,17 +727,17 @@ export function SubscriptionTasksPanel() {
                   dataIndex: "status",
                   width: 90,
                   render: (s: string) => (
-                    <Tag color={BATCH_STATUS_COLOR[s] ?? "default"}>{s}</Tag>
+                    <Tag color={BATCH_STATUS_COLOR[s] ?? ITEM_STATUS_COLOR[s] ?? "default"}>
+                      {s}
+                    </Tag>
                   ),
                 },
                 {
                   title: "资产",
-                  width: 140,
-                  render: (_: unknown, b) => (
-                    <Text style={{ fontSize: 12 }}>
-                      {b.completedCount}/{b.totalCount} 成功
-                      {b.failedCount ? `，${b.failedCount} 失败` : ""}
-                    </Text>
+                  dataIndex: "assetSummary",
+                  ellipsis: true,
+                  render: (v: string) => (
+                    <Text style={{ fontSize: 12, fontFamily: "monospace" }}>{v}</Text>
                   ),
                 },
                 {
@@ -689,54 +752,57 @@ export function SubscriptionTasksPanel() {
                 },
               ]}
               expandable={{
-                onExpand: (expanded, b) => {
-                  if (expanded && !itemsByBatch[b.id]) loadBatchItems(b.id);
+                rowExpandable: (row) => row.kind === "batch",
+                onExpand: (expanded, row) => {
+                  if (expanded && row.kind === "batch" && !itemsByBatch[row.id])
+                    loadBatchItems(row.id);
                 },
-                expandedRowRender: (b) => (
-                  <Table<DispatchBatchItem>
-                    rowKey="id"
-                    size="small"
-                    loading={itemsLoading[b.id]}
-                    dataSource={itemsByBatch[b.id] ?? []}
-                    pagination={{ pageSize: 20, hideOnSinglePage: true }}
-                    locale={{ emptyText: "无资产" }}
-                    columns={[
-                      {
-                        title: "资产 ID",
-                        dataIndex: "assetId",
-                        ellipsis: true,
-                        render: (a: string) => (
-                          <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
-                            {a}
-                          </Text>
-                        ),
-                      },
-                      {
-                        title: "状态",
-                        dataIndex: "status",
-                        width: 90,
-                        render: (s: string) => (
-                          <Tag color={ITEM_STATUS_COLOR[s] ?? "default"}>{s}</Tag>
-                        ),
-                      },
-                      {
-                        title: "错误",
-                        dataIndex: "errorMessage",
-                        ellipsis: true,
-                        render: (e?: string | null) =>
-                          e ? (
-                            <Tooltip title={e}>
-                              <Text type="danger" style={{ fontSize: 12 }}>
-                                {e}
-                              </Text>
-                            </Tooltip>
-                          ) : (
-                            <Text type="secondary">-</Text>
+                expandedRowRender: (row) =>
+                  row.kind === "batch" ? (
+                    <Table<DispatchBatchItem>
+                      rowKey="id"
+                      size="small"
+                      loading={itemsLoading[row.id]}
+                      dataSource={itemsByBatch[row.id] ?? []}
+                      pagination={{ pageSize: 20, hideOnSinglePage: true }}
+                      locale={{ emptyText: "无资产" }}
+                      columns={[
+                        {
+                          title: "资产 ID",
+                          dataIndex: "assetId",
+                          ellipsis: true,
+                          render: (a: string) => (
+                            <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                              {a}
+                            </Text>
                           ),
-                      },
-                    ]}
-                  />
-                ),
+                        },
+                        {
+                          title: "状态",
+                          dataIndex: "status",
+                          width: 90,
+                          render: (s: string) => (
+                            <Tag color={ITEM_STATUS_COLOR[s] ?? "default"}>{s}</Tag>
+                          ),
+                        },
+                        {
+                          title: "错误",
+                          dataIndex: "errorMessage",
+                          ellipsis: true,
+                          render: (e?: string | null) =>
+                            e ? (
+                              <Tooltip title={e}>
+                                <Text type="danger" style={{ fontSize: 12 }}>
+                                  {e}
+                                </Text>
+                              </Tooltip>
+                            ) : (
+                              <Text type="secondary">-</Text>
+                            ),
+                        },
+                      ]}
+                    />
+                  ) : null,
               }}
             />
           </>

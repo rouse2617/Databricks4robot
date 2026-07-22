@@ -3593,7 +3593,7 @@ Notes:
 
 ## Subscription Tasks (CYB-3778)
 
-Pub/Sub-driven auto-dispatch rules. External publishers push asset IDs to a GCP Pub/Sub topic; Databrew subscribes and, for each message, dispatches a batch job to **every** bound pipeline template (fan-out). Produced batches surface in the existing 执行记录 → 批量任务 view.
+Pub/Sub-driven auto-dispatch rules. External publishers push a message `{"asset_ids": ["a","b"], "topic": "..."}` to a GCP Pub/Sub topic; Databrew subscribes and, per message, dispatches to **every** bound pipeline template (fan-out): **1 asset → a single pipeline run** (surfaces in 执行记录), **≥2 assets → a batch** (批量任务). `topic` is a reserved field (parsed, not yet acted on). Legacy single-field `{"asset_id":"x"}` is **no longer supported** — use `asset_ids` (CYB-3801).
 
 **Base**: all endpoints under `/api/v1/subscription-tasks`, authenticated via `X-Databrew-Token` (or the session cookie the frontend already uses).
 
@@ -3620,7 +3620,7 @@ curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json"
     ]
   }'
 # -> 201 { "id": "sub_...", ... }
-# Each pulled asset_id dispatches one batch per binding (2 batches here).
+# Per message: 1 asset → a single run per binding; ≥2 assets → a batch per binding.
 
 # Get / Update / Delete
 curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$ID"
@@ -3640,15 +3640,20 @@ curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$I
 
 **Smoke**: `scripts/smoke-subscription-tasks-dev.sh` (happy path + 400 + 404 + history endpoints).
 
-### 历史下发批次与资产 (CYB-3798)
+### 历史下发追溯：批次 (CYB-3798) + 单 run (CYB-3801)
 
-从订阅任务反查它下发过的批次与每批的资产。链路靠 `backfill_jobs.created_by = "subscription-task:<id>"`，均为只读，复用现有 Backfill 面。
+从订阅任务反查它下发过的**批次**和**单个 run**。链路靠 `backfill_jobs.created_by` / `pipeline_runs.owner = "subscription-task:<id>"`，均为只读。
 
 ```bash
-# 某订阅任务下发过的全部批次（newest-first）
+# 该订阅任务下发过的全部批次（≥2 资产的消息，newest-first）
 curl -sS -H "X-Databrew-Token: $TOK" \
   "$BASE/api/v1/backfill?createdBy=subscription-task:$ID"
 # -> {"items":[{ "id":"batch_...", "name":"...", "status":"...", "totalCount":N, ... }]}
+
+# 该订阅任务下发过的单个 run（单资产的消息，standalone，CYB-3801）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/runs?createdBy=subscription-task:$ID&excludeBatch=true"
+# -> {"items":[{ "id":"...", "pipelineName":"...", "status":"...", "assetIds":[...] }], "total":N}
 
 # 某批次跑过的资产明细（assetId + 状态 + pipelineRunId）
 curl -sS -H "X-Databrew-Token: $TOK" \
@@ -3656,5 +3661,5 @@ curl -sS -H "X-Databrew-Token: $TOK" \
 # -> {"items":[{ "assetId":"...", "status":"completed", "pipelineRunId":"...?" }]}
 ```
 
-- `createdBy` 省略时 `GET /api/v1/backfill` 行为不变（返回全部）。
+- `createdBy` 省略时 `GET /api/v1/backfill` 与 `GET /api/v1/runs` 行为不变（返回全部）。
 - 未知 batch id 的 `/items` 返回 `200 {"items":[]}`（非 404）；空 id 返回 `400 INVALID_ARGUMENT`。

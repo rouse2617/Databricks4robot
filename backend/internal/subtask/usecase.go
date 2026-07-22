@@ -18,6 +18,12 @@ type BatchCreator interface {
 	CreateBatch(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, owner string) (batchID string, err error)
 }
 
+// RunCreator dispatches a single asset as a first-class pipeline run (as opposed
+// to a batch). Used when a message carries exactly one asset.
+type RunCreator interface {
+	CreateRun(ctx context.Context, templateID, name, assetID, targetID string, templateVersion int, owner string) (runID string, err error)
+}
+
 type Notifier interface {
 	NotifyTaskFailure(ctx context.Context, task Task, err error)
 	NotifyTaskEmpty(ctx context.Context, task Task)
@@ -31,16 +37,17 @@ type Usecase struct {
 	repo    Repo
 	pubsub  *PubSubClient
 	batches BatchCreator
+	runs    RunCreator
 	notify  Notifier
 	opt     Options
 	now     func() time.Time
 }
 
-func New(repo Repo, ps *PubSubClient, batches BatchCreator, notify Notifier, opt Options) *Usecase {
+func New(repo Repo, ps *PubSubClient, batches BatchCreator, runs RunCreator, notify Notifier, opt Options) *Usecase {
 	if opt.DefaultPullIntervalSec <= 0 {
 		opt.DefaultPullIntervalSec = 10
 	}
-	return &Usecase{repo: repo, pubsub: ps, batches: batches, notify: notify, opt: opt, now: time.Now}
+	return &Usecase{repo: repo, pubsub: ps, batches: batches, runs: runs, notify: notify, opt: opt, now: time.Now}
 }
 
 func (uc *Usecase) StartLoop(ctx context.Context) {
@@ -91,7 +98,7 @@ func (uc *Usecase) executeTask(ctx context.Context, task Task) error {
 		return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("pubsub pull: %w", err))
 	}
 
-	if len(result.IDs) == 0 {
+	if len(result.Messages) == 0 {
 		if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusEmpty, nil, uc.now()); err != nil {
 			slog.Warn("subtask: record empty run failed", "taskID", task.ID, "err", err)
 		}
@@ -103,31 +110,51 @@ func (uc *Usecase) executeTask(ctx context.Context, task Task) error {
 		return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("no pipeline bindings configured"))
 	}
 
-	// Fan out: one batch per binding for the same asset set. All bindings must
-	// succeed before we Ack — any failure Nacks the whole message so it retries
-	// (at-least-once; a retry may re-dispatch bindings that already succeeded).
+	// Dispatch each message independently: one asset → a single pipeline run,
+	// more than one → a batch. Each binding is dispatched once per message
+	// (fan-out). All dispatches must succeed before we Ack — any failure Nacks
+	// the whole pull so it retries (at-least-once; a retry may re-dispatch units
+	// that already succeeded).
+	owner := "subscription-task:" + task.ID
 	ts := uc.now().UTC().Format("20060102-150405")
-	batchIDs := make([]string, 0, len(task.PipelineBindings))
-	for i, b := range task.PipelineBindings {
-		tmplVersion := 0
-		if b.TemplateVersion != nil {
-			tmplVersion = *b.TemplateVersion
+	dispatchedIDs := make([]string, 0, len(result.Messages)*len(task.PipelineBindings))
+	runCount, batchCount := 0, 0
+	for mi, assetIDs := range result.Messages {
+		for bi, b := range task.PipelineBindings {
+			tmplVersion := 0
+			if b.TemplateVersion != nil {
+				tmplVersion = *b.TemplateVersion
+			}
+			name := fmt.Sprintf("%s-%s-m%d-p%d", task.Name, ts, mi+1, bi+1)
+			var (
+				id   string
+				derr error
+			)
+			if len(assetIDs) == 1 {
+				id, derr = uc.runs.CreateRun(ctx, b.TemplateID, name, assetIDs[0], b.TargetID, tmplVersion, owner)
+				if derr == nil {
+					runCount++
+				}
+			} else {
+				id, derr = uc.batches.CreateBatch(ctx, b.TemplateID, name, assetIDs, b.TargetID, tmplVersion, owner)
+				if derr == nil {
+					batchCount++
+				}
+			}
+			if derr != nil {
+				result.Nack()
+				return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("dispatch template %s: %w", b.TemplateID, derr))
+			}
+			dispatchedIDs = append(dispatchedIDs, id)
 		}
-		batchName := fmt.Sprintf("%s-%s-p%d", task.Name, ts, i+1)
-		batchID, err := uc.batches.CreateBatch(ctx, b.TemplateID, batchName, result.IDs, b.TargetID, tmplVersion, "subscription-task:"+task.ID)
-		if err != nil {
-			result.Nack()
-			return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("create batch for template %s: %w", b.TemplateID, err))
-		}
-		batchIDs = append(batchIDs, batchID)
 	}
 
 	result.Ack()
 
-	if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusSucceeded, batchIDs, uc.now()); err != nil {
+	if err := uc.repo.RecordSuccess(ctx, task.ID, RunStatusSucceeded, dispatchedIDs, uc.now()); err != nil {
 		slog.Warn("subtask: record success failed", "taskID", task.ID, "err", err)
 	}
-	slog.Info("subtask: batches created", "taskID", task.ID, "batchIDs", batchIDs, "bindings", len(task.PipelineBindings), "assetCount", len(result.IDs))
+	slog.Info("subtask: dispatched", "taskID", task.ID, "runs", runCount, "batches", batchCount, "messages", len(result.Messages), "bindings", len(task.PipelineBindings))
 	return nil
 }
 

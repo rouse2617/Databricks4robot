@@ -1043,6 +1043,11 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		args = append(args, "%"+query+"%")
 		argPos++
 	}
+	if createdBy := strings.TrimSpace(filter.CreatedBy); createdBy != "" {
+		conds = append(conds, fmt.Sprintf("COALESCE(pr.owner, '') = $%d", argPos))
+		args = append(args, createdBy)
+		argPos++
+	}
 	if filter.BatchJobID != "" && strings.TrimSpace(filter.PipelineNodeID) != "" {
 		nodeStatus := strings.TrimSpace(filter.NodeStatus)
 		conds = append(conds, fmt.Sprintf(`EXISTS (

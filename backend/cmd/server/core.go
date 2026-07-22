@@ -309,6 +309,20 @@ func setupCore(inf *infra) *coreHandlers {
 			}
 			return job.ID, nil
 		}),
+		subtask.RunCreatorFn(func(ctx context.Context, tmpl, name, assetID, target string, ver int, owner string) (string, error) {
+			run, err := puc.CreateRunByTemplateID(ctx, tmpl, name, []string{assetID}, pipelineUC.DeployOptions{
+				TargetID:        target,
+				Owner:           owner,
+				TemplateVersion: ver,
+			})
+			if err != nil {
+				return "", err
+			}
+			if run == nil {
+				return "", nil
+			}
+			return run.ID, nil
+		}),
 		subtask.NewFeishuNotifierFromEnv(),
 		subtask.Options{},
 	)

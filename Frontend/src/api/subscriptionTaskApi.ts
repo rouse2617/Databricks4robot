@@ -156,3 +156,26 @@ export function listDispatchBatchItems(
     `/backfill/${encodeURIComponent(batchId)}/items`,
   ).then((r) => r.items ?? []);
 }
+
+export interface DispatchRun {
+  id: string;
+  pipelineName: string;
+  status: string;
+  assetIds?: string[];
+  createdAt: string;
+}
+
+/**
+ * Standalone single pipeline runs this task dispatched (from 1-asset messages).
+ * excludeBatch=true keeps only standalone runs (batch_job_id IS NULL), so batch
+ * children never double-count against the batches list.
+ */
+export function listSubscriptionTaskRuns(
+  taskId: string,
+): Promise<DispatchRun[]> {
+  const createdBy = encodeURIComponent(`subscription-task:${taskId}`);
+  return request<{ items: DispatchRun[] }>(
+    "GET",
+    `/runs?createdBy=${createdBy}&excludeBatch=true`,
+  ).then((r) => r.items ?? []);
+}

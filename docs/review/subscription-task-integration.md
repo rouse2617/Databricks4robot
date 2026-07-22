@@ -47,17 +47,22 @@ gcloud pubsub subscriptions add-iam-policy-binding databrew-ingest-<your-name>-s
 | 订阅 ID | subscription 名称 | `databrew-ingest-youxin-sub` |
 | 拉取间隔（秒） | 消费频率 | `10`（默认） |
 | 单次最大消息数 | 每次 pull 上限 | `1000`（默认） |
-| 流水线绑定 | 一个或多个「模板 + 资源池」；每条消息对**每个模板各下发一个批次** | `youxin-all v12 → video-proc-dev` |
+| 流水线绑定 | 一个或多个「模板 + 资源池」；每条消息对**每个模板各下发一次**（1 个资产→run，多个→批次） | `youxin-all v12 → video-proc-dev` |
 
 ### 4. 发送消息
 
-每条消息的 data 字段必须是 JSON，包含 `asset_id`：
+每条消息的 data 字段是 JSON，用 `asset_ids`（数组）承载资产。`topic` 为**预留字段**（当前不解析，留作未来路由/标注）；未知字段一律忽略，便于以后扩展。
 
 ```json
-{"asset_id": "abc123-uuid-here"}
+{"asset_ids": ["asset-a", "asset-b"], "topic": "可选、预留"}
 ```
 
-支持在消息 attributes 中携带可选元数据（当前版本不解析 attributes，预留扩展）。
+**单条 vs 批次（按消息判定）：**
+- `asset_ids` 只有 **1 个** → 建**单个 pipeline run**（进「执行记录」，轻量）
+- **2 个及以上** → 建**批次**（`backfill_job`，进「批量任务」）
+- 每个流水线绑定各下发一次（fan-out）
+
+> ⚠️ 旧的 `{"asset_id": "x"}` 单字段格式**不再支持**，请改用 `asset_ids` 数组（单条即 `["x"]`）。
 
 #### Python 示例
 
@@ -68,12 +73,11 @@ import json
 publisher = pubsub_v1.PublisherClient()
 topic = "projects/green-valley-442103/topics/databrew-ingest-youxin"
 
-# 单条
-publisher.publish(topic, json.dumps({"asset_id": "video-001"}).encode("utf-8"))
+# 单条资产 → 单个 run
+publisher.publish(topic, json.dumps({"asset_ids": ["video-001"]}).encode("utf-8"))
 
-# 批量
-for vid in ["video-001", "video-002", "video-003"]:
-    publisher.publish(topic, json.dumps({"asset_id": vid}).encode("utf-8"))
+# 一批资产 → 一个批次
+publisher.publish(topic, json.dumps({"asset_ids": ["video-001", "video-002", "video-003"]}).encode("utf-8"))
 ```
 
 #### Go 示例
@@ -82,7 +86,7 @@ for vid in ["video-001", "video-002", "video-003"]:
 client, _ := pubsub.NewClient(ctx, "green-valley-442103")
 topic := client.Topic("databrew-ingest-youxin")
 topic.Publish(ctx, &pubsub.Message{
-    Data: []byte(`{"asset_id": "video-001"}`),
+    Data: []byte(`{"asset_ids": ["video-001"]}`),
 })
 ```
 
@@ -91,7 +95,7 @@ topic.Publish(ctx, &pubsub.Message{
 ```bash
 gcloud pubsub topics publish databrew-ingest-youxin \
   --project=green-valley-442103 \
-  --message='{"asset_id": "test-video-001"}'
+  --message='{"asset_ids": ["test-video-001"]}'
 ```
 
 ## 消费行为
@@ -99,9 +103,9 @@ gcloud pubsub topics publish databrew-ingest-youxin \
 | 行为 | 说明 |
 |------|------|
 | 拉取频率 | 每 N 秒（默认 10s，per-task 可配） |
-| 批次创建 | 同一次 pull 的所有 asset_id 合并；对每个绑定的模板各下发一个 batch（fan-out，N 个模板 → N 个 batch） |
-| Ack 时机 | 所有绑定的 batch 都创建成功后 ack；任一失败则 nack 整条消息重试（重试可能重复下发已成功的模板） |
-| 空 pull | 无消息时跳过，不创建空 batch |
+| 下发形态 | 按**消息**判定：`asset_ids` 1 个 → 单 pipeline run；≥2 个 → 批次（backfill_job）。每个绑定各下发一次（fan-out，N 个绑定 → N 个 run/批次） |
+| Ack 时机 | 一条消息的所有绑定 run/批次 都创建成功后 ack；任一失败则 nack 整个 pull 重试（重试可能重复下发已成功的单元） |
+| 空 pull | 无消息时跳过，不创建空 run/批次 |
 | 去重 | 不做 — 批量任务层面本身幂等（同 asset 重复下发不会重复处理） |
 | 消息格式错误 | 解析失败的消息会 ack（避免毒消息阻塞队列），错误记录到日志 |
 

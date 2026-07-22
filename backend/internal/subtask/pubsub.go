@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,9 +24,12 @@ const pullTimeout = 20 * time.Second
 const ackTimeout = 10 * time.Second
 
 type PullResult struct {
-	IDs  []string
-	Ack  func()
-	Nack func()
+	// Messages holds one asset group per received Pub/Sub message, preserving
+	// message boundaries so the caller can dispatch each message independently
+	// (one asset → single run, more → batch). Ack/Nack stay pull-level.
+	Messages [][]string
+	Ack      func()
+	Nack     func()
 }
 
 // PubSubClient wraps a single apiv1 SubscriberClient. The subscription resource
@@ -77,18 +81,23 @@ func (pc *PubSubClient) Pull(ctx context.Context, projectID, subscriptionID stri
 	}
 
 	var (
-		ids       []string
+		messages  [][]string
 		ackIDs    []string
 		badAckIDs []string
 	)
 	for _, rm := range resp.GetReceivedMessages() {
-		id, parseErr := extractAssetID(rm.GetMessage().GetData())
+		ids, topic, parseErr := extractAssetIDs(rm.GetMessage().GetData())
 		if parseErr != nil {
 			slog.Warn("subtask: bad message, acking to skip", "err", parseErr, "msgID", rm.GetMessage().GetMessageId())
 			badAckIDs = append(badAckIDs, rm.GetAckId())
 			continue
 		}
-		ids = append(ids, id)
+		if topic != "" {
+			// topic is a reserved field (CYB-3801): parsed for future routing/
+			// labeling, not acted on yet.
+			slog.Debug("subtask: message topic", "topic", topic, "msgID", rm.GetMessage().GetMessageId())
+		}
+		messages = append(messages, ids)
 		ackIDs = append(ackIDs, rm.GetAckId())
 	}
 
@@ -100,7 +109,7 @@ func (pc *PubSubClient) Pull(ctx context.Context, projectID, subscriptionID stri
 	}
 
 	return &PullResult{
-		IDs: ids,
+		Messages: messages,
 		Ack: func() {
 			if len(ackIDs) == 0 {
 				return
@@ -139,16 +148,28 @@ func (pc *PubSubClient) Close() {
 }
 
 type assetMessage struct {
-	AssetID string `json:"asset_id"`
+	AssetIDs []string `json:"asset_ids"`
+	// Topic is a reserved field (CYB-3801): future routing/labeling. Parsed and
+	// returned for logging, not acted on yet. Unknown JSON keys are ignored, so
+	// the message format stays forward-extensible.
+	Topic string `json:"topic,omitempty"`
 }
 
-func extractAssetID(data []byte) (string, error) {
+// extractAssetIDs parses one message's JSON data. The asset set drives dispatch
+// (one asset → single run, more → batch). Returns the trimmed, non-empty asset
+// ids plus the reserved topic. Errors when no usable asset id remains.
+func extractAssetIDs(data []byte) (ids []string, topic string, err error) {
 	var msg assetMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return "", fmt.Errorf("unmarshal message: %w", err)
+	if uerr := json.Unmarshal(data, &msg); uerr != nil {
+		return nil, "", fmt.Errorf("unmarshal message: %w", uerr)
 	}
-	if msg.AssetID == "" {
-		return "", fmt.Errorf("empty asset_id in message")
+	for _, a := range msg.AssetIDs {
+		if s := strings.TrimSpace(a); s != "" {
+			ids = append(ids, s)
+		}
 	}
-	return msg.AssetID, nil
+	if len(ids) == 0 {
+		return nil, "", fmt.Errorf("no asset_ids in message")
+	}
+	return ids, msg.Topic, nil
 }
