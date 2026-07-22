@@ -249,16 +249,17 @@ export function SubscriptionTasksPanel() {
   const handleSubmit = async () => {
     try {
       const vals = await form.validateFields();
-      // Advanced knobs are defaulted, not surfaced in the form: project falls
-      // back to Databrew's own GCP project, interval/maxMessages to sensible
-      // defaults, and template version to latest. Editing preserves whatever an
-      // existing task already had.
+      // Prefer the user's form input; fall back to the existing task's value
+      // when the field wasn't touched, then to a safe default. CYB-3847: the
+      // old code read editingTask?.X directly and discarded user edits.
       const body: SubscriptionTaskCreateRequest = {
         name: vals.name,
-        projectId: editingTask?.projectId ?? DEFAULT_PROJECT_ID,
+        projectId: vals.projectId ?? editingTask?.projectId ?? DEFAULT_PROJECT_ID,
         subscriptionId: vals.subscriptionId,
-        pullIntervalSeconds: editingTask?.pullIntervalSeconds ?? 10,
-        maxMessagesPerPull: editingTask?.maxMessagesPerPull ?? 1000,
+        pullIntervalSeconds:
+          vals.pullIntervalSeconds ?? editingTask?.pullIntervalSeconds ?? 10,
+        maxMessagesPerPull:
+          vals.maxMessagesPerPull ?? editingTask?.maxMessagesPerPull ?? 1000,
         pipelineBindings: (vals.pipelineBindings ?? []).map((b) => ({
           templateId: b.templateId,
           targetId: b.targetId,
