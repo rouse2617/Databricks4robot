@@ -5417,7 +5417,16 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string, filters ...mo
 			Summary:   runstate.AggregateChildRuns(nil),
 		}, nil
 	}
-	if uc.runRelationRepo != nil {
+	// CYB-3822b: durable relations path does its own pagination via
+	// FindByID per relation and cannot cheaply apply filter.Status without a
+	// join. When the caller asks for a status subset (batch-export
+	// "仅成功 / 仅失败"), skip straight to listBatchRunChildren which forwards
+	// filter.Status all the way to WHERE status=? in pipeline_repo. This
+	// keeps the fast path for the unfiltered detail view and the fast path
+	// for the filtered batch-export in one branch each, without a repo-level
+	// join rewrite for the durable case.
+	skipDurableForStatusFilter := strings.TrimSpace(filter.Status) != ""
+	if uc.runRelationRepo != nil && !skipDurableForStatusFilter {
 		if result, err := uc.listDurableRunChildren(ctx, run.ID, filter); err != nil {
 			return nil, err
 		} else if result.Total > 0 || len(result.Relations) > 0 {

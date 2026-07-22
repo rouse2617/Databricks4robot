@@ -417,6 +417,9 @@ func (m *mockPipelineConfigRepo) FindVersion(_ context.Context, configID string,
 
 type mockRunRelationRepo struct {
 	relations []models.RunRelation
+	// CYB-3822b: call counter so tests can assert the durable path was
+	// skipped when a status filter is supplied.
+	listByParentCalls int
 }
 
 func (m *mockRunRelationRepo) Upsert(_ context.Context, relation *models.RunRelation) error {
@@ -437,6 +440,7 @@ func (m *mockRunRelationRepo) Upsert(_ context.Context, relation *models.RunRela
 }
 
 func (m *mockRunRelationRepo) ListByParentRunID(_ context.Context, parentRunID string) ([]models.RunRelation, error) {
+	m.listByParentCalls++
 	out := []models.RunRelation{}
 	for _, relation := range m.relations {
 		if relation.ParentRunID == parentRunID {
@@ -2351,6 +2355,57 @@ func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
 	// CYB-3490: children listing is a pure read — no refresh requested.
 	if len(runRepo.listFilters) != 1 || runRepo.listFilters[0].RefreshActive {
 		t.Fatalf("ListRunChildren batch filter = %+v, want a single pure (no-refresh) listing", runRepo.listFilters)
+	}
+}
+
+// CYB-3822b: when filter.Status is present, ListRunChildren must skip the
+// durable-relations path and go straight to listBatchRunChildren so the
+// status filter reaches the repo (WHERE status=?). Otherwise the durable
+// path returns a full page of items whose statuses are NOT filtered, and
+// the frontend paginates through the entire relation table.
+func TestListRunChildrenSkipsDurablePathWhenStatusFilterSet(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "parent-with-relations-and-status"
+	childID := "child-succeeded"
+	childBatchID := parentID
+	relationRepo := &mockRunRelationRepo{
+		relations: []models.RunRelation{
+			{ParentRunID: parentID, ChildRunID: childID, RelationType: "batch_child"},
+		},
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {ID: parentID, Status: "Running"},
+			childID: {
+				ID:         childID,
+				Status:     "Succeeded",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunFactRepositories(relationRepo, nil)
+
+	if _, err := uc.ListRunChildren(context.Background(), parentID, models.PipelineRunListFilter{
+		Status: "Succeeded",
+	}); err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	// Durable path would have hit relationRepo.ListByParentRunID. When we
+	// skip it correctly, that repo has zero list-by-parent calls.
+	if got := relationRepo.listByParentCalls; got != 0 {
+		t.Fatalf("expected 0 ListByParentRunID calls when status filter set, got %d", got)
+	}
+	// And listBatchRunChildren must have forwarded the filter to ListSummaries.
+	if len(runRepo.listFilters) == 0 {
+		t.Fatalf("expected ListSummaries to be called")
+	}
+	if got := runRepo.listFilters[0].Status; got != "Succeeded" {
+		t.Fatalf("ListSummaries filter.Status = %q, want %q", got, "Succeeded")
 	}
 }
 
