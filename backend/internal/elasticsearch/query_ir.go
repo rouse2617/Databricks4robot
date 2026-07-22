@@ -164,6 +164,10 @@ func facetFieldPath(field string) (string, error) {
 	switch field {
 	case "lifecycle_state", "asset_type", "owner", "mcap.vendor_id", "mcap.scene_id":
 		return keywordAggField(field), nil
+	// CYB-3715: flatten mirror columns are top-level string fields on the doc;
+	// facet on the direct name so ES matches PG's PGSupportedFacetFields set.
+	case "camera_model", "data_source", "collection_method", "source_platform":
+		return keywordAggField(field), nil
 	case "tag.priority":
 		return "tags_flat.priority", nil
 	case "tag.quality":

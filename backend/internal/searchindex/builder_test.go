@@ -498,6 +498,77 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 	}
 }
 
+// CYB-3715: 7 flatten mirror columns on the Asset struct project to
+// top-level string fields in the ES doc so filter/facet paths that address
+// them by direct name (instead of mcap.<col>) actually resolve.
+func TestBuild_EmitsCYB3715TopLevelFlattenFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:          "seg37150",
+			McapFileID:       "m-3715",
+			AssetType:        "raw_mcap",
+			CameraModel:      "CyberCap2",
+			DeviceID:         "11111111-1111-1111-1111-111111111111",
+			CollectorID:      "22222222-2222-2222-2222-222222222222",
+			SceneID:          "33333333-3333-3333-3333-333333333333",
+			DataSource:       "vibecap",
+			CollectionMethod: "manual",
+			SourcePlatform:   "vibecap",
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "seg37150")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	wantTop := map[string]any{
+		"camera_model":      "CyberCap2",
+		"device_id":         "11111111-1111-1111-1111-111111111111",
+		"collector_id":      "22222222-2222-2222-2222-222222222222",
+		"scene_id":          "33333333-3333-3333-3333-333333333333",
+		"data_source":       "vibecap",
+		"collection_method": "manual",
+		"source_platform":   "vibecap",
+	}
+	for k, v := range wantTop {
+		if got, present := doc[k]; !present {
+			t.Errorf("doc top-level %q missing", k)
+		} else if got != v {
+			t.Errorf("doc[%q] = %#v, want %#v", k, got, v)
+		}
+	}
+}
+
+// CYB-3715: empty flatten mirror columns stay absent so ES dynamic mapping
+// doesn't create empty-string keyword buckets for every asset.
+func TestBuild_OmitsEmptyCYB3715FlattenFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID: "seg37151", AssetType: "raw_mcap",
+			CreatedAt: now, UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "seg37151")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	for _, k := range []string{
+		"camera_model", "device_id", "collector_id", "scene_id",
+		"data_source", "collection_method", "source_platform",
+	} {
+		if _, present := doc[k]; present {
+			t.Errorf("doc top-level %q should be absent when Asset field is empty", k)
+		}
+	}
+}
+
 // Empty mcap fields must stay absent (additive, no empty-string buckets).
 func TestBuild_OmitsEmptyMcapFields(t *testing.T) {
 	now := time.Now().UTC()
