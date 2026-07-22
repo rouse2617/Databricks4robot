@@ -1,4 +1,5 @@
 import {
+	DownloadOutlined,
 	PlayCircleOutlined,
 	PoweroffOutlined,
 	RedoOutlined,
@@ -38,6 +39,9 @@ import {
 	batchJobCompletionAt,
 	batchJobCreatedAtMs,
 	batchJobRunDurationSeconds,
+	copyAssetIdsToClipboard,
+	exportAssetIdsCsv,
+	fetchAssetIdsForBatches,
 	formatDurationSeconds,
 	sortBatchJobsByCreatedDesc,
 } from "../lib/batchJobs";
@@ -62,6 +66,9 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nameFilter, setNameFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState<string | undefined>();
+	// CYB-3800: batches selected for the multi-batch asset-id export.
+	const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+	const [exportBusy, setExportBusy] = useState(false);
 
 	const templateNameById = Object.fromEntries(
 		templates.map((item) => [item.id, item.name]),
@@ -375,6 +382,65 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				>
 					刷新
 				</Button>
+				<Dropdown
+					disabled={selectedRowKeys.length === 0 || exportBusy}
+					menu={{
+						items: [
+							{ key: "copy", label: "复制到剪贴板" },
+							{ key: "csv", label: "导出 CSV" },
+						],
+						onClick: async ({ key }) => {
+							if (selectedRowKeys.length === 0) return;
+							setExportBusy(true);
+							const hide = message.loading(
+								`正在拉取 ${selectedRowKeys.length} 个批次的资产 ID…`,
+								0,
+							);
+							try {
+								const ids = await fetchAssetIdsForBatches(selectedRowKeys);
+								hide();
+								if (ids.length === 0) {
+									message.info("所选批次没有可导出的资产 ID");
+									return;
+								}
+								if (key === "copy") {
+									const ok = await copyAssetIdsToClipboard(ids);
+									if (ok) {
+										message.success(
+											`已复制 ${ids.length} 个资产 ID(来自 ${selectedRowKeys.length} 个批次)到剪贴板`,
+										);
+									} else {
+										message.error("复制失败，请重试");
+									}
+								} else if (key === "csv") {
+									exportAssetIdsCsv(
+										ids,
+										`batch-multi-${selectedRowKeys.length}`,
+									);
+									message.success(
+										`已导出 ${ids.length} 个资产 ID(来自 ${selectedRowKeys.length} 个批次)`,
+									);
+								}
+							} catch (err) {
+								hide();
+								message.error(`拉取资产 ID 失败:${String(err)}`);
+							} finally {
+								setExportBusy(false);
+							}
+						},
+					}}
+				>
+					<Button
+						icon={<DownloadOutlined />}
+						disabled={selectedRowKeys.length === 0 || exportBusy}
+						loading={exportBusy}
+						data-testid="batch-job-bulk-export"
+					>
+						{selectedRowKeys.length > 0
+							? `批量导出资产 ID (${selectedRowKeys.length})`
+							: "批量导出资产 ID"}
+					</Button>
+				</Dropdown>
 			</div>
 
 			{loading && jobs.length === 0 ? (
@@ -389,7 +455,16 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					dataSource={filteredJobs}
 					scroll={{ x: 1190 }}
 					pagination={{ pageSize: 20, showSizeChanger: true }}
+					// CYB-3800: multi-select drives the bulk export button above.
+					rowSelection={{
+						selectedRowKeys,
+						onChange: (keys) => setSelectedRowKeys(keys as string[]),
+					}}
 					onRow={(record) => ({
+						// The row-level click drills into the batch detail. The
+						// checkbox is rendered outside the row's onClick target so
+						// selecting doesn't navigate; explicit action buttons in
+						// the operation column stop propagation themselves.
 						onClick: () =>
 							navigate(`/pipeline/batch/${record.id}`, {
 								state: batchJobDetailLocationState(),

@@ -45,7 +45,6 @@ import {
 } from "../api/batchJobApi";
 import {
 	listPipelineVersions,
-	type PipelineRun,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
 import {
@@ -56,6 +55,11 @@ import {
 } from "../api/runApi";
 import type { WorkflowSummary } from "../api/workflowApi";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
+import {
+	copyAssetIdsToClipboard,
+	exportAssetIdsCsv,
+	extractAssetIds,
+} from "../lib/batchJobs";
 import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
@@ -356,67 +360,9 @@ function exportFailuresCsv(
 	URL.revokeObjectURL(url);
 }
 
-// 入参是 run 树的子 run 行(PipelineRun),不是 RunChildSummary(那是聚合统计,
-// 之前的注解写反导致 tsc 恒红)。后端 run JSON 只有 assetIds,没有 labels 字段
-// (models.PipelineRun 无 Labels),原先的 labels.asset_id 回退是永不可达的死分支。
-function extractAssetIds(runs: PipelineRun[]): string[] {
-	const ids = new Set<string>();
-	for (const item of runs) {
-		if (item.assetIds && item.assetIds.length > 0) {
-			for (const id of item.assetIds) {
-				const trimmed = id?.trim();
-				if (trimmed) ids.add(trimmed);
-			}
-		}
-	}
-	return Array.from(ids);
-}
+// CYB-3800: extractAssetIds / exportAssetIdsCsv / copyAssetIdsToClipboard are
+// now shared with the batch-list multi-select export flow — see lib/batchJobs.
 
-function exportAssetIdsCsv(assetIds: string[], batchId: string): void {
-	const header = "assetId\n";
-	// CSV 中双引号需要转义为两个双引号
-	const rows = assetIds.map((id) => `"${id.replace(/"/g, '""')}"`).join("\n");
-	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
-	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = `batch-${batchId.slice(0, 8)}-asset-ids.csv`;
-	// Firefox 要求 anchor 必须先添加到 DOM 才能点击
-	document.body.appendChild(anchor);
-	anchor.click();
-	document.body.removeChild(anchor);
-	URL.revokeObjectURL(url);
-}
-
-async function copyAssetIdsToClipboard(assetIds: string[]): Promise<boolean> {
-	const text = assetIds.join("\n");
-
-	// 方法1: 使用现代 Clipboard API
-	if (navigator.clipboard && navigator.clipboard.writeText) {
-		try {
-			await navigator.clipboard.writeText(text);
-			return true;
-		} catch {
-			// 降级到方法2
-		}
-	}
-
-	// 方法2: 使用传统 execCommand（兼容性更好）
-	try {
-		const textarea = document.createElement("textarea");
-		textarea.value = text;
-		textarea.style.position = "fixed";
-		textarea.style.left = "-999999px";
-		textarea.setAttribute("readonly", ""); // 移动设备避免弹出键盘
-		document.body.appendChild(textarea);
-		textarea.select();
-		const success = document.execCommand("copy");
-		document.body.removeChild(textarea);
-		return success;
-	} catch {
-		return false;
-	}
-}
 
 export function formatRerunFeedback(result: {
 	status: string;
@@ -1029,7 +975,10 @@ export default function BatchJobDetailPage() {
 											message.error("复制失败，请重试");
 										}
 									} else if (key === "csv") {
-										exportAssetIdsCsv(assetIds, job.id);
+										exportAssetIdsCsv(
+											assetIds,
+											`batch-${job.id.slice(0, 8)}`,
+										);
 										message.success(`已导出 ${assetIds.length} 个资产 ID`);
 									}
 								},
