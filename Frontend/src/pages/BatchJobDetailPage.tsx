@@ -56,9 +56,11 @@ import {
 import type { WorkflowSummary } from "../api/workflowApi";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
+	type BatchExportStatusFilter,
 	copyAssetIdsToClipboard,
 	exportAssetIdsCsv,
 	extractAssetIds,
+	statusFilterPredicate,
 } from "../lib/batchJobs";
 import {
 	goBackFromBatchJobDetail,
@@ -915,20 +917,42 @@ export default function BatchJobDetailPage() {
 						</Dropdown>
 						<Dropdown
 							menu={{
+								// CYB-3821: mirror the list page's copy/csv × all/成功/失败
+								// sub-menu so single-batch export gets the same status filter.
 								items: [
 									{
 										key: "copy",
 										label: "复制到剪贴板",
 										disabled: !runTree || runTree.items.length === 0,
+										children: [
+											{ key: "copy:all", label: "全部" },
+											{ key: "copy:succeeded", label: "仅成功" },
+											{ key: "copy:failed", label: "仅失败" },
+										],
 									},
 									{
 										key: "csv",
 										label: "导出 CSV",
 										disabled: !runTree || runTree.items.length === 0,
+										children: [
+											{ key: "csv:all", label: "全部" },
+											{ key: "csv:succeeded", label: "仅成功" },
+											{ key: "csv:failed", label: "仅失败" },
+										],
 									},
 								],
 								onClick: async ({ key }) => {
 									if (!runTree) return;
+									const [action, filterKey] = key.split(":") as [
+										"copy" | "csv",
+										BatchExportStatusFilter,
+									];
+									const filterLabel =
+										filterKey === "succeeded"
+											? "成功"
+											: filterKey === "failed"
+												? "失败"
+												: "全部";
 									// CYB-3491: runTree 是分页的(pageSize=20 见 line 236),之前
 									// 直接用 runTree.items 会让 58 条批次只导出 20 条 —— 用户
 									// 每次都要人肉再来一次。导出前分页扫全 —— 后端
@@ -960,26 +984,37 @@ export default function BatchJobDetailPage() {
 										}
 										hide();
 									}
-									const assetIds = extractAssetIds(items);
+									const assetIds = extractAssetIds(
+										items,
+										statusFilterPredicate(filterKey),
+									);
 									if (assetIds.length === 0) {
-										message.info("没有可导出的资产 ID");
+										message.info(
+											filterKey === "all"
+												? "没有可导出的资产 ID"
+												: `没有${filterLabel}状态的子任务`,
+										);
 										return;
 									}
-									if (key === "copy") {
+									if (action === "copy") {
 										const success = await copyAssetIdsToClipboard(assetIds);
 										if (success) {
 											message.success(
-												`已复制 ${assetIds.length} 个资产 ID 到剪贴板`,
+												`已复制 ${assetIds.length} 个${filterLabel}资产 ID 到剪贴板`,
 											);
 										} else {
 											message.error("复制失败，请重试");
 										}
-									} else if (key === "csv") {
+									} else if (action === "csv") {
+										const filterSuffix =
+											filterKey === "all" ? "" : `-${filterKey}`;
 										exportAssetIdsCsv(
 											assetIds,
-											`batch-${job.id.slice(0, 8)}`,
+											`batch-${job.id.slice(0, 8)}${filterSuffix}`,
 										);
-										message.success(`已导出 ${assetIds.length} 个资产 ID`);
+										message.success(
+											`已导出 ${assetIds.length} 个${filterLabel}资产 ID`,
+										);
 									}
 								},
 							}}

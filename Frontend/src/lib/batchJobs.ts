@@ -57,11 +57,18 @@ export function formatDurationSeconds(secs: number): string {
 
 /**
  * Backend run rows carry asset_ids on each PipelineRun. Return the union across
- * all rows with empty / whitespace-only ids dropped and insertion order preserved.
+ * all rows with empty / whitespace-only ids dropped and insertion order
+ * preserved. When `filterFn` is supplied (CYB-3821), only runs it returns true
+ * for contribute their asset_ids — used by the "仅成功 / 仅失败" export
+ * variants to narrow the export to a subset of child-run statuses.
  */
-export function extractAssetIds(runs: PipelineRun[]): string[] {
+export function extractAssetIds(
+	runs: PipelineRun[],
+	filterFn?: (run: PipelineRun) => boolean,
+): string[] {
 	const ids = new Set<string>();
 	for (const item of runs) {
+		if (filterFn && !filterFn(item)) continue;
 		if (item.assetIds && item.assetIds.length > 0) {
 			for (const id of item.assetIds) {
 				const trimmed = id?.trim();
@@ -70,6 +77,24 @@ export function extractAssetIds(runs: PipelineRun[]): string[] {
 		}
 	}
 	return Array.from(ids);
+}
+
+// CYB-3821: status filters used by the batch-export dropdown. Kept as a
+// discriminated union of pure predicates so the UI can label them without
+// duplicating the truth about which run.status values count as success/failure.
+export type BatchExportStatusFilter = "all" | "succeeded" | "failed";
+
+export function statusFilterPredicate(
+	filter: BatchExportStatusFilter,
+): ((run: PipelineRun) => boolean) | undefined {
+	switch (filter) {
+		case "succeeded":
+			return (run) => run.status === "succeeded";
+		case "failed":
+			return (run) => run.status === "failed";
+		case "all":
+			return undefined;
+	}
 }
 
 /**
@@ -135,7 +160,10 @@ export async function copyAssetIdsToClipboard(
  * caps pageSize at 100 (CYB-3491). Returns the asset_ids union across all
  * pages. Uses the same runId endpoint that the detail page uses.
  */
-export async function fetchAllBatchAssetIds(batchId: string): Promise<string[]> {
+export async function fetchAllBatchAssetIds(
+	batchId: string,
+	filterFn?: (run: PipelineRun) => boolean,
+): Promise<string[]> {
 	const pageSize = 100;
 	// First page tells us `total` — keep pulling pages until we've either
 	// collected total items or a page comes back empty (safety valve so a
@@ -150,7 +178,7 @@ export async function fetchAllBatchAssetIds(batchId: string): Promise<string[]> 
 		collected.push(...part.items);
 		page += 1;
 	}
-	return extractAssetIds(collected);
+	return extractAssetIds(collected, filterFn);
 }
 
 /**
@@ -160,15 +188,19 @@ export async function fetchAllBatchAssetIds(batchId: string): Promise<string[]> 
  */
 export async function fetchAssetIdsForBatches(
 	batchIds: string[],
-	concurrency = 4,
+	options: {
+		concurrency?: number;
+		filterFn?: (run: PipelineRun) => boolean;
+	} = {},
 ): Promise<string[]> {
+	const concurrency = options.concurrency ?? 4;
 	const union = new Set<string>();
 	let cursor = 0;
 	async function worker(): Promise<void> {
 		while (cursor < batchIds.length) {
 			const idx = cursor;
 			cursor += 1;
-			const ids = await fetchAllBatchAssetIds(batchIds[idx]);
+			const ids = await fetchAllBatchAssetIds(batchIds[idx], options.filterFn);
 			for (const id of ids) union.add(id);
 		}
 	}

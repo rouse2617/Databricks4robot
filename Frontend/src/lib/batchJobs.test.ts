@@ -6,6 +6,7 @@ import {
 	extractAssetIds,
 	fetchAllBatchAssetIds,
 	fetchAssetIdsForBatches,
+	statusFilterPredicate,
 } from "./batchJobs";
 
 // Minimal PipelineRun stub — CYB-3800 lib only reads assetIds so we keep the
@@ -104,7 +105,65 @@ describe("fetchAssetIdsForBatches", () => {
 			summary: {} as never,
 			total: 1,
 		}));
-		const ids = await fetchAssetIdsForBatches(["b1", "b2"], 2);
+		const ids = await fetchAssetIdsForBatches(["b1", "b2"], { concurrency: 2 });
 		expect(ids.sort()).toEqual(["a1", "b1", "shared"]);
+	});
+});
+
+// CYB-3821 — status-filtered export path
+describe("extractAssetIds with filterFn", () => {
+	it("keeps only runs the predicate returns true for", () => {
+		const runs = [
+			stubRun({ status: "succeeded", assetIds: ["ok1"] }),
+			stubRun({ status: "failed", assetIds: ["bad1"] }),
+			stubRun({ status: "succeeded", assetIds: ["ok2"] }),
+			stubRun({ status: "running", assetIds: ["in-flight"] }),
+		];
+		expect(
+			extractAssetIds(runs, (r) => r.status === "succeeded"),
+		).toEqual(["ok1", "ok2"]);
+		expect(extractAssetIds(runs, (r) => r.status === "failed")).toEqual([
+			"bad1",
+		]);
+	});
+});
+
+describe("statusFilterPredicate", () => {
+	it("all → undefined (no-op)", () => {
+		expect(statusFilterPredicate("all")).toBeUndefined();
+	});
+	it("succeeded / failed → predicate matching that status", () => {
+		const succeeded = statusFilterPredicate("succeeded");
+		const failed = statusFilterPredicate("failed");
+		expect(succeeded?.(stubRun({ status: "succeeded" }))).toBe(true);
+		expect(succeeded?.(stubRun({ status: "failed" }))).toBe(false);
+		expect(failed?.(stubRun({ status: "failed" }))).toBe(true);
+		expect(failed?.(stubRun({ status: "running" }))).toBe(false);
+	});
+});
+
+describe("fetchAssetIdsForBatches with filterFn", () => {
+	it("threads the predicate through and filters per batch before union", async () => {
+		vi.spyOn(runApi, "listRunChildren").mockImplementation(async (runId) => ({
+			runId,
+			items: [
+				stubRun({
+					status: "succeeded",
+					assetIds: runId === "b1" ? ["a-good"] : ["b-good"],
+				}),
+				stubRun({
+					status: "failed",
+					assetIds: runId === "b1" ? ["a-bad"] : ["b-bad"],
+				}),
+			],
+			relations: [],
+			summary: {} as never,
+			total: 2,
+		}));
+		const succeededOnly = await fetchAssetIdsForBatches(["b1", "b2"], {
+			concurrency: 2,
+			filterFn: statusFilterPredicate("succeeded"),
+		});
+		expect(succeededOnly.sort()).toEqual(["a-good", "b-good"]);
 	});
 });

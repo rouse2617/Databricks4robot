@@ -36,6 +36,7 @@ import {
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
+	type BatchExportStatusFilter,
 	batchJobCompletionAt,
 	batchJobCreatedAtMs,
 	batchJobRunDurationSeconds,
@@ -44,6 +45,7 @@ import {
 	fetchAssetIdsForBatches,
 	formatDurationSeconds,
 	sortBatchJobsByCreatedDesc,
+	statusFilterPredicate,
 } from "../lib/batchJobs";
 import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
 import {
@@ -385,40 +387,77 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				<Dropdown
 					disabled={selectedRowKeys.length === 0 || exportBusy}
 					menu={{
+						// CYB-3821: each action gains a status sub-menu so the user can
+						// narrow the export to succeeded / failed child runs. Key format
+						// `${action}:${filter}` keeps the click handler flat.
 						items: [
-							{ key: "copy", label: "复制到剪贴板" },
-							{ key: "csv", label: "导出 CSV" },
+							{
+								key: "copy",
+								label: "复制到剪贴板",
+								children: [
+									{ key: "copy:all", label: "全部" },
+									{ key: "copy:succeeded", label: "仅成功" },
+									{ key: "copy:failed", label: "仅失败" },
+								],
+							},
+							{
+								key: "csv",
+								label: "导出 CSV",
+								children: [
+									{ key: "csv:all", label: "全部" },
+									{ key: "csv:succeeded", label: "仅成功" },
+									{ key: "csv:failed", label: "仅失败" },
+								],
+							},
 						],
 						onClick: async ({ key }) => {
 							if (selectedRowKeys.length === 0) return;
+							const [action, filterKey] = key.split(":") as [
+								"copy" | "csv",
+								BatchExportStatusFilter,
+							];
+							const filterLabel =
+								filterKey === "succeeded"
+									? "成功"
+									: filterKey === "failed"
+										? "失败"
+										: "全部";
 							setExportBusy(true);
 							const hide = message.loading(
-								`正在拉取 ${selectedRowKeys.length} 个批次的资产 ID…`,
+								`正在拉取 ${selectedRowKeys.length} 个批次的${filterLabel}资产 ID…`,
 								0,
 							);
 							try {
-								const ids = await fetchAssetIdsForBatches(selectedRowKeys);
+								const ids = await fetchAssetIdsForBatches(selectedRowKeys, {
+									filterFn: statusFilterPredicate(filterKey),
+								});
 								hide();
 								if (ids.length === 0) {
-									message.info("所选批次没有可导出的资产 ID");
+									message.info(
+										filterKey === "all"
+											? "所选批次没有可导出的资产 ID"
+											: `所选批次没有${filterLabel}状态的子任务`,
+									);
 									return;
 								}
-								if (key === "copy") {
+								if (action === "copy") {
 									const ok = await copyAssetIdsToClipboard(ids);
 									if (ok) {
 										message.success(
-											`已复制 ${ids.length} 个资产 ID(来自 ${selectedRowKeys.length} 个批次)到剪贴板`,
+											`已复制 ${ids.length} 个${filterLabel}资产 ID(来自 ${selectedRowKeys.length} 个批次)到剪贴板`,
 										);
 									} else {
 										message.error("复制失败，请重试");
 									}
-								} else if (key === "csv") {
+								} else if (action === "csv") {
+									const filterSuffix =
+										filterKey === "all" ? "" : `-${filterKey}`;
 									exportAssetIdsCsv(
 										ids,
-										`batch-multi-${selectedRowKeys.length}`,
+										`batch-multi-${selectedRowKeys.length}${filterSuffix}`,
 									);
 									message.success(
-										`已导出 ${ids.length} 个资产 ID(来自 ${selectedRowKeys.length} 个批次)`,
+										`已导出 ${ids.length} 个${filterLabel}资产 ID(来自 ${selectedRowKeys.length} 个批次)`,
 									);
 								}
 							} catch (err) {
