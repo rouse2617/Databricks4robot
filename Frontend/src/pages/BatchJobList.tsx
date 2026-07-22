@@ -69,6 +69,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nameFilter, setNameFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState<string | undefined>();
+	const [templateFilter, setTemplateFilter] = useState<string | undefined>();
+	const [ownerFilter, setOwnerFilter] = useState<string | undefined>();
 	// CYB-3800: batches selected for the multi-batch asset-id export.
 	const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
 	const [exportBusy, setExportBusy] = useState(false);
@@ -77,14 +79,31 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		templates.map((item) => [item.id, item.name]),
 	);
 
+	const ownerOptions = useMemo(() => {
+		const set = new Set<string>();
+		for (const j of jobs) {
+			if (j.createdBy) set.add(j.createdBy);
+		}
+		return [...set].sort().map((v) => ({ value: v, label: v }));
+	}, [jobs]);
+
+	const templateOptions = useMemo(() => {
+		const used = new Set(jobs.map((j) => j.templateId));
+		return templates
+			.filter((t) => used.has(t.id))
+			.map((t) => ({ value: t.id, label: t.name }));
+	}, [jobs, templates]);
+
 	const filteredJobs = useMemo(() => {
 		const q = nameFilter.trim().toLowerCase();
 		return jobs.filter((job) => {
 			if (q && !job.name.toLowerCase().includes(q)) return false;
 			if (statusFilter && job.status !== statusFilter) return false;
+			if (templateFilter && job.templateId !== templateFilter) return false;
+			if (ownerFilter && job.createdBy !== ownerFilter) return false;
 			return true;
 		});
-	}, [jobs, nameFilter, statusFilter]);
+	}, [jobs, nameFilter, statusFilter, templateFilter, ownerFilter]);
 
 	const refresh = useCallback(
 		async (silent = false) => {
@@ -377,6 +396,28 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 						{ value: "completed", label: "已完成" },
 						{ value: "failed", label: "失败" },
 					]}
+				/>
+				<Select
+					allowClear
+					showSearch
+					optionFilterProp="label"
+					placeholder="模板"
+					value={templateFilter}
+					onChange={(value) => setTemplateFilter(value)}
+					style={{ width: 180 }}
+					data-testid="batch-job-template-filter"
+					options={templateOptions}
+				/>
+				<Select
+					allowClear
+					showSearch
+					optionFilterProp="label"
+					placeholder="所属用户"
+					value={ownerFilter}
+					onChange={(value) => setOwnerFilter(value)}
+					style={{ width: 160 }}
+					data-testid="batch-job-owner-filter"
+					options={ownerOptions}
 				/>
 				<Button
 					icon={<ReloadOutlined />}
