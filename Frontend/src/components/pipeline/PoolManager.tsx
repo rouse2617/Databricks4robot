@@ -568,8 +568,23 @@ export default function PoolManager() {
 			render: (_: unknown, r: ExecutionTarget) => {
 				const rd = r.resourceDefaults;
 				const sched = rd?.scheduling ?? {};
-				const tols = rd?.templateTolerations ?? [];
-				const sel = rd?.templateNodeSelector ?? {};
+				// Read tolerations / nodeSelector with the same alias set the backend
+				// accepts (see backend/internal/usecase/pipeline/scheduling.go): both
+				// nested under scheduling.* and top-level, multiple key names. Prior
+				// code only checked top-level rd.template* — pools that stored the
+				// data under scheduling.* (e.g. rtx-flex-start, 交付集群 pools)
+				// rendered as "—" even though the config was live (CYB-3826).
+				const tols =
+					sched.templateTolerations ??
+					sched.tolerations ??
+					rd?.templateTolerations ??
+					[];
+				const sel =
+					sched.templateNodeSelector ??
+					sched.nodeSelector ??
+					sched.nodeSelectors ??
+					rd?.templateNodeSelector ??
+					{};
 				const podLabels = sched.podLabels ?? {};
 				const schedulerName = sched.schedulerName?.trim();
 				const priorityClassName = sched.priorityClassName?.trim();

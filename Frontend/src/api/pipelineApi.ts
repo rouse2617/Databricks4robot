@@ -219,11 +219,17 @@ export interface TargetScheduling {
 	podLabels?: Record<string, string>;
 	// Pod annotations merged onto every workflow pod.
 	podAnnotations?: Record<string, string>;
-	// nodeSelector / tolerations are ALSO read from here by the backend, but the
-	// PoolManager edits those via the top-level templateNodeSelector /
-	// templateTolerations fields, so they are not managed through this sub-object.
+	// nodeSelector / tolerations are ALSO read from here by the backend
+	// (scheduling.go accepts nodeSelector, nodeSelectors, templateNodeSelector,
+	// tolerations, templateTolerations as aliases at both top-level and nested).
+	// PoolManager edits via top-level templateNodeSelector / templateTolerations,
+	// but the display renderer reads from both locations to stay in sync with
+	// the backend's alias-aware resolution.
 	nodeSelector?: Record<string, string>;
+	nodeSelectors?: Record<string, string>;
+	templateNodeSelector?: Record<string, string>;
 	tolerations?: TargetToleration[];
+	templateTolerations?: TargetToleration[];
 }
 
 export interface TargetResourceDefaults {
