@@ -224,6 +224,30 @@ type clusterCycleLocker interface {
 	WithSubmitterClusterLock(ctx context.Context, cluster string, fn func(context.Context) error) (bool, error)
 }
 
+// deferForBackpressure reports whether a job's target namespace already holds
+// as many active (pending+running) workflows as it may (CYB-3681). When true
+// the submitter skips the job this cycle and its items stay pending in the DB
+// (zero cluster cost) until the backlog drains — this is the guard the rate
+// limiter cannot provide (the token bucket only slows creation; it never bounds
+// the resident set the Argo controller must hold in memory). Fails open on an
+// unresolvable target, a disabled ceiling (maxActive<=0), or a missing watcher
+// observation, so a cold start or a stalled watcher never wedges dispatch.
+func (uc *Usecase) deferForBackpressure(ctx context.Context, job *models.BackfillJob) bool {
+	ns, maxActive, ok := uc.deployer.ResolveTargetBackpressure(ctx, targetIDFromBackfillJob(job))
+	if !ok || maxActive <= 0 {
+		return false
+	}
+	active, known := uc.deployer.ActiveWorkflowCount(ns)
+	if !known || active < maxActive {
+		metrics.DispatcherBackpressureActive.WithLabelValues(ns).Set(0)
+		return false
+	}
+	metrics.DispatcherBackpressureActive.WithLabelValues(ns).Set(1)
+	slog.Warn("submitter: backpressure — namespace at/over active-workflow ceiling, deferring dispatch",
+		"namespace", ns, "active", active, "threshold", maxActive, "jobID", job.ID)
+	return true
+}
+
 // runClusterChannel dispatches one cluster's jobs under its own advisory
 // lock, governor, and breaker. Returns true when any job filled its whole
 // batch (backlog remains → the caller self-kicks instead of waiting a tick).
@@ -245,6 +269,9 @@ func (uc *Usecase) runClusterChannel(ctx context.Context, cluster string, jobs [
 		gov := uc.governorFor(cluster)
 		consecutiveTransient := 0
 		for _, job := range jobs {
+			if uc.deferForBackpressure(ctx, job) {
+				continue // target namespace saturated — items stay pending, re-checked next cycle
+			}
 			attempted, outcomes := uc.submitJobBatch(ctx, job, gov)
 			for _, o := range outcomes {
 				if o == outcomeTransient {

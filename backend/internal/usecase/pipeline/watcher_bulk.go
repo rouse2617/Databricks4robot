@@ -11,6 +11,7 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
@@ -84,6 +85,31 @@ func (uc *Usecase) forgetWorkflowApplied(runID string) {
 	delete(uc.watcherAppliedRV, runID)
 }
 
+// recordActiveWorkflowCount stores (and publishes as a gauge) the active
+// (completed=false) workflow count the bulk watcher observed for a namespace
+// this scan. ActiveWorkflowCount reads it back for backfill admission
+// backpressure (CYB-3681).
+func (uc *Usecase) recordActiveWorkflowCount(namespace string, n int) {
+	uc.activeWFMu.Lock()
+	if uc.activeWFCount == nil {
+		uc.activeWFCount = map[string]int{}
+	}
+	uc.activeWFCount[namespace] = n
+	uc.activeWFMu.Unlock()
+	metrics.DispatcherActiveWorkflows.WithLabelValues(namespace).Set(float64(n))
+}
+
+// ActiveWorkflowCount returns the last active (pending+running) workflow count
+// observed for a namespace and whether any observation exists yet. The
+// backfill submitter gates dispatch on it; a missing observation (false) fails
+// open so dispatch is never wedged by a cold start or a stalled watcher.
+func (uc *Usecase) ActiveWorkflowCount(namespace string) (int, bool) {
+	uc.activeWFMu.Lock()
+	defer uc.activeWFMu.Unlock()
+	n, ok := uc.activeWFCount[namespace]
+	return n, ok
+}
+
 // bulkSyncActiveRuns refreshes all DB-active runs from per-cluster LIST
 // snapshots. Returns the number of runs whose state was applied or probed.
 // residualLimit bounds the targeted GETs for snapshot-absent runs per cluster
@@ -141,6 +167,7 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 		namespaces[ns] = true
 	}
 	listed := map[string]*wfv1.Workflow{} // "ns/name" → workflow
+	nsActive := map[string]int{}          // namespace → active workflow count
 	listOK := true
 	for ns := range namespaces {
 		items, err := client.ListWorkflows(ctx, ns, activeWorkflowSelector)
@@ -153,12 +180,21 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 			listOK = false
 			break
 		}
+		nsActive[ns] = len(items)
 		for i := range items {
 			listed[ns+"/"+items[i].Name] = &items[i]
 		}
 	}
 	if !listOK {
 		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
+	}
+	// Publish per-namespace active (completed=false) workflow counts so the
+	// backfill submitter can backpressure dispatch against control-plane
+	// saturation (CYB-3681). Per-namespace, not per-cluster: the Argo
+	// controller (the thing that OOMs) is scoped to one namespace, and a
+	// cluster can map to several namespaces.
+	for ns, n := range nsActive {
+		uc.recordActiveWorkflowCount(ns, n)
 	}
 
 	// Snapshot-hit apply is serialized (no network — just DB writes with

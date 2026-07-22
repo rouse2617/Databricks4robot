@@ -3,12 +3,66 @@ package pipeline
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
+
+// backpressureDefaultMaxActive is the fallback active-workflow ceiling used when
+// a target's resource_defaults does not set maxActiveWorkflows (CYB-3681). Sized
+// well under an Argo controller's memory ceiling (~66KB/workflow → a 4Gi
+// controller holds ~36k) to leave etcd LIST headroom. Env overrides the global
+// default; per-target resource_defaults is the primary, online-tunable knob.
+var backpressureDefaultMaxActive = func() int {
+	if v := os.Getenv("BACKFILL_BACKPRESSURE_DEFAULT_MAX_ACTIVE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 20000
+}()
+
+// executionTargetMaxActiveWorkflows reads the per-namespace active-workflow
+// ceiling from a target's resource_defaults (online-tunable via the pool
+// manager). Absent → compiled default. An explicit 0 disables backpressure for
+// the target.
+func executionTargetMaxActiveWorkflows(target *models.ExecutionTarget) int {
+	if raw, ok := mapValue(target.ResourceDefaults, "maxActiveWorkflows", "max_active_workflows"); ok {
+		if n, ok := intValue(raw); ok && n >= 0 {
+			return n
+		}
+	}
+	return backpressureDefaultMaxActive
+}
+
+// intValue coerces a JSON-decoded value (number as float64, or a numeric
+// string) to an int.
+func intValue(raw interface{}) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case int32:
+		return int(v), true
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return int(n), true
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
 
 func executionTargetTemplateNodeSelector(target *models.ExecutionTarget) map[string]string {
 	out := map[string]string{}

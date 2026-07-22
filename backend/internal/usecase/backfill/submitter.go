@@ -56,6 +56,16 @@ type subtaskDeployer interface {
 	// ResolveTargetClusterID maps a target to its cluster ("" → "default"),
 	// the sharding key for per-cluster dispatch channels (CYB-3678).
 	ResolveTargetClusterID(ctx context.Context, targetID string) string
+	// ResolveTargetBackpressure returns the namespace a target dispatches into
+	// and that namespace's max active-workflow ceiling (CYB-3681 admission
+	// control). ok=false when the target is unresolvable (fails open);
+	// maxActive=0 disables backpressure for the target.
+	ResolveTargetBackpressure(ctx context.Context, targetID string) (namespace string, maxActive int, ok bool)
+	// ActiveWorkflowCount returns the last active (pending+running) workflow
+	// count the watcher observed for a namespace, and whether an observation
+	// exists. Backpressure fails open (dispatch proceeds) when unknown, so a
+	// cold start or a stalled watcher never wedges dispatch.
+	ActiveWorkflowCount(namespace string) (int, bool)
 }
 
 // SetSubmitQueue wires the submitter's persistence surface. In production

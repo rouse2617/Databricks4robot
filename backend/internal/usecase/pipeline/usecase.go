@@ -77,6 +77,14 @@ type Usecase struct {
 	// In-memory by design — restart means one full re-apply (recalibration).
 	watcherRVMu      sync.Mutex
 	watcherAppliedRV map[string]string
+	// activeWFCount is the last active (pending+running) workflow count the
+	// bulk-pull watcher observed per cluster (CYB-3681 backpressure). The
+	// backfill submitter reads it via ActiveWorkflowCount as an admission
+	// signal — stop minting new workflows when the control plane is already
+	// saturated. In-memory; unknown until the first scan (backpressure fails
+	// open, i.e. dispatch proceeds, when unknown).
+	activeWFMu    sync.Mutex
+	activeWFCount map[string]int
 	// watcherLoadCursor paginates loadRunsForWatcherSync's active-run fetch
 	// across scans so a total active set larger than watcherActiveRunLoadCap
 	// still gets covered eventually (CYB-3746). The cursor is
@@ -377,6 +385,24 @@ func (uc *Usecase) ResolveTargetClusterID(ctx context.Context, targetID string) 
 		return "default"
 	}
 	return strings.TrimSpace(target.ClusterID)
+}
+
+// ResolveTargetBackpressure returns the namespace a target dispatches into and
+// the max active (pending+running) workflows that namespace may hold before the
+// backfill submitter defers dispatch (CYB-3681). ok=false when the target is
+// unresolvable (backpressure then fails open). maxActive=0 disables it for the
+// target. The threshold is data-driven from resource_defaults (online-tunable
+// via the pool manager), so no redeploy is needed to retune it.
+func (uc *Usecase) ResolveTargetBackpressure(ctx context.Context, targetID string) (namespace string, maxActive int, ok bool) {
+	target, err := uc.resolveExecutionTarget(ctx, targetID)
+	if err != nil || target == nil {
+		return "", 0, false
+	}
+	ns := strings.TrimSpace(target.Namespace)
+	if ns == "" {
+		ns = uc.namespace
+	}
+	return ns, executionTargetMaxActiveWorkflows(target), true
 }
 
 // ListBatchDLQ returns a batch's dead-lettered items (status=failed) with

@@ -83,10 +83,13 @@ func (q *fakeSubmitQueue) LockPendingItem(_ context.Context, itemID string) (*mo
 type fakeDeployer struct {
 	mu sync.Mutex
 
-	deployErrByAsset map[string]error  // nil entry → success
-	clusterByTarget  map[string]string // targetID → cluster (sharding tests)
-	runsByID         map[string]*models.PipelineRun
-	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
+	deployErrByAsset  map[string]error  // nil entry → success
+	clusterByTarget   map[string]string // targetID → cluster (sharding tests)
+	runsByID          map[string]*models.PipelineRun
+	refreshNoUID      bool              // RefreshRunFromWorkflowByName returns a uid-less run
+	activeWFByNS      map[string]int    // namespace → observed active workflow count (backpressure tests)
+	nsByTarget        map[string]string // targetID → namespace (backpressure tests)
+	maxActiveByTarget map[string]int    // targetID → maxActiveWorkflows (backpressure tests)
 
 	upserts        []string
 	upsertVersions []int
@@ -105,6 +108,26 @@ func (d *fakeDeployer) ResolveTargetClusterID(_ context.Context, targetID string
 		return c
 	}
 	return "default"
+}
+
+func (d *fakeDeployer) ActiveWorkflowCount(namespace string) (int, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.activeWFByNS == nil {
+		return 0, false
+	}
+	n, ok := d.activeWFByNS[namespace]
+	return n, ok
+}
+
+func (d *fakeDeployer) ResolveTargetBackpressure(_ context.Context, targetID string) (string, int, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ns, ok := d.nsByTarget[targetID]
+	if !ok {
+		return "", 0, false
+	}
+	return ns, d.maxActiveByTarget[targetID], true
 }
 
 func (d *fakeDeployer) GetRun(_ context.Context, id string) (*models.PipelineRun, error) {
@@ -355,6 +378,79 @@ func TestSubmitter_PausedJobLeavesItemsPending(t *testing.T) {
 	}
 	if len(d.deploys) != 0 {
 		t.Fatalf("deploys = %v, want none while paused", d.deploys)
+	}
+}
+
+// Backpressure (CYB-3681): when the target namespace already holds as many
+// active workflows as it may, the submitter defers the job — items stay
+// pending and nothing is deployed, like a paused channel but driven by
+// control-plane saturation rather than an operator.
+func TestSubmitter_BackpressureDefersWhenNamespaceSaturated(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	d.activeWFByNS = map[string]int{"ns-prod": 150} // at/over the 100 ceiling
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending (backpressure deferred)", got)
+	}
+	if len(d.deploys) != 0 {
+		t.Fatalf("deploys = %v, want none under backpressure", d.deploys)
+	}
+}
+
+// Below the ceiling, dispatch proceeds normally.
+func TestSubmitter_BackpressureAllowsBelowCeiling(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	d.activeWFByNS = map[string]int{"ns-prod": 42} // under the ceiling
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (below ceiling)", got)
+	}
+	if len(d.deploys) != 1 {
+		t.Fatalf("deploys = %v, want exactly one", d.deploys)
+	}
+}
+
+// Fail open: with no watcher observation for the namespace yet (cold start /
+// stalled watcher), dispatch proceeds rather than wedging.
+func TestSubmitter_BackpressureFailsOpenWhenCountUnknown(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	// activeWFByNS empty → ActiveWorkflowCount returns (0,false) → fail open.
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (fail open on unknown count)", got)
 	}
 }
 
