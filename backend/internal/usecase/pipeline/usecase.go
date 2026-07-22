@@ -5536,10 +5536,15 @@ func normalizeRunChildrenFilter(filters ...models.PipelineRunListFilter) models.
 }
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string, filter models.PipelineRunListFilter) (*models.RunChildList, error) {
+	// CYB-3822: forward filter.Status so batch-export "仅成功 / 仅失败" filters
+	// at the repo (WHERE status=...) instead of the frontend having to fetch
+	// every child then discard 95%. Repo already knows how to compare against
+	// batchItemRunStatusExpr (Argo TitleCase) — see pipeline_repo.go:1025.
 	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
 		BatchJobID: batchJobID,
 		Page:       filter.Page,
 		PageSize:   filter.PageSize,
+		Status:     filter.Status,
 	})
 	if err != nil {
 		return nil, err

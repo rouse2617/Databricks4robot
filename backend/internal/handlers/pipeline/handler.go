@@ -749,9 +749,15 @@ func (h *Handler) ListRunChildren(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
+	// CYB-3822: optional server-side status filter — batch-export UX selects
+	// "仅成功 / 仅失败" and passes Argo TitleCase ("Succeeded" / "Failed") so
+	// the repo can drop non-matching rows before serialization instead of
+	// forcing the frontend to fetch every child then discard 95%.
+	status := strings.TrimSpace(c.Query("status"))
 	result, err := h.runs.ListRunChildren(c.Request.Context(), id, models.PipelineRunListFilter{
 		Page:     page,
 		PageSize: pageSize,
+		Status:   status,
 	})
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {

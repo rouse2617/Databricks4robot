@@ -102,6 +102,24 @@ export function statusFilterPredicate(
 	}
 }
 
+// CYB-3822: server-side status query value. Backend expects Argo TitleCase
+// (batchItemRunStatusExpr in pipeline_repo.go rewrites bi.status → "Succeeded"
+// / "Failed" / …). undefined for "all" means the caller should omit the query
+// param entirely. Kept alongside statusFilterPredicate so the client-side
+// predicate stays as a safety net if a legacy deploy ignores the param.
+export function statusFilterServerValue(
+	filter: BatchExportStatusFilter,
+): string | undefined {
+	switch (filter) {
+		case "succeeded":
+			return "Succeeded";
+		case "failed":
+			return "Failed";
+		case "all":
+			return undefined;
+	}
+}
+
 /**
  * Trigger a browser download of a single-column asset_id CSV.
  * `filenameSuffix` is placed after `asset-ids-` in the filename (e.g.
@@ -167,23 +185,38 @@ export async function copyAssetIdsToClipboard(
  */
 export async function fetchAllBatchAssetIds(
 	batchId: string,
-	filterFn?: (run: PipelineRun) => boolean,
+	options: {
+		filterFn?: (run: PipelineRun) => boolean;
+		// CYB-3822: server-side status filter (Argo TitleCase). When set the
+		// backend applies WHERE status=? so only matching rows come back, and
+		// each page's item count reflects the filter — total shrinks from
+		// e.g. 10000 → 42 for a "just failed" scan of a mostly-successful batch.
+		status?: string;
+	} = {},
 ): Promise<string[]> {
 	const pageSize = 100;
 	// First page tells us `total` — keep pulling pages until we've either
 	// collected total items or a page comes back empty (safety valve so a
 	// truncated `total` on the server side does not spin forever).
-	const first = await listRunChildren(batchId, { page: 1, pageSize });
+	const first = await listRunChildren(batchId, {
+		page: 1,
+		pageSize,
+		status: options.status,
+	});
 	const collected: PipelineRun[] = [...first.items];
 	const total = first.total ?? first.items.length;
 	let page = 2;
 	while (collected.length < total) {
-		const part = await listRunChildren(batchId, { page, pageSize });
+		const part = await listRunChildren(batchId, {
+			page,
+			pageSize,
+			status: options.status,
+		});
 		if (part.items.length === 0) break;
 		collected.push(...part.items);
 		page += 1;
 	}
-	return extractAssetIds(collected, filterFn);
+	return extractAssetIds(collected, options.filterFn);
 }
 
 /**
@@ -196,17 +229,30 @@ export async function fetchAssetIdsForBatches(
 	options: {
 		concurrency?: number;
 		filterFn?: (run: PipelineRun) => boolean;
+		// CYB-3822: passed through to each batch's fetchAllBatchAssetIds.
+		status?: string;
+		// CYB-3822: invoked once per batch after its fetch completes. UI uses
+		// this to render "X/Y 批次已拉取" progress so the loading toast does
+		// not look like a hang on large multi-batch exports.
+		onBatchDone?: (done: number, total: number) => void;
 	} = {},
 ): Promise<string[]> {
 	const concurrency = options.concurrency ?? 4;
 	const union = new Set<string>();
 	let cursor = 0;
+	let doneCount = 0;
+	const totalBatches = batchIds.length;
 	async function worker(): Promise<void> {
 		while (cursor < batchIds.length) {
 			const idx = cursor;
 			cursor += 1;
-			const ids = await fetchAllBatchAssetIds(batchIds[idx], options.filterFn);
+			const ids = await fetchAllBatchAssetIds(batchIds[idx], {
+				filterFn: options.filterFn,
+				status: options.status,
+			});
 			for (const id of ids) union.add(id);
+			doneCount += 1;
+			options.onBatchDone?.(doneCount, totalBatches);
 		}
 	}
 	const workers = Array.from(

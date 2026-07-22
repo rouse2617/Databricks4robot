@@ -7,6 +7,7 @@ import {
 	fetchAllBatchAssetIds,
 	fetchAssetIdsForBatches,
 	statusFilterPredicate,
+	statusFilterServerValue,
 } from "./batchJobs";
 
 // Minimal PipelineRun stub — CYB-3800 lib only reads assetIds so we keep the
@@ -143,6 +144,35 @@ describe("statusFilterPredicate", () => {
 		expect(failed?.(stubRun({ status: "Failed" }))).toBe(true);
 		expect(failed?.(stubRun({ status: "failed" }))).toBe(true);
 		expect(failed?.(stubRun({ status: "Running" }))).toBe(false);
+	});
+});
+
+// CYB-3822 — server-side status filter mapping + api plumbing
+describe("statusFilterServerValue", () => {
+	it("maps enum → Argo TitleCase; all → undefined", () => {
+		expect(statusFilterServerValue("all")).toBeUndefined();
+		expect(statusFilterServerValue("succeeded")).toBe("Succeeded");
+		expect(statusFilterServerValue("failed")).toBe("Failed");
+	});
+});
+
+describe("fetchAllBatchAssetIds threads status to listRunChildren", () => {
+	it("passes options.status through to every page request", async () => {
+		const spy = vi
+			.spyOn(runApi, "listRunChildren")
+			.mockResolvedValue({
+				runId: "b1",
+				items: [stubRun({ status: "Failed", assetIds: ["only-bad"] })],
+				relations: [],
+				summary: {} as never,
+				total: 1,
+			});
+		await fetchAllBatchAssetIds("b1", { status: "Failed" });
+		expect(spy).toHaveBeenCalledWith("b1", {
+			page: 1,
+			pageSize: 100,
+			status: "Failed",
+		});
 	});
 });
 

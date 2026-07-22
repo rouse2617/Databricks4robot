@@ -2354,6 +2354,46 @@ func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
 	}
 }
 
+// CYB-3822: batch export selects "仅成功 / 仅失败" and passes an Argo TitleCase
+// status through the handler → filter.Status. Verify the usecase forwards it
+// to ListSummaries so the WHERE clause runs server-side instead of the caller
+// fetching every child and discarding non-matching rows client-side.
+func TestListRunChildrenForwardsStatusToListSummaries(t *testing.T) {
+	t.Parallel()
+
+	const batchID = "legacy-batch-status"
+	childBatchID := batchID
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"child-failed": {
+				ID:         "child-failed",
+				Status:     "Failed",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+
+	if _, err := uc.ListRunChildren(context.Background(), batchID, models.PipelineRunListFilter{
+		Status: "Failed",
+	}); err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if len(runRepo.listFilters) != 1 {
+		t.Fatalf("expected 1 ListSummaries call, got %d", len(runRepo.listFilters))
+	}
+	if got := runRepo.listFilters[0].Status; got != "Failed" {
+		t.Fatalf("ListSummaries filter.Status = %q, want %q", got, "Failed")
+	}
+	if got := runRepo.listFilters[0].BatchJobID; got != batchID {
+		t.Fatalf("ListSummaries filter.BatchJobID = %q, want %q", got, batchID)
+	}
+}
+
 func TestListRunChildrenIncludesEventDerivedRelations(t *testing.T) {
 	t.Parallel()
 

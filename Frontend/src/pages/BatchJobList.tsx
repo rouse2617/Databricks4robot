@@ -46,6 +46,7 @@ import {
 	formatDurationSeconds,
 	sortBatchJobsByCreatedDesc,
 	statusFilterPredicate,
+	statusFilterServerValue,
 } from "../lib/batchJobs";
 import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
 import {
@@ -423,13 +424,30 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 										? "失败"
 										: "全部";
 							setExportBusy(true);
-							const hide = message.loading(
-								`正在拉取 ${selectedRowKeys.length} 个批次的${filterLabel}资产 ID…`,
+							// CYB-3822: progress toast — start at 0/N and rebuild the
+							// message each time a batch's fetch completes so a large
+							// selection (25k+ children) does not look like a hang. The
+							// server-side status filter (statusFilterServerValue) means
+							// the payloads themselves are already 5-10× smaller for
+							// "仅成功 / 仅失败".
+							const total = selectedRowKeys.length;
+							let hide = message.loading(
+								`正在拉取 0/${total} 个批次的${filterLabel}资产 ID…`,
 								0,
 							);
 							try {
 								const ids = await fetchAssetIdsForBatches(selectedRowKeys, {
+									status: statusFilterServerValue(filterKey),
+									// CYB-3821a: keep the client predicate as a safety net
+									// in case a legacy backend ignores ?status=.
 									filterFn: statusFilterPredicate(filterKey),
+									onBatchDone: (done, tot) => {
+										hide();
+										hide = message.loading(
+											`正在拉取 ${done}/${tot} 个批次的${filterLabel}资产 ID…`,
+											0,
+										);
+									},
 								});
 								hide();
 								if (ids.length === 0) {
