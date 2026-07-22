@@ -2699,6 +2699,7 @@ func (r *AssetRepo) listWithFiltersData(ctx context.Context, whereSQL string, wh
   parent_asset_id, root_asset_id, tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   logical_asset_id, revision, is_current,
+  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBySQL, len(allArgs)+1, len(allArgs)+2,
@@ -2714,21 +2715,28 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 	var out []*models.Asset
 	for rows.Next() {
 		var (
-			a               models.Asset
-			lifecycleState  string
-			mcapFileID      *string
-			segLoc          *string
-			parentID        *string
-			rootID          *string
-			tenantID        *string
-			projectID       *string
-			metadataBytes   []byte
-			filesBytes      []byte
-			algoInputsURIs  []byte
-			annotInputsURIs []byte
-			logicalID       *string
-			revision        *int64
-			isCurrent       *bool
+			a                models.Asset
+			lifecycleState   string
+			mcapFileID       *string
+			segLoc           *string
+			parentID         *string
+			rootID           *string
+			tenantID         *string
+			projectID        *string
+			metadataBytes    []byte
+			filesBytes       []byte
+			algoInputsURIs   []byte
+			annotInputsURIs  []byte
+			logicalID        *string
+			revision         *int64
+			isCurrent        *bool
+			cameraModel      *string
+			deviceID         *string
+			collectorID      *string
+			sceneID          *string
+			dataSource       *string
+			collectionMethod *string
+			sourcePlatform   *string
 		)
 		if err := rows.Scan(
 			&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -2738,9 +2746,31 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			&parentID, &rootID, &tenantID, &projectID,
 			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 			&logicalID, &revision, &isCurrent,
+			&cameraModel, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
+		}
+		if cameraModel != nil {
+			a.CameraModel = *cameraModel
+		}
+		if deviceID != nil {
+			a.DeviceID = *deviceID
+		}
+		if collectorID != nil {
+			a.CollectorID = *collectorID
+		}
+		if sceneID != nil {
+			a.SceneID = *sceneID
+		}
+		if dataSource != nil {
+			a.DataSource = *dataSource
+		}
+		if collectionMethod != nil {
+			a.CollectionMethod = *collectionMethod
+		}
+		if sourcePlatform != nil {
+			a.SourcePlatform = *sourcePlatform
 		}
 		if mcapFileID != nil {
 			a.McapFileID = *mcapFileID

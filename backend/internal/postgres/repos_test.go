@@ -795,7 +795,10 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 
 	// COUNT returns 2
 	db.queryRow = &fakeRow{values: []any{int64(2)}}
-	// DATA returns 2 rows (31 columns each — includes metadata/files/algo/annot JSONB)
+	// DATA returns 2 rows (38 columns after CYB-3715e added 7 flatten mirror
+	// columns — camera_model / device_id / collector_id / scene_id /
+	// data_source / collection_method / source_platform — between the
+	// logical_asset_id/revision/is_current triplet and created_at).
 	db.rows = &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -804,6 +807,8 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -812,6 +817,8 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -844,6 +851,8 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -1272,7 +1281,8 @@ func TestGet_SegTypeMirrorsAssetType(t *testing.T) {
 func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 	ctx := context.Background()
 
-	// List queries return 31 columns (includes metadata/files/algo/annot JSONB)
+	// List queries return 38 columns after CYB-3715e (includes metadata/files/
+	// algo/annot JSONB + 7 flatten mirror columns before created_at).
 	row := []any{
 		"lf-1", "m1", int64(100), int64(200), (*string)(nil),
 		"delivered", "frame_set", int64(5000),
@@ -1281,6 +1291,8 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
