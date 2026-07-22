@@ -132,13 +132,17 @@ describe("statusFilterPredicate", () => {
 	it("all → undefined (no-op)", () => {
 		expect(statusFilterPredicate("all")).toBeUndefined();
 	});
-	it("succeeded / failed → predicate matching that status", () => {
+	it("succeeded / failed → predicate matching that status (case-insensitive)", () => {
 		const succeeded = statusFilterPredicate("succeeded");
 		const failed = statusFilterPredicate("failed");
+		// Backend serializes TitleCase ("Succeeded"/"Failed"); older paths use
+		// lowercase. Both must match.
+		expect(succeeded?.(stubRun({ status: "Succeeded" }))).toBe(true);
 		expect(succeeded?.(stubRun({ status: "succeeded" }))).toBe(true);
-		expect(succeeded?.(stubRun({ status: "failed" }))).toBe(false);
+		expect(succeeded?.(stubRun({ status: "Failed" }))).toBe(false);
+		expect(failed?.(stubRun({ status: "Failed" }))).toBe(true);
 		expect(failed?.(stubRun({ status: "failed" }))).toBe(true);
-		expect(failed?.(stubRun({ status: "running" }))).toBe(false);
+		expect(failed?.(stubRun({ status: "Running" }))).toBe(false);
 	});
 });
 
@@ -147,12 +151,13 @@ describe("fetchAssetIdsForBatches with filterFn", () => {
 		vi.spyOn(runApi, "listRunChildren").mockImplementation(async (runId) => ({
 			runId,
 			items: [
+				// TitleCase mirrors the real backend serialization.
 				stubRun({
-					status: "succeeded",
+					status: "Succeeded",
 					assetIds: runId === "b1" ? ["a-good"] : ["b-good"],
 				}),
 				stubRun({
-					status: "failed",
+					status: "Failed",
 					assetIds: runId === "b1" ? ["a-bad"] : ["b-bad"],
 				}),
 			],

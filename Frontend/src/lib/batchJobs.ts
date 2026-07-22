@@ -84,14 +84,19 @@ export function extractAssetIds(
 // duplicating the truth about which run.status values count as success/failure.
 export type BatchExportStatusFilter = "all" | "succeeded" | "failed";
 
+// CYB-3821a: backend serializes run status in TitleCase ("Succeeded",
+// "Failed", "Running", "Pending"), not lowercase — the aggregate summary
+// fields (succeededCount etc.) misled the initial implementation into
+// comparing against "succeeded"/"failed" and always returning zero.
+// toLowerCase() covers both future casings and any legacy rows.
 export function statusFilterPredicate(
 	filter: BatchExportStatusFilter,
 ): ((run: PipelineRun) => boolean) | undefined {
 	switch (filter) {
 		case "succeeded":
-			return (run) => run.status === "succeeded";
+			return (run) => run.status?.toLowerCase() === "succeeded";
 		case "failed":
-			return (run) => run.status === "failed";
+			return (run) => run.status?.toLowerCase() === "failed";
 		case "all":
 			return undefined;
 	}
