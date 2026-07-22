@@ -559,7 +559,7 @@ ORDER BY created_at ASC`
 func (r *BackfillRepo) FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
 	q := `SELECT
   bi.id, bi.job_id, bi.asset_id, bi.status,
-  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.started_at, bi.finished_at, bi.created_at
+  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.attempts, bi.started_at, bi.finished_at, bi.created_at
 FROM (
   SELECT DISTINCT ON (job_id, asset_id) *
   FROM backfill_items
