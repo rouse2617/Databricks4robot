@@ -121,7 +121,13 @@ func (c *crdWorkflowClient) DeleteWorkflow(ctx context.Context, name, namespace 
 // selector. Empty selector returns everything the caller can see.
 func (c *crdWorkflowClient) ListWorkflows(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error) {
 	ns := c.resolveNS(namespace)
-	list, err := c.dyn.Resource(workflowGVR).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	// ResourceVersion "0" serves the list from the apiserver watch cache instead
+	// of a quorum etcd read (CYB-3681). Both callers — the bulk-pull watcher
+	// (re-lists every tick, change-gated on resourceVersion) and the read-only
+	// workflow UI list — tolerate a slightly stale snapshot, and the cache read
+	// does not contend with the heavy workflow write churn that made the quorum
+	// read time out under batch load.
+	list, err := c.dyn.Resource(workflowGVR).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: labelSelector, ResourceVersion: "0"})
 	if err != nil {
 		return nil, translateK8sErr(err)
 	}
