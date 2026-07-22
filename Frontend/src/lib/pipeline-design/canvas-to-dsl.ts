@@ -121,13 +121,22 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 				? { componentVersionLabel: d.componentVersionLabel }
 				: {}),
 			resources:
-				d.cpu || d.memory || d.disk || d.gpu || d.computeTier
+				d.cpu ||
+				d.memory ||
+				d.cpuLimit ||
+				d.memoryLimit ||
+				d.disk ||
+				d.gpu ||
+				d.computeTier
 					? {
 							cpu: d.cpu,
 							memory: d.memory,
 							disk: d.disk,
 							gpu: d.gpu,
 							computeTier: d.computeTier,
+							// Optional Burstable ceilings; omitted when unset (empty = same as request).
+							...(d.cpuLimit ? { cpuLimit: d.cpuLimit } : {}),
+							...(d.memoryLimit ? { memoryLimit: d.memoryLimit } : {}),
 						}
 					: undefined,
 		},

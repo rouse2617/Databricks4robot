@@ -223,6 +223,8 @@ export function designDSLToCanvas(pipeline: Pipeline): {
 				env: readComponentEnv(component),
 				cpu: pn.component.resources?.cpu || "",
 				memory: pn.component.resources?.memory || "",
+				cpuLimit: pn.component.resources?.cpuLimit || "",
+				memoryLimit: pn.component.resources?.memoryLimit || "",
 				disk: pn.component.resources?.disk || "",
 				gpu: pn.component.resources?.gpu || "",
 				computeTier: pn.component.resources?.computeTier || "",

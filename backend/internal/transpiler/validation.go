@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // ValidationError describes a user-correctable pipeline definition problem.
@@ -36,8 +38,57 @@ func ValidatePipeline(p *Pipeline) error {
 	problems = append(problems, validateConsumedOutputFiles(p)...)
 	problems = append(problems, validateNoCycles(p)...)
 	problems = append(problems, validateStepCount(p)...)
+	problems = append(problems, validateResources(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
+	}
+	return nil
+}
+
+// validateResources rejects a component whose CPU/memory request exceeds its
+// limit — k8s rejects that at admission with an opaque message, so fail fast
+// here with a clear one. Request/limit resolve from the *Request/*Limit
+// overrides, falling back to the simple CPU/Memory value (request==limit).
+// Unparseable quantities are left to buildK8sResources' existing lenient
+// handling (silently ignored), so this only adds the request>limit guard.
+func validateResources(p *Pipeline) []string {
+	var problems []string
+	for _, n := range flattenNodes(p.Nodes) {
+		res := n.Component.Resources
+		if res == nil {
+			continue
+		}
+		cpuReq, cpuLim := res.CPURequest, res.CPULimit
+		if cpuReq == "" {
+			cpuReq = res.CPU
+		}
+		if cpuLim == "" {
+			cpuLim = res.CPU
+		}
+		problems = append(problems, checkRequestLimit(n.ID, "cpu", cpuReq, cpuLim)...)
+		memReq, memLim := res.MemoryRequest, res.MemoryLimit
+		if memReq == "" {
+			memReq = res.Memory
+		}
+		if memLim == "" {
+			memLim = res.Memory
+		}
+		problems = append(problems, checkRequestLimit(n.ID, "memory", memReq, memLim)...)
+	}
+	return problems
+}
+
+func checkRequestLimit(nodeID, dim, reqStr, limStr string) []string {
+	if reqStr == "" || limStr == "" {
+		return nil
+	}
+	req, err1 := resource.ParseQuantity(reqStr)
+	lim, err2 := resource.ParseQuantity(limStr)
+	if err1 != nil || err2 != nil {
+		return nil // lenient: buildK8sResources also ignores unparseable values
+	}
+	if req.Cmp(lim) > 0 {
+		return []string{fmt.Sprintf("node %q: %s request %q exceeds limit %q", nodeID, dim, reqStr, limStr)}
 	}
 	return nil
 }

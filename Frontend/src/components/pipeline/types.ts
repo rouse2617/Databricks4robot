@@ -79,6 +79,10 @@ export interface Port {
 export interface ResourceRequirements {
 	cpu?: string;
 	memory?: string;
+	// Optional Burstable overrides: cpu/memory act as the request (or request==limit
+	// when these are empty); *Limit sets a higher ceiling. request must be <= limit.
+	cpuLimit?: string;
+	memoryLimit?: string;
 	disk?: string;
 	gpu?: string;
 	computeTier?: string;
@@ -106,6 +110,8 @@ export interface RegisteredComponent {
 	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
+	cpuLimit?: string;
+	memoryLimit?: string;
 	disk: string;
 	gpu?: string;
 	computeTier?: string;
@@ -123,6 +129,8 @@ export interface PipelineNodeData {
 	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
+	cpuLimit?: string;
+	memoryLimit?: string;
 	disk: string;
 	gpu?: string;
 	computeTier?: string;

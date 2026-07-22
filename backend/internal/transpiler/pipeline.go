@@ -70,12 +70,28 @@ type Component struct {
 }
 
 // ResourceRequirements defines compute resources for a component.
+//
+// CPU/Memory are the simple form: each sets request AND limit to the same value
+// (Guaranteed QoS). To make a step Burstable (request < limit) — pack the pool
+// by a low request while allowing bursts — set the *Request / *Limit fields,
+// which override the corresponding side. Setting only CPU is equivalent to
+// setting CPURequest == CPULimit == CPU (backward compatible).
 type ResourceRequirements struct {
-	CPU         string `json:"cpu,omitempty" yaml:"cpu,omitempty"`                 // e.g. "500m", "2"
-	Memory      string `json:"memory,omitempty" yaml:"memory,omitempty"`           // e.g. "256Mi", "1Gi"
+	CPU         string `json:"cpu,omitempty" yaml:"cpu,omitempty"`                 // e.g. "500m", "2" — request==limit unless overridden below
+	Memory      string `json:"memory,omitempty" yaml:"memory,omitempty"`           // e.g. "256Mi", "1Gi" — request==limit unless overridden below
 	Disk        string `json:"disk,omitempty" yaml:"disk,omitempty"`               // ephemeral storage, e.g. "1Gi"
 	GPU         string `json:"gpu,omitempty" yaml:"gpu,omitempty"`                 // Kubernetes nvidia.com/gpu quantity, e.g. "1"
 	ComputeTier string `json:"computeTier,omitempty" yaml:"computeTier,omitempty"` // DataBrew scheduling/cost metadata
+
+	// Burstable overrides: when set, take precedence over CPU/Memory for that
+	// side. Request defaults to the simple CPU/Memory value; limit likewise. A
+	// low request (scheduler packs by request) with a higher limit (burst
+	// headroom) lifts pod density without over-reserving. request must be <= limit
+	// (enforced by ValidatePipeline).
+	CPURequest    string `json:"cpuRequest,omitempty" yaml:"cpuRequest,omitempty"`
+	CPULimit      string `json:"cpuLimit,omitempty" yaml:"cpuLimit,omitempty"`
+	MemoryRequest string `json:"memoryRequest,omitempty" yaml:"memoryRequest,omitempty"`
+	MemoryLimit   string `json:"memoryLimit,omitempty" yaml:"memoryLimit,omitempty"`
 }
 
 // Param is a key-value pair for workflow-level parameters.

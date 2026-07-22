@@ -889,16 +889,42 @@ func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 	limits := corev1.ResourceList{}
 	requests := corev1.ResourceList{}
 
-	if res.CPU != "" {
-		if q, err := resource.ParseQuantity(res.CPU); err == nil {
-			limits[corev1.ResourceCPU] = q
+	// CPU/Memory: request defaults to the simple value, limit likewise;
+	// *Request/*Limit override their side, enabling Burstable (request < limit).
+	// Setting only CPU/Memory keeps request==limit (Guaranteed), unchanged from
+	// before. ValidatePipeline guarantees request <= limit before we get here.
+	cpuReq, cpuLim := res.CPURequest, res.CPULimit
+	if cpuReq == "" {
+		cpuReq = res.CPU
+	}
+	if cpuLim == "" {
+		cpuLim = res.CPU
+	}
+	if cpuReq != "" {
+		if q, err := resource.ParseQuantity(cpuReq); err == nil {
 			requests[corev1.ResourceCPU] = q
 		}
 	}
-	if res.Memory != "" {
-		if q, err := resource.ParseQuantity(res.Memory); err == nil {
-			limits[corev1.ResourceMemory] = q
+	if cpuLim != "" {
+		if q, err := resource.ParseQuantity(cpuLim); err == nil {
+			limits[corev1.ResourceCPU] = q
+		}
+	}
+	memReq, memLim := res.MemoryRequest, res.MemoryLimit
+	if memReq == "" {
+		memReq = res.Memory
+	}
+	if memLim == "" {
+		memLim = res.Memory
+	}
+	if memReq != "" {
+		if q, err := resource.ParseQuantity(memReq); err == nil {
 			requests[corev1.ResourceMemory] = q
+		}
+	}
+	if memLim != "" {
+		if q, err := resource.ParseQuantity(memLim); err == nil {
+			limits[corev1.ResourceMemory] = q
 		}
 	}
 	if res.Disk != "" {

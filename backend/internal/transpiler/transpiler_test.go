@@ -193,6 +193,96 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 	t.Fatal("step-gpu template not found")
 }
 
+// CPURequest/CPULimit (and the memory pair) make a step Burstable: the scheduler
+// packs by the low request while the pod may burst to the higher limit.
+func TestTranspileBurstableRequestBelowLimit(t *testing.T) {
+	p := &Pipeline{Name: "burst", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox", Command: []string{"true"},
+			Resources: &ResourceRequirements{
+				CPURequest: "1", CPULimit: "1500m",
+				MemoryRequest: "512Mi", MemoryLimit: "1Gi",
+			},
+		},
+	}}}
+	wf, err := Transpile(p, &Options{Name: "burst"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-slim" || tmpl.Container == nil {
+			continue
+		}
+		found = true
+		r := tmpl.Container.Resources
+		if got := r.Requests[corev1.ResourceCPU]; got.String() != "1" {
+			t.Fatalf("cpu request = %q, want 1", got.String())
+		}
+		if got := r.Limits[corev1.ResourceCPU]; got.String() != "1500m" {
+			t.Fatalf("cpu limit = %q, want 1500m", got.String())
+		}
+		if got := r.Requests[corev1.ResourceMemory]; got.String() != "512Mi" {
+			t.Fatalf("mem request = %q, want 512Mi", got.String())
+		}
+		if got := r.Limits[corev1.ResourceMemory]; got.String() != "1Gi" {
+			t.Fatalf("mem limit = %q, want 1Gi", got.String())
+		}
+	}
+	if !found {
+		t.Fatal("step-slim template not found")
+	}
+}
+
+// The simple single-value form stays Guaranteed: request == limit (unchanged).
+func TestTranspileSingleValueStaysGuaranteed(t *testing.T) {
+	p := &Pipeline{Name: "guar", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox", Command: []string{"true"},
+			Resources: &ResourceRequirements{CPU: "2", Memory: "256Mi"},
+		},
+	}}}
+	wf, err := Transpile(p, &Options{Name: "guar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-slim" || tmpl.Container == nil {
+			continue
+		}
+		r := tmpl.Container.Resources
+		if req, lim := r.Requests[corev1.ResourceCPU], r.Limits[corev1.ResourceCPU]; req.String() != "2" || lim.String() != "2" {
+			t.Fatalf("cpu req/lim = %q/%q, want 2/2 (request==limit)", req.String(), lim.String())
+		}
+		if req, lim := r.Requests[corev1.ResourceMemory], r.Limits[corev1.ResourceMemory]; req.String() != "256Mi" || lim.String() != "256Mi" {
+			t.Fatalf("mem req/lim = %q/%q, want 256Mi/256Mi", req.String(), lim.String())
+		}
+		return
+	}
+	t.Fatal("step-slim template not found")
+}
+
+// A request above its limit is rejected up front (k8s would otherwise reject it
+// at admission with an opaque error).
+func TestValidatePipelineRejectsCPURequestOverLimit(t *testing.T) {
+	p := &Pipeline{Name: "bad", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox",
+			Resources: &ResourceRequirements{CPURequest: "2", CPULimit: "1"},
+		},
+	}}}
+	err := ValidatePipeline(p)
+	if err == nil {
+		t.Fatal("expected validation error for cpu request > limit")
+	}
+	if !strings.Contains(err.Error(), "request") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %q, want a cpu request>limit message", err.Error())
+	}
+}
+
 func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
 	t.Helper()
 	for _, tol := range tmpl.Tolerations {
