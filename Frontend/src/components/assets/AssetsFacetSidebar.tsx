@@ -92,6 +92,13 @@ const AGG_KEY_MAP: Record<string, string> = {
 	priority_agg: "tag.priority",
 	quality_agg: "tag.quality",
 	env_agg: "env",
+	// CYB-3715: flatten mirror columns arrive with their raw field name as
+	// the agg key (mapFacetFieldToAggregationKey passes them through). Map
+	// them to themselves so fieldCounts picks them up.
+	camera_model: "camera_model",
+	data_source: "data_source",
+	collection_method: "collection_method",
+	source_platform: "source_platform",
 };
 
 export interface AssetsFacetSidebarProps {
@@ -546,6 +553,16 @@ const GROUP_FIELDS: Record<string, string[]> = {
 		"mcap.vendor_id",
 		"mcap.device_id",
 		"mcap.scene_id",
+		// CYB-3715: 4 facet-able flatten fields + 3 uuid input-only fields
+		// mirrored from mcap_files onto assets. Direct top-level fields (no
+		// mcap. prefix) — see AGG_KEY_MAP and ASSET_DISCOVERY_FACETS.
+		"camera_model",
+		"data_source",
+		"collection_method",
+		"source_platform",
+		"device_id",
+		"collector_id",
+		"scene_id",
 		"duration_ms",
 		"updated_at",
 	],
@@ -693,6 +710,97 @@ export default function AssetsFacetSidebar({
 						label="场景 ID"
 						field="mcap.scene_id"
 						placeholder="scene_id"
+						activeFilters={activeFilters}
+						onToggleFacet={onToggleFacet}
+					/>
+					{fieldCounts.camera_model &&
+						Object.keys(fieldCounts.camera_model).length > 0 && (
+							<CheckboxFacet
+								compact={compact}
+								label="相机型号"
+								field="camera_model"
+								options={Object.keys(fieldCounts.camera_model).sort(
+									(a, b) =>
+										(fieldCounts.camera_model[b] ?? 0) -
+										(fieldCounts.camera_model[a] ?? 0),
+								)}
+								activeFilters={activeFilters}
+								onToggleFacet={onToggleFacet}
+								counts={fieldCounts.camera_model}
+							/>
+						)}
+					{fieldCounts.source_platform &&
+						Object.keys(fieldCounts.source_platform).length > 0 && (
+							<CheckboxFacet
+								compact={compact}
+								label="来源平台"
+								field="source_platform"
+								options={Object.keys(fieldCounts.source_platform).sort(
+									(a, b) =>
+										(fieldCounts.source_platform[b] ?? 0) -
+										(fieldCounts.source_platform[a] ?? 0),
+								)}
+								activeFilters={activeFilters}
+								onToggleFacet={onToggleFacet}
+								counts={fieldCounts.source_platform}
+							/>
+						)}
+					{fieldCounts.data_source &&
+						Object.keys(fieldCounts.data_source).length > 0 && (
+							<CheckboxFacet
+								compact={compact}
+								label="数据源"
+								field="data_source"
+								options={Object.keys(fieldCounts.data_source).sort(
+									(a, b) =>
+										(fieldCounts.data_source[b] ?? 0) -
+										(fieldCounts.data_source[a] ?? 0),
+								)}
+								activeFilters={activeFilters}
+								onToggleFacet={onToggleFacet}
+								counts={fieldCounts.data_source}
+							/>
+						)}
+					{fieldCounts.collection_method &&
+						Object.keys(fieldCounts.collection_method).length > 0 && (
+							<CheckboxFacet
+								compact={compact}
+								label="采集方式"
+								field="collection_method"
+								options={Object.keys(fieldCounts.collection_method).sort(
+									(a, b) =>
+										(fieldCounts.collection_method[b] ?? 0) -
+										(fieldCounts.collection_method[a] ?? 0),
+								)}
+								activeFilters={activeFilters}
+								onToggleFacet={onToggleFacet}
+								counts={fieldCounts.collection_method}
+							/>
+						)}
+					<InputFacet
+						compact={compact}
+						span="half"
+						label="设备 UUID"
+						field="device_id"
+						placeholder="device_id"
+						activeFilters={activeFilters}
+						onToggleFacet={onToggleFacet}
+					/>
+					<InputFacet
+						compact={compact}
+						span="half"
+						label="采集者 UUID"
+						field="collector_id"
+						placeholder="collector_id"
+						activeFilters={activeFilters}
+						onToggleFacet={onToggleFacet}
+					/>
+					<InputFacet
+						compact={compact}
+						span="half"
+						label="场景 UUID"
+						field="scene_id"
+						placeholder="scene_id (direct)"
 						activeFilters={activeFilters}
 						onToggleFacet={onToggleFacet}
 					/>
