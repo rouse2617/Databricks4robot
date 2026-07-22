@@ -26,7 +26,7 @@ func (m *mockBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) 
 func (m *mockBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (m *mockBackfillRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
-func (m *mockBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (m *mockBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (m *mockBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
@@ -699,7 +699,7 @@ func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJo
 	r.job = &copyJob
 	return nil
 }
-func (r *trackingBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (r *trackingBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (r *trackingBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {

@@ -107,3 +107,52 @@ export function resumeSubscriptionTask(id: string): Promise<SubscriptionTask> {
     `${BASE}/${encodeURIComponent(id)}/resume`,
   );
 }
+
+// ── Dispatch history (CYB-3798) ──────────────────────────────────────────────
+// A subscription task fans each message out to one backfill batch per binding.
+// Batches carry `created_by = "subscription-task:<taskId>"`, so we reverse-look
+// them up on the existing Backfill surface (no dedicated endpoint). The
+// convention string is kept here, in one place.
+
+export interface DispatchBatch {
+  id: string;
+  name: string;
+  templateId: string;
+  templateVersion?: number;
+  status: string;
+  totalCount: number;
+  completedCount: number;
+  failedCount: number;
+  createdAt: string;
+}
+
+export interface DispatchBatchItem {
+  id: string;
+  assetId: string;
+  status: string;
+  pipelineRunId?: string | null;
+  workflowName?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+}
+
+/** Batches this subscription task has dispatched, newest-first. */
+export function listSubscriptionTaskBatches(
+  taskId: string,
+): Promise<DispatchBatch[]> {
+  const createdBy = encodeURIComponent(`subscription-task:${taskId}`);
+  return request<{ items: DispatchBatch[] }>(
+    "GET",
+    `/backfill?createdBy=${createdBy}`,
+  ).then((r) => r.items ?? []);
+}
+
+/** Per-asset items of one dispatched batch (asset id + status + run link). */
+export function listDispatchBatchItems(
+  batchId: string,
+): Promise<DispatchBatchItem[]> {
+  return request<{ items: DispatchBatchItem[] }>(
+    "GET",
+    `/backfill/${encodeURIComponent(batchId)}/items`,
+  ).then((r) => r.items ?? []);
+}

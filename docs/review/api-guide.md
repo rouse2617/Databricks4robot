@@ -3638,4 +3638,23 @@ curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$I
 - `400 INVALID_ARGUMENT` — missing required fields (name/projectId/subscriptionId), empty `pipelineBindings`, a binding missing templateId/targetId, or invalid pullIntervalSeconds/maxMessagesPerPull.
 - `404 SUBSCRIPTION_TASK_NOT_FOUND` — get/update against an unknown id.
 
-**Smoke**: `scripts/smoke-subscription-tasks-dev.sh` (happy path + 400 + 404).
+**Smoke**: `scripts/smoke-subscription-tasks-dev.sh` (happy path + 400 + 404 + history endpoints).
+
+### 历史下发批次与资产 (CYB-3798)
+
+从订阅任务反查它下发过的批次与每批的资产。链路靠 `backfill_jobs.created_by = "subscription-task:<id>"`，均为只读，复用现有 Backfill 面。
+
+```bash
+# 某订阅任务下发过的全部批次（newest-first）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/backfill?createdBy=subscription-task:$ID"
+# -> {"items":[{ "id":"batch_...", "name":"...", "status":"...", "totalCount":N, ... }]}
+
+# 某批次跑过的资产明细（assetId + 状态 + pipelineRunId）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/backfill/<BATCH_ID>/items"
+# -> {"items":[{ "assetId":"...", "status":"completed", "pipelineRunId":"...?" }]}
+```
+
+- `createdBy` 省略时 `GET /api/v1/backfill` 行为不变（返回全部）。
+- 未知 batch id 的 `/items` 返回 `200 {"items":[]}`（非 404）；空 id 返回 `400 INVALID_ARGUMENT`。

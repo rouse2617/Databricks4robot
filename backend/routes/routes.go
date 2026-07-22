@@ -564,6 +564,7 @@ func RegisterAll(
 			api.GET("/backfill/:id/node-summary", backfillHandler.GetNodeSummary)
 			api.GET("/backfill/:id/node-failures", backfillHandler.ListNodeFailures)
 			api.GET("/backfill/:id/attempts", backfillHandler.GetItemAttempts)
+			api.GET("/backfill/:id/items", backfillHandler.ListItems)
 			// dispatcher online tuning (CYB-3679)
 			api.GET("/dispatcher/clusters", backfillHandler.GetDispatcherStatus)
 			api.PUT("/dispatcher/clusters/:cluster", backfillHandler.PutDispatcherConfig)

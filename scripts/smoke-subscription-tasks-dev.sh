@@ -70,6 +70,15 @@ check "pause is 200" 200 "$code"
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${HDR[@]}" "$URL/$ID/resume")
 check "resume is 200" 200 "$code"
 
+# CYB-3798: dispatch-history endpoints (read-only, reuse the Backfill surface).
+# The smoke task is disabled and never dispatched, so its batch list is expected
+# empty — we assert the endpoints answer 200, not that rows exist.
+code=$(curl -sS -o /tmp/smoke-st-hist.txt -w '%{http_code}' "${HDR[@]}" "${BASE}/api/v1/backfill?createdBy=subscription-task:$ID")
+check "list batches by createdBy is 200" 200 "$code" "$(cat /tmp/smoke-st-hist.txt)"
+
+code=$(curl -sS -o /tmp/smoke-st-items.txt -w '%{http_code}' "${HDR[@]}" "${BASE}/api/v1/backfill/batch_definitely_not_here/items")
+check "items of unknown batch is 200 (empty list)" 200 "$code" "$(cat /tmp/smoke-st-items.txt)"
+
 # 404: unknown id
 code=$(curl -sS -o /dev/null -w '%{http_code}' "${HDR[@]}" "$URL/sub_definitely_not_here")
 check "get unknown id is 404" 404 "$code"

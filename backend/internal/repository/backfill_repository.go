@@ -10,7 +10,10 @@ import (
 type BackfillRepository interface {
 	// Job operations.
 	SaveJob(ctx context.Context, j *models.BackfillJob) error
-	FindAllJobs(ctx context.Context) ([]models.BackfillJob, error)
+	// FindAllJobs lists jobs newest-first. When createdBy is non-empty, only
+	// jobs with that exact created_by are returned (e.g.
+	// "subscription-task:<id>" to list a subscription task's dispatches).
+	FindAllJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error)
 	FindJobByID(ctx context.Context, id string) (*models.BackfillJob, error)
 	UpdateJobStatus(ctx context.Context, id, status string) error
 	UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error

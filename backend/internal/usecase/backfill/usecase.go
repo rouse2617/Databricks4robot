@@ -796,8 +796,15 @@ func backfillItemLedgerStatus(item models.BackfillItem) (status, message string)
 // ListJobs returns all backfill jobs from the database.
 // Listing must stay read-only: syncJobProgress (per-job DB + optional GetRun/Argo)
 // belongs on GetJob, ReconcileSubtaskRuns, and background runners — not on list.
-func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	return uc.repo.FindAllJobs(ctx)
+func (uc *Usecase) ListJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error) {
+	return uc.repo.FindAllJobs(ctx, createdBy)
+}
+
+// ListItems returns the per-asset items of one batch job (asset id, status, and
+// pipeline-run linkage). Read-only; backs the subscription-task history UI that
+// shows which assets a dispatch ran.
+func (uc *Usecase) ListItems(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
+	return uc.repo.FindItemsByJobID(ctx, jobID)
 }
 
 // GetJob returns a backfill job without loading all items.

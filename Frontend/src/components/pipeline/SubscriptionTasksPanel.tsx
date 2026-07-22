@@ -12,6 +12,7 @@ import {
   App,
   Button,
   Card,
+  Descriptions,
   Divider,
   Drawer,
   Dropdown,
@@ -38,6 +39,10 @@ import {
 import {
   createSubscriptionTask,
   deleteSubscriptionTask,
+  type DispatchBatch,
+  type DispatchBatchItem,
+  listDispatchBatchItems,
+  listSubscriptionTaskBatches,
   listSubscriptionTasks,
   pauseSubscriptionTask,
   resumeSubscriptionTask,
@@ -71,6 +76,24 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
 
 const DEFAULT_PROJECT_ID = "green-valley-442103";
 
+// Backfill job / item status → tag color, for the dispatch-history drawer.
+const BATCH_STATUS_COLOR: Record<string, string> = {
+  completed: "green",
+  running: "blue",
+  pending: "default",
+  failed: "red",
+  paused: "orange",
+  cancelled: "default",
+};
+const ITEM_STATUS_COLOR: Record<string, string> = {
+  completed: "green",
+  running: "blue",
+  submitted: "blue",
+  pending: "default",
+  failed: "red",
+  cancelled: "default",
+};
+
 export function SubscriptionTasksPanel() {
   const { modal } = App.useApp();
   const [tasks, setTasks] = useState<SubscriptionTask[]>([]);
@@ -78,6 +101,16 @@ export function SubscriptionTasksPanel() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<SubscriptionTask | null>(null);
   const [form] = Form.useForm<TaskFormValues>();
+
+  // Dispatch-history drawer (CYB-3798): which batches a task dispatched, and
+  // which assets each batch ran.
+  const [historyTask, setHistoryTask] = useState<SubscriptionTask | null>(null);
+  const [batches, setBatches] = useState<DispatchBatch[]>([]);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [itemsByBatch, setItemsByBatch] = useState<
+    Record<string, DispatchBatchItem[]>
+  >({});
+  const [itemsLoading, setItemsLoading] = useState<Record<string, boolean>>({});
 
   const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
   const [targets, setTargets] = useState<ExecutionTarget[]>([]);
@@ -227,6 +260,32 @@ export function SubscriptionTasksPanel() {
     }
   };
 
+  const openHistory = useCallback(async (task: SubscriptionTask) => {
+    setHistoryTask(task);
+    setBatches([]);
+    setItemsByBatch({});
+    setBatchesLoading(true);
+    try {
+      setBatches(await listSubscriptionTaskBatches(task.id));
+    } catch {
+      message.error("加载下发批次失败");
+    } finally {
+      setBatchesLoading(false);
+    }
+  }, []);
+
+  const loadBatchItems = useCallback(async (batchId: string) => {
+    setItemsLoading((m) => ({ ...m, [batchId]: true }));
+    try {
+      const items = await listDispatchBatchItems(batchId);
+      setItemsByBatch((m) => ({ ...m, [batchId]: items }));
+    } catch {
+      message.error("加载资产明细失败");
+    } finally {
+      setItemsLoading((m) => ({ ...m, [batchId]: false }));
+    }
+  }, []);
+
   const describeBinding = useCallback(
     (
       templateId: string,
@@ -248,6 +307,18 @@ export function SubscriptionTasksPanel() {
       dataIndex: "name",
       width: 160,
       ellipsis: true,
+      render: (name: string, task) => (
+        <Tooltip title="查看下发历史与资产">
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: "auto" }}
+            onClick={() => openHistory(task)}
+          >
+            {name}
+          </Button>
+        </Tooltip>
+      ),
     },
     {
       title: "状态",
@@ -539,6 +610,137 @@ export function SubscriptionTasksPanel() {
             )}
           </Form.List>
         </Form>
+      </Drawer>
+
+      <Drawer
+        title={historyTask ? `下发历史 · ${historyTask.name}` : "下发历史"}
+        open={historyTask !== null}
+        onClose={() => setHistoryTask(null)}
+        width={760}
+      >
+        {historyTask && (
+          <>
+            <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="订阅">
+                <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                  {historyTask.subscriptionId}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="流水线绑定">
+                {(historyTask.pipelineBindings ?? []).length} 个模板（每条消息各下发一个批次）
+              </Descriptions.Item>
+              <Descriptions.Item label="最近状态">
+                {historyTask.lastRunStatus
+                  ? STATUS_MAP[historyTask.lastRunStatus]?.label ??
+                    historyTask.lastRunStatus
+                  : "-"}
+              </Descriptions.Item>
+            </Descriptions>
+            <Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+              该订阅任务下发过的批次，展开可看每批跑过的资产。
+            </Text>
+            <Table<DispatchBatch>
+              rowKey="id"
+              size="small"
+              loading={batchesLoading}
+              dataSource={batches}
+              pagination={{ pageSize: 10, hideOnSinglePage: true }}
+              locale={{ emptyText: "还没有下发过批次" }}
+              columns={[
+                {
+                  title: "批次",
+                  dataIndex: "name",
+                  ellipsis: true,
+                  render: (name: string, b) => (
+                    <Link to={`/pipeline/batch/${b.id}`}>
+                      <Text style={{ fontSize: 12 }}>
+                        {name || b.id.slice(0, 12)}
+                      </Text>
+                    </Link>
+                  ),
+                },
+                {
+                  title: "状态",
+                  dataIndex: "status",
+                  width: 90,
+                  render: (s: string) => (
+                    <Tag color={BATCH_STATUS_COLOR[s] ?? "default"}>{s}</Tag>
+                  ),
+                },
+                {
+                  title: "资产",
+                  width: 140,
+                  render: (_: unknown, b) => (
+                    <Text style={{ fontSize: 12 }}>
+                      {b.completedCount}/{b.totalCount} 成功
+                      {b.failedCount ? `，${b.failedCount} 失败` : ""}
+                    </Text>
+                  ),
+                },
+                {
+                  title: "时间",
+                  dataIndex: "createdAt",
+                  width: 160,
+                  render: (v: string) => (
+                    <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                      {new Date(v).toLocaleString("zh-CN")}
+                    </Text>
+                  ),
+                },
+              ]}
+              expandable={{
+                onExpand: (expanded, b) => {
+                  if (expanded && !itemsByBatch[b.id]) loadBatchItems(b.id);
+                },
+                expandedRowRender: (b) => (
+                  <Table<DispatchBatchItem>
+                    rowKey="id"
+                    size="small"
+                    loading={itemsLoading[b.id]}
+                    dataSource={itemsByBatch[b.id] ?? []}
+                    pagination={{ pageSize: 20, hideOnSinglePage: true }}
+                    locale={{ emptyText: "无资产" }}
+                    columns={[
+                      {
+                        title: "资产 ID",
+                        dataIndex: "assetId",
+                        ellipsis: true,
+                        render: (a: string) => (
+                          <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                            {a}
+                          </Text>
+                        ),
+                      },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        width: 90,
+                        render: (s: string) => (
+                          <Tag color={ITEM_STATUS_COLOR[s] ?? "default"}>{s}</Tag>
+                        ),
+                      },
+                      {
+                        title: "错误",
+                        dataIndex: "errorMessage",
+                        ellipsis: true,
+                        render: (e?: string | null) =>
+                          e ? (
+                            <Tooltip title={e}>
+                              <Text type="danger" style={{ fontSize: 12 }}>
+                                {e}
+                              </Text>
+                            </Tooltip>
+                          ) : (
+                            <Text type="secondary">-</Text>
+                          ),
+                      },
+                    ]}
+                  />
+                ),
+              }}
+            />
+          </>
+        )}
       </Drawer>
     </Card>
   );

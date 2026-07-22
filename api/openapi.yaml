@@ -3249,8 +3249,10 @@ components:
         jobId: { type: string }
         assetId: { type: string }
         status: { type: string, description: "pending | running | completed | failed | cancelled" }
+        pipelineRunId: { type: string, nullable: true }
         workflowName: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true }
+        attempts: { type: integer }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
@@ -8630,8 +8632,17 @@ paths:
     get:
       tags: [Backfill]
       summary: List all backfill jobs
+      description: |
+        Optional `createdBy` filters to a single creator — e.g.
+        `subscription-task:<id>` to list the batches a subscription task dispatched.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: createdBy
+          required: false
+          description: Exact-match filter on the job creator (e.g. `subscription-task:<id>`). Omitted → all jobs.
+          schema: { type: string }
       responses:
         '200':
           description: Backfill job list
@@ -8662,6 +8673,37 @@ paths:
               schema: { $ref: '#/components/schemas/BackfillJob' }
         '404':
           description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/items:
+    get:
+      tags: [Backfill]
+      summary: List a batch's per-asset items
+      description: |
+        Returns the asset-level items of a batch (asset id, status, pipeline-run
+        linkage). Backs the subscription-task history view — which assets a
+        dispatch ran. An unknown id yields an empty list, not 404.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Batch items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/BackfillItem' }
+        '400':
+          description: id is required
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

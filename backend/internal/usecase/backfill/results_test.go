@@ -75,7 +75,7 @@ func (s *stubBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) 
 func (s *stubBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (s *stubBackfillRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
-func (s *stubBackfillRepo) FindAllJobs(context.Context) ([]models.BackfillJob, error) {
+func (s *stubBackfillRepo) FindAllJobs(context.Context, string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (s *stubBackfillRepo) FindJobByID(context.Context, string) (*models.BackfillJob, error) {

@@ -97,8 +97,9 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 	return nil
 }
 
-// FindAllJobs returns all backfill jobs ordered by created_at DESC.
-func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, error) {
+// FindAllJobs returns backfill jobs ordered by created_at DESC. When createdBy
+// is non-empty it filters to jobs with that exact created_by.
+func (r *BackfillRepo) FindAllJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error) {
 	// Enrich the list with each job's subtask run span (earliest start, latest
 	// finish) so the UI can show a real run duration that excludes submit/queue/
 	// pause waiting. MIN/MAX ignore NULL item timestamps, so jobs whose subtasks
@@ -109,10 +110,17 @@ func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, e
 	LEFT JOIN (
 	  SELECT job_id, MIN(started_at) AS run_started_at, MAX(finished_at) AS run_finished_at
 	  FROM backfill_items GROUP BY job_id
-	) rs ON rs.job_id = backfill_jobs.id
+	) rs ON rs.job_id = backfill_jobs.id`
+	var args []any
+	if createdBy != "" {
+		q += `
+	WHERE backfill_jobs.created_by = $1`
+		args = append(args, createdBy)
+	}
+	q += `
 	ORDER BY created_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
-	rows, err := db.Query(ctx, q)
+	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres BackfillRepo.FindAllJobs: %w", err)
 	}

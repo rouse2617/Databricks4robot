@@ -24,7 +24,7 @@ func (missingJobRepo) IncrementItemSubmitAttempts(context.Context, string) (int,
 func (missingJobRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (missingJobRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
-func (missingJobRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (missingJobRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (missingJobRepo) FindJobByID(_ context.Context, _ string) (*models.BackfillJob, error) {

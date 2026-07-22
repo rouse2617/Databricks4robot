@@ -58,7 +58,7 @@ func (r *pausedSyncRepo) ResetFailedItems(_ context.Context, jobID string) (int6
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
-func (r *pausedSyncRepo) FindAllJobs(context.Context) ([]models.BackfillJob, error) {
+func (r *pausedSyncRepo) FindAllJobs(context.Context, string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
