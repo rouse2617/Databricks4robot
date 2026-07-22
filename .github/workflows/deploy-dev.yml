@@ -15,6 +15,12 @@ on:
       - "Frontend/**"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-dev.yml"
+  # Manual dispatch for the dorny/paths-filter shallow-fetch race case:
+  # when 3 pushes land within ~seconds the runner cache goes stale and one
+  # of the concurrent `changes` jobs fails with "shallow file has changed".
+  # `gh run rerun` re-hits the same broken cache; workflow_dispatch triggers
+  # a clean run.
+  workflow_dispatch:
 
 permissions:
   contents: read
