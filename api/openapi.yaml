@@ -290,6 +290,17 @@ components:
         last_delivered_to: { type: string, nullable: true }
         env: { type: string }
         task: { type: string }
+        # CYB-3715 mirror columns — populated from mcap_files on asset write
+        # (source_platform is lifted from mcap_files.metadata.source_platform).
+        # Nullable text/uuid; empty when the asset has no upstream mcap_file
+        # or the upstream row leaves the field blank.
+        camera_model: { type: string, description: "CYB-3715: mirrored from mcap_files.camera_model." }
+        device_id: { type: string, description: "CYB-3715: mirrored from mcap_files.device_id (uuid text)." }
+        collector_id: { type: string, description: "CYB-3715: mirrored from mcap_files.collector_id (uuid text)." }
+        scene_id: { type: string, description: "CYB-3715: mirrored from mcap_files.scene_id (uuid text)." }
+        data_source: { type: string, description: "CYB-3715: mirrored from mcap_files.data_source." }
+        collection_method: { type: string, description: "CYB-3715: mirrored from mcap_files.collection_method." }
+        source_platform: { type: string, description: "CYB-3715: lifted from mcap_files.metadata.source_platform." }
         version: { type: integer, format: int64 }
         algo_results:
           type: object

@@ -2172,9 +2172,10 @@ curl "$BASE/api/v1/search/sync-progress" \
 字段前缀约定:
 
 - `tags_flat.<key>` — 物化扁平字段，**首选**等值过滤路径（如 `tags_flat.scene`、`tags_flat.time_of_day`）。
-- `mcap.<col>` — mcap 反范式属性（`vendor_id` / `device_id` / `scene_id` / `camera_model` 等）。
+- `mcap.<col>` — mcap 反范式属性（`vendor_id` / `device_id` / `scene_id` / `camera_model` 等）。CYB-3715 之后同名字段也可直接作顶层字段使用（下方一栏），mcap.* 保留给需要走 mcap_files subquery 的旧调用。
 - `algos.<key>.status` / `algos.<key>.score` — 算法状态（nested，后端自动转 nested query）。
 - 顶层字段：`lifecycle_state` / `asset_type` / `owner` / `duration_ms` / `created_at` / `updated_at`。
+- 顶层字段（CYB-3715 新增，mcap 反范式镜像）：`camera_model` / `device_id` / `collector_id` / `scene_id` / `data_source` / `collection_method` / `source_platform`。前四条同时作为 facet 桶字段(uuid 类 filter-only,camera_model/data_source/collection_method/source_platform 支持 facet)。示例：`{"where":{"pred":{"field":"camera_model","op":"eq","value":"CyberCap2"}}}`。
 
 常见误区:
 

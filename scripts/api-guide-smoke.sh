@@ -416,6 +416,27 @@ for KWQ in "nonexistent-xxx-cyb-3713-regression-do-not-match" "备餐操作"; do
 		ok "queries run keyword q=${KWQ} (total=${TOTAL} != unfiltered ${KW_TOTAL_UNFILTERED})"
 	fi
 done
+
+# CYB-3715 regression pack: flatten mcap-file columns onto assets must be
+# filter-able as top-level fields. Pre-fix was HTTP 422 UNSUPPORTED_FIELD.
+# Uses `camera_model` and `source_platform` because those have populated
+# rows on dev (mirror columns backfilled from mcap_files). Success = HTTP
+# 200 and filtered total < unfiltered total (proves the WHERE landed).
+for F3715 in camera_model source_platform; do
+	RAW=$(curl -sS --max-time 20 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+		-d "{\"schema_version\":\"v1\",\"mode\":\"structured\",\"scope\":{\"resource\":\"assets\"},\"where\":{\"pred\":{\"field\":\"${F3715}\",\"op\":\"ilike\",\"value\":\"%\"}},\"page\":{\"page\":1,\"page_size\":1}}" 2>/dev/null || echo $'\n000')
+	RESP_CODE=$(echo "$RAW" | tail -n1)
+	RESP_BODY=$(echo "$RAW" | sed '$d')
+	TOTAL=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+	if [[ "$RESP_CODE" != "200" ]]; then
+		bad "queries run filter ${F3715}"
+	elif [[ "$TOTAL" -le 0 ]]; then
+		FAIL=$((FAIL + 1))
+		echo "  FAIL queries run filter ${F3715}: total=${TOTAL} (expected >0 — field populated on dev)"
+	else
+		ok "queries run filter ${F3715} (total=${TOTAL} > 0)"
+	fi
+done
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
 
