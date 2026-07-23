@@ -1164,6 +1164,57 @@ LIMIT $2`
 	return out, nil
 }
 
+// RecentDispatchStatsByTarget counts runs CREATED within the trailing `since`
+// window, grouped by execution_target_id and status, then bucketed for the pool
+// runtime-status view. The created_at predicate is served by
+// idx_pipeline_runs_created_at, so only recent rows enter the plan and the
+// query stays cheap as pipeline_runs history grows (it is deliberately
+// window-bounded — a full-table aggregation is what caused the webhook SyncJob
+// avalanche). Rows whose target was deleted (execution_target_id NULL) collapse
+// into the "" key. Runs are bucketed by created_at, so a run that reached a
+// terminal status is only counted while its creation is still inside the
+// window — this is a dispatch-cadence signal, not lifetime totals.
+func (r *PipelineRunRepo) RecentDispatchStatsByTarget(
+	ctx context.Context, since time.Duration,
+) (map[string]models.TargetDispatchStats, error) {
+	if since <= 0 {
+		since = 15 * time.Minute
+	}
+	cutoff := time.Now().UTC().Add(-since)
+	const q = `SELECT COALESCE(execution_target_id, ''), status, count(*)
+FROM pipeline_runs
+WHERE created_at >= $1
+GROUP BY 1, 2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.RecentDispatchStatsByTarget: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]models.TargetDispatchStats{}
+	for rows.Next() {
+		var targetID, status string
+		var n int
+		if err := rows.Scan(&targetID, &status, &n); err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.RecentDispatchStatsByTarget scan: %w", err)
+		}
+		s := out[targetID]
+		s.Total += n
+		switch {
+		case strings.EqualFold(status, "Succeeded"):
+			s.Succeeded += n
+		case strings.EqualFold(status, "Failed"), strings.EqualFold(status, "Error"):
+			s.Failed += n
+		default:
+			// Running / Pending / Unknown / Suspended (and any unrecognized
+			// status) count as still-active work.
+			s.Active += n
+		}
+		out[targetID] = s
+	}
+	return out, rows.Err()
+}
+
 // FindActiveRunSummariesAfter is the paginated variant of
 // FindActiveRunSummaries — same status filter and newest-first sort, but
 // resumes AFTER the (createdAt, id) tuple of the last-seen row. Passing zero

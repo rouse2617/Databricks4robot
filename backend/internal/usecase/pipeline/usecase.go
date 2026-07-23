@@ -1298,6 +1298,48 @@ func (uc *Usecase) ListExecutionTargets(ctx context.Context) ([]models.Execution
 	return targets, nil
 }
 
+// ExecutionTargetsStatus returns each target's live runtime picture for the
+// pool manager: how full its namespace is against the backpressure ceiling and
+// how fast it has been dispatching recently. ActiveWorkflows is per-NAMESPACE
+// (the last count the bulk watcher observed — targets sharing a namespace
+// report the same number, which is exactly what backfill backpressure gates
+// on); the recent dispatch breakdown is per-target. A missing watcher
+// observation surfaces as ActiveObserved=false so the UI shows "—" rather than
+// a misleading 0. Read-only: no k8s calls, one window-bounded DB aggregate.
+func (uc *Usecase) ExecutionTargetsStatus(ctx context.Context) ([]models.TargetRuntimeStatus, error) {
+	targets, err := uc.ListExecutionTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	const window = 15 * time.Minute
+	var recent map[string]models.TargetDispatchStats
+	if uc.runRepo != nil {
+		recent, err = uc.runRepo.RecentDispatchStatsByTarget(ctx, window)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out := make([]models.TargetRuntimeStatus, 0, len(targets))
+	for i := range targets {
+		t := &targets[i]
+		ns := strings.TrimSpace(t.Namespace)
+		if ns == "" {
+			ns = uc.namespace
+		}
+		active, observed := uc.ActiveWorkflowCount(ns)
+		out = append(out, models.TargetRuntimeStatus{
+			TargetID:           t.ID,
+			Namespace:          ns,
+			ActiveWorkflows:    active,
+			ActiveObserved:     observed,
+			MaxActiveWorkflows: executionTargetMaxActiveWorkflows(t),
+			WindowMinutes:      int(window / time.Minute),
+			Recent:             recent[t.ID],
+		})
+	}
+	return out, nil
+}
+
 func (uc *Usecase) CreateExecutionTarget(ctx context.Context, t *models.ExecutionTarget) error {
 	return uc.targetRepo.Save(ctx, t)
 }

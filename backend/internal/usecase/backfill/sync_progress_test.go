@@ -277,6 +277,10 @@ func (m *syncTestRunRepo) Save(context.Context, *models.PipelineRun) error { ret
 func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *syncTestRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return nil, nil
+}
+
 func (m *syncTestRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }

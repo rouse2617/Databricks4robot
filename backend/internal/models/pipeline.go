@@ -92,6 +92,36 @@ type ExecutionTarget struct {
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
+// TargetDispatchStats is the trailing-window run breakdown for one execution
+// target, bucketed by outcome. It backs the "近15min 速率" figure in the pool
+// manager runtime view. Counts are per-target (grouped on execution_target_id),
+// unlike TargetRuntimeStatus.ActiveWorkflows which is per-namespace.
+type TargetDispatchStats struct {
+	Total     int `json:"total"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Active    int `json:"active"`
+}
+
+// TargetRuntimeStatus is one execution target's live picture for the pool
+// manager: how full its namespace is against the backpressure ceiling, and how
+// fast it has been dispatching recently. ActiveWorkflows is per-NAMESPACE — two
+// targets sharing a namespace report the same number, which is exactly what the
+// backfill submitter gates dispatch on. Recent is per-target.
+type TargetRuntimeStatus struct {
+	TargetID  string `json:"targetId"`
+	Namespace string `json:"namespace"`
+	// ActiveWorkflows is the last active (pending+running) workflow count the
+	// bulk watcher observed for Namespace; ActiveObserved is false when no
+	// observation exists yet (cold start / stalled watcher) so the UI can show
+	// "—" instead of a misleading 0.
+	ActiveWorkflows    int                 `json:"activeWorkflows"`
+	ActiveObserved     bool                `json:"activeObserved"`
+	MaxActiveWorkflows int                 `json:"maxActiveWorkflows"`
+	WindowMinutes      int                 `json:"windowMinutes"`
+	Recent             TargetDispatchStats `json:"recent"`
+}
+
 // PipelineRun is the first-class execution record for a pipeline run. Legacy
 // deployment endpoints can still project this data as PipelineDeployment.
 type PipelineRun struct {

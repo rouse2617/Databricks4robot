@@ -2035,14 +2035,89 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 
 // ── CYB-1537 — PR #77 review follow-up: runRepo primary lookup ─────────────
 
+func TestExecutionTargetsStatus(t *testing.T) {
+	targets := map[string]*models.ExecutionTarget{
+		// Explicit ceiling; marked default so ensureDefaultExecutionTarget
+		// doesn't inject an extra target into the result.
+		"t-explicit": {
+			ID:               "t-explicit",
+			Namespace:        "ns-a",
+			IsDefault:        true,
+			ResourceDefaults: map[string]interface{}{"maxActiveWorkflows": float64(200)},
+		},
+		// No ceiling -> compiled default; ns-b is never observed -> "—".
+		"t-default": {ID: "t-default", Namespace: "ns-b"},
+		// Shares ns-a with t-explicit -> same per-namespace active count.
+		"t-shared": {ID: "t-shared", Namespace: "ns-a"},
+	}
+	runRepo := &mockRunRepo{recentByTarget: map[string]models.TargetDispatchStats{
+		"t-explicit": {Total: 50, Succeeded: 40, Failed: 2, Active: 8},
+		"t-shared":   {Total: 10, Succeeded: 10},
+	}}
+	uc := &Usecase{
+		targetRepo: &mockTargetRepo{byID: targets},
+		runRepo:    runRepo,
+		namespace:  "fallback-ns",
+	}
+	uc.activeWFCount = map[string]int{"ns-a": 147} // ns-b deliberately unobserved
+
+	got, err := uc.ExecutionTargetsStatus(context.Background())
+	if err != nil {
+		t.Fatalf("ExecutionTargetsStatus: %v", err)
+	}
+	byID := make(map[string]models.TargetRuntimeStatus, len(got))
+	for _, s := range got {
+		byID[s.TargetID] = s
+	}
+	if len(byID) != 3 {
+		t.Fatalf("want 3 targets, got %d (%+v)", len(byID), got)
+	}
+
+	// Ceiling: explicit resource_defaults vs compiled default.
+	if c := byID["t-explicit"].MaxActiveWorkflows; c != 200 {
+		t.Errorf("t-explicit ceiling = %d, want 200", c)
+	}
+	if c := byID["t-default"].MaxActiveWorkflows; c != backpressureDefaultMaxActive {
+		t.Errorf("t-default ceiling = %d, want compiled default %d", c, backpressureDefaultMaxActive)
+	}
+
+	// Active is per-NAMESPACE: ns-a observed at 147 for BOTH ns-a targets.
+	for _, id := range []string{"t-explicit", "t-shared"} {
+		s := byID[id]
+		if !s.ActiveObserved || s.ActiveWorkflows != 147 {
+			t.Errorf("%s active = (%d, observed=%v), want (147, true)", id, s.ActiveWorkflows, s.ActiveObserved)
+		}
+	}
+	// ns-b never observed -> observed=false so the UI shows "—", not 0.
+	if s := byID["t-default"]; s.ActiveObserved || s.ActiveWorkflows != 0 {
+		t.Errorf("t-default active = (%d, observed=%v), want (0, false)", s.ActiveWorkflows, s.ActiveObserved)
+	}
+
+	// Recent dispatch is per-TARGET (not shared across the namespace).
+	if s := byID["t-explicit"].Recent; s.Total != 50 || s.Succeeded != 40 || s.Failed != 2 || s.Active != 8 {
+		t.Errorf("t-explicit recent = %+v, want {Total:50 Succeeded:40 Failed:2 Active:8}", s)
+	}
+	if s := byID["t-shared"].Recent; s.Total != 10 || s.Succeeded != 10 {
+		t.Errorf("t-shared recent = %+v, want Total=10 Succeeded=10", s)
+	}
+	if s := byID["t-default"].Recent; s.Total != 0 {
+		t.Errorf("t-default recent = %+v, want zero", s)
+	}
+
+	if w := byID["t-explicit"].WindowMinutes; w != 15 {
+		t.Errorf("window = %d, want 15", w)
+	}
+}
+
 type mockRunRepo struct {
-	mu           sync.Mutex
-	byID         map[string]*models.PipelineRun
-	summaryByID  map[string]*models.PipelineRun
-	byWf         map[string]*models.PipelineRun
-	findAllErr   error
-	findAllCalls int
-	listFilters  []models.PipelineRunListFilter
+	mu             sync.Mutex
+	byID           map[string]*models.PipelineRun
+	summaryByID    map[string]*models.PipelineRun
+	byWf           map[string]*models.PipelineRun
+	findAllErr     error
+	findAllCalls   int
+	listFilters    []models.PipelineRunListFilter
+	recentByTarget map[string]models.TargetDispatchStats
 }
 
 func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
@@ -2074,6 +2149,10 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
+func (m *mockRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return m.recentByTarget, nil
+}
+
 func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models.PipelineRun, error) {
 	items, err := m.FindAll(context.Background())
 	if err != nil {

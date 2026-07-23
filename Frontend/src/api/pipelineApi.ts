@@ -273,6 +273,31 @@ export interface ExecutionTarget {
 	updatedAt?: string;
 }
 
+// TargetDispatchStats is one pool's trailing-window run breakdown by outcome,
+// backing the "近15min 速率" figure in the pool manager. Counts are per-target.
+export interface TargetDispatchStats {
+	total: number;
+	succeeded: number;
+	failed: number;
+	active: number;
+}
+
+// TargetRuntimeStatus is one pool's live picture: how full its namespace is
+// against the backpressure ceiling, and how fast it has been dispatching. Note
+// activeWorkflows is per-NAMESPACE — pools sharing a namespace report the same
+// number (that is what backpressure gates on) — while `recent` is per-target.
+// activeObserved is false when the watcher has no observation yet, so the UI
+// shows "—" rather than a misleading 0.
+export interface TargetRuntimeStatus {
+	targetId: string;
+	namespace: string;
+	activeWorkflows: number;
+	activeObserved: boolean;
+	maxActiveWorkflows: number;
+	windowMinutes: number;
+	recent: TargetDispatchStats;
+}
+
 export interface RuntimeSecretMountResource {
 	id: string;
 	name: string;
@@ -622,6 +647,15 @@ export function listExecutionTargets(): Promise<ExecutionTarget[]> {
 		"GET",
 		"/execution-targets",
 	).then((r) => r.items);
+}
+
+// listExecutionTargetsStatus fetches each pool's live active/ceiling + recent
+// dispatch rate for the pool manager runtime view. Read-only on the backend.
+export function listExecutionTargetsStatus(): Promise<TargetRuntimeStatus[]> {
+	return request<{ items: TargetRuntimeStatus[] }>(
+		"GET",
+		"/execution-targets/status",
+	).then((r) => r.items ?? []);
 }
 
 export function createExecutionTarget(

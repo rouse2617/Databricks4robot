@@ -451,6 +451,7 @@ func RegisterAll(
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
+		api.GET("/execution-targets/status", pipelineHandler.ExecutionTargetsStatus)
 		api.POST("/execution-targets", pipelineHandler.CreateExecutionTarget)
 		api.PUT("/execution-targets/:id", pipelineHandler.UpdateExecutionTarget)
 		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)

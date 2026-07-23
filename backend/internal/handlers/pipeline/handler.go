@@ -412,6 +412,18 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items})
 }
 
+// ExecutionTargetsStatus handles GET /api/v1/execution-targets/status. It
+// returns each target's live active/ceiling and recent dispatch rate for the
+// pool manager runtime view (read-only; no k8s calls).
+func (h *Handler) ExecutionTargetsStatus(c *gin.Context) {
+	items, err := h.uc.ExecutionTargetsStatus(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
 // ListRuntimeMounts handles GET /api/v1/pipeline/runtime-mounts.
 func (h *Handler) ListRuntimeMounts(c *gin.Context) {
 	catalog, err := h.uc.ListRuntimeMounts(c.Request.Context())

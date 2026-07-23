@@ -200,6 +200,10 @@ func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 	}
 	return out
 }
+func (m *mockPipelineRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return nil, nil
+}
+
 func (m *mockPipelineRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }

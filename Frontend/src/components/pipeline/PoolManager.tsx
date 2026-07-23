@@ -32,6 +32,8 @@ import {
 	listClusters,
 	listElasticQuotas,
 	listExecutionTargets,
+	listExecutionTargetsStatus,
+	type TargetRuntimeStatus,
 	type TargetScheduling,
 	type TargetToleration,
 	updateExecutionTarget,
@@ -107,6 +109,11 @@ function kvEntriesToMap(
 export default function PoolManager() {
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [quotas, setQuotas] = useState<Record<string, QuotaInfo>>({});
+	// Live runtime status per target (active/ceiling + recent dispatch rate),
+	// keyed by target id. Refreshed on the same 60s poll as the rest of the panel.
+	const [targetStatus, setTargetStatus] = useState<
+		Record<string, TargetRuntimeStatus>
+	>({});
 	const [elasticQuotas, setElasticQuotas] = useState<ElasticQuota[]>([]);
 	const [clusters, setClusters] = useState<Cluster[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -130,16 +137,18 @@ export default function PoolManager() {
 	const fetchData = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [t, q, eq, cs] = await Promise.all([
+			const [t, q, eq, cs, st] = await Promise.all([
 				listExecutionTargets(),
 				fetch("/api/v1/resource-quotas").then((r) => r.json()),
 				listElasticQuotas().catch(() => [] as ElasticQuota[]),
 				listClusters().catch(() => [] as Cluster[]),
+				listExecutionTargetsStatus().catch(() => [] as TargetRuntimeStatus[]),
 			]);
 			setTargets(t);
 			setQuotas(q.items || {});
 			setElasticQuotas(eq);
 			setClusters(cs);
+			setTargetStatus(Object.fromEntries(st.map((s) => [s.targetId, s])));
 		} catch {
 			/* ignore */
 		}
@@ -282,7 +291,8 @@ export default function PoolManager() {
 			elasticQuotaName: eqName,
 			podLabels: kvMapToEntries(otherLabels),
 			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
-			maxActiveWorkflows: target.resourceDefaults?.maxActiveWorkflows ?? undefined,
+			maxActiveWorkflows:
+				target.resourceDefaults?.maxActiveWorkflows ?? undefined,
 		});
 		setModalOpen(true);
 	};
@@ -361,7 +371,11 @@ export default function PoolManager() {
 		// operator entered a non-negative number; clear to fall back to the backend
 		// default. A blank field reverts a previously-set threshold.
 		const maxActive = values.maxActiveWorkflows;
-		if (typeof maxActive === "number" && Number.isFinite(maxActive) && maxActive >= 0) {
+		if (
+			typeof maxActive === "number" &&
+			Number.isFinite(maxActive) &&
+			maxActive >= 0
+		) {
 			preservedDefaults.maxActiveWorkflows = maxActive;
 		} else {
 			delete preservedDefaults.maxActiveWorkflows;
@@ -572,6 +586,108 @@ export default function PoolManager() {
 						>
 							{q.memory.used}/{q.memory.hard}
 						</Text>
+					</div>
+				);
+			},
+		},
+		{
+			// Live dispatch picture per pool — how full its namespace is against
+			// the backpressure ceiling, and how fast it has been dispatching.
+			// Active is per-NAMESPACE (pools sharing a namespace share the number —
+			// exactly what backpressure gates on); the rate is per-target.
+			title: "运行状态",
+			key: "runtime",
+			width: 210,
+			render: (_: unknown, r: ExecutionTarget) => {
+				const s = targetStatus[r.id];
+				if (!s) return <Text type="secondary">—</Text>;
+				const ceiling = s.maxActiveWorkflows;
+				const active = s.activeWorkflows;
+				const pct =
+					ceiling > 0 ? Math.min(100, Math.round((active / ceiling) * 100)) : 0;
+				// At/over the ceiling = this pool is deferring dispatch (yielding
+				// slots to other pools in the namespace).
+				const atCeiling = ceiling > 0 && active >= ceiling;
+				const barColor = !s.activeObserved
+					? "#9ca3af"
+					: atCeiling
+						? "#ef4444"
+						: pct > 70
+							? "#f59e0b"
+							: "#22c55e";
+				const rec = s.recent;
+				return (
+					<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+						<Tooltip
+							title={
+								`命名空间 ${s.namespace}:活跃 (pending+running) ` +
+								`${s.activeObserved ? active : "未采样"} / 上限 ` +
+								`${ceiling === 0 ? "已关闭背压" : ceiling}` +
+								(atCeiling ? " — 已到上限,该池正延迟下发给其他池让路" : "") +
+								"。活跃数按命名空间统计,同命名空间的池子共享此数字。"
+							}
+						>
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<div
+									style={{
+										flex: 1,
+										height: 8,
+										background: "#e5e7eb",
+										borderRadius: 4,
+										overflow: "hidden",
+									}}
+								>
+									<div
+										style={{
+											width: `${pct}%`,
+											height: "100%",
+											background: barColor,
+											borderRadius: 4,
+											transition: "width 0.3s",
+										}}
+									/>
+								</div>
+								<Text
+									style={{
+										fontSize: 11,
+										fontFamily: "var(--font-mono)",
+										color: barColor,
+										minWidth: 64,
+									}}
+								>
+									{s.activeObserved ? active : "—"}/
+									{ceiling === 0 ? "∞" : ceiling}
+								</Text>
+							</div>
+						</Tooltip>
+						<Tooltip
+							title={
+								`最近 ${s.windowMinutes} 分钟该池下发的 run(按 execution_target 统计):` +
+								`成功 ${rec.succeeded} / 运行中 ${rec.active} / 失败 ${rec.failed}`
+							}
+						>
+							<Text type="secondary" style={{ fontSize: 11 }}>
+								近{s.windowMinutes}min 下发 {rec.total}
+								{rec.succeeded > 0 ? (
+									<Text style={{ fontSize: 11, color: "#22c55e" }}>
+										{" "}
+										✓{rec.succeeded}
+									</Text>
+								) : null}
+								{rec.active > 0 ? (
+									<Text style={{ fontSize: 11, color: "#3b82f6" }}>
+										{" "}
+										⟳{rec.active}
+									</Text>
+								) : null}
+								{rec.failed > 0 ? (
+									<Text style={{ fontSize: 11, color: "#ef4444" }}>
+										{" "}
+										✗{rec.failed}
+									</Text>
+								) : null}
+							</Text>
+						</Tooltip>
 					</div>
 				);
 			},

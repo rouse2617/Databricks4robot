@@ -119,6 +119,14 @@ type PipelineRunRepository interface {
 	DeleteByTemplateID(ctx context.Context, templateID string) error
 	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error
 	UpdateLedgerState(ctx context.Context, id, ledgerState string) error
+	// RecentDispatchStatsByTarget aggregates runs CREATED within the trailing
+	// `since` window by execution_target_id, bucketed into succeeded/failed/
+	// active/total for the pool runtime-status view. Served off
+	// idx_pipeline_runs_created_at (only recent rows scanned) so it stays cheap
+	// as history grows — deliberately window-bounded to avoid the full-table
+	// aggregation that caused the webhook SyncJob avalanche. Keyed by
+	// execution_target_id ("" for rows whose target was deleted).
+	RecentDispatchStatsByTarget(ctx context.Context, since time.Duration) (map[string]models.TargetDispatchStats, error)
 }
 
 // PipelineRunNodeRepository defines persistence operations for Argo node
