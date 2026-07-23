@@ -12,6 +12,7 @@ import {
 	Divider,
 	Form,
 	Input,
+	InputNumber,
 	Modal,
 	message,
 	Select,
@@ -72,6 +73,10 @@ interface FormValues {
 	elasticQuotaName?: string;
 	podLabels?: KVEntry[];
 	podAnnotations?: KVEntry[];
+	// CYB-3681 admission backpressure: max active (pending+running) workflows the
+	// target's namespace may hold before this pool defers dispatch. Top-level in
+	// resourceDefaults (not scheduling). Empty = compiled default.
+	maxActiveWorkflows?: number | null;
 }
 
 const TOLERATION_EFFECTS = [
@@ -277,6 +282,7 @@ export default function PoolManager() {
 			elasticQuotaName: eqName,
 			podLabels: kvMapToEntries(otherLabels),
 			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
+			maxActiveWorkflows: target.resourceDefaults?.maxActiveWorkflows ?? undefined,
 		});
 		setModalOpen(true);
 	};
@@ -350,6 +356,15 @@ export default function PoolManager() {
 		}
 		if (preservedDefaults.scheduling === undefined) {
 			delete preservedDefaults.scheduling;
+		}
+		// CYB-3681 backpressure threshold (top-level, not scheduling). Set when the
+		// operator entered a non-negative number; clear to fall back to the backend
+		// default. A blank field reverts a previously-set threshold.
+		const maxActive = values.maxActiveWorkflows;
+		if (typeof maxActive === "number" && Number.isFinite(maxActive) && maxActive >= 0) {
+			preservedDefaults.maxActiveWorkflows = maxActive;
+		} else {
+			delete preservedDefaults.maxActiveWorkflows;
 		}
 
 		// Backend still requires the legacy `cluster` string field; look it up
@@ -872,6 +887,19 @@ export default function PoolManager() {
 						<Input placeholder="留空 = K8s 全局默认;例如 cyber-databrew-prod" />
 					</Form.Item>
 					<Form.Item
+						name="maxActiveWorkflows"
+						label="最大活跃 workflow(背压阈值)"
+						extra="该 namespace 活跃 workflow 达到此数时,本池子暂停下发(任务留 DB 排队),给其他池子让路。留空 = 后端默认。"
+					>
+						<InputNumber
+							min={0}
+							step={100}
+							precision={0}
+							style={{ width: "100%" }}
+							placeholder="留空 = 后端默认"
+						/>
+					</Form.Item>
+					<Form.Item
 						label="Pod labels"
 						extra="额外的 pod 标签(EQ label 由上方资源池管理,无需在此重复)。"
 					>
@@ -1014,6 +1042,7 @@ type TargetResourceDefaultsPatch = Record<string, unknown> & {
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: Record<string, string>;
 	scheduling?: TargetScheduling;
+	maxActiveWorkflows?: number;
 };
 
 interface KeyValueListEditorProps {

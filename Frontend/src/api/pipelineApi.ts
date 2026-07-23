@@ -238,6 +238,10 @@ export interface TargetResourceDefaults {
 	templateNodeSelector?: Record<string, string>;
 	// Pool scheduling directives (scheduler, priorityclass, pod labels/annotations).
 	scheduling?: TargetScheduling;
+	// CYB-3681 admission backpressure: max active (pending+running) workflows the
+	// target's namespace may hold before this pool defers dispatch. Empty =
+	// compiled backend default.
+	maxActiveWorkflows?: number;
 	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
 	[key: string]: unknown;
 }
