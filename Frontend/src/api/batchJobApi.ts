@@ -116,10 +116,22 @@ export interface RerunBatchJobResult {
 	skipped: Array<{ itemId: string; reason: string }>;
 }
 
-export function listBatchJobs(): Promise<BatchJob[]> {
-	return request<{ items: BatchJob[] }>("GET", "/backfill").then(
-		(r) => r.items,
-	);
+export interface ListBatchJobsParams {
+	createdBy?: string;
+	status?: string;
+	q?: string;
+}
+
+export function listBatchJobs(
+	params?: ListBatchJobsParams,
+): Promise<BatchJob[]> {
+	const search = new URLSearchParams();
+	if (params?.createdBy) search.set("createdBy", params.createdBy);
+	if (params?.status) search.set("status", params.status);
+	if (params?.q) search.set("q", params.q);
+	const qs = search.toString();
+	const path = qs ? `/backfill?${qs}` : "/backfill";
+	return request<{ items: BatchJob[] }>("GET", path).then((r) => r.items);
 }
 
 export function getBatchJob(id: string): Promise<BatchJob> {
