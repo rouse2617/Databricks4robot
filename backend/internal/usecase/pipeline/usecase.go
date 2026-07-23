@@ -6090,7 +6090,7 @@ func (uc *Usecase) runtimeRefForRun(run *models.PipelineRun) runtimeadapter.Runt
 // (CYB-3486 PR 4d.5). runtimeAdapter still wins when set — used by tests.
 
 func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		_, err := uc.runtimeAdapter.Retry(ctx, uc.runtimeRefForRun(run), runtimeadapter.RetryOptions{})
 		return err
 	}
@@ -6105,7 +6105,7 @@ func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun)
 }
 
 func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Stop(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -6119,7 +6119,7 @@ func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) 
 }
 
 func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Suspend(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -6133,7 +6133,7 @@ func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRu
 }
 
 func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Resume(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -6147,7 +6147,7 @@ func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun
 }
 
 func (uc *Usecase) terminateRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Terminate(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
