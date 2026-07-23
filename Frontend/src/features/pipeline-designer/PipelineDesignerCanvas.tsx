@@ -98,6 +98,10 @@ import {
 	validatePipelineForSave,
 } from "../../lib/pipelineValidation";
 import {
+	PRIORITY_TIER_OPTIONS,
+	priorityBadge,
+} from "../../lib/workflowPriority";
+import {
 	apiToRegistered,
 	createPipelineNode,
 	defaultDeployWorkflowName,
@@ -468,6 +472,11 @@ function PipelineDesignerCanvasInner({
 			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
 		[executionTargets, selectedTargetId],
 	);
+	// Per-dispatch Argo priority override for the designer deploy dialog;
+	// undefined = inherit the selected pool's default.
+	const [deployPriorityOverride, setDeployPriorityOverride] = useState<
+		number | undefined
+	>(undefined);
 	// CYB-3486: fetch each target cluster's ElasticQuotas so the pool picker can
 	// show live usage. The designer's deploy dropdown previously showed only
 	// "name · namespace" — no signal on which pool actually has room.
@@ -1201,6 +1210,7 @@ function PipelineDesignerCanvasInner({
 		pipelineName,
 		selectedAssetIds,
 		selectedTargetId,
+		priorityOverride: deployPriorityOverride,
 		dispatch,
 		closeDeployDialog,
 		messageApi,
@@ -1842,6 +1852,46 @@ function PipelineDesignerCanvasInner({
 											};
 										})}
 									/>
+								</label>
+								<label
+									htmlFor="pp-priority-override"
+									style={{
+										display: "flex",
+										flexDirection: "column",
+										gap: 4,
+										fontSize: 10,
+										textTransform: "uppercase",
+										letterSpacing: "0.8px",
+										color: "#64748b",
+									}}
+								>
+									优先级
+									<div
+										style={{ display: "flex", alignItems: "center", gap: 8 }}
+									>
+										<Select
+											id="pp-priority-override"
+											size="small"
+											style={{ flex: 1 }}
+											value={deployPriorityOverride ?? "inherit"}
+											onChange={(v) =>
+												setDeployPriorityOverride(
+													v === "inherit" ? undefined : (v as number),
+												)
+											}
+											options={[
+												{ value: "inherit", label: "跟随池子默认" },
+												...PRIORITY_TIER_OPTIONS,
+											]}
+										/>
+										{(() => {
+											const badge = priorityBadge(
+												deployPriorityOverride ??
+													selectedExecutionTarget?.resourceDefaults?.priority,
+											);
+											return <Tag color={badge.color}>{badge.label}</Tag>;
+										})()}
+									</div>
 								</label>
 								<div
 									style={{
