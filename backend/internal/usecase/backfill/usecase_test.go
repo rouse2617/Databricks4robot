@@ -319,6 +319,56 @@ func TestStringFromBackfillFilterAcceptsTargetAliases(t *testing.T) {
 	}
 }
 
+func TestIntFromBackfillFilter(t *testing.T) {
+	// JSON numbers decode to float64.
+	if n, ok := intFromBackfillFilter(map[string]interface{}{"priority": float64(-100)}, "priority"); !ok || n != -100 {
+		t.Fatalf("float64: got (%d,%v), want (-100,true)", n, ok)
+	}
+	// Numeric string is accepted too.
+	if n, ok := intFromBackfillFilter(map[string]interface{}{"priority": "100"}, "priority"); !ok || n != 100 {
+		t.Fatalf("string: got (%d,%v), want (100,true)", n, ok)
+	}
+	// Absent key → ok=false (caller inherits the pool default).
+	if _, ok := intFromBackfillFilter(map[string]interface{}{}, "priority"); ok {
+		t.Fatal("absent key should yield ok=false")
+	}
+	// Non-numeric → ok=false.
+	if _, ok := intFromBackfillFilter(map[string]interface{}{"priority": "abc"}, "priority"); ok {
+		t.Fatal("non-numeric should yield ok=false")
+	}
+}
+
+func TestCreateBackfill_PersistsPriorityOverrideInFilterJSON(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	p := 100
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{"asset-1"}, CreateBackfillOptions{
+		TargetID: "video-proc-prod",
+		Priority: &p,
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	got, ok := intFromBackfillFilter(job.FilterJSON, "priority")
+	if !ok || got != 100 {
+		t.Fatalf("priority in filter_json = (%d,%v), want (100,true)", got, ok)
+	}
+}
+
+func TestCreateBackfill_OmitsPriorityWhenNil(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{"asset-1"}, CreateBackfillOptions{
+		TargetID: "video-proc-prod",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	if _, ok := intFromBackfillFilter(job.FilterJSON, "priority"); ok {
+		t.Fatal("nil priority override must not write filter_json.priority (should inherit pool default)")
+	}
+}
+
 func TestCreateBackfill_PersistsTargetIDInFilterJSON(t *testing.T) {
 	repo := &trackingBackfillRepo{}
 	uc := New(repo, nil)

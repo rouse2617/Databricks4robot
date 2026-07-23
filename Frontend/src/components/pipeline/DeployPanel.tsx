@@ -60,6 +60,10 @@ import {
 } from "../../api/pipelineConfigs";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
+import {
+	PRIORITY_TIER_OPTIONS,
+	priorityBadge,
+} from "../../lib/workflowPriority";
 import AssetPicker, { type AssetPickerHandle } from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
@@ -529,6 +533,10 @@ export function DeployPanel({
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
+	// Per-dispatch Argo priority override; undefined = inherit the pool default.
+	const [priorityOverride, setPriorityOverride] = useState<number | undefined>(
+		undefined,
+	);
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
@@ -701,6 +709,11 @@ export function DeployPanel({
 		() => poolTargets.find((target) => target.id === selectedTargetId),
 		[poolTargets, selectedTargetId],
 	);
+	// Effective priority for the badge: the per-dispatch override wins, else the
+	// selected pool's default (undefined → normal).
+	const effectivePriority =
+		priorityOverride ?? selectedPool?.resourceDefaults?.priority;
+	const effectiveBadge = priorityBadge(effectivePriority);
 	const selectedPoolEq = useMemo(
 		() => (selectedPool ? matchPoolEq(selectedPool, eqsByCluster) : undefined),
 		[selectedPool, eqsByCluster],
@@ -1068,6 +1081,7 @@ export function DeployPanel({
 				version: selectedDeployVersion,
 				batchName: template ? `${template.name}-${Date.now()}` : undefined,
 				configSelection,
+				priority: priorityOverride,
 			});
 			if (result.mode === "batch") {
 				messageApi.success(
@@ -1725,6 +1739,36 @@ export function DeployPanel({
 							};
 						})}
 					/>
+					<div
+						style={{
+							marginTop: 8,
+							display: "flex",
+							alignItems: "center",
+							gap: 8,
+							flexWrap: "wrap",
+						}}
+					>
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							优先级
+						</Typography.Text>
+						<Select
+							size="small"
+							aria-label="工作流优先级"
+							style={{ width: 200 }}
+							value={priorityOverride ?? "inherit"}
+							onChange={(v) =>
+								setPriorityOverride(v === "inherit" ? undefined : (v as number))
+							}
+							options={[
+								{ value: "inherit", label: "跟随池子默认" },
+								...PRIORITY_TIER_OPTIONS,
+							]}
+						/>
+						<Tag color={effectiveBadge.color}>{effectiveBadge.label}优先级</Tag>
+						<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+							集群繁忙时的下发顺序;不中断在跑的任务
+						</Typography.Text>
+					</div>
 					{selectedPool ? (
 						<div style={{ marginTop: 8 }} data-testid="pool-usage">
 							{selectedPoolEq ? (

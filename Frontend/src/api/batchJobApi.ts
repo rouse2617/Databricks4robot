@@ -35,6 +35,9 @@ export interface CreateBatchJobRequest {
 	templateVersion?: number;
 	pilotCount?: number;
 	configSelection?: DeployConfigSelection;
+	// Per-dispatch Argo priority override. Omit to inherit the target pool's
+	// default; -100/0/100 = low/normal/high.
+	priority?: number;
 }
 
 export interface BatchNodeSummary {

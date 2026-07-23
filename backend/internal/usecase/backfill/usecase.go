@@ -328,6 +328,10 @@ type CreateBackfillOptions struct {
 	PilotCount      int
 	ConfigSelection *pipelineUC.RuntimeConfigSelection
 	Owner           string
+	// Priority overrides the Argo workflow priority for every subtask of this
+	// batch. Nil → each subtask inherits the target pool's default. Stored in
+	// filter_json.priority; the submitter forwards it as DeployOptions.Priority.
+	Priority *int
 }
 
 type RerunRequest struct {
@@ -413,6 +417,9 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 			"mountPath":      options.ConfigSelection.MountPath,
 			"targetFilename": options.ConfigSelection.TargetFilename,
 		}
+	}
+	if options.Priority != nil {
+		filterJSON["priority"] = *options.Priority
 	}
 	if len(filterJSON) > 0 {
 		job.FilterJSON = filterJSON
@@ -651,6 +658,35 @@ func stringFromBackfillFilter(values map[string]interface{}, keys ...string) str
 		}
 	}
 	return ""
+}
+
+// intFromBackfillFilter coerces a numeric filter_json value (JSON number,
+// numeric string, or int) to an int. Used for the per-batch priority override
+// (filter_json.priority). ok=false when the key is absent or non-numeric.
+func intFromBackfillFilter(values map[string]interface{}, keys ...string) (int, bool) {
+	for _, key := range keys {
+		raw, ok := values[key]
+		if !ok {
+			continue
+		}
+		switch v := raw.(type) {
+		case float64:
+			return int(v), true
+		case int:
+			return v, true
+		case int64:
+			return int(v), true
+		case json.Number:
+			if n, err := v.Int64(); err == nil {
+				return int(n), true
+			}
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func decodeRuntimeConfigSelection(raw interface{}) *pipelineUC.RuntimeConfigSelection {

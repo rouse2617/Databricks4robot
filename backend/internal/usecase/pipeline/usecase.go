@@ -195,6 +195,11 @@ type DeployOptions struct {
 	PreallocatedRunID  string
 	AllowUnknownAssets bool
 	ConfigSelection    *RuntimeConfigSelection
+	// Priority overrides the Argo workflow priority (wf.Spec.Priority) for this
+	// dispatch. Nil → inherit the target pool's default
+	// (executionTargetWorkflowPriority). Set by a per-batch override chosen at
+	// dispatch time.
+	Priority *int32
 }
 
 type RuntimeConfigSelection struct {
@@ -4268,6 +4273,13 @@ func (uc *Usecase) Deploy(
 	wfOpts.PodAnnotations = executionTargetPodAnnotations(target)
 	wfOpts.PodPriorityClassName = executionTargetPriorityClassName(target)
 	wfOpts.SchedulerName = executionTargetSchedulerName(target)
+	// Argo workflow priority: pool default, overridden by a per-dispatch choice
+	// (CYB task priority). Only meaningful under controller parallelism
+	// saturation; never preempts running workflows.
+	wfOpts.Priority = executionTargetWorkflowPriority(target)
+	if len(opts) > 0 && opts[0].Priority != nil {
+		wfOpts.Priority = opts[0].Priority
+	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)

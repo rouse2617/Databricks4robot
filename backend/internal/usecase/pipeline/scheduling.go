@@ -38,6 +38,26 @@ func executionTargetMaxActiveWorkflows(target *models.ExecutionTarget) int {
 	return backpressureDefaultMaxActive
 }
 
+// executionTargetWorkflowPriority reads the pool's default Argo workflow
+// priority (wf.Spec.Priority) from resource_defaults.priority (online-tunable
+// via the pool manager). Higher is admitted first when the controller's
+// parallelism queue is saturated; it does not preempt running workflows and is
+// only comparable among pools sharing one controller/namespace queue. Absent →
+// nil (Argo default 0). Distinct from priorityClassName
+// (executionTargetPriorityClassName), which is K8s pod scheduling priority.
+func executionTargetWorkflowPriority(target *models.ExecutionTarget) *int32 {
+	if target == nil {
+		return nil
+	}
+	if raw, ok := mapValue(target.ResourceDefaults, "priority", "workflowPriority"); ok {
+		if n, ok := intValue(raw); ok {
+			p := int32(n)
+			return &p
+		}
+	}
+	return nil
+}
+
 // intValue coerces a JSON-decoded value (number as float64, or a numeric
 // string) to an int.
 func intValue(raw interface{}) (int, bool) {

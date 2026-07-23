@@ -87,6 +87,15 @@ type Options struct {
 	// the workflow (CYB-3486 pool). Empty = unset, K8s global default.
 	PodPriorityClassName string
 
+	// Priority sets the Argo workflow-level priority (wf.Spec.Priority). When
+	// the controller's parallelism limit is saturated, higher-priority Pending
+	// workflows are admitted to Running first (ties broken by creation time). It
+	// does NOT preempt already-running workflows and is a no-op when there is
+	// spare capacity. Distinct from PodPriorityClassName, which is K8s pod
+	// scheduling priority. Nil = unset (Argo default 0). Values are only
+	// comparable among workflows sharing one controller/namespace queue.
+	Priority *int32
+
 	// SchedulerName sets the K8s scheduler for every pod (CYB-3486 pool).
 	// Empty = unset → cluster default scheduler (scheduler-agnostic pool).
 	// The value is supplied by the pool config (data-driven); Transpile does
@@ -242,6 +251,9 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	}
 	if opts.PodPriorityClassName != "" {
 		wf.Spec.PodPriorityClassName = opts.PodPriorityClassName
+	}
+	if opts.Priority != nil {
+		wf.Spec.Priority = opts.Priority
 	}
 	if opts.SchedulerName != "" {
 		wf.Spec.SchedulerName = opts.SchedulerName

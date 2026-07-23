@@ -78,6 +78,66 @@ func TestDeploy_AppliesExecutionTargetSchedulingDefaults(t *testing.T) {
 	}
 }
 
+// TestDeploy_AppliesWorkflowPriority verifies the effective Argo priority: the
+// pool default (resource_defaults.priority) applies by default, and a
+// per-dispatch DeployOptions.Priority override wins over it.
+func TestDeploy_AppliesWorkflowPriority(t *testing.T) {
+	ctx := context.Background()
+	target := &models.ExecutionTarget{
+		ID:               "prio-pool",
+		Name:             "prio-pool",
+		Namespace:        "video-proc-prod",
+		ServiceAccount:   "workflow-runner",
+		Enabled:          true,
+		Status:           "available",
+		ResourceDefaults: map[string]interface{}{"priority": float64(-100)},
+	}
+	targetRepo := &mockTargetRepo{byID: map[string]*models.ExecutionTarget{target.ID: target}}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), nil, "default")
+	uc.SetRunRepositories(targetRepo, nil, nil)
+
+	pipe := map[string]interface{}{
+		"name": "prio",
+		"nodes": []interface{}{map[string]interface{}{
+			"id": "n1",
+			"component": map[string]interface{}{
+				"name":    "echo",
+				"image":   "busybox",
+				"command": []interface{}{"sh", "-c"},
+				"args": []interface{}{map[string]interface{}{
+					"name": "script", "value": "echo hi",
+				}},
+				"resources": map[string]interface{}{"cpu": "1", "memory": "1Gi"},
+			},
+		}},
+	}
+
+	// Pool default applies when the dispatch carries no override.
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{DryRun: true, TargetID: target.ID})
+	if err != nil {
+		t.Fatalf("Deploy dry-run (pool default): %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected dry-run manifest")
+	}
+	if !strings.Contains(*dep.Manifest, "priority: -100") {
+		t.Fatalf("expected pool default priority -100 in manifest, got:\n%s", *dep.Manifest)
+	}
+
+	// Per-dispatch override wins over the pool default.
+	override := int32(100)
+	dep2, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{DryRun: true, TargetID: target.ID, Priority: &override})
+	if err != nil {
+		t.Fatalf("Deploy dry-run (override): %v", err)
+	}
+	if dep2 == nil || dep2.Manifest == nil {
+		t.Fatal("expected dry-run manifest (override)")
+	}
+	if !strings.Contains(*dep2.Manifest, "priority: 100") {
+		t.Fatalf("expected override priority 100 in manifest, got:\n%s", *dep2.Manifest)
+	}
+}
+
 func TestExecutionTargetGpuStepNodeSelector_ParsesResourceDefaults(t *testing.T) {
 	target := &models.ExecutionTarget{
 		ResourceDefaults: map[string]interface{}{

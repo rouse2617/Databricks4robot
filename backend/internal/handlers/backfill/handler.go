@@ -34,6 +34,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		TemplateVersion int      `json:"templateVersion,omitempty"`
 		TargetIDLegacy  string   `json:"target_id,omitempty"`
 		PilotCount      int      `json:"pilotCount,omitempty"`
+		Priority        *int     `json:"priority,omitempty"`
 		Config          *struct {
 			Mode           string `json:"mode"`
 			ConfigID       string `json:"configId"`
@@ -53,6 +54,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		TemplateVersion: req.TemplateVersion,
 		TargetID:        firstNonEmpty(req.TargetID, req.TargetIDLegacy),
 		PilotCount:      req.PilotCount,
+		Priority:        req.Priority,
 		Owner:           middleware.GetUserEmail(c),
 		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {
 			if req.Config == nil {

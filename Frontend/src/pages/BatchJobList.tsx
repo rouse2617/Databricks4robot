@@ -33,7 +33,12 @@ import {
 	resumeBatchJob,
 	retryFailedBatchItems,
 } from "../api/batchJobApi";
-import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
+import {
+	type ExecutionTarget,
+	listExecutionTargets,
+	listPipelines,
+	type PipelineTemplate,
+} from "../api/pipelineApi";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
 	type BatchExportStatusFilter,
@@ -53,6 +58,11 @@ import {
 	formatBatchJobStatus,
 	resolveStatusTagColor,
 } from "../lib/statusLabels";
+import {
+	batchTargetId,
+	effectivePriorityFromFilter,
+	priorityBadge,
+} from "../lib/workflowPriority";
 
 const { Title, Text } = Typography;
 
@@ -65,6 +75,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	const navigate = useNavigate();
 	const [jobs, setJobs] = useState<BatchJob[]>([]);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
+	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nameFilter, setNameFilter] = useState("");
@@ -77,6 +88,11 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 
 	const templateNameById = Object.fromEntries(
 		templates.map((item) => [item.id, item.name]),
+	);
+
+	const targetMap = useMemo(
+		() => new Map(targets.map((t) => [t.id, t])),
+		[targets],
 	);
 
 	const ownerOptions = useMemo(() => {
@@ -109,14 +125,16 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		async (silent = false) => {
 			if (!silent) setLoading(true);
 			try {
-				const [jobItems, templateItems] = await Promise.all([
+				const [jobItems, templateItems, targetItems] = await Promise.all([
 					listBatchJobs(),
 					listPipelines({ pageSize: 200 })
 						.then((r) => r.items)
 						.catch(() => []),
+					listExecutionTargets().catch(() => []),
 				]);
 				setJobs(sortBatchJobsByCreatedDesc(jobItems));
 				setTemplates(templateItems);
+				setTargets(targetItems);
 			} catch (err) {
 				message.error(`加载批次任务失败：${String(err)}`);
 			} finally {
@@ -234,6 +252,21 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					{formatBatchJobStatus(status)}
 				</Tag>
 			),
+		},
+		{
+			title: "优先级",
+			key: "priority",
+			width: 90,
+			render: (_: unknown, record: BatchJob) => {
+				const tid = batchTargetId(record.filterJson);
+				const poolDefault = tid
+					? targetMap.get(tid)?.resourceDefaults?.priority
+					: undefined;
+				const badge = priorityBadge(
+					effectivePriorityFromFilter(record.filterJson, poolDefault),
+				);
+				return <Tag color={badge.color}>{badge.label}</Tag>;
+			},
 		},
 		{
 			title: "创建时间",

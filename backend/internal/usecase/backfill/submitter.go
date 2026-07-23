@@ -386,6 +386,10 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 				deployOpts.ConfigSelection = selection
 			}
 		}
+		if p, ok := intFromBackfillFilter(job.FilterJSON, "priority"); ok {
+			pv := int32(p)
+			deployOpts.Priority = &pv
+		}
 	}
 
 	dep, err := uc.deployer.DeployByTemplateID(ctx, job.TemplateID, "", []string{item.AssetID}, deployOpts)

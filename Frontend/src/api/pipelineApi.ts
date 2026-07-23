@@ -242,6 +242,11 @@ export interface TargetResourceDefaults {
 	// target's namespace may hold before this pool defers dispatch. Empty =
 	// compiled backend default.
 	maxActiveWorkflows?: number;
+	// Default Argo workflow priority (wf.Spec.Priority) for batches dispatched to
+	// this pool. Higher is admitted first when the parallelism queue is
+	// saturated; only comparable among pools sharing one namespace. Absent =
+	// normal (0). A per-dispatch override can raise/lower it per batch.
+	priority?: number;
 	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
 	[key: string]: unknown;
 }

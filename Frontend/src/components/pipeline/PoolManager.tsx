@@ -38,6 +38,10 @@ import {
 	type TargetToleration,
 	updateExecutionTarget,
 } from "../../api/pipelineApi";
+import {
+	canonicalPriority,
+	PRIORITY_TIER_OPTIONS,
+} from "../../lib/workflowPriority";
 import ClusterManager from "./ClusterManager";
 import { KOORD_EQ_LABEL_KEY, poolUsageSummary } from "./poolUsage";
 
@@ -79,6 +83,9 @@ interface FormValues {
 	// target's namespace may hold before this pool defers dispatch. Top-level in
 	// resourceDefaults (not scheduling). Empty = compiled default.
 	maxActiveWorkflows?: number | null;
+	// Pool default Argo workflow priority (top-level in resourceDefaults, not
+	// scheduling). Normal (0) is cleared to keep the stored config minimal.
+	priority?: number | null;
 }
 
 const TOLERATION_EFFECTS = [
@@ -293,6 +300,7 @@ export default function PoolManager() {
 			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
 			maxActiveWorkflows:
 				target.resourceDefaults?.maxActiveWorkflows ?? undefined,
+			priority: canonicalPriority(target.resourceDefaults?.priority),
 		});
 		setModalOpen(true);
 	};
@@ -379,6 +387,18 @@ export default function PoolManager() {
 			preservedDefaults.maxActiveWorkflows = maxActive;
 		} else {
 			delete preservedDefaults.maxActiveWorkflows;
+		}
+		// Pool default workflow priority (top-level, not scheduling). Store only a
+		// non-normal tier; normal (0) clears the key so "unset = normal (Argo 0)".
+		const priority = values.priority;
+		if (
+			typeof priority === "number" &&
+			Number.isFinite(priority) &&
+			priority !== 0
+		) {
+			preservedDefaults.priority = priority;
+		} else {
+			delete preservedDefaults.priority;
 		}
 
 		// Backend still requires the legacy `cluster` string field; look it up
@@ -1014,6 +1034,14 @@ export default function PoolManager() {
 							style={{ width: "100%" }}
 							placeholder="留空 = 后端默认"
 						/>
+					</Form.Item>
+					<Form.Item
+						name="priority"
+						label="工作流优先级"
+						initialValue={0}
+						extra="集群繁忙(parallelism 满)时,高优先级的批次先下发;不中断在跑的任务,空闲时不生效。只在同一个 namespace 的池子之间比较 —— 与上方「PriorityClass」(K8s Pod 调度)不是一回事。"
+					>
+						<Select options={PRIORITY_TIER_OPTIONS} />
 					</Form.Item>
 					<Form.Item
 						label="Pod labels"

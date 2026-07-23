@@ -44,6 +44,8 @@ import {
 	resumeBatchJob,
 } from "../api/batchJobApi";
 import {
+	type ExecutionTarget,
+	listExecutionTargets,
 	listPipelineVersions,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
@@ -62,16 +64,21 @@ import {
 	extractAssetIds,
 	statusFilterPredicate,
 } from "../lib/batchJobs";
+import { humanizeDlqReason } from "../lib/dispatcher";
 import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
 } from "../lib/pipelineNavigation";
-import { humanizeDlqReason } from "../lib/dispatcher";
 import {
 	formatBatchJobStatus,
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
 } from "../lib/statusLabels";
+import {
+	batchTargetId,
+	effectivePriorityFromFilter,
+	priorityBadge,
+} from "../lib/workflowPriority";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
@@ -365,7 +372,6 @@ function exportFailuresCsv(
 // CYB-3800: extractAssetIds / exportAssetIdsCsv / copyAssetIdsToClipboard are
 // now shared with the batch-list multi-select export flow — see lib/batchJobs.
 
-
 export function formatRerunFeedback(result: {
 	status: string;
 	matchedCount: number;
@@ -472,6 +478,7 @@ export default function BatchJobDetailPage() {
 	const templateVersionsRef = useRef<PipelineTemplate[]>([]);
 	const [job, setJob] = useState<BatchJob | null>(null);
 	const [templateName, setTemplateName] = useState("");
+	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nodeSummary, setNodeSummary] = useState<BatchNodeSummary | null>(null);
@@ -593,6 +600,14 @@ export default function BatchJobDetailPage() {
 	useEffect(() => {
 		void refresh({ useCache: true });
 	}, [refresh]);
+
+	// Execution targets resolve the batch's pool-default priority for the badge
+	// (the per-batch override, if any, lives in filter_json).
+	useEffect(() => {
+		listExecutionTargets()
+			.then(setTargets)
+			.catch(() => {});
+	}, []);
 
 	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
@@ -1082,6 +1097,20 @@ export default function BatchJobDetailPage() {
 									) : null}
 								</>
 							),
+						},
+						{
+							label: "优先级",
+							children: (() => {
+								const tid = batchTargetId(job.filterJson);
+								const poolDefault = tid
+									? targets.find((t) => t.id === tid)?.resourceDefaults
+											?.priority
+									: undefined;
+								const badge = priorityBadge(
+									effectivePriorityFromFilter(job.filterJson, poolDefault),
+								);
+								return <Tag color={badge.color}>{badge.label}</Tag>;
+							})(),
 						},
 						{
 							label: "子任务数",

@@ -1103,6 +1103,36 @@ func TestTranspileOmitsPodPriorityClassNameWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestTranspileSetsPriority verifies the Argo workflow-level priority
+// (wf.Spec.Priority) is set from Options.Priority so the controller admits
+// higher-priority workflows first when the parallelism queue is saturated.
+func TestTranspileSetsPriority(t *testing.T) {
+	p := int32(-100)
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:      "wf-prio",
+		Namespace: "default",
+		Priority:  &p,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Priority == nil || *wf.Spec.Priority != -100 {
+		t.Errorf("Priority: want -100, got %v", wf.Spec.Priority)
+	}
+}
+
+// TestTranspileOmitsPriorityWhenNil guards backward-compat: nil leaves the
+// field unset, and Argo treats an absent priority as 0 (normal).
+func TestTranspileOmitsPriorityWhenNil(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noprio", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Priority != nil {
+		t.Errorf("nil option must leave Priority unset, got %v", *wf.Spec.Priority)
+	}
+}
+
 // TestTranspileSetsSchedulerName verifies pool (CYB-3486) injects the pool's
 // scheduler onto the workflow spec. Data-driven: transpiler sets whatever
 // string it's given, no hardcoded scheduler.
