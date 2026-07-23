@@ -4294,9 +4294,6 @@ func (uc *Usecase) Deploy(
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
-	slog.Warn("TEMPDEBUG-LABELS post-transpile", "wf", wf.Name,
-		"labels", fmt.Sprintf("%v", wf.ObjectMeta.Labels),
-		"optInstanceID", wfOpts.InstanceID)
 
 	// sigsyaml (sigs.k8s.io/yaml) round-trips through encoding/json first, so it
 	// correctly calls resource.Quantity's MarshalJSON (producing e.g. "500m")
@@ -4370,8 +4367,6 @@ func (uc *Usecase) Deploy(
 	}
 
 	status := "Pending"
-	slog.Warn("TEMPDEBUG-LABELS pre-submit", "wf", wf.Name,
-		"labels", fmt.Sprintf("%v", wf.ObjectMeta.Labels))
 	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, client, depID, pipeName, wf, targetNamespace)
 	if err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {

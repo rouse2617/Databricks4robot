@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -68,9 +67,6 @@ func (c *crdWorkflowClient) CreateWorkflow(ctx context.Context, wf *wfv1.Workflo
 	if err != nil {
 		return err
 	}
-	slog.Warn("TEMPDEBUG-LABELS crd-create", "wf", wf.Name,
-		"wfLabels", fmt.Sprintf("%v", wf.GetLabels()),
-		"uLabels", fmt.Sprintf("%v", u.GetLabels()))
 	created, err := c.dyn.Resource(workflowGVR).Namespace(ns).Create(ctx, u, metav1.CreateOptions{})
 	if err != nil {
 		return translateK8sErr(err)

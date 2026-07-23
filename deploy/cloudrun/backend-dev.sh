@@ -64,10 +64,13 @@ DB_PASSWORD_SECRET="${DB_PASSWORD_SECRET:-cyber-databrew-dev-postgres-password}"
 DB_PASSWORD_SECRET_VERSION="${DB_PASSWORD_SECRET_VERSION:-latest}"
 DB_NAME_OVERRIDE="${DB_NAME_OVERRIDE:-cyber_databrew_dev}"
 DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
-# Argo Workflows server lives in the dev K8s cluster, not on Cloud Run.
-# The Cloud Run service cyber-databrew-pipeline-ui-dev is a separate UI proxy
-# (SSO/OIDC) and rejects K8s SA tokens with "unexpected signing method: RS256".
-ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-http://10.2.1.211:2746}"
+# Argo workflow submission on the dev cluster now runs in CRD mode: the backend
+# creates Workflow CRs directly via the in-cluster K8s API (crdWorkflowClient),
+# which preserves ObjectMeta.Labels — notably the controller-instanceid routing
+# label that argo-server used to strip. Leave ARGO_SERVER_URL unset so the
+# default-cluster env fallback (factory.go configForCluster) resolves to CRD
+# mode; set ARGO_SERVER_URL_OVERRIDE only to fall back to argo-server.
+ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-}"
 # Completed Argo workflow CR retention (secondsAfterCompletion). Default 30 days.
 ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-2592000}"
 # Argo run status push webhook (CYB-3058). ENABLED: the container curl exit hook
