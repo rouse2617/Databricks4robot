@@ -4581,6 +4581,11 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
 		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
 		deployOpts.ConfigSelection = opts[0].ConfigSelection
+		// Forward the per-dispatch Argo priority override. This copy is
+		// field-by-field (not a struct assignment) so any new DeployOptions field
+		// used by the batch submitter must be added here too, or it is silently
+		// dropped before reaching Deploy.
+		deployOpts.Priority = opts[0].Priority
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }

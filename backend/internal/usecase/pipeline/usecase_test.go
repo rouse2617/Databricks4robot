@@ -1205,6 +1205,49 @@ func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
 	}
 }
 
+// TestDeployByTemplateID_ForwardsPriority is a regression guard: DeployByTemplateID
+// copies DeployOptions field-by-field, so it must forward the per-dispatch
+// Priority override to the inner Deploy. Missing it silently drops priority for
+// every batch dispatch (the submitter's path), leaving wf.Spec.priority unset.
+func TestDeployByTemplateID_ForwardsPriority(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "prio-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	uc.templateRepo = &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe},
+		},
+		byName: map[string][]models.PipelineTemplate{
+			"tmpl": {{ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe}},
+		},
+	}
+
+	p := int32(100)
+	dep, err := uc.DeployByTemplateID(ctx, "tmpl-1", "", nil, DeployOptions{DryRun: true, Priority: &p})
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if !strings.Contains(*dep.Manifest, "priority: 100") {
+		t.Fatalf("expected forwarded priority: 100 in manifest, got:\n%s", *dep.Manifest)
+	}
+}
+
 func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{
