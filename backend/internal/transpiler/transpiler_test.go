@@ -1136,6 +1136,36 @@ func TestTranspileOmitsPriorityWhenNil(t *testing.T) {
 // TestTranspileSetsSchedulerName verifies pool (CYB-3486) injects the pool's
 // scheduler onto the workflow spec. Data-driven: transpiler sets whatever
 // string it's given, no hardcoded scheduler.
+// TestTranspileSetsInstanceIDLabel verifies the workflow-level
+// controller-instanceid label is set from Options.InstanceID, routing the
+// workflow to the Argo controller configured with that instanceID.
+func TestTranspileSetsInstanceIDLabel(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:       "wf-iid",
+		Namespace:  "default",
+		InstanceID: "vpp-gpu",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; got != "vpp-gpu" {
+		t.Errorf("controller-instanceid label: want vpp-gpu, got %q", got)
+	}
+}
+
+// TestTranspileOmitsInstanceIDLabelWhenEmpty guards backward-compat: no
+// instanceID → no label, so the default (no-instanceid) controller keeps owning
+// the workflow.
+func TestTranspileOmitsInstanceIDLabelWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noiid", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; ok {
+		t.Error("empty InstanceID must not set the controller-instanceid label")
+	}
+}
+
 func TestTranspileSetsSchedulerName(t *testing.T) {
 	wf, err := Transpile(singleNodePipeline(), &Options{
 		Name:          "wf-sched",

@@ -96,6 +96,13 @@ type Options struct {
 	// comparable among workflows sharing one controller/namespace queue.
 	Priority *int32
 
+	// InstanceID sets the workflow-level label
+	// "workflows.argoproj.io/controller-instanceid", routing the workflow to the
+	// Argo controller configured with the matching instanceID. Empty = unset (the
+	// default controller, which handles unlabeled workflows). Lets multiple
+	// controllers — each with its own parallelism — coexist in one namespace.
+	InstanceID string
+
 	// SchedulerName sets the K8s scheduler for every pod (CYB-3486 pool).
 	// Empty = unset → cluster default scheduler (scheduler-agnostic pool).
 	// The value is supplied by the pool config (data-driven); Transpile does
@@ -254,6 +261,12 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	}
 	if opts.Priority != nil {
 		wf.Spec.Priority = opts.Priority
+	}
+	if opts.InstanceID != "" {
+		if wf.ObjectMeta.Labels == nil {
+			wf.ObjectMeta.Labels = map[string]string{}
+		}
+		wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"] = opts.InstanceID
 	}
 	if opts.SchedulerName != "" {
 		wf.Spec.SchedulerName = opts.SchedulerName

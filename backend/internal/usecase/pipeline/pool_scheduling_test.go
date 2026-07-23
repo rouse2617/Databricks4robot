@@ -61,6 +61,24 @@ func TestExecutionTargetWorkflowPriority(t *testing.T) {
 	}
 }
 
+func TestExecutionTargetInstanceID(t *testing.T) {
+	tg := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"instanceId": "vpp-gpu"}}
+	if got := executionTargetInstanceID(tg); got != "vpp-gpu" {
+		t.Errorf("want vpp-gpu, got %q", got)
+	}
+	// snake_case alias
+	tg2 := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"instance_id": "vpp-cpu"}}
+	if got := executionTargetInstanceID(tg2); got != "vpp-cpu" {
+		t.Errorf("want vpp-cpu from alias, got %q", got)
+	}
+	if got := executionTargetInstanceID(&models.ExecutionTarget{ResourceDefaults: map[string]interface{}{}}); got != "" {
+		t.Errorf("absent instanceId should yield empty, got %q", got)
+	}
+	if got := executionTargetInstanceID(nil); got != "" {
+		t.Errorf("nil target should yield empty, got %q", got)
+	}
+}
+
 func TestExecutionTargetPodLabels(t *testing.T) {
 	// The pool config supplies BOTH the label key and value (here a Koordinator
 	// EQ label) — the backend does not hardcode the koord label key.

@@ -1248,6 +1248,47 @@ func TestDeployByTemplateID_ForwardsPriority(t *testing.T) {
 	}
 }
 
+// TestDeployByTemplateID_ForwardsInstanceID guards that DeployByTemplateID
+// forwards the InstanceID override to the inner Deploy (the field-by-field copy
+// that dropped Priority in #553 must not drop this too).
+func TestDeployByTemplateID_ForwardsInstanceID(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "iid-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	uc.templateRepo = &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe},
+		},
+		byName: map[string][]models.PipelineTemplate{
+			"tmpl": {{ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe}},
+		},
+	}
+
+	dep, err := uc.DeployByTemplateID(ctx, "tmpl-1", "", nil, DeployOptions{DryRun: true, InstanceID: "vpp-gpu"})
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if !strings.Contains(*dep.Manifest, "workflows.argoproj.io/controller-instanceid") {
+		t.Fatalf("expected forwarded controller-instanceid label in manifest, got:\n%s", *dep.Manifest)
+	}
+}
+
 func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{

@@ -58,6 +58,21 @@ func executionTargetWorkflowPriority(target *models.ExecutionTarget) *int32 {
 	return nil
 }
 
+// executionTargetInstanceID reads the pool's Argo controller-instanceid from
+// resource_defaults.instanceId (alias instance_id). The transpiler stamps it as
+// the workflow-level label workflows.argoproj.io/controller-instanceid so the
+// matching per-namespace controller (each with its own parallelism) picks it up.
+// Empty = unset (handled by the default no-instanceid controller).
+func executionTargetInstanceID(target *models.ExecutionTarget) string {
+	if target == nil {
+		return ""
+	}
+	if raw, ok := mapValue(target.ResourceDefaults, "instanceId", "instance_id"); ok {
+		return stringValue(raw)
+	}
+	return ""
+}
+
 // intValue coerces a JSON-decoded value (number as float64, or a numeric
 // string) to an int.
 func intValue(raw interface{}) (int, bool) {

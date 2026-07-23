@@ -200,6 +200,10 @@ type DeployOptions struct {
 	// (executionTargetWorkflowPriority). Set by a per-batch override chosen at
 	// dispatch time.
 	Priority *int32
+	// InstanceID routes this dispatch's workflow to the Argo controller with the
+	// matching instanceID (per-target; multiple controllers share one namespace).
+	// Empty → inherit the target pool's instanceId.
+	InstanceID string
 }
 
 type RuntimeConfigSelection struct {
@@ -4280,6 +4284,12 @@ func (uc *Usecase) Deploy(
 	if len(opts) > 0 && opts[0].Priority != nil {
 		wfOpts.Priority = opts[0].Priority
 	}
+	// Argo controller instanceID: pool default, overridden per-dispatch. Routes
+	// the workflow to the matching per-namespace controller.
+	wfOpts.InstanceID = executionTargetInstanceID(target)
+	if len(opts) > 0 && opts[0].InstanceID != "" {
+		wfOpts.InstanceID = opts[0].InstanceID
+	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
@@ -4586,6 +4596,7 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		// used by the batch submitter must be added here too, or it is silently
 		// dropped before reaching Deploy.
 		deployOpts.Priority = opts[0].Priority
+		deployOpts.InstanceID = opts[0].InstanceID
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
