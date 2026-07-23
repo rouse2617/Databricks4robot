@@ -759,7 +759,14 @@ func (uc *Usecase) reconcileMissingRuns(ctx context.Context, jobID string) error
 	}
 	for _, item := range items {
 		if err := uc.reconcileItemRun(ctx, job, item); err != nil {
-			return err
+			// Per-item failures must NOT abort the whole sweep: the legacy
+			// `return err` exited reconcileMissingRuns on the first
+			// duplicate-key hit, leaving every subsequent orphaned item
+			// stranded until the next cycle, and `ForceNewAttempt` only
+			// solves the first one if the loop continues. Log and keep
+			// going so each item gets an independent rebuild attempt.
+			slog.Warn("job reconciler: reconcileMissingRuns item failed (continuing)",
+				"jobID", job.ID, "itemID", item.ID, "err", err)
 		}
 	}
 	return nil
@@ -798,6 +805,18 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 		BatchJobID:      job.ID,
 		AssetID:         item.AssetID,
 		RunID:           runID,
+		// CYB-3678 P0: every reconcile-rebuild path must mint a brand-new
+		// run with a fresh workflow name. The legacy code reused
+		// item.WorkflowName (which `batchSubtaskWorkflowName` derives
+		// deterministically from (jobID, assetID) without a run suffix
+		// unless `unique=true`). Once the prior submitter pass had already
+		// inserted a pipeline_runs row with that workflow_name, every
+		// subsequent Save — and every reconciler cycle — collided on the
+		// `pipeline_runs_workflow_name_key` unique constraint and
+		// permanently stranded the item. ForceNewAttempt forces the
+		// unique=true branch (run-suffixed name) so each reconcile gets a
+		// fresh key and the loop can keep making progress.
+		ForceNewAttempt: true,
 		Status:          status,
 		Message:         message,
 		WorkflowName:    workflowName,
