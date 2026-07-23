@@ -785,8 +785,7 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 			if item.WorkflowName != nil {
 				itemWorkflowName = strings.TrimSpace(*item.WorkflowName)
 			}
-			if workflowName != "" && (itemWorkflowName == "" ||
-				(strings.Contains(itemWorkflowName, "-batch-") && !strings.Contains(workflowName, "-batch-"))) {
+			if workflowName != "" && itemWorkflowName != workflowName {
 				_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, item.Status)
 			}
 			return nil
@@ -805,18 +804,7 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 		BatchJobID:      job.ID,
 		AssetID:         item.AssetID,
 		RunID:           runID,
-		// CYB-3678 P0: every reconcile-rebuild path must mint a brand-new
-		// run with a fresh workflow name. The legacy code reused
-		// item.WorkflowName (which `batchSubtaskWorkflowName` derives
-		// deterministically from (jobID, assetID) without a run suffix
-		// unless `unique=true`). Once the prior submitter pass had already
-		// inserted a pipeline_runs row with that workflow_name, every
-		// subsequent Save — and every reconciler cycle — collided on the
-		// `pipeline_runs_workflow_name_key` unique constraint and
-		// permanently stranded the item. ForceNewAttempt forces the
-		// unique=true branch (run-suffixed name) so each reconcile gets a
-		// fresh key and the loop can keep making progress.
-		ForceNewAttempt: true,
+		ForceNewAttempt: false,
 		Status:          status,
 		Message:         message,
 		WorkflowName:    workflowName,

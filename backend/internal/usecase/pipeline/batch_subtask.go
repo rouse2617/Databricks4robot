@@ -199,7 +199,11 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 		}
 	}
 	if runID == "" {
-		runID = uuid.New().String()
+		if in.ForceNewAttempt {
+			runID = uuid.New().String()
+		} else {
+			runID = initialBatchSubtaskRunID(batchJobID, assetID)
+		}
 	}
 
 	status := strings.TrimSpace(in.Status)
@@ -207,10 +211,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 		status = "Pending"
 	}
 
-	workflowName := strings.TrimSpace(in.WorkflowName)
-	if workflowName == "" {
-		workflowName = batchSubtaskWorkflowName(t.Name, batchJobID, assetID, runID, in.ForceNewAttempt)
-	}
+	workflowName := runID
 
 	target, err := uc.resolveExecutionTarget(ctx, in.TargetID)
 	if err != nil {
@@ -257,7 +258,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	if existing, err := uc.runRepo.FindByID(ctx, runID); err == nil && existing != nil {
 		run.CreatedAt = existing.CreatedAt
-		if shouldPreserveBatchSubtaskWorkflowName(existing, workflowName) {
+		if shouldPreserveBatchSubtaskWorkflowName(existing) {
 			run.WorkflowName = existing.WorkflowName
 			workflowName = existing.WorkflowName
 		}
@@ -306,26 +307,21 @@ func isBatchSubtaskPlaceholderWorkflowName(name string) bool {
 	return strings.Contains(strings.TrimSpace(name), "-batch-")
 }
 
+func initialBatchSubtaskRunID(batchJobID, assetID string) string {
+	identity := strings.TrimSpace(batchJobID) + "\x00" + strings.TrimSpace(assetID)
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("cyber-databrew/batch-subtask\x00"+identity)).String()
+}
+
 func isBatchParentWorkflowName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), "batch-parent-")
 }
 
-func shouldPreserveBatchSubtaskWorkflowName(existing *models.PipelineRun, incoming string) bool {
+func shouldPreserveBatchSubtaskWorkflowName(existing *models.PipelineRun) bool {
 	if existing == nil {
 		return false
 	}
-	if strings.TrimSpace(existing.ArgoWorkflowUID) != "" {
-		return true
-	}
-	existingName := strings.TrimSpace(existing.WorkflowName)
-	incomingName := strings.TrimSpace(incoming)
-	if existingName == "" {
-		return false
-	}
-	if !isBatchSubtaskPlaceholderWorkflowName(existingName) {
-		return isBatchSubtaskPlaceholderWorkflowName(incomingName) || incomingName == "" || incomingName != existingName
-	}
-	return false
+	return strings.TrimSpace(existing.ArgoWorkflowUID) != "" &&
+		strings.TrimSpace(existing.WorkflowName) != ""
 }
 
 // CommitBatchSubtaskDeploy binds a preallocated batch ledger row to the live
@@ -415,47 +411,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// batchSubtaskWorkflowName builds the deterministic Argo workflow name for a
-// batch subtask. CYB-3491: the name is scoped by JOB — the pre-P2 key was
-// (pipeline, asset), while dedup was keyed (job, asset), so two jobs running
-// the same pipeline on the same asset minted the SAME name and collided on
-// the pipeline_runs.workflow_name UNIQUE constraint. The name keeps the
-// "-batch-" token because placeholder heuristics
-// (isBatchSubtaskPlaceholderWorkflowName) match on it.
-//
-// Determinism is the submitter's idempotency key: an automatic re-submission
-// after a crash reuses the SAME name, so Argo answers AlreadyExists and the
-// UID is backfilled instead of a duplicate workflow being created. Only a
-// manual retry with ForceNewAttempt (a NEW run row) appends the new run's
-// id, minting a fresh name for a fresh attempt.
-func batchSubtaskWorkflowName(pipelineName, batchJobID, assetID, runID string, unique bool) string {
-	jobScope := strings.TrimSpace(batchJobID)
-	if len(jobScope) > 8 {
-		jobScope = jobScope[:8]
-	}
-	suffix := strings.TrimSpace(assetID)
-	if len(suffix) > 12 {
-		suffix = suffix[len(suffix)-12:]
-	}
-	if suffix == "" {
-		suffix = runID[:6]
-	}
-	base := fmt.Sprintf("%s-batch-%s", pipelineName, suffix)
-	if jobScope != "" {
-		base = fmt.Sprintf("%s-batch-%s-%s", pipelineName, jobScope, suffix)
-	}
-	if unique {
-		runSuffix := strings.TrimSpace(runID)
-		if len(runSuffix) > 8 {
-			runSuffix = runSuffix[:8]
-		}
-		if runSuffix != "" {
-			return base + "-" + runSuffix
-		}
-	}
-	return base
 }
 
 func isTerminalBatchSubtaskStatus(status string) bool {

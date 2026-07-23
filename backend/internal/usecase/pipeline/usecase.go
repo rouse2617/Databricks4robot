@@ -2895,7 +2895,7 @@ func workflowUnavailableMessage(run *models.PipelineRun) string {
 	if run == nil {
 		return messageWorkflowUnavailable
 	}
-	if strings.TrimSpace(run.ArgoWorkflowUID) == "" && isBatchSubtaskPlaceholderWorkflowName(run.WorkflowName) {
+	if isPendingBatchWorkflowCreation(run) {
 		return messageWorkflowAwaitingDeploy
 	}
 	return messageWorkflowUnavailable

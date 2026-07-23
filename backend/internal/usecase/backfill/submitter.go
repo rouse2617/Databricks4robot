@@ -309,10 +309,9 @@ func (uc *Usecase) submitOneCandidate(ctx context.Context, job *models.BackfillJ
 	return out
 }
 
-// submitItem performs the actual submission for a row-locked pending
-// item. Every DB write here rides the caller's transaction. Terminal
-// decisions (submitted / failed) COMMIT; only infra errors return non-nil
-// (→ rollback → still pending).
+// submitItem performs the actual submission for a pending item. Individual
+// writes are idempotent; the Argo create is intentionally not wrapped in a
+// database transaction.
 func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item models.BackfillItem, templateVersion int) (submitOutcome, error) {
 	runID := ""
 	if item.PipelineRunID != nil {
@@ -328,16 +327,13 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 	// while the item is still pending — e.g. a crash between the run commit
 	// and the item update. Mark submitted, done.
 	//
-	// staleRun flags the other case: the item points at a run that is NOT live
-	// in flight — a never-launched placeholder (no uid/startedAt) or a prior
-	// terminal attempt. Reusing it would re-Deploy with the SAME deterministic
-	// workflow name, which Argo rejects as AlreadyExists; the handler then
-	// marks the item "submitted" without ever launching a workflow, so the item
-	// strands (the "stopped, resumed, stuck again" report). Mint a fresh attempt
-	// instead — the same mechanism manual Rerun uses (ForceNewAttempt).
-	staleRun := false
+	needsUpsert := runID == ""
 	if runID != "" {
-		if existing, getErr := uc.deployer.GetRun(ctx, runID); getErr == nil && existing != nil {
+		existing, getErr := uc.deployer.GetRun(ctx, runID)
+		if getErr != nil {
+			return outcomeTransient, getErr
+		}
+		if existing != nil {
 			if runAlreadySubmitted(existing) {
 				wf := strings.TrimSpace(existing.WorkflowName)
 				if wf == "" {
@@ -345,14 +341,25 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 				}
 				return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
 			}
-			staleRun = true
+			if isTerminalRunStatus(existing.Status) {
+				return outcomeOK, uc.repo.UpdateItemPipelineRun(
+					ctx,
+					item.ID,
+					runID,
+					firstNonEmptyString(existing.WorkflowName, workflowName, runID),
+					backfillItemStatusFromTerminalRun(existing.Status),
+				)
+			}
+			needsUpsert = workflowName != runID
+		} else {
+			needsUpsert = true
 		}
 	}
 
-	// Ensure a deployable run ledger row exists. First-time submits mint one
-	// normally (deterministic, job-scoped workflow name). A stale placeholder
-	// forces a brand-new attempt so Deploy gets a fresh, un-poisoned name.
-	if runID == "" || staleRun {
+	// Automatic submission and recovery always reuse the current attempt.
+	// Upsert normalizes legacy uid-less business names to the run UUID, which
+	// is also the name Deploy submits to Argo.
+	if needsUpsert {
 		var initErr error
 		runID, workflowName, initErr = uc.deployer.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      job.TemplateID,
@@ -360,8 +367,9 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			TargetID:        targetID,
 			BatchJobID:      job.ID,
 			AssetID:         item.AssetID,
+			RunID:           runID,
 			Status:          "Pending",
-			ForceNewAttempt: staleRun,
+			ForceNewAttempt: false,
 		})
 		if initErr != nil {
 			return outcomeTransient, initErr // infra: retry next cycle
@@ -370,6 +378,7 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			return outcomeTransient, err
 		}
 	}
+	workflowName = runID
 
 	deployOpts := pipelineUC.DeployOptions{
 		BatchJobID:         job.ID,
@@ -486,6 +495,24 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			"jobID", job.ID, "assetID", item.AssetID, "runID", runID, "err", bindErr)
 	}
 	return outcomeOK, nil
+}
+
+func backfillItemStatusFromTerminalRun(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success":
+		return "completed"
+	default:
+		return "failed"
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // isWorkflowAlreadyExists reports whether err (possibly wrapped) is Argo's
