@@ -1,4 +1,5 @@
 import {
+	CopyOutlined,
 	DownloadOutlined,
 	PlayCircleOutlined,
 	PoweroffOutlined,
@@ -11,7 +12,6 @@ import {
 	Dropdown,
 	Empty,
 	Input,
-	Progress,
 	Select,
 	Skeleton,
 	Space,
@@ -20,14 +20,13 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
+import { BatchProgressCell } from "../components/pipeline/BatchProgressCell";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type BatchJob,
-	batchJobProgress,
-	batchJobProgressStatus,
 	listBatchJobs,
 	pauseBatchJob,
 	resumeBatchJob,
@@ -196,16 +195,36 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "批次名称",
 			dataIndex: "name",
 			key: "name",
-			width: 260,
+			width: 320,
 			ellipsis: true,
 			render: (name: string, record: BatchJob) => (
-				<div style={{ minWidth: 0, maxWidth: 260 }}>
+				<div style={{ minWidth: 0, maxWidth: 320 }}>
 					<Text strong ellipsis={{ tooltip: name }}>
 						{name}
 					</Text>
-					<Text type="secondary" style={{ display: "block", fontSize: 12 }}>
-						ID: {record.id.slice(0, 8)}…
-					</Text>
+					<Space size={4} style={{ display: "flex", alignItems: "center" }}>
+						<Text
+							type="secondary"
+							style={{ fontSize: 12, fontFamily: "monospace" }}
+						>
+							ID: {record.id.slice(0, 12)}…
+						</Text>
+						<Tooltip title="复制完整 ID">
+							<Button
+								type="text"
+								size="small"
+								icon={<CopyOutlined style={{ fontSize: 12 }} />}
+								onClick={(e) => {
+									e.stopPropagation();
+									void navigator.clipboard
+										.writeText(record.id)
+										.then(() => message.success("已复制批次 ID"))
+										.catch(() => message.error("复制失败"));
+								}}
+								style={{ padding: "0 4px", height: 20 }}
+							/>
+						</Tooltip>
+					</Space>
 				</div>
 			),
 		},
@@ -213,12 +232,12 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "模板",
 			dataIndex: "templateId",
 			key: "templateId",
-			width: 200,
+			width: 260,
 			ellipsis: true,
 			render: (templateId: string) => {
 				const label = templateNameById[templateId] ?? templateId;
 				return (
-					<Text ellipsis={{ tooltip: label }} style={{ maxWidth: 200 }}>
+					<Text ellipsis={{ tooltip: label }} style={{ maxWidth: 260 }}>
 						{label}
 					</Text>
 				);
@@ -227,19 +246,9 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		{
 			title: "进度",
 			key: "progress",
-			width: 220,
+			width: 200,
 			render: (_: unknown, record: BatchJob) => (
-				<div>
-					<Progress
-						percent={batchJobProgress(record)}
-						size="small"
-						status={batchJobProgressStatus(record)}
-					/>
-					<Text type="secondary" style={{ fontSize: 12 }}>
-						{record.completedCount} 成功 · {record.failedCount} 失败 · 共{" "}
-						{record.totalCount}
-					</Text>
-				</div>
+				<BatchProgressCell job={record} />
 			),
 		},
 		{
@@ -247,11 +256,30 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			dataIndex: "status",
 			key: "status",
 			width: 110,
-			render: (status: string) => (
-				<Tag color={resolveStatusTagColor(status)}>
-					{formatBatchJobStatus(status)}
-				</Tag>
-			),
+			render: (status: string, record: BatchJob) => {
+				// "部分失败" is the finished-with-some-failures case: completed AND
+				// failedCount>0. Distinct from a fully failed batch. Uses a light-red
+				// outline so it reads as informational, not alarming.
+				if (status === "completed" && record.failedCount > 0) {
+					return (
+						<Tag
+							color="warning"
+							style={{
+								background: "#fff2e8",
+								borderColor: "#ffbb96",
+								color: "#d4380d",
+							}}
+						>
+							部分失败
+						</Tag>
+					);
+				}
+				return (
+					<Tag color={resolveStatusTagColor(status)}>
+						{formatBatchJobStatus(status)}
+					</Tag>
+				);
+			},
 		},
 		{
 			title: "优先级",
@@ -265,6 +293,22 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				const badge = priorityBadge(
 					effectivePriorityFromFilter(record.filterJson, poolDefault),
 				);
+				// "普通" is the default and shouldn't compete for attention — render
+				// it as a low-contrast outlined chip; "高 / 低" keep their colored
+				// tags so they stand out against the dominant "普通" row noise.
+				if (badge.label === "普通") {
+					return (
+						<Tag
+							style={{
+								background: "#fafafa",
+								borderColor: "#d9d9d9",
+								color: "#8c8c8c",
+							}}
+						>
+							{badge.label}
+						</Tag>
+					);
+				}
 				return <Tag color={badge.color}>{badge.label}</Tag>;
 			},
 		},
@@ -584,7 +628,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					loading={loading}
 					columns={columns}
 					dataSource={filteredJobs}
-					scroll={{ x: 1190 }}
+					scroll={{ x: 1270 }}
 					pagination={{ pageSize: 20, showSizeChanger: true }}
 					// CYB-3800: multi-select drives the bulk export button above.
 					rowSelection={{
