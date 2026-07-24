@@ -39,7 +39,7 @@ import (
 //     too and simply read back their live phase.
 //
 // `WATCHER_MODE=legacy` restores the per-run rotating-window path (rollback
-// hatch, same convention as BATCH_DISPATCH_MODE).
+// hatch, same convention used elsewhere in this package).
 
 const (
 	watcherModeEnv    = "WATCHER_MODE"

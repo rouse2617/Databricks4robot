@@ -243,11 +243,6 @@ func setupCore(inf *infra) *coreHandlers {
 	// re-read every cycle, so a PUT bites within one tick.
 	backfillUC.SetDispatcherConfigRepo(postgres.NewDispatcherConfigRepo(pg))
 	backfillUC.StartSubmitter()
-	// CYB-3677: the legacy batch entry now persists jobs for the submitter
-	// (durable dispatch) instead of a one-shot in-memory goroutine. The kick
-	// starts the first cycle immediately; BATCH_DISPATCH_MODE=legacy is the
-	// one-release rollback switch.
-	puc.SetBatchDispatchMode(inf.cfg.BatchDispatchMode)
 	puc.SetBatchSubmitKicker(backfillUC.KickSubmitter)
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
@@ -300,7 +295,7 @@ func setupCore(inf *infra) *coreHandlers {
 		subTaskRepo,
 		subtask.NewPubSubClient(),
 		subtask.BatchCreatorFn(func(ctx context.Context, tmpl, name string, ids []string, target string, ver int, owner string) (string, error) {
-			job, err := puc.CreateBatchJob(ctx, tmpl, name, ids, target, ver, 0, owner)
+			job, err := puc.CreateBatchJob(ctx, tmpl, name, ids, target, ver, owner)
 			if err != nil {
 				return "", err
 			}

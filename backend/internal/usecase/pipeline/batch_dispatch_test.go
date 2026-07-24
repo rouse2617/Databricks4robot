@@ -4,14 +4,12 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
-// dispatchBatchRepo captures what CreateBatchJob persists. Legacy-mode tests
-// additionally tolerate the background goroutine's bookkeeping calls.
+// dispatchBatchRepo captures what CreateBatchJob persists.
 type dispatchBatchRepo struct {
 	repository.BackfillRepository
 	mu            sync.Mutex
@@ -80,17 +78,17 @@ func newDispatchFixture(t *testing.T) (*Usecase, *dispatchBatchRepo) {
 	return uc, repo
 }
 
-// ── CYB-3677: submitter mode (default) ───────────────────────────────────────
+// ── CYB-3677: submitter mode ─────────────────────────────────────────────────
 
-// Default mode persists the job born 'running' with the version pinned in the
-// COLUMN (and mirrored in filter_json for one release), kicks the submitter,
-// and registers NO in-memory goroutine — persistence IS the dispatch.
+// Submitter mode persists the job born 'running' with the version pinned in
+// the COLUMN (and mirrored in filter_json for one release) and kicks the
+// submitter — persistence IS the dispatch.
 func TestCreateBatchJobSubmitterModePersistsRunningAndKicks(t *testing.T) {
 	uc, repo := newDispatchFixture(t)
 	kicked := 0
 	uc.SetBatchSubmitKicker(func() { kicked++ })
 
-	job, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1", "a2"}, "", 0, 0, "owner")
+	_, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1", "a2"}, "", 0, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +109,6 @@ func TestCreateBatchJobSubmitterModePersistsRunningAndKicks(t *testing.T) {
 	if len(repo.savedItems) != 2 {
 		t.Fatalf("items = %d, want 2", len(repo.savedItems))
 	}
-	if uc.cancelBatch(job.ID) {
-		t.Fatal("submitter mode must not register an in-memory dispatch goroutine")
-	}
 }
 
 // A nil kicker must be tolerated: durability never depends on the kick (the
@@ -121,7 +116,7 @@ func TestCreateBatchJobSubmitterModePersistsRunningAndKicks(t *testing.T) {
 func TestCreateBatchJobSubmitterModeNilKickerIsFine(t *testing.T) {
 	uc, repo := newDispatchFixture(t)
 
-	if _, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err != nil {
+	if _, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1"}, "", 0, "o"); err != nil {
 		t.Fatal(err)
 	}
 	if repo.job().Status != "running" {
@@ -133,57 +128,11 @@ func TestCreateBatchJobSubmitterModeNilKickerIsFine(t *testing.T) {
 func TestCreateBatchJobPinsExplicitVersion(t *testing.T) {
 	uc, repo := newDispatchFixture(t)
 
-	if _, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1"}, "", 2, 0, "o"); err != nil {
+	if _, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1"}, "", 2, "o"); err != nil {
 		t.Fatal(err)
 	}
 	if repo.job().TemplateVersion != 2 {
 		t.Fatalf("job.TemplateVersion = %d, want 2 (explicit pin)", repo.job().TemplateVersion)
-	}
-}
-
-// ── CYB-3677: legacy mode (rollback flag) ────────────────────────────────────
-
-// Legacy mode preserves the pre-3677 shape byte-for-byte: job born 'pending',
-// in-memory goroutine registered (cancelBatch returns true), pin still written
-// to the column so a later flag flip inherits it.
-func TestCreateBatchJobLegacyModeKeepsGoroutine(t *testing.T) {
-	uc, repo := newDispatchFixture(t)
-	uc.SetBatchDispatchMode("legacy")
-	kicked := 0
-	uc.SetBatchSubmitKicker(func() { kicked++ })
-
-	job, err := uc.CreateBatchJob(context.Background(), "tpl-1", "b", []string{"a1"}, "", 0, 0, "o")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if repo.job().Status != "pending" {
-		t.Fatalf("job status = %q, want pending (legacy)", repo.job().Status)
-	}
-	if repo.job().TemplateVersion != 3 {
-		t.Fatalf("job.TemplateVersion = %d, want 3 (column written in both modes)", repo.job().TemplateVersion)
-	}
-	if kicked != 0 {
-		t.Fatalf("kicker calls = %d, want 0 in legacy mode", kicked)
-	}
-	// The goroutine is registered; cancel it and wait for its bookkeeping to
-	// finish so the test doesn't leak it.
-	if !uc.cancelBatch(job.ID) {
-		t.Fatal("legacy mode must register the in-memory dispatch goroutine")
-	}
-	deadline := time.After(5 * time.Second)
-	for {
-		repo.mu.Lock()
-		done := repo.progressCalls >= 1
-		repo.mu.Unlock()
-		if done {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("legacy goroutine never finished after cancel")
-		case <-time.After(10 * time.Millisecond):
-		}
 	}
 }
 
@@ -225,14 +174,14 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 
 	t.Run("nil backfill repo", func(t *testing.T) {
 		uc := New(tpl, nil, nil, nil, "ns")
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, "o"); err == nil {
 			t.Fatal("want error for missing backfill repo")
 		}
 	})
 	t.Run("template repo error", func(t *testing.T) {
 		uc := New(&errTemplateRepo{}, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(&dispatchBatchRepo{})
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, "o"); err == nil {
 			t.Fatal("want error when template lookup fails")
 		}
 	})
@@ -242,7 +191,7 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 			"tpl-1": {ID: "tpl-1", Name: "demo", Version: 3, ActiveVersion: 2},
 		}}, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(repo)
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err != nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, "o"); err != nil {
 			t.Fatal(err)
 		}
 		if repo.job().TemplateVersion != 2 {
@@ -252,21 +201,21 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 	t.Run("template not found", func(t *testing.T) {
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(&dispatchBatchRepo{})
-		if _, err := uc.CreateBatchJob(ctx, "tpl-missing", "b", []string{"a1"}, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-missing", "b", []string{"a1"}, "", 0, "o"); err == nil {
 			t.Fatal("want error for missing template")
 		}
 	})
 	t.Run("empty asset ids", func(t *testing.T) {
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(&dispatchBatchRepo{})
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", nil, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", nil, "", 0, "o"); err == nil {
 			t.Fatal("want error for empty asset_ids")
 		}
 	})
 	t.Run("save job fails", func(t *testing.T) {
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(&erroringBatchRepo{saveJobErr: context.DeadlineExceeded})
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, "o"); err == nil {
 			t.Fatal("want error when SaveJob fails")
 		}
 	})
@@ -274,7 +223,7 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 		repo := &erroringBatchRepo{saveItemsErr: context.DeadlineExceeded}
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(repo)
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, 0, "o"); err == nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "", 0, "o"); err == nil {
 			t.Fatal("want error when SaveItems fails")
 		}
 		repo.mu.Lock()
@@ -287,7 +236,7 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 		repo := &dispatchBatchRepo{}
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(repo)
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "cluster-b", 0, 0, "o"); err != nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "b", []string{"a1"}, "cluster-b", 0, "o"); err != nil {
 			t.Fatal(err)
 		}
 		if got := repo.job().FilterJSON["target_id"]; got != "cluster-b" {
@@ -298,33 +247,13 @@ func TestCreateBatchJobErrorPaths(t *testing.T) {
 		repo := &dispatchBatchRepo{}
 		uc := New(tpl, nil, nil, nil, "ns")
 		uc.SetBackfillRepo(repo)
-		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "", []string{"a1"}, "", 0, 0, "o"); err != nil {
+		if _, err := uc.CreateBatchJob(ctx, "tpl-1", "", []string{"a1"}, "", 0, "o"); err != nil {
 			t.Fatal(err)
 		}
 		if repo.job().Name == "" {
 			t.Fatal("want defaulted batch name")
 		}
 	})
-}
-
-func TestSetBatchDispatchMode(t *testing.T) {
-	uc := &Usecase{}
-	cases := []struct {
-		mode string
-		want bool
-	}{
-		{"legacy", true},
-		{" LEGACY ", true},
-		{"submitter", false},
-		{"", false},
-		{"anything-else", false},
-	}
-	for _, tc := range cases {
-		uc.SetBatchDispatchMode(tc.mode)
-		if uc.batchDispatchLegacy != tc.want {
-			t.Fatalf("mode %q: legacy = %v, want %v", tc.mode, uc.batchDispatchLegacy, tc.want)
-		}
-	}
 }
 
 // ── CYB-3678: DLQ list / retry ───────────────────────────────────────────────

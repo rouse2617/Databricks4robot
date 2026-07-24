@@ -31,12 +31,13 @@ func (h *Handler) StopBatchRun(c *gin.Context) {
 
 func (h *Handler) CreateBatchRun(c *gin.Context) {
 	var req struct {
-		TemplateID     string   `json:"template_id"`
-		AssetIDs       []string `json:"asset_ids"`
-		TargetID       string   `json:"target_id"`
-		Version        int      `json:"version"`
-		Name           string   `json:"name"`
-		MaxConcurrency int      `json:"max_concurrency"`
+		TemplateID string   `json:"template_id"`
+		AssetIDs   []string `json:"asset_ids"`
+		TargetID   string   `json:"target_id"`
+		Version    int      `json:"version"`
+		Name       string   `json:"name"`
+		// deprecated: no-op, kept for wire compatibility
+		MaxConcurrency int `json:"max_concurrency"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -58,7 +59,7 @@ func (h *Handler) CreateBatchRun(c *gin.Context) {
 	}
 
 	owner := middleware.GetUserEmail(c)
-	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version, req.MaxConcurrency, owner)
+	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version, owner)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())

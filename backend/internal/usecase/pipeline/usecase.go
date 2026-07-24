@@ -151,17 +151,6 @@ type Usecase struct {
 	// pricing (CYB-3073); nil falls back to the default GPU-pool rate.
 	nodeResolver nodeInstanceResolver
 
-	// batchCancels holds cancel funcs for in-flight batch submission
-	// goroutines so StopBatchRuns can halt further run creation. Legacy
-	// dispatch mode only — in submitter mode cancellation is DB-state driven
-	// (job status 'cancelled' is never selected by the submitter).
-	batchCancelMu sync.Mutex
-	batchCancels  map[string]context.CancelFunc
-
-	// batchDispatchLegacy selects the pre-CYB-3677 in-memory dispatch
-	// goroutine instead of the durable backfill submitter. Rollback-only;
-	// removed one release after G4 (see CYB-3677).
-	batchDispatchLegacy bool
 	// batchSubmitKick pokes the backfill submitter after a batch lands so
 	// dispatch starts immediately instead of on the next 15s tick. Nil is
 	// fine — the ticker picks the job up regardless (durability never
@@ -170,14 +159,6 @@ type Usecase struct {
 
 	watcherLedgerMu     sync.RWMutex
 	watcherLedgerHealth models.LedgerHealth
-}
-
-// SetBatchDispatchMode selects the batch dispatch path (CYB-3677).
-// "legacy" restores the in-memory goroutine; anything else (default
-// "submitter") persists the job as 'running' and lets the durable backfill
-// submitter own submission.
-func (uc *Usecase) SetBatchDispatchMode(mode string) {
-	uc.batchDispatchLegacy = strings.EqualFold(strings.TrimSpace(mode), "legacy")
 }
 
 // SetBatchSubmitKicker wires the backfill submitter's kick so newly created
@@ -1401,39 +1382,11 @@ func (uc *Usecase) StopBatchRuns(ctx context.Context, batchJobID, owner string) 
 		}
 		stopped++
 	}
-	// Halt the background submission goroutine so it stops creating new runs
-	// for any items that have not been submitted yet.
-	uc.cancelBatch(batchJobID)
+	// Individual StopRun calls above already halt in-flight work; the
+	// submitter never selects a 'cancelled' job so no further items will be
+	// dispatched.
 	_ = uc.backfillRepo.UpdateJobStatus(ctx, batchJobID, "cancelled")
 	return stopped, failed, nil
-}
-
-func (uc *Usecase) registerBatchCancel(jobID string, cancel context.CancelFunc) {
-	uc.batchCancelMu.Lock()
-	if uc.batchCancels == nil {
-		uc.batchCancels = make(map[string]context.CancelFunc)
-	}
-	uc.batchCancels[jobID] = cancel
-	uc.batchCancelMu.Unlock()
-}
-
-func (uc *Usecase) unregisterBatchCancel(jobID string) {
-	uc.batchCancelMu.Lock()
-	delete(uc.batchCancels, jobID)
-	uc.batchCancelMu.Unlock()
-}
-
-// cancelBatch cancels the in-flight submission goroutine for a batch job.
-// Returns false when no submission is currently tracked (already finished).
-func (uc *Usecase) cancelBatch(jobID string) bool {
-	uc.batchCancelMu.Lock()
-	cancel := uc.batchCancels[jobID]
-	uc.batchCancelMu.Unlock()
-	if cancel == nil {
-		return false
-	}
-	cancel()
-	return true
 }
 
 func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
