@@ -260,7 +260,14 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				// "部分失败" is the finished-with-some-failures case: completed AND
 				// failedCount>0. Distinct from a fully failed batch. Uses a light-red
 				// outline so it reads as informational, not alarming.
-				if (status === "completed" && record.failedCount > 0) {
+				// "部分失败" only when the batch finished with a mix of success and
+				// failure. All-failed (0 completed) keeps the plain "失败" tag so
+				// operators can distinguish "some worked" from "nothing worked".
+				if (
+					status === "completed" &&
+					record.failedCount > 0 &&
+					record.completedCount > 0
+				) {
 					return (
 						<Tag
 							color="warning"
