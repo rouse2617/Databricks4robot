@@ -480,6 +480,10 @@ export function savePipeline(
 	return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
 
+export function deletePipeline(id: string): Promise<void> {
+	return request<void>("DELETE", `/pipelines/${encodeURIComponent(id)}`);
+}
+
 // ── Pipeline Promotion ─────────────────────────────────────────────────
 
 export interface PipelinePromotionDependency {
