@@ -365,6 +365,20 @@ var (
 		},
 	)
 
+	// PipelineDeploySubmitIncompleteTotal counts Deploy calls that returned
+	// ErrWorkflowSubmitIncomplete after the bounded post-submit UID retry
+	// (usecase.waitForWorkflowUID). Path label distinguishes batch (submitter
+	// self-heals via AlreadyExists) from single (client must retry). A steady
+	// non-zero on path="single" indicates orphan-workflow risk from
+	// per-request UUID names.
+	PipelineDeploySubmitIncompleteTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_pipeline_deploy_submit_incomplete_total",
+			Help: "Deploy calls where the runtime accepted the submit but no Argo UID materialized within the bounded retry window",
+		},
+		[]string{"path"},
+	)
+
 	// DispatcherStaleItems gauges the watcher→reconciler gap: how many
 	// pipeline_runs are terminal (Succeeded/Failed/Error) while their linked
 	// backfill_item still shows pending or submitted. Without a webhook, the

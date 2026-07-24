@@ -1124,6 +1124,16 @@ func mapDeployError(c *gin.Context, err error) {
 		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, err.Error(), nil)
 		return
 	}
+	// Runtime accepted the submit but no Argo UID materialized within the
+	// bounded retry window. The CR is likely live but not yet readable — the
+	// caller should retry the same request. Batch paths self-heal on the next
+	// submitter cycle (deterministic name → AlreadyExists → uid backfill); the
+	// single-request path relies on the client to retry, so surface it as a
+	// retryable 503 rather than a generic 500.
+	if errors.Is(err, pipelineUC.ErrWorkflowSubmitIncomplete) {
+		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, err.Error(), nil)
+		return
+	}
 	httpresp.Internal(c, err.Error())
 }
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	runtimeadapter "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter"
@@ -4409,12 +4410,35 @@ func (uc *Usecase) Deploy(
 	// best-effort GetWorkflow above was rate-limited (or the CR isn't readable
 	// yet). CRITICAL: the CR was almost certainly really created (CRD
 	// CreateWorkflow only returns nil on a k8s 201), so we must NOT delete it —
-	// that would tear down a live workflow. But persisting the run now would
-	// leave a uid-less Pending row the batch submitter can never advance
-	// (invariant ②), silently stranding the item. Return a RETRYABLE error so
-	// the caller leaves the item pending and re-submits next cycle; the
-	// deterministic workflow name makes that submit AlreadyExists → uid backfill.
+	// that would tear down a live workflow.
+	//
+	// Bounded retry (CYB-3491 follow-up): most rate-limit "phantom success"
+	// windows clear within a few hundred ms. Try a small handful of GetWorkflow
+	// reads before giving up so the single-request Deploy path — which uses a
+	// fresh UUID per call and cannot self-heal via AlreadyExists — has a real
+	// chance to obtain the uid on the same call the client already made. Batch
+	// path still self-heals on the next submitter cycle if the retry also
+	// fails, so this is strictly additive.
+	if strings.TrimSpace(wfUID) == "" && client != nil {
+		if detail, phase, ok := waitForWorkflowUID(ctx, client, wfName, targetNamespace); ok {
+			wfDetail = detail
+			wfUID = string(detail.UID)
+			if phase != "" {
+				status = string(phase)
+			}
+		}
+	}
+	// Post-retry: still no uid. Persisting the run now would leave a uid-less
+	// Pending row the batch submitter can never advance (invariant ②),
+	// silently stranding the item. Return a RETRYABLE error so the caller
+	// leaves the item pending and re-submits next cycle; the deterministic
+	// workflow name makes that submit AlreadyExists → uid backfill.
 	if strings.TrimSpace(wfUID) == "" {
+		path := "single"
+		if len(opts) > 0 && (strings.TrimSpace(opts[0].BatchJobID) != "" || strings.TrimSpace(opts[0].PreallocatedRunID) != "") {
+			path = "batch"
+		}
+		metrics.PipelineDeploySubmitIncompleteTotal.WithLabelValues(path).Inc()
 		return nil, fmt.Errorf("%w: workflow %q", ErrWorkflowSubmitIncomplete, wfName)
 	}
 
@@ -4528,6 +4552,30 @@ func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, client argo.Workfl
 		}, nil
 	}
 	return nil, ErrWorkflowUnavailable
+}
+
+// waitForWorkflowUID retries GetWorkflow a few times to obtain the server-
+// assigned UID after a successful CreateWorkflow. Handles the "phantom
+// success" window where CRD Create returned 201 but the immediate follow-up
+// read was client-side rate-limited or hit an apiserver blip. Bounded so a
+// truly missing CR still surfaces as ErrWorkflowSubmitIncomplete quickly.
+// Total budget ~800ms (4 attempts × 200ms) — well inside typical HTTP client
+// timeouts and safe on the submitter's per-item deadline.
+func waitForWorkflowUID(ctx context.Context, client argo.WorkflowClient, name, namespace string) (*wfv1.Workflow, wfv1.WorkflowPhase, bool) {
+	const attempts = 4
+	const delay = 200 * time.Millisecond
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, "", false
+		case <-time.After(delay):
+		}
+		detail, err := client.GetWorkflow(ctx, name, namespace)
+		if err == nil && detail != nil && detail.UID != "" {
+			return detail, detail.Status.Phase, true
+		}
+	}
+	return nil, "", false
 }
 
 // targetClusterID returns a short label of the target's cluster for logging.
