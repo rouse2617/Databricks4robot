@@ -21,7 +21,6 @@ type PipelineTemplate struct {
 
 func (PipelineTemplate) TableName() string { return "pipeline_templates" }
 
-// PipelineDeployment — `pipeline_deployments` (039; altered by 052 to add scope/owner).
 type PipelineDeployment struct {
 	ID           string     `gorm:"column:id;type:text;primaryKey" json:"id"`
 	TemplateID   string     `gorm:"column:template_id;type:text" json:"template_id,omitempty"`

@@ -69,9 +69,9 @@ func (r *PipelineTemplateRepo) GetUserPipelineStatsAfter(ctx context.Context, us
 // GetLatestVersionWithConflictCheck returns the latest version and checks for conflicts.
 func (r *PipelineTemplateRepo) GetLatestVersionWithConflictCheck(ctx context.Context, pipelineID string, baseVersion int) (*models.PipelineTemplate, bool, error) {
 	query := `
-	SELECT id, name, version, pipeline, node_count, active_version, scope, owner, created_at, updated_at
+	SELECT ` + pipelineTemplateSelectCols + `
 	FROM pipeline_templates
-	WHERE id = $1
+	WHERE name = (SELECT name FROM pipeline_templates WHERE id = $1)
 	ORDER BY version DESC
 	LIMIT 1
 	`

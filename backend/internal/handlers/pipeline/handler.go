@@ -211,7 +211,18 @@ func (h *Handler) SetActiveVersion(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "activeVersion must be >= 0", nil)
 		return
 	}
-	if err := h.uc.SetActiveVersion(c.Request.Context(), id, req.ActiveVersion); err != nil {
+	role, _ := c.Get(middleware.CtxKeyRole)
+	roleText, _ := role.(string)
+	isAdmin := roleText == "admin" || middleware.GetUserEmail(c) == "sdk"
+	if err := h.uc.SetActiveVersion(c.Request.Context(), id, req.ActiveVersion, isAdmin); err != nil {
+		if errors.Is(err, pipelineUC.ErrProdLocked) {
+			httpresp.Error(c, http.StatusForbidden, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
+		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}

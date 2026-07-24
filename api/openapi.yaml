@@ -3396,6 +3396,61 @@ components:
           minItems: 1
           items: { $ref: '#/components/schemas/PipelineBinding' }
 
+    # ── Pipeline Promotion ──────────────────────────────────────────────
+    PipelinePromotionDependency:
+      type: object
+      required: [nodeName, runtimeImage]
+      properties:
+        nodeName: { type: string, description: Node ID in the pipeline DAG }
+        componentId: { type: string }
+        releaseId: { type: string }
+        componentVersionLabel: { type: string }
+        runtimeImage: { type: string, description: Must be pinned by sha256 digest }
+
+    PipelinePromotionMappingRequirement:
+      type: object
+      required: [kind, sourceId]
+      properties:
+        kind: { type: string, enum: [config, secret, storage], description: Resource kind }
+        sourceId: { type: string, description: Dev resource identifier }
+        targetId: { type: string, description: Prod resource identifier (empty = blocker) }
+        nodeName: { type: string }
+        mountPath: { type: string }
+        required: { type: boolean, default: true }
+        resolution: { type: string, enum: [explicit, ''], description: explicit when targetId was provided }
+
+    PipelinePromotionBundle:
+      type: object
+      required: [sourceEnvironment, sourceTemplateId, sourceVersion, name, pipeline, bundleDigest]
+      properties:
+        sourceEnvironment: { type: string, enum: [dev] }
+        sourceTemplateId: { type: string }
+        sourceVersion: { type: integer }
+        name: { type: string }
+        owner: { type: string }
+        pipeline: { type: object, description: Full normalized pipeline definition }
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePromotionDependency' }
+        bundleDigest: { type: string, description: sha256:hex content digest }
+
+    PipelinePromotionPlan:
+      type: object
+      properties:
+        targetEnvironment: { type: string, enum: [prod] }
+        planDigest: { type: string }
+        bundle: { $ref: '#/components/schemas/PipelinePromotionBundle' }
+        requiredMappings:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePromotionMappingRequirement' }
+        warnings:
+          type: array
+          items: { type: string }
+        blockers:
+          type: array
+          items: { type: string }
+        ready: { type: boolean }
+
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
   /healthz:
@@ -6530,6 +6585,94 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineTemplate' }
 
+  # ── Pipeline Promotion ───────────────────────────────────────────────
+
+  /api/v1/pipelines/{id}/promotion-plan:
+    post:
+      tags: [Pipeline]
+      summary: Preview a dev-to-prod promotion plan
+      description: >
+        Returns a promotion plan with blockers, warnings, required resource
+        mappings, and a content-addressed plan digest. Admin role required.
+      security:
+        - DatabrewToken: []
+        - CookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Dev template ID
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target: { type: string, enum: [prod], default: prod }
+                mappings:
+                  type: array
+                  items: { $ref: '#/components/schemas/PipelinePromotionMappingRequirement' }
+      responses:
+        '200':
+          description: Promotion plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelinePromotionPlan' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: Plan has blockers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipelines/{id}/promote:
+    post:
+      tags: [Pipeline]
+      summary: Promote a dev pipeline to prod scope
+      description: >
+        Copies the dev template to the prod scope (same database). Admin role
+        required.
+      security:
+        - DatabrewToken: []
+        - CookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Dev template ID
+      responses:
+        '201':
+          description: Prod template created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineTemplate' }
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   # ── Deployment ────────────────────────────────────────────────────
   /api/v1/deploy:
     post:

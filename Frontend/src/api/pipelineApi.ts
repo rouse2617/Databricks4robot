@@ -480,8 +480,56 @@ export function savePipeline(
 	return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
 
-export function deletePipeline(id: string): Promise<void> {
-	return request<void>("DELETE", `/pipelines/${id}`);
+// ── Pipeline Promotion ─────────────────────────────────────────────────
+
+export interface PipelinePromotionDependency {
+	nodeName: string;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
+	runtimeImage: string;
+}
+
+export interface PipelinePromotionMappingRequirement {
+	kind: "config" | "secret" | "storage";
+	sourceId: string;
+	targetId?: string;
+	nodeName?: string;
+	mountPath?: string;
+	required: boolean;
+	resolution?: "explicit" | "";
+}
+
+export interface PipelinePromotionBundle {
+	sourceEnvironment: string;
+	sourceTemplateId: string;
+	sourceVersion: number;
+	name: string;
+	owner?: string;
+	pipeline: Pipeline;
+	dependencies: PipelinePromotionDependency[];
+	bundleDigest: string;
+}
+
+export interface PipelinePromotionPlan {
+	targetEnvironment: string;
+	planDigest: string;
+	bundle: PipelinePromotionBundle;
+	requiredMappings: PipelinePromotionMappingRequirement[];
+	warnings: string[];
+	blockers: string[];
+	ready: boolean;
+}
+
+export function getPromotionPlan(
+	id: string,
+	mappings?: PipelinePromotionMappingRequirement[],
+): Promise<PipelinePromotionPlan> {
+	return request<PipelinePromotionPlan>(
+		"POST",
+		`/pipelines/${id}/promotion-plan`,
+		{ mappings },
+	);
 }
 
 export function promotePipeline(id: string): Promise<PipelineTemplate> {
@@ -802,10 +850,10 @@ export function updatePipelineWithVersion(
 	pipeline: Pipeline,
 	baseVersion: number,
 	note?: string,
-): Promise<{ version: number; updatedAt: string }> {
-	return request<{ version: number; updatedAt: string }>(
-		"PUT",
-		`/pipelines/${id}`,
-		{ pipeline, baseVersion, note },
-	);
+): Promise<PipelineTemplate> {
+	return request<PipelineTemplate>("PUT", `/pipelines/${id}`, {
+		pipeline,
+		baseVersion,
+		note,
+	});
 }

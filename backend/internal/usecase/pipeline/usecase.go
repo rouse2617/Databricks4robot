@@ -43,6 +43,7 @@ var (
 	ErrInvalidArgument         = errors.New("invalid argument")
 	ErrExecutionTargetNotFound = errors.New("execution target not found")
 	ErrWorkflowUnavailable     = errors.New("workflow service unavailable: argo server not configured")
+	ErrVersionConflict         = errors.New("pipeline version conflict")
 	// ErrWorkflowSubmitIncomplete means the runtime accepted the submit call but
 	// no Argo UID ever materialized (e.g. a client rate-limited "phantom
 	// success"): the workflow CR isn't actually live. It is a RETRYABLE submit
@@ -3883,6 +3884,44 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 	return t, nil
 }
 
+// UpdateTemplate appends a normalized template version. Existing rows are
+// immutable snapshots; baseVersion prevents an editor from overwriting a newer
+// version that appeared after it loaded.
+func (uc *Usecase) UpdateTemplate(
+	ctx context.Context,
+	templateID string,
+	pipeline map[string]interface{},
+	baseVersion int,
+	owner string,
+	isAdmin bool,
+) (*models.PipelineTemplate, error) {
+	current, err := uc.templateRepo.FindByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("find template: %w", err)
+	}
+	if current == nil {
+		return nil, ErrTemplateNotFound
+	}
+	if current.Scope == "prod" && !isAdmin {
+		return nil, ErrProdLocked
+	}
+	if current.Scope != "prod" && !isAdmin && owner != "" && current.Owner != "" && current.Owner != owner {
+		return nil, ErrTemplateNotOwned
+	}
+
+	latest, conflict, err := uc.templateRepo.GetLatestVersionWithConflictCheck(ctx, templateID, baseVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check version conflict: %w", err)
+	}
+	if latest == nil {
+		return nil, ErrTemplateNotFound
+	}
+	if conflict {
+		return latest, ErrVersionConflict
+	}
+	return uc.SaveTemplate(ctx, current.Name, pipeline, current.Scope, owner)
+}
+
 // ListVersions returns all versions of a pipeline template. The identifier is
 // normally a template id; name fallback preserves compatibility with older
 // callers that used the route param as a template name.
@@ -3898,13 +3937,25 @@ func (uc *Usecase) ListVersions(ctx context.Context, templateIDOrName string) ([
 
 // SetActiveVersion pins a pipeline's default run version. When version is 0,
 // the pin is cleared (latest = active).
-func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string, version int) error {
+func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string, version int, isAdmin ...bool) error {
 	t, err := uc.templateRepo.FindByID(ctx, templateIDOrName)
 	if err != nil {
 		return fmt.Errorf("find template: %w", err)
 	}
 	if t == nil {
 		return ErrTemplateNotFound
+	}
+	if t.Scope == "prod" && (len(isAdmin) == 0 || !isAdmin[0]) {
+		return ErrProdLocked
+	}
+	if version > 0 {
+		selected, findErr := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, version)
+		if findErr != nil {
+			return fmt.Errorf("find active template version: %w", findErr)
+		}
+		if selected == nil || selected.Scope != t.Scope {
+			return ErrTemplateNotFound
+		}
 	}
 	return uc.templateRepo.SetActiveVersion(ctx, t.Name, version)
 }

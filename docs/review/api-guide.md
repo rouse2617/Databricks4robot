@@ -2567,6 +2567,48 @@ curl -s "$BASE/api/v1/pipelines/<ID1>/diff/<ID2>" \
 # 404: template 不存在
 ```
 
+### Pipeline 发布到正式版（promotion，CYB-3914）
+
+将 dev 草稿流水线复制到 prod scope（同库）。发布前可预览 readiness（blockers / warnings / mappings）。
+
+**前置条件：** 调用者需要 admin 角色（admin email 或 `sdk` 用户）。
+
+#### 预览 promotion plan
+
+```bash
+# POST /api/v1/pipelines/<DEV_TEMPLATE_ID>/promotion-plan
+curl -s "$BASE/api/v1/pipelines/<ID>/promotion-plan" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"target": "prod"}'
+
+# 响应示例 (ready):
+# {
+#   "targetEnvironment": "prod",
+#   "planDigest": "sha256:...",
+#   "bundle": { "sourceTemplateId": "<ID>", "sourceVersion": 3, ... },
+#   "requiredMappings": [],
+#   "blockers": [],
+#   "warnings": [],
+#   "ready": true
+# }
+# ready=false 时 blockers 列出所有阻塞项（非 digest 镜像 / 敏感明文 env / 缺少映射）
+# 403: 无 admin 权限
+```
+
+#### 执行 promotion
+
+```bash
+# POST /api/v1/pipelines/<DEV_TEMPLATE_ID>/promote
+curl -X POST "$BASE/api/v1/pipelines/<ID>/promote" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# { "id": "<PROD_ID>", "name": "my-pipeline", "scope": "prod", "version": 1, ... }
+# 201: 发布成功（返回 prod 模板）
+# 403: 无 admin 权限
+# 404: template 不存在
+```
+
 ### Pipeline 执行目标与资产驱动运行（CYB-1532/CYB-1534）
 
 查询可用执行目标。CYB-1534 后执行目标会落库，默认目标会由 backend 当前 Argo

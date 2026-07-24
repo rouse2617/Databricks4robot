@@ -319,29 +319,29 @@ WHERE asset_id = $1`
 // scanOneAsset scans a single asset row from a QueryRow result.
 func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.Asset, error) {
 	var (
-		a                models.Asset
-		lifecycleState   string
-		mcapFileID       *string
-		segLoc           *string
-		parentID         *string
-		rootID           *string
-		tenantID         *string
-		projectID        *string
-		segIndex         *int
-		parentStartOff   *int64
-		parentEndOff     *int64
-		splitMethod      *string
-		splitAlgoName    *string
-		splitAlgoVer     *string
-		splitRunID       *string
-		splitReason      *string
-		metadataBytes    []byte
-		filesBytes       []byte
-		algoInputsURIs   []byte
-		annotInputsURIs  []byte
-		logicalID        *string
-		revision         *int64
-		isCurrent        *bool
+		a               models.Asset
+		lifecycleState  string
+		mcapFileID      *string
+		segLoc          *string
+		parentID        *string
+		rootID          *string
+		tenantID        *string
+		projectID       *string
+		segIndex        *int
+		parentStartOff  *int64
+		parentEndOff    *int64
+		splitMethod     *string
+		splitAlgoName   *string
+		splitAlgoVer    *string
+		splitRunID      *string
+		splitReason     *string
+		metadataBytes   []byte
+		filesBytes      []byte
+		algoInputsURIs  []byte
+		annotInputsURIs []byte
+		logicalID       *string
+		revision        *int64
+		isCurrent       *bool
 		// CYB-3715: 7 mcap-file mirror columns. All nullable; scanned as
 		// *string so callers see empty string when NULL (matches the model
 		// convention where absence == "").

@@ -54,11 +54,14 @@ type RuntimeStorageMountBinding struct {
 
 // Component is a pipeline step backed by a container image.
 type Component struct {
-	Name            string     `json:"name" yaml:"name"`
-	Image           string     `json:"image" yaml:"image"`
-	ImagePullPolicy string     `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
-	Command         []string   `json:"command,omitempty" yaml:"command,omitempty"`
-	Args            []Argument `json:"args,omitempty" yaml:"args,omitempty"`
+	Name                  string     `json:"name" yaml:"name"`
+	ComponentID           string     `json:"componentId,omitempty" yaml:"componentId,omitempty"`
+	ReleaseID             string     `json:"releaseId,omitempty" yaml:"releaseId,omitempty"`
+	ComponentVersionLabel string     `json:"componentVersionLabel,omitempty" yaml:"componentVersionLabel,omitempty"`
+	Image                 string     `json:"image" yaml:"image"`
+	ImagePullPolicy       string     `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
+	Command               []string   `json:"command,omitempty" yaml:"command,omitempty"`
+	Args                  []Argument `json:"args,omitempty" yaml:"args,omitempty"`
 	// Mode controls the template type: "container" (default) or "script".
 	// "container" emits an Argo container template (suitable for any image).
 	// "script" emits an Argo script template: Source is injected as inline script,

@@ -11,15 +11,15 @@ import (
 // every time.
 func TestExtractMetadataTags_PangziShape(t *testing.T) {
 	meta := map[string]any{
-		"vibecap_tasks":    []any{"备餐操作", "台面清洁"},
-		"source_platform":  "vibecap",
+		"vibecap_tasks":   []any{"备餐操作", "台面清洁"},
+		"source_platform": "vibecap",
 		"location": map[string]any{
 			"address": "合肥新民医院, 合瓦路, 上城, 上城社区, 杏林街道, 庐阳区, 合肥市, 安徽省, 230061, 中国",
 		},
 		// Unknown fields — must be ignored, not create extra tags.
-		"collector_height":       1.6,
-		"collection_session_id":  "3b2f52a4-a5d6-4c1c-bb7d-82c8a502efcc",
-		"weather":                "sunny",
+		"collector_height":      1.6,
+		"collection_session_id": "3b2f52a4-a5d6-4c1c-bb7d-82c8a502efcc",
+		"weather":               "sunny",
 	}
 	got := extractMetadataTags("mcap123", "t1", "p1", meta)
 	// 2 task + 1 source + 1 city = 4 rows.
