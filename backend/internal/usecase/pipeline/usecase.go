@@ -4634,22 +4634,18 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	deployOpts := DeployOptions{TemplateID: templateID, TemplateVersion: t.Version}
+	// Spread caller opts so any DeployOptions field added later flows through
+	// without a code change here. The two fields this function resolves
+	// (template id/version) are then overridden — those overrides MUST stay
+	// after the spread. The old field-by-field copy silently dropped Priority
+	// (#553) and InstanceID (#554) when the batch submitter first started
+	// setting them; the spread eliminates that class of bug.
+	var deployOpts DeployOptions
 	if len(opts) > 0 {
-		deployOpts.TargetID = opts[0].TargetID
-		deployOpts.Owner = opts[0].Owner
-		deployOpts.BatchJobID = opts[0].BatchJobID
-		deployOpts.DryRun = opts[0].DryRun
-		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
-		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
-		deployOpts.ConfigSelection = opts[0].ConfigSelection
-		// Forward the per-dispatch Argo priority override. This copy is
-		// field-by-field (not a struct assignment) so any new DeployOptions field
-		// used by the batch submitter must be added here too, or it is silently
-		// dropped before reaching Deploy.
-		deployOpts.Priority = opts[0].Priority
-		deployOpts.InstanceID = opts[0].InstanceID
+		deployOpts = opts[0]
 	}
+	deployOpts.TemplateID = templateID
+	deployOpts.TemplateVersion = t.Version
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
 
