@@ -87,6 +87,9 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 	if err := db.Exec(ctx, `UPDATE backfill_jobs SET template_version = 7 WHERE id = $1`, jobRun); err != nil {
 		t.Fatalf("pin template_version: %v", err)
 	}
+	if err := db.Exec(ctx, `UPDATE backfill_jobs SET created_by = 'alice@example.com' WHERE id = $1`, jobRun); err != nil {
+		t.Fatalf("set created_by: %v", err)
+	}
 
 	repo := NewBackfillRepo(client)
 
@@ -98,6 +101,9 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 	for _, j := range jobs {
 		if j.ID == jobRun && j.TemplateVersion != 7 {
 			t.Errorf("job %s template_version = %d, want 7 (CYB-3677 pin)", jobRun, j.TemplateVersion)
+		}
+		if j.ID == jobRun && j.CreatedBy != "alice@example.com" {
+			t.Errorf("job %s created_by = %q, want alice@example.com", jobRun, j.CreatedBy)
 		}
 		if j.ID == jobPilot && j.TemplateVersion != 0 {
 			t.Errorf("job %s template_version = %d, want 0 (NULL coalesced)", jobPilot, j.TemplateVersion)

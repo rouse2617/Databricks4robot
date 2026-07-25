@@ -97,6 +97,7 @@ type fakeDeployer struct {
 	upsertForceNew []bool
 	deploys        []string
 	deployVersions []int
+	deployOwners   []string
 	commits        []string
 	failures       []string
 	refreshes      []string
@@ -160,6 +161,7 @@ func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string,
 	d.deploys = append(d.deploys, asset)
 	if len(opts) > 0 {
 		d.deployVersions = append(d.deployVersions, opts[0].TemplateVersion)
+		d.deployOwners = append(d.deployOwners, opts[0].Owner)
 	}
 	err := d.deployErrByAsset[asset]
 	d.mu.Unlock()
@@ -245,6 +247,23 @@ func TestSubmitter_SubmitsPendingItemToSubmitted(t *testing.T) {
 	}
 	if len(d.failures) != 0 {
 		t.Fatalf("failures = %v, want none", d.failures)
+	}
+}
+
+func TestSubmitter_ForwardsBatchCreatorAsDeployOwner(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1,
+		TotalCount: 1, CreatedBy: "alice@example.com",
+	}
+	uc, _, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+
+	uc.runSubmitterCycle(ctx)
+
+	if len(d.deployOwners) != 1 || d.deployOwners[0] != "alice@example.com" {
+		t.Fatalf("deploy owners = %v, want [alice@example.com]", d.deployOwners)
 	}
 }
 
