@@ -128,6 +128,16 @@ type WorkflowErrorState = {
 };
 
 const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
+// 与后端 state_machine.go 的 run 状态词表对齐（Succeeded/Failed/Error/
+// Cancelled/Expired）。仅这些明确终态才抑制 runtime_missing；空值、未知或
+// 未来新增的状态保持可诊断，不会被“非活动即终态”的反向判断误伤。
+const terminalWorkflowStatuses = new Set([
+	"Succeeded",
+	"Failed",
+	"Error",
+	"Cancelled",
+	"Expired",
+]);
 
 interface RunListFilterParams {
 	status?: string;
@@ -144,6 +154,9 @@ const STALE_ACTIVE_RUN_MS = 3 * 60 * 60 * 1000;
 
 const isActiveWorkflowStatus = (status?: string): boolean =>
 	activeWorkflowStatuses.has(status ?? "");
+
+const isTerminalWorkflowStatus = (status?: string): boolean =>
+	terminalWorkflowStatuses.has(status ?? "");
 
 const isStaleRunningWorkflow = (record: WorkflowSummary): boolean => {
 	if (!isActiveWorkflowStatus(record.status)) return false;
@@ -317,8 +330,23 @@ const isRedundantRunReason = (reason?: string, status?: string): boolean => {
 	return status === "Failed" || status === "Error";
 };
 
-const renderRunReasonTag = (reason?: string, message?: string) => {
+// runtime_missing 是任务在运行中才会有的临时状态（同步断流、ledger 还没更新
+// 等），任务一旦进入终态（成功/失败/过期/取消）就不应再展示，否则会误导排障。
+const shouldSuppressRuntimeMissing = (
+	reason?: string,
+	status?: string,
+): boolean => reason === "runtime_missing" && isTerminalWorkflowStatus(status);
+
+const renderRunReasonTag = (
+	reason?: string,
+	message?: string,
+	status?: string,
+) => {
 	if (!reason) return null;
+	// 对于已完成的任务（成功/失败/过期/取消等），不显示 runtime_missing
+	if (shouldSuppressRuntimeMissing(reason, status)) {
+		return null;
+	}
 	const tag = (
 		<Tag
 			color={RUN_REASON_COLORS[reason] ?? "default"}
@@ -1279,8 +1307,17 @@ export function WorkflowExecutionList({
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					(a.status ?? "").localeCompare(b.status ?? ""),
 				render: (s: string, record: ExecutionRecord) => {
-					const reason = record.blockingReason || record.failureReason;
-					const reasonMessage = record.blockingMessage || record.message;
+					// 终态以 failureReason 为准，活动态以 blockingReason 为准
+					// （对齐后端 AnnotateRunDiagnostics：终态写 failureReason、
+					// 活动态写 blockingReason）。避免残留的 blockingReason（如 stale
+					// runtime_missing）在终态遮住真实失败原因。
+					const terminal = isTerminalWorkflowStatus(s);
+					const reason = terminal
+						? record.failureReason || record.blockingReason
+						: record.blockingReason || record.failureReason;
+					const reasonMessage = terminal
+						? record.message || record.blockingMessage
+						: record.blockingMessage || record.message;
 					const redundant = isRedundantRunReason(reason, s);
 					const statusTag = (
 						<Tag
@@ -1309,7 +1346,7 @@ export function WorkflowExecutionList({
 									<Tag color="warning">疑似停滞</Tag>
 								</Tooltip>
 							) : null}
-							{redundant ? null : renderRunReasonTag(reason, reasonMessage)}
+							{redundant ? null : renderRunReasonTag(reason, reasonMessage, s)}
 						</Space>
 					);
 				},

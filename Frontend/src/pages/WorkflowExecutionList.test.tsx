@@ -506,4 +506,136 @@ describe("WorkflowExecutionList", () => {
 		// 池已加载(map 非空)时,不再把原始命名空间当作可见文本泄露出来。
 		expect(screen.queryByText("cyber-delivery-prod")).not.toBeInTheDocument();
 	});
+
+	// runtime_missing 只是运行期的临时诊断（同步断流、ledger 未更新）。它应该在
+	// 运行中的任务上展示，但在明确终态（成功/失败/异常/取消/过期）上被抑制，且不能
+	// 因为"非活动即终态"的反向判断误伤未知/新增状态，也不能遮住真实的失败原因。
+	it("shows the runtime_missing tag while the run is still active", async () => {
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-active-missing",
+					pipelineName: "active-run",
+					workflowName: "active-run",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					blockingReason: "runtime_missing",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("active-run")).toBeInTheDocument();
+		});
+		expect(screen.getByText("Runtime 不可用")).toBeInTheDocument();
+	});
+
+	it("hides a stale runtime_missing tag once the run reaches a terminal status", async () => {
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-terminal-missing",
+					pipelineName: "terminal-run",
+					workflowName: "terminal-run",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					finishedAt: "2026-06-02T01:01:00Z",
+					blockingReason: "runtime_missing",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("terminal-run")).toBeInTheDocument();
+		});
+		expect(screen.queryByText("Runtime 不可用")).not.toBeInTheDocument();
+	});
+
+	it("keeps the concrete failure reason on terminal runs", async () => {
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-terminal-failed",
+					pipelineName: "unschedulable-run",
+					workflowName: "unschedulable-run",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					finishedAt: "2026-06-02T01:01:00Z",
+					failureReason: "unschedulable",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("unschedulable-run")).toBeInTheDocument();
+		});
+		expect(screen.getByText("调度失败")).toBeInTheDocument();
+	});
+
+	it("does not hide runtime_missing for unknown (non-terminal) statuses", async () => {
+		// 未知/未来新增的状态既不在活动集合也不在终态集合，旧逻辑用
+		// !isActiveWorkflowStatus 会把它当作终态而误隐藏诊断，这里守住它。
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-unknown",
+					pipelineName: "unknown-status-run",
+					workflowName: "unknown-status-run",
+					status: "Terminating",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					blockingReason: "runtime_missing",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("unknown-status-run")).toBeInTheDocument();
+		});
+		expect(screen.getByText("Runtime 不可用")).toBeInTheDocument();
+	});
+
+	it("prefers the terminal failure reason over a stale blocking reason", async () => {
+		// 兼容旧数据/异常响应：终态同时带残留 blockingReason=runtime_missing 与真实
+		// failureReason 时，应展示真实失败原因，而不是先选中 runtime_missing 再隐藏。
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-both-reasons",
+					pipelineName: "both-reasons-run",
+					workflowName: "both-reasons-run",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+					finishedAt: "2026-06-02T01:01:00Z",
+					blockingReason: "runtime_missing",
+					failureReason: "runtime_config_projection_failed",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("both-reasons-run")).toBeInTheDocument();
+		});
+		expect(screen.getByText("运行配置投影失败")).toBeInTheDocument();
+		expect(screen.queryByText("Runtime 不可用")).not.toBeInTheDocument();
+	});
 });
