@@ -228,6 +228,54 @@ func TestRunSubmitterCycle_ClusterIsolation(t *testing.T) {
 	}
 }
 
+func TestRunSubmitterCycle_TargetFairnessPreventsBackpressureStarvation(t *testing.T) {
+	old := perJobSubmitBatch
+	perJobSubmitBatch = 1
+	defer func() { perJobSubmitBatch = old }()
+
+	jobs := make([]models.BackfillJob, 0, 26)
+	items := make([]models.BackfillItem, 0, 26)
+	for i := 0; i < 25; i++ {
+		jobID := fmt.Sprintf("job-a-%02d", i)
+		assetID := fmt.Sprintf("asset-a-%02d", i)
+		jobs = append(jobs, models.BackfillJob{
+			ID: jobID, Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+			FilterJSON: map[string]interface{}{"target_id": "target-a"},
+		})
+		items = append(items, models.BackfillItem{ID: "item-" + assetID, JobID: jobID, AssetID: assetID, Status: "pending"})
+	}
+	jobs = append(jobs, models.BackfillJob{
+		ID: "job-b-00", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"target_id": "target-b"},
+	})
+	items = append(items, models.BackfillItem{ID: "item-asset-b-00", JobID: "job-b-00", AssetID: "asset-b-00", Status: "pending"})
+
+	repo := &pausedSyncRepo{job: &jobs[0], extraJobs: jobs[1:], items: items}
+	q := &fakeSubmitQueue{repo: repo, jobs: jobs, lockedNow: map[string]bool{}}
+	d := &fakeDeployer{
+		deployErrByAsset:  map[string]error{},
+		runsByID:          map[string]*models.PipelineRun{},
+		clusterByTarget:   map[string]string{"target-a": "cluster-a", "target-b": "cluster-b"},
+		nsByTarget:        map[string]string{"target-a": "ns-a", "target-b": "ns-b"},
+		maxActiveByTarget: map[string]int{"target-a": 100, "target-b": 100},
+		activeWFByNS:      map[string]int{"ns-a": 150, "ns-b": 0},
+	}
+	uc := New(repo, nil)
+	uc.deployer = d
+	uc.SetSubmitQueue(q)
+
+	uc.runSubmitterCycle(context.Background())
+
+	if itemStatus(repo, "item-asset-b-00") != "submitted" {
+		t.Fatalf("healthy target-b item status = %q, want submitted", itemStatus(repo, "item-asset-b-00"))
+	}
+	for i := 0; i < 25; i++ {
+		if got := itemStatus(repo, fmt.Sprintf("item-asset-a-%02d", i)); got != "pending" {
+			t.Fatalf("backpressured target-a item %02d status = %q, want pending", i, got)
+		}
+	}
+}
+
 // ── CYB-3678: self-kick ──────────────────────────────────────────────────────
 
 // A channel that fills its whole batch (backlog remains) self-kicks instead
