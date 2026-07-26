@@ -689,6 +689,12 @@ ORDER BY bi.created_at ASC`
 	return out, nil
 }
 
+// PrepareItemsForRerun re-queues the given items for a human rerun: status →
+// pending with error_message, started_at and finished_at cleared, and
+// submit_attempts reset to 0 so the retry earns a fresh transient-retry budget
+// (parity with ResetFailedItems on the DLQ path — CYB-3678). Its only
+// production caller is Rerun (an explicit human retry), so zeroing the counter
+// here never touches automatic-dispatch attempt accounting.
 func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []string) error {
 	if len(itemIDs) == 0 {
 		return nil
@@ -697,7 +703,8 @@ func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []strin
 	  status = 'pending',
 	  error_message = NULL,
 	  started_at = NULL,
-	  finished_at = NULL
+	  finished_at = NULL,
+	  submit_attempts = 0
 	WHERE id = ANY($1)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, itemIDs); err != nil {

@@ -1079,3 +1079,96 @@ func TestPauseJob_StopRunning_DefersStopsToBackground(t *testing.T) {
 // CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery
 // stopgap) is deleted; dispatch is owned by the submitter (see submitter.go
 // and submitter_test.go).
+
+// ── CYB-TBD: Rerun transaction boundary (review P1-5) ────────────────────────
+
+// partialUpsertDeployer fails UpsertBatchSubtaskRun for the named assets and
+// succeeds for the rest, exercising rerun's mixed success/failure path.
+type partialUpsertDeployer struct {
+	*fakeDeployer
+	failAssets map[string]bool
+}
+
+func (d *partialUpsertDeployer) UpsertBatchSubtaskRun(ctx context.Context, in pipelineUC.BatchSubtaskRunInput) (string, string, error) {
+	if d.failAssets[in.AssetID] {
+		return "", "", errors.New("upsert failed for " + in.AssetID)
+	}
+	return d.fakeDeployer.UpsertBatchSubtaskRun(ctx, in)
+}
+
+// When every rerun re-submit fails, Rerun must not leave the job terminal while
+// its items dangle pending: each matched item keeps its failed status and
+// error_message, and the job is not moved to running (review P1-5).
+func TestRerun_AllUpsertsFail_NoDanglingPending(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{ID: "job-1", Status: "failed", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 2},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "failed", ErrorMessage: strPtr("boom-1")},
+			{ID: "item-2", JobID: "job-1", AssetID: "asset-2", Status: "failed", ErrorMessage: strPtr("boom-2")},
+		},
+	}
+	uc := New(repo, nil)
+	uc.deployer = &upsertFailingDeployer{fakeDeployer: &fakeDeployer{}}
+
+	result, err := uc.Rerun(context.Background(), "job-1", RerunRequest{Scope: "failed"})
+	if err != nil {
+		t.Fatalf("Rerun: %v", err)
+	}
+	if result.RetriedCount != 0 {
+		t.Fatalf("RetriedCount = %d, want 0", result.RetriedCount)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("Status = %q, want failed", result.Status)
+	}
+	if repo.job.Status != "failed" {
+		t.Fatalf("job status = %q, want failed (must not go running with no scheduled item)", repo.job.Status)
+	}
+	for i := range repo.items {
+		it := repo.items[i]
+		if it.Status != "failed" {
+			t.Fatalf("item %s status = %q, want failed (must not dangle pending)", it.ID, it.Status)
+		}
+		if it.ErrorMessage == nil {
+			t.Fatalf("item %s error_message wiped; original failure reason must be preserved", it.ID)
+		}
+	}
+}
+
+// On partial success only the successfully re-submitted item is re-queued
+// (pending + bound to a run) and the job moves to running; the failed item is
+// left untouched with its reason intact.
+func TestRerun_PartialSuccess_OnlyScheduledItemsRequeued(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{ID: "job-1", Status: "failed", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 2},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "failed", ErrorMessage: strPtr("boom-1")},
+			{ID: "item-2", JobID: "job-1", AssetID: "asset-2", Status: "failed", ErrorMessage: strPtr("boom-2")},
+		},
+	}
+	uc := New(repo, nil)
+	uc.deployer = &partialUpsertDeployer{fakeDeployer: &fakeDeployer{}, failAssets: map[string]bool{"asset-2": true}}
+
+	result, err := uc.Rerun(context.Background(), "job-1", RerunRequest{Scope: "failed"})
+	if err != nil {
+		t.Fatalf("Rerun: %v", err)
+	}
+	if result.RetriedCount != 1 {
+		t.Fatalf("RetriedCount = %d, want 1", result.RetriedCount)
+	}
+	if result.Status != "partial_success" {
+		t.Fatalf("Status = %q, want partial_success", result.Status)
+	}
+	if repo.job.Status != "running" {
+		t.Fatalf("job status = %q, want running", repo.job.Status)
+	}
+	byID := map[string]models.BackfillItem{}
+	for _, it := range repo.items {
+		byID[it.ID] = it
+	}
+	if got := byID["item-1"]; got.Status != "pending" || got.PipelineRunID == nil {
+		t.Fatalf("item-1 = {status:%q run:%v}, want pending + bound run", got.Status, got.PipelineRunID)
+	}
+	if got := byID["item-2"]; got.Status != "failed" || got.ErrorMessage == nil {
+		t.Fatalf("item-2 = {status:%q errNil:%v}, want untouched failed with reason", got.Status, got.ErrorMessage == nil)
+	}
+}

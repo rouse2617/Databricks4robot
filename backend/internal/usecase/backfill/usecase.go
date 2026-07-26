@@ -1007,28 +1007,23 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		Skipped:         []RerunSkippedItem{},
 	}
 	runnable := make([]models.BackfillItem, 0, len(items))
-	itemIDs := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.Status == "running" || item.Status == "submitted" {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: item.ID, Reason: "already_running"})
 			continue
 		}
 		runnable = append(runnable, item)
-		itemIDs = append(itemIDs, item.ID)
 	}
 	if req.DryRun {
 		return result, nil
 	}
 	retriedCount := 0
-	if err := uc.repo.PrepareItemsForRerun(ctx, itemIDs); err != nil {
-		return nil, err
-	}
 	scheduled := make([]models.BackfillItem, 0, len(runnable))
 	for i := range runnable {
-		if uc.pipelineUC == nil {
+		if uc.deployer == nil {
 			continue
 		}
-		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+		runID, workflowName, err := uc.deployer.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
 			TargetID:        targetID,
@@ -1038,6 +1033,22 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 			ForceNewAttempt: true,
 		})
 		if err != nil {
+			// Leave the item untouched on failure: it keeps its original
+			// (failed/cancelled) status and error_message. Flipping items to
+			// pending before their run exists is exactly what stranded them
+			// when every upsert failed — the job stayed terminal, so the
+			// submitter (which only scans running/pilot_running jobs) never
+			// picked up the dangling pending items, and their failure reason
+			// had already been wiped.
+			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
+			continue
+		}
+		// Success: only now is it safe to re-queue this item.
+		// PrepareItemsForRerun flips status→pending and clears error_message,
+		// started_at, finished_at, and submit_attempts (fresh transient-retry
+		// budget for the human retry); UpdateItemPipelineRun then binds the new
+		// run.
+		if err := uc.repo.PrepareItemsForRerun(ctx, []string{runnable[i].ID}); err != nil {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
 			continue
 		}
