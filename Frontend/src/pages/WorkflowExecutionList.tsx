@@ -36,6 +36,7 @@ import {
 	useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { assetsApi } from "../api/assets";
 import {
 	type BackfillItemAttemptsResult,
 	getBatchItemAttempts,
@@ -60,7 +61,7 @@ import { deleteWorkflow, type WorkflowSummary } from "../api/workflowApi";
 import AssetIdLink from "../components/common/AssetIdLink";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
-import { isCanonicalAssetId } from "../lib/assetId";
+import { isCanonicalAssetId, isUUID } from "../lib/assetId";
 import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
 import {
 	STATUS_ACCENT_COLORS,
@@ -115,6 +116,9 @@ type ExecutionRecord = WorkflowSummary & {
 	// CYB-3486: 资源池不再以命名空间示人 —— 列表用 executionTargetId 反查池名。
 	executionTargetId?: string;
 	videoDurationSec?: number;
+	// CYB-4011: source asset ids (often Grace UUIDs) — used to resolve the
+	// video duration via grace_video_id when video_durations has no row.
+	assetIds?: string[];
 	// CYB-3392: propagate the parent batch id so the row can render a
 	// clickable "批次" badge that jumps to BatchJobList detail.
 	batchJobId?: string;
@@ -486,6 +490,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		argoNamespace: run.argoNamespace,
 		executionTargetId: run.executionTargetId,
 		videoDurationSec: run.videoDurationSec,
+		assetIds: run.assetIds,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
@@ -554,6 +559,12 @@ export function WorkflowExecutionList({
 	messageApiRef.current = messageApi;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<ExecutionRecord[]>([]);
+	// CYB-4011: grace UUID → resolved video duration (seconds), used as a
+	// fallback when video_durations has no row for the Grace video id but the
+	// mirrored DataBrew asset carries duration_sec (resolved via grace_video_id).
+	const [resolvedDurationByUUID, setResolvedDurationByUUID] = useState<
+		Record<string, number>
+	>({});
 	// CYB-3486: executionTargetId → 资源池,用于把"命名空间"列换成"资源池"列。
 	// 加载失败时保持空表,render 会优雅回退到命名空间显示(不回归)。
 	const [targetById, setTargetById] = useState<Map<string, ExecutionTarget>>(
@@ -1087,6 +1098,45 @@ export function WorkflowExecutionList({
 		}));
 	}, [items]);
 
+	// CYB-4011: fill the video-duration column for rows whose source asset is a
+	// Grace UUID that video_durations has no row for. Resolve the UUID to its
+	// DataBrew asset via grace_video_id and use that asset's duration_sec.
+	// Read-only, per-UUID, cached; skips UUIDs already resolved (incl. misses).
+	useEffect(() => {
+		const pending = new Set<string>();
+		for (const r of items) {
+			if (r.videoDurationSec != null) continue;
+			for (const a of r.assetIds ?? []) {
+				if (a && isUUID(a) && !(a in resolvedDurationByUUID)) {
+					pending.add(a);
+				}
+			}
+		}
+		if (pending.size === 0) return;
+		let cancelled = false;
+		(async () => {
+			const entries = await Promise.all(
+				[...pending].map(async (uuid) => {
+					const asset = await assetsApi.resolveByGraceVideoID(uuid);
+					// -1 marks "resolved but no duration" so we don't re-query.
+					const sec =
+						asset?.duration_sec ??
+						(asset?.duration_ms != null ? asset.duration_ms / 1000 : -1);
+					return [uuid, sec] as const;
+				}),
+			);
+			if (cancelled) return;
+			setResolvedDurationByUUID((prev) => {
+				const next = { ...prev };
+				for (const [uuid, sec] of entries) next[uuid] = sec;
+				return next;
+			});
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [items, resolvedDurationByUUID]);
+
 	const executeOperation = useCallback(
 		async (
 			record: ExecutionRecord,
@@ -1552,8 +1602,21 @@ export function WorkflowExecutionList({
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					((a as ExecutionRecord).videoDurationSec ?? -1) -
 					((b as ExecutionRecord).videoDurationSec ?? -1),
-				render: (_: unknown, record: WorkflowSummary) =>
-					formatVideoDurationSec((record as ExecutionRecord).videoDurationSec),
+				render: (_: unknown, record: WorkflowSummary) => {
+					const rec = record as ExecutionRecord;
+					let sec = rec.videoDurationSec;
+					if (sec == null) {
+						// CYB-4011: fall back to a Grace-UUID-resolved duration.
+						for (const a of rec.assetIds ?? []) {
+							const r = resolvedDurationByUUID[a];
+							if (r != null && r >= 0) {
+								sec = r;
+								break;
+							}
+						}
+					}
+					return formatVideoDurationSec(sec);
+				},
 			},
 			{
 				title: (
@@ -1762,6 +1825,7 @@ export function WorkflowExecutionList({
 		targetById,
 		messageApi,
 		navigate,
+		resolvedDurationByUUID,
 	]);
 
 	const showSkeleton = !initializedOnce;

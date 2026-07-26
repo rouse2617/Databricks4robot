@@ -287,6 +287,17 @@ export const assetsApi = {
 	get: (id: string) =>
 		apiClient.get<Asset>(`/assets/${id}`).then((r) => r.data),
 
+	// CYB-4011: resolve a Grace video UUID to its DataBrew asset via the
+	// backfilled grace_video_id column. Returns the first matching asset, or
+	// null if none. Used as a frontend fallback when a Grace UUID is used
+	// where a DataBrew asset_id is expected (asset detail redirect; subtask
+	// video-duration column).
+	resolveByGraceVideoID: (graceVideoID: string) =>
+		assetsApi
+			.list({ filter: [`grace_video_id:eq:${graceVideoID}`], page_size: 1 })
+			.then((r) => r.items[0] ?? null)
+			.catch(() => null),
+
 	batchGet: (assetIds: string[]) =>
 		apiClient
 			.post<{ items: Asset[] }>("/assets:batch_get", { asset_ids: assetIds })
