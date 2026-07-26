@@ -1,3 +1,4 @@
+import { LinkOutlined } from "@ant-design/icons";
 import { Card, Collapse, Descriptions, Spin, Tag, Typography } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
@@ -67,6 +68,29 @@ export default function OverviewTab({ asset }: Props) {
 						</Text>
 					) : (
 						<code className="text-xs">—</code>
+					)}
+				</Descriptions.Item>
+				{/* CYB-4011: Grace video id — copy + jump when present, else 未关联. */}
+				<Descriptions.Item label="Grace Video ID">
+					{asset.grace_video_id ? (
+						<span
+							style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+						>
+							<Text code copyable className="text-xs">
+								{asset.grace_video_id}
+							</Text>
+							<a
+								href={`https://grace.cyberorigin.ai/videos/${asset.grace_video_id}`}
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								<LinkOutlined />
+							</a>
+						</span>
+					) : (
+						<Text type="secondary" className="text-xs">
+							未关联
+						</Text>
 					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="起始时间 (ns)">

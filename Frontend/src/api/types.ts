@@ -23,6 +23,8 @@ export interface AssetTagDetail {
 export interface Asset {
 	asset_id: string;
 	mcap_file_id: string;
+	/** CYB-4011: Grace video UUID, mirrored from mcap_files.grace_video_id. Nullable / unpopulated by default. */
+	grace_video_id?: string;
 	start_timestamp_ns: number;
 	end_timestamp_ns: number;
 	duration_sec?: number;
