@@ -30,8 +30,8 @@ The system SHALL persist an optional `grace_video_id` (Grace video UUID, stored 
 - **Then** `grace_video_id` 不出现在可用 facet 字段中（仅支持精确过滤）
 
 #### Scenario: 前端显示与占位
-- **Given** 用户打开某 mcap 的详情
-- **When** 该 mcap 有 `grace_video_id`
-- **Then** 页面显示该 id，可复制并可跳转 `https://grace.cyberorigin.ai/videos/<id>`
-- **When** 该 mcap 无 `grace_video_id`
-- **Then** 页面显示「未关联」占位，不提供跳转
+- **Given** 用户打开某 mcap 的详情（或资产详情页）
+- **When** 该资产有 `grace_video_id`
+- **Then** 页面显示该 id 且可复制（不提供跳转 Grace 的外链）
+- **When** 该资产无 `grace_video_id`
+- **Then** 页面显示「未关联」占位
