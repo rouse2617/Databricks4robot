@@ -58,6 +58,7 @@ const TAB_FALLBACK = (
 
 import { buildPreviewManifestFromSources } from "../hooks/assets/useAssetPreview";
 import { extractApiErrorMessage } from "../lib/apiError";
+import { isUUID } from "../lib/assetId";
 import {
 	getAssetStateColor,
 	getLifecycleState,
@@ -191,6 +192,7 @@ export default function AssetDetailPage() {
 				setLoading(true);
 			}
 			setAssetError(null);
+			let redirected = false;
 			assetsApi
 				.get(id)
 				.then(async (nextAsset) => {
@@ -202,19 +204,31 @@ export default function AssetDetailPage() {
 						buildPreviewManifestFromSources(nextAsset, null, foxgloveSource),
 					);
 				})
-				.catch((err) => {
+				.catch(async (err) => {
+					// CYB-4011: a Grace video UUID may be used where a DataBrew
+					// asset_id is expected (pipeline/subtask links). When the id is a
+					// UUID and the direct lookup 404s, resolve it via grace_video_id
+					// and redirect to the real DataBrew asset page.
+					if (isUUID(id)) {
+						const resolved = await assetsApi.resolveByGraceVideoID(id);
+						if (resolved?.asset_id && resolved.asset_id !== id) {
+							redirected = true;
+							navigate(`/assets/${resolved.asset_id}`, { replace: true });
+							return;
+						}
+					}
 					const nextError = extractApiErrorMessage(err, "加载资产失败");
 					setAssetError(nextError);
 					msg.error(nextError);
 				})
 				.finally(() => {
-					if (!background) {
+					if (!background && !redirected) {
 						setLoading(false);
 						setDidInitialLoad(true);
 					}
 				});
 		},
-		[id, msg],
+		[id, msg, navigate],
 	);
 
 	const loadAlgoEvents = useCallback(
