@@ -105,6 +105,9 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	if a.CameraModel != "" {
 		doc["camera_model"] = a.CameraModel
 	}
+	if a.GraceVideoID != "" { // CYB-4011
+		doc["grace_video_id"] = a.GraceVideoID
+	}
 	if a.DeviceID != "" {
 		doc["device_id"] = a.DeviceID
 	}
@@ -228,6 +231,9 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			}
 			if mf.CameraModel != "" {
 				mcapObj["camera_model"] = mf.CameraModel
+			}
+			if mf.GraceVideoID != "" { // CYB-4011
+				mcapObj["grace_video_id"] = mf.GraceVideoID
 			}
 			if mf.DataSource != "" {
 				mcapObj["data_source"] = mf.DataSource

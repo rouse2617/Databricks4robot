@@ -951,6 +951,7 @@ class McapFile(BaseModel):
     task_id: str | None = None
     device_id: str | None = None
     camera_model: str | None = None
+    grace_video_id: str | None = None
     data_source: str | None = None
     location_id: str | None = None
     scene_id: str | None = None
@@ -1004,6 +1005,11 @@ class McapCreateFileRequest(BaseModel):
     task_id: str | None = Field(None, examples=['task-route-42'])
     device_id: str | None = Field(None, examples=['lidar-unit-03'])
     camera_model: str | None = Field(None, examples=['FLIR-BFS-U3-16S2'])
+    grace_video_id: str | None = Field(
+        None,
+        description='CYB-4011: Grace video UUID (optional).',
+        examples=['019f9893-3456-7376-ae68-30a89227eb46'],
+    )
     data_source: str | None = Field(None, examples=['onboard-recording'])
     location_id: str | None = Field(None, examples=['loc-sf-downtown'])
     scene_id: str | None = Field(None, examples=['scene-heavy-traffic'])

@@ -565,6 +565,8 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	echo "--- RUN_WRITES=1 — §1.1 mcap-files + assets (unique ids) ---"
 	MCAP_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(8)))")
 	HASH=$(openssl rand -hex 16 2>/dev/null || python3 -c "import secrets; print(secrets.token_hex(16))")
+	# CYB-4011: exercise grace_video_id round-trip (create → get → filter).
+	GRACE_VID="019f9893-3456-7376-ae68-30a89227eb46"
 	MCAP_JSON=$(cat <<EOF
 {
   "mcap_file_id": "${MCAP_ID}",
@@ -580,11 +582,20 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
   "vendor_id": "smoke",
   "device_id": "smoke-1",
   "scene_id": "indoor",
+  "grace_video_id": "${GRACE_VID}",
   "owner": "api-guide-smoke"
 }
 EOF
 )
 	post "POST mcap-files" "/api/v1/mcap-files" "$MCAP_JSON" >/dev/null
+	# CYB-4011: mcap get returns the grace_video_id we wrote.
+	MCAP_GET=$(get "GET mcap-files/{id} (CYB-4011 grace_video_id)" "/api/v1/mcap-files/${MCAP_ID}")
+	GOT_GVID=$(echo "$MCAP_GET" | python3 -c "import sys,json; print(json.load(sys.stdin).get('grace_video_id',''))" 2>/dev/null || echo "")
+	if [[ "$GOT_GVID" == "$GRACE_VID" ]]; then ok "mcap grace_video_id round-trips"; else bad "mcap grace_video_id expected ${GRACE_VID}, got ${GOT_GVID:-<empty>}"; fi
+	# CYB-4011: filter by grace_video_id (filter-only exact field) hits the mirrored raw_mcap asset.
+	GVID_FILTER=$(post "POST queries/run filter=grace_video_id (CYB-4011)" "/api/v1/queries/run" "{\"schema_version\":\"v1\",\"mode\":\"structured\",\"scope\":{\"resource\":\"assets\"},\"where\":{\"pred\":{\"field\":\"grace_video_id\",\"op\":\"eq\",\"value\":\"${GRACE_VID}\"}},\"page\":{\"page\":1,\"page_size\":5}}")
+	GVID_HIT=$(echo "$GVID_FILTER" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('1' if any(i.get('grace_video_id')=='${GRACE_VID}' or i.get('asset_id')=='${MCAP_ID}' for i in items) else '0')" 2>/dev/null || echo "0")
+	if [[ "$GVID_HIT" == "1" ]]; then ok "grace_video_id filter returns the mirrored asset"; else bad "grace_video_id filter did not return the mirrored asset"; fi
 	ASSET_JSON=$(cat <<EOF
 {
   "mcap_file_id": "${MCAP_ID}",

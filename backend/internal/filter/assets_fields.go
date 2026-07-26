@@ -35,6 +35,7 @@ var mcapFilterColumns = map[string]bool{
 	"vendor_id":      true,
 	"device_id":      true,
 	"camera_model":   true,
+	"grace_video_id": true,
 	"scene_id":       true,
 	"location_id":    true,
 	"environment_id": true,
@@ -88,6 +89,7 @@ var exactFieldSpecs = map[string]fieldSpec{
 	// mcap.<col> remains available for callers who still address them via
 	// the mcap subquery syntax.
 	"camera_model":      {Canonical: "camera_model", StorageField: "camera_model", IsJSONB: false},
+	"grace_video_id":    {Canonical: "grace_video_id", StorageField: "grace_video_id", IsJSONB: false}, // CYB-4011: filter-only, not faceted
 	"device_id":         {Canonical: "device_id", StorageField: "device_id", IsJSONB: false},
 	"collector_id":      {Canonical: "collector_id", StorageField: "collector_id", IsJSONB: false},
 	"scene_id":          {Canonical: "scene_id", StorageField: "scene_id", IsJSONB: false},

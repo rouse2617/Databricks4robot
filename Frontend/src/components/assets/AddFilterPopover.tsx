@@ -117,6 +117,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
 	{ key: "mcap.vendor_id", label: "设备商 vendor_id", type: "string" },
 	{ key: "mcap.device_id", label: "设备 device_id", type: "string" },
 	{ key: "mcap.scene_id", label: "采集场景 scene_id", type: "string" },
+	{ key: "grace_video_id", label: "Grace Video ID", type: "string" },
 	{ key: "owner", label: "Owner", type: "string" },
 	{ key: "reviewer", label: "Reviewer", type: "string" },
 	{ key: "tags_flat.notes", label: "备注", type: "string" },

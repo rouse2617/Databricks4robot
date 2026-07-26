@@ -427,8 +427,8 @@ func TestAssetRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "a1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 46 columns after CYB-3715 (39 + 7 mcap-file mirror
-	// columns inserted before created_at).
+	// Get now scans 47 columns after CYB-3715 (39 + 7 mcap-file mirror
+	// columns) + CYB-4011 grace_video_id, all inserted before created_at.
 	db.queryRow = &fakeRow{values: []any{
 		"a1", "m1", int64(10), int64(20), (*string)(nil),
 		"ready", "segment", int64(1200),
@@ -440,11 +440,11 @@ func TestAssetRepo(t *testing.T) {
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
-		// CYB-3715: camera_model, device_id, collector_id, scene_id,
-		// data_source, collection_method, source_platform — all NULL
-		// for this fixture (no producer-identity path exercised here).
+		// CYB-3715: camera_model, (CYB-4011: grace_video_id), device_id,
+		// collector_id, scene_id, data_source, collection_method,
+		// source_platform — all NULL for this fixture.
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-		(*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -564,14 +564,14 @@ func TestMcapRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "m1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 31 columns (all real columns including provenance/retention/metadata)
+	// Get now scans 32 columns (all real columns including provenance/retention/metadata + CYB-4011 grace_video_id)
 	db.queryRow = &fakeRow{values: []any{
 		"m1", "md5", (*string)(nil), // raw_hash_sha256
 		"gs://x", int64(10), (*int64)(nil), // file_duration_ms
 		int64(1), int64(2),
 		int(3), int(4), "pending", "o",
 		"", "", "", "", // vendor_id, collector_id, task_id, device_id
-		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		"", "", "", "", "", "", "", // camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method
 		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
 		[]byte(`{}`), []byte(`{"p":"done"}`), // metadata, process_state
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
@@ -795,7 +795,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 
 	// COUNT returns 2
 	db.queryRow = &fakeRow{values: []any{int64(2)}}
-	// DATA returns 2 rows (38 columns after CYB-3715e added 7 flatten mirror
+	// DATA returns 2 rows (47 columns: 39 base + 7 CYB-3715 flatten + 1 CYB-4011 grace_video_id
 	// columns — camera_model / device_id / collector_id / scene_id /
 	// data_source / collection_method / source_platform — between the
 	// logical_asset_id/revision/is_current triplet and created_at).
@@ -808,7 +808,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-			(*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -818,7 +818,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-			(*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -852,7 +852,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-			(*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -1125,7 +1125,7 @@ func buildAssetRow(
 		// the row and overwrite these positions when exercising the
 		// flatten path.
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-		(*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1281,7 +1281,7 @@ func TestGet_SegTypeMirrorsAssetType(t *testing.T) {
 func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 	ctx := context.Background()
 
-	// List queries return 38 columns after CYB-3715e (includes metadata/files/
+	// List queries return 47 columns (39 base + 7 CYB-3715 flatten + 1 CYB-4011; includes metadata/files/
 	// algo/annot JSONB + 7 flatten mirror columns before created_at).
 	row := []any{
 		"lf-1", "m1", int64(100), int64(200), (*string)(nil),
@@ -1292,7 +1292,7 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-		(*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1919,7 +1919,7 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 // McapFileRepo tests
 // ---------------------------------------------------------------------------
 
-// buildMcapRow builds a fake row slice (31 columns) matching the SELECT in
+// buildMcapRow builds a fake row slice (32 columns) matching the SELECT in
 // McapFileRepo.Get() and List().
 func buildMcapRow(
 	mcapFileID string,
@@ -1940,7 +1940,7 @@ func buildMcapRow(
 		startNs, endNs,
 		channelCount, chunkCount, ingestState, owner,
 		"", "", "", "", // vendor_id, collector_id, task_id, device_id
-		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		"", "", "", "", "", "", "", // camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method
 		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
 		[]byte(`{}`), processState, // metadata, process_state
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
@@ -2040,9 +2040,9 @@ func TestMcapFileRepo_Set_WritesRealColumns(t *testing.T) {
 	}
 
 	args := tracker.calls[0]
-	// Set() passes 31 args (all real columns including provenance/retention/metadata)
-	if len(args) != 31 {
-		t.Fatalf("expected 31 args, got %d", len(args))
+	// Set() passes 32 args (all real columns including provenance/retention/metadata + CYB-4011 grace_video_id)
+	if len(args) != 32 {
+		t.Fatalf("expected 32 args, got %d", len(args))
 	}
 
 	if args[0] != "m-dw-1" {
@@ -2073,10 +2073,10 @@ func TestMcapFileRepo_Set_WritesRealColumns(t *testing.T) {
 		t.Errorf("owner: got %v, want bob", args[11])
 	}
 
-	// Verify process_state JSONB (arg index 27 in the new layout).
-	psRaw, ok := args[27].([]byte)
+	// Verify process_state JSONB (arg index 28 after CYB-4011 grace_video_id).
+	psRaw, ok := args[28].([]byte)
 	if !ok {
-		t.Fatalf("process_state arg is not []byte: %T", args[27])
+		t.Fatalf("process_state arg is not []byte: %T", args[28])
 	}
 	var ps map[string]string
 	if err := json.Unmarshal(psRaw, &ps); err != nil {
@@ -2266,8 +2266,8 @@ func TestProperty_McapFileRealColumnConsistency(t *testing.T) {
 		}
 
 		args := tracker.calls[0]
-		if len(args) != 31 {
-			t.Fatalf("expected 31 args, got %d", len(args))
+		if len(args) != 32 {
+			t.Fatalf("expected 32 args, got %d", len(args))
 		}
 
 		// Verify real column values.

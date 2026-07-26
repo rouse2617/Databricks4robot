@@ -130,6 +130,7 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 				Metadata:         map[string]interface{}{},
 				Files:            map[string]string{},
 				CameraModel:      f.CameraModel,
+				GraceVideoID:     f.GraceVideoID, // CYB-4011: mirror onto raw_mcap asset
 				DeviceID:         f.DeviceID,
 				CollectorID:      f.CollectorID,
 				SceneID:          f.SceneID,
@@ -236,6 +237,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 		TaskID           string                 `json:"task_id"`
 		DeviceID         string                 `json:"device_id"`
 		CameraModel      string                 `json:"camera_model"`
+		GraceVideoID     string                 `json:"grace_video_id"` // CYB-4011
 		DataSource       string                 `json:"data_source"`
 		LocationID       string                 `json:"location_id"`
 		SceneID          string                 `json:"scene_id"`
@@ -282,6 +284,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 		TaskID:           req.TaskID,
 		DeviceID:         req.DeviceID,
 		CameraModel:      req.CameraModel,
+		GraceVideoID:     req.GraceVideoID, // CYB-4011
 		DataSource:       req.DataSource,
 		LocationID:       req.LocationID,
 		SceneID:          req.SceneID,
