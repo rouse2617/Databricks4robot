@@ -1975,6 +1975,22 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID/resume" \
   -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
+### 7.2.2b Internal：回填 mcap 的 grace_video_id（CYB-4011）
+
+> mcap 没有通用 update 端点。此内部路由用于把 Grace video id（按 `raw_hash_md5` 解析）回填到**已存在**的 mcap 行——同时更新事实源 `mcap_files.grace_video_id` 和镜像列 `assets.grace_video_id`，并发 `asset_updated` 事件触发 ES 重建，使 `grace_video_id` 可过滤。幂等（已是该值时直接 200 返回不变）。鉴权同 `X-Databrew-Token`（生产另需 `X-Admin-Token`）。
+
+```bash
+curl -sS -X PATCH "$BASE/api/v1/internal/mcap-files/$MCAP_ID/grace-video-id" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"grace_video_id": "019f9893-3456-7376-ae68-30a89227eb46"}' | jq .
+```
+
+- `200` — 返回更新后的 mcap（`grace_video_id` 已写入）。
+- `400 INVALID_ARGUMENT` — 未传 `grace_video_id` 或为空。
+- `404 MCAP_FILE_NOT_FOUND` — mcap 不存在。
+
+回填后 mcap 详情页与资产详情页两处均显示 Grace Video ID；`filter=grace_video_id:eq:<uuid>` 可命中。
+
 ### 7.2.3 Internal：硬删除 assets / mcap_files
 
 > ⚠️ 这是**物理删除**接口，与公共 `DELETE /api/v1/assets/:id`（soft delete）行为不同。仅在导入失控、需要彻底清理时使用。

@@ -389,6 +389,13 @@ func RegisterAll(
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
 		}
 
+		// CYB-4011: internal backfill of grace_video_id onto an existing mcap
+		// file (+ mirrored asset). No general mcap update endpoint exists.
+		if adminRoutesEnabled {
+			internalMcap := api.Group("/internal", adminAuth)
+			internalMcap.PATCH("/mcap-files/:id/grace-video-id", mcapHandler.BackfillGraceVideoID)
+		}
+
 		// API key management (issue/list/revoke keys for SDK/API callers).
 		// Under admin auth; keys themselves carry scopes for least-privilege.
 		if apiKeyHandler != nil { // pragma: allowlist secret

@@ -5678,6 +5678,52 @@ paths:
       responses:
         '204':
           description: Purged
+  /api/v1/internal/mcap-files/{id}/grace-video-id:
+    patch:
+      tags: [Internal]
+      summary: Backfill grace_video_id on an existing mcap file
+      description: >
+        CYB-4011: sets grace_video_id (Grace video UUID, resolved by
+        raw_hash_md5) on an existing mcap file and its mirrored raw_mcap asset,
+        then emits an asset_updated event so the ES document reindexes. There is
+        no general mcap update endpoint; this internal route exists to backfill
+        the Grace link onto rows created before the column existed. Idempotent.
+      security:
+        - DatabrewToken: []
+        - AdminToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: mcap_file_id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grace_video_id]
+              properties:
+                grace_video_id:
+                  type: string
+                  example: "019f9893-3456-7376-ae68-30a89227eb46"
+      responses:
+        '200':
+          description: Updated (or unchanged if already set)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McapFile' }
+        '400':
+          description: grace_video_id missing/empty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: mcap file not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
   /api/v1/internal/assets:batch_delete:
     post:
       tags: [Internal]
