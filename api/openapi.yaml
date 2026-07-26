@@ -295,6 +295,7 @@ components:
         # Nullable text/uuid; empty when the asset has no upstream mcap_file
         # or the upstream row leaves the field blank.
         camera_model: { type: string, description: "CYB-3715: mirrored from mcap_files.camera_model." }
+        grace_video_id: { type: string, description: "CYB-4011: Grace video UUID, mirrored from mcap_files.grace_video_id. Nullable / unpopulated by default." }
         device_id: { type: string, description: "CYB-3715: mirrored from mcap_files.device_id (uuid text)." }
         collector_id: { type: string, description: "CYB-3715: mirrored from mcap_files.collector_id (uuid text)." }
         scene_id: { type: string, description: "CYB-3715: mirrored from mcap_files.scene_id (uuid text)." }
@@ -1265,6 +1266,7 @@ components:
         task_id: { type: string }
         device_id: { type: string }
         camera_model: { type: string }
+        grace_video_id: { type: string, description: "CYB-4011: Grace video UUID. Nullable / unpopulated by default." }
         data_source: { type: string }
         location_id: { type: string }
         scene_id: { type: string }
@@ -1313,6 +1315,7 @@ components:
         task_id: { type: string, example: "task-route-42" }
         device_id: { type: string, example: "lidar-unit-03" }
         camera_model: { type: string, example: "FLIR-BFS-U3-16S2" }
+        grace_video_id: { type: string, example: "019f9893-3456-7376-ae68-30a89227eb46", description: "CYB-4011: Grace video UUID (optional)." }
         data_source: { type: string, example: "onboard-recording" }
         location_id: { type: string, example: "loc-sf-downtown" }
         scene_id: { type: string, example: "scene-heavy-traffic" }

@@ -2176,6 +2176,7 @@ curl "$BASE/api/v1/search/sync-progress" \
 - `algos.<key>.status` / `algos.<key>.score` — 算法状态（nested，后端自动转 nested query）。
 - 顶层字段：`lifecycle_state` / `asset_type` / `owner` / `duration_ms` / `created_at` / `updated_at`。
 - 顶层字段（CYB-3715 新增，mcap 反范式镜像）：`camera_model` / `device_id` / `collector_id` / `scene_id` / `data_source` / `collection_method` / `source_platform`。前四条同时作为 facet 桶字段(uuid 类 filter-only,camera_model/data_source/collection_method/source_platform 支持 facet)。示例：`{"where":{"pred":{"field":"camera_model","op":"eq","value":"CyberCap2"}}}`。
+- 顶层字段（CYB-4011）：`grace_video_id` — Grace video UUID，从 `mcap_files.grace_video_id` 镜像到 assets。**仅精确过滤（filter-only），不作 facet 桶**（UUID 高基数）。默认未填充（可空）。示例：`filter=grace_video_id:eq:019f9893-3456-7376-ae68-30a89227eb46` 或 Query IR `{"where":{"pred":{"field":"grace_video_id","op":"eq","value":"019f9893-3456-7376-ae68-30a89227eb46"}}}`。创建 mcap 时可选传 `grace_video_id`；mcap get/list 与 `/queries/run` 响应回读该字段。
 
 常见误区:
 

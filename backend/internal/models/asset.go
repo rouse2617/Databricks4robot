@@ -118,6 +118,10 @@ type Asset struct {
 	CollectionMethod string `json:"collection_method,omitempty"`
 	SourcePlatform   string `json:"source_platform,omitempty"`
 
+	// CYB-4011: Grace video UUID, mirrored from mcap_files.grace_video_id.
+	// Nullable / unpopulated by default (interface reserved; no backfill yet).
+	GraceVideoID string `json:"grace_video_id,omitempty"`
+
 	// Multi-version identity (CYB-1013). Legacy rows may have empty/zero values.
 	LogicalAssetID string `json:"logical_asset_id,omitempty"`
 	Revision       int64  `json:"revision,omitempty"`
@@ -213,6 +217,7 @@ type McapFile struct {
 	TaskID           string `json:"task_id,omitempty"`
 	DeviceID         string `json:"device_id,omitempty"`
 	CameraModel      string `json:"camera_model,omitempty"`
+	GraceVideoID     string `json:"grace_video_id,omitempty"` // CYB-4011: Grace video UUID (nullable, unpopulated by default)
 	DataSource       string `json:"data_source,omitempty"`
 	LocationID       string `json:"location_id,omitempty"`
 	SceneID          string `json:"scene_id,omitempty"`

@@ -464,6 +464,7 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 			VendorID:       "vendor-x",
 			DeviceID:       "device-y",
 			CameraModel:    "CyberCap2",
+			GraceVideoID:   "019f9893-3456-7376-ae68-30a89227eb46",
 			DataSource:     "vendor",
 			SceneID:        "scene-z",
 			EnvironmentID:  "warehouse",
@@ -484,6 +485,7 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 		"vendor_id":        "vendor-x",
 		"device_id":        "device-y",
 		"camera_model":     "CyberCap2",
+		"grace_video_id":   "019f9893-3456-7376-ae68-30a89227eb46",
 		"data_source":      "vendor",
 		"scene_id":         "scene-z",
 		"environment_id":   "warehouse",
@@ -509,6 +511,7 @@ func TestBuild_EmitsCYB3715TopLevelFlattenFields(t *testing.T) {
 			McapFileID:       "m-3715",
 			AssetType:        "raw_mcap",
 			CameraModel:      "CyberCap2",
+			GraceVideoID:     "019f9893-3456-7376-ae68-30a89227eb46",
 			DeviceID:         "11111111-1111-1111-1111-111111111111",
 			CollectorID:      "22222222-2222-2222-2222-222222222222",
 			SceneID:          "33333333-3333-3333-3333-333333333333",
@@ -527,6 +530,7 @@ func TestBuild_EmitsCYB3715TopLevelFlattenFields(t *testing.T) {
 	}
 	wantTop := map[string]any{
 		"camera_model":      "CyberCap2",
+		"grace_video_id":    "019f9893-3456-7376-ae68-30a89227eb46",
 		"device_id":         "11111111-1111-1111-1111-111111111111",
 		"collector_id":      "22222222-2222-2222-2222-222222222222",
 		"scene_id":          "33333333-3333-3333-3333-333333333333",
@@ -560,7 +564,7 @@ func TestBuild_OmitsEmptyCYB3715FlattenFields(t *testing.T) {
 		t.Fatalf("Build: ok=%v err=%v", ok, err)
 	}
 	for _, k := range []string{
-		"camera_model", "device_id", "collector_id", "scene_id",
+		"camera_model", "grace_video_id", "device_id", "collector_id", "scene_id",
 		"data_source", "collection_method", "source_platform",
 	} {
 		if _, present := doc[k]; present {

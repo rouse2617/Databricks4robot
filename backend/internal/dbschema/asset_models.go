@@ -254,6 +254,7 @@ type McapFile struct {
 	TaskID               string     `gorm:"column:task_id;type:text" json:"task_id,omitempty"`
 	DeviceID             string     `gorm:"column:device_id;type:text" json:"device_id,omitempty"`
 	CameraModel          string     `gorm:"column:camera_model;type:text" json:"camera_model,omitempty"`
+	GraceVideoID         string     `gorm:"column:grace_video_id;type:text" json:"grace_video_id,omitempty"` // CYB-4011: Grace video UUID (nullable, unpopulated by default)
 	DataSource           string     `gorm:"column:data_source;type:text" json:"data_source,omitempty"`
 	LocationID           string     `gorm:"column:location_id;type:text" json:"location_id,omitempty"`
 	SceneID              string     `gorm:"column:scene_id;type:text" json:"scene_id,omitempty"`

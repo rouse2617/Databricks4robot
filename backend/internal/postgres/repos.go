@@ -258,7 +258,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
-  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
@@ -309,7 +309,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
-  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1`
@@ -346,6 +346,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		// *string so callers see empty string when NULL (matches the model
 		// convention where absence == "").
 		cameraModel      *string
+		graceVideoID     *string // CYB-4011
 		deviceID         *string
 		collectorID      *string
 		sceneID          *string
@@ -364,7 +365,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		&tenantID, &projectID,
 		&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 		&logicalID, &revision, &isCurrent,
-		&cameraModel, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
+		&cameraModel, &graceVideoID, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -433,6 +434,9 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	if cameraModel != nil {
 		a.CameraModel = *cameraModel
 	}
+	if graceVideoID != nil { // CYB-4011
+		a.GraceVideoID = *graceVideoID
+	}
 	if deviceID != nil {
 		a.DeviceID = *deviceID
 	}
@@ -480,7 +484,7 @@ INSERT INTO assets(
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
   tenant_id, project_id,
   is_deleted,
-  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -490,8 +494,8 @@ INSERT INTO assets(
   $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
   $25,$26,
   FALSE,
-  $27,$28,$29,$30,$31,$32,$33,
-  $34,$35,$36
+  $27,$28,$29,$30,$31,$32,$33,$34,
+  $35,$36,$37
 )
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
@@ -520,6 +524,7 @@ ON CONFLICT (asset_id) DO UPDATE SET
   tenant_id=EXCLUDED.tenant_id,
   project_id=EXCLUDED.project_id,
   camera_model=EXCLUDED.camera_model,
+  grace_video_id=EXCLUDED.grace_video_id,
   device_id=EXCLUDED.device_id,
   collector_id=EXCLUDED.collector_id,
   scene_id=EXCLUDED.scene_id,
@@ -540,7 +545,7 @@ WHERE assets.version = EXCLUDED.version - 1`
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
-		nullableText(a.CameraModel), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.CameraModel), nullableText(a.GraceVideoID), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
 		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
@@ -572,7 +577,7 @@ INSERT INTO assets(
   tenant_id, project_id,
   is_deleted,
   logical_asset_id, revision, is_current,
-  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -583,8 +588,8 @@ INSERT INTO assets(
   $25,$26,
   FALSE,
   $27,$28,$29,
-  $30,$31,$32,$33,$34,$35,$36,
-  $37,$38,$39
+  $30,$31,$32,$33,$34,$35,$36,$37,
+  $38,$39,$40
 )`
 
 	metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON, parentAssetID, rootAssetID, tenantID, projectID := bindAssetJSONAndRefs(a)
@@ -599,7 +604,7 @@ INSERT INTO assets(
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
 		logicalID, revision, isCurrent,
-		nullableText(a.CameraModel), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.CameraModel), nullableText(a.GraceVideoID), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
 		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
@@ -932,7 +937,7 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
   COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
   COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
-  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(camera_model, ''), COALESCE(grace_video_id, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version,
@@ -955,6 +960,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		taskID            *string
 		deviceID          *string
 		cameraModel       *string
+		graceVideoID      *string // CYB-4011
 		dataSource        *string
 		locationID        *string
 		sceneID           *string
@@ -967,7 +973,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		&f.StartTimestampNs, &f.EndTimestampNs,
 		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner,
 		&vendorID, &collectorID, &taskID, &deviceID,
-		&cameraModel, &dataSource, &locationID, &sceneID, &environmentID, &collectionMethod,
+		&cameraModel, &graceVideoID, &dataSource, &locationID, &sceneID, &environmentID, &collectionMethod,
 		&retentionTier, &expireAt, &tenantID, &projectID,
 		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
@@ -1000,6 +1006,9 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	}
 	if cameraModel != nil {
 		f.CameraModel = *cameraModel
+	}
+	if graceVideoID != nil { // CYB-4011
+		f.GraceVideoID = *graceVideoID
 	}
 	if dataSource != nil {
 		f.DataSource = *dataSource
@@ -1072,7 +1081,7 @@ INSERT INTO mcap_files(
   start_timestamp_ns, end_timestamp_ns,
   channel_count, chunk_count, ingest_state,
   owner, vendor_id, collector_id, task_id, device_id,
-  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
+  camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method,
   retention_tier, expire_at, tenant_id, project_id,
   metadata, process_state,
   created_at, updated_at, version
@@ -1082,10 +1091,10 @@ INSERT INTO mcap_files(
   $7,$8,
   $9,$10,$11,
   $12,$13,$14,$15,$16,
-  $17,$18,$19,$20,$21,$22,
-  $23,$24,$25,$26,
-  $27::jsonb,$28::jsonb,
-  $29,$30,$31
+  $17,$18,$19,$20,$21,$22,$23,
+  $24,$25,$26,$27,
+  $28::jsonb,$29::jsonb,
+  $30,$31,$32
 )
 ON CONFLICT (mcap_file_id) DO UPDATE SET
   raw_hash_md5=EXCLUDED.raw_hash_md5,
@@ -1104,6 +1113,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
   task_id=EXCLUDED.task_id,
   device_id=EXCLUDED.device_id,
   camera_model=EXCLUDED.camera_model,
+  grace_video_id=EXCLUDED.grace_video_id,
   data_source=EXCLUDED.data_source,
   location_id=EXCLUDED.location_id,
   scene_id=EXCLUDED.scene_id,
@@ -1123,7 +1133,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
 		f.StartTimestampNs, f.EndTimestampNs,
 		f.ChannelCount, f.ChunkCount, string(f.IngestState),
 		f.Owner, nullable(f.VendorID), nullable(f.CollectorID), nullable(f.TaskID), nullable(f.DeviceID),
-		nullable(f.CameraModel), nullable(f.DataSource), nullable(f.LocationID), nullable(f.SceneID), nullable(f.EnvironmentID), nullable(f.CollectionMethod),
+		nullable(f.CameraModel), nullable(f.GraceVideoID), nullable(f.DataSource), nullable(f.LocationID), nullable(f.SceneID), nullable(f.EnvironmentID), nullable(f.CollectionMethod),
 		nullable(f.RetentionTier), f.ExpireAt, nullable(f.TenantID), nullable(f.ProjectID),
 		metadataJSON, processStateJSON,
 		f.CreatedAt, f.UpdatedAt, f.Version,
@@ -1172,7 +1182,7 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
   COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
   COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
-  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(camera_model, ''), COALESCE(grace_video_id, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version,
@@ -1209,7 +1219,7 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 			&f.StartTimestampNs, &f.EndTimestampNs,
 			&f.ChannelCount, &f.ChunkCount, &is, &f.Owner,
 			&f.VendorID, &f.CollectorID, &f.TaskID, &f.DeviceID,
-			&f.CameraModel, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
+			&f.CameraModel, &f.GraceVideoID, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
 			&retentionTier, &expireAt, &tenantID, &projectID,
 			&metadataBytes, &processStateBytes,
 			&f.CreatedAt, &f.UpdatedAt, &f.Version,
@@ -2699,7 +2709,7 @@ func (r *AssetRepo) listWithFiltersData(ctx context.Context, whereSQL string, wh
   parent_asset_id, root_asset_id, tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   logical_asset_id, revision, is_current,
-  camera_model, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBySQL, len(allArgs)+1, len(allArgs)+2,
@@ -2731,6 +2741,7 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			revision         *int64
 			isCurrent        *bool
 			cameraModel      *string
+			graceVideoID     *string // CYB-4011
 			deviceID         *string
 			collectorID      *string
 			sceneID          *string
@@ -2746,13 +2757,16 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			&parentID, &rootID, &tenantID, &projectID,
 			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 			&logicalID, &revision, &isCurrent,
-			&cameraModel, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
+			&cameraModel, &graceVideoID, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
 		}
 		if cameraModel != nil {
 			a.CameraModel = *cameraModel
+		}
+		if graceVideoID != nil { // CYB-4011
+			a.GraceVideoID = *graceVideoID
 		}
 		if deviceID != nil {
 			a.DeviceID = *deviceID

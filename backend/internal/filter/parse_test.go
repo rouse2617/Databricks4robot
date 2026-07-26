@@ -497,6 +497,7 @@ func TestParseFilter_CYB3715FlattenFields(t *testing.T) {
 		storage string
 	}{
 		{"camera_model", "camera_model"},
+		{"grace_video_id", "grace_video_id"}, // CYB-4011
 		{"device_id", "device_id"},
 		{"collector_id", "collector_id"},
 		{"scene_id", "scene_id"},

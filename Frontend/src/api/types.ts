@@ -98,6 +98,8 @@ export interface McapFile {
 	chunk_count?: number;
 	/** CYB-3285: # of asset_type='segment' with this mcap_file_id (derived, backend). */
 	segment_count?: number;
+	/** CYB-4011: Grace video UUID. Nullable / unpopulated by default. */
+	grace_video_id?: string;
 	owner: string;
 	process_state?: Record<string, string>;
 	created_at: string;
