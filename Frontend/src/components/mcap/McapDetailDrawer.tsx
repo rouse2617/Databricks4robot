@@ -240,24 +240,12 @@ export default function McapDetailDrawer({
 								{mcapFile.raw_hash_md5 || "—"}
 							</Text>
 						</Descriptions.Item>
-						{/* CYB-4011: Grace video id — copy + jump when present, else 未关联. */}
+						{/* CYB-4011: Grace video id — copyable value, else 未关联. */}
 						<Descriptions.Item label="Grace Video ID" span={2}>
 							{mcapFile.grace_video_id ? (
-								<Space size={4}>
-									<Text copyable className="font-mono text-xs">
-										{mcapFile.grace_video_id}
-									</Text>
-									<Tooltip title="在 Grace 中查看">
-										<Button
-											type="text"
-											size="small"
-											icon={<LinkOutlined />}
-											href={`https://grace.cyberorigin.ai/videos/${mcapFile.grace_video_id}`}
-											target="_blank"
-											rel="noopener noreferrer"
-										/>
-									</Tooltip>
-								</Space>
+								<Text copyable className="font-mono text-xs">
+									{mcapFile.grace_video_id}
+								</Text>
 							) : (
 								<Text type="secondary">未关联</Text>
 							)}
