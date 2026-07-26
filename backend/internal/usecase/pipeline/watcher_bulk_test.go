@@ -317,7 +317,7 @@ func TestBulkSync_EmptyActiveSet(t *testing.T) {
 	if n := uc.bulkSyncActiveRuns(context.Background(), runs, nil, 50, false); n != 0 {
 		t.Fatalf("synced = %d, want 0", n)
 	}
-	if n := uc.bulkSyncClusterRuns(context.Background(), runs, nil, 50, false); n != 0 {
+	if n := uc.bulkSyncClusterRuns(context.Background(), "default", runs, nil, 50, false); n != 0 {
 		t.Fatalf("cluster synced = %d, want 0", n)
 	}
 }

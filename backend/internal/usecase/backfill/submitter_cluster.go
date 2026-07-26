@@ -233,18 +233,25 @@ type clusterCycleLocker interface {
 // unresolvable target, a disabled ceiling (maxActive<=0), or a missing watcher
 // observation, so a cold start or a stalled watcher never wedges dispatch.
 func (uc *Usecase) deferForBackpressure(ctx context.Context, job *models.BackfillJob) bool {
-	ns, maxActive, ok := uc.deployer.ResolveTargetBackpressure(ctx, targetIDFromBackfillJob(job))
+	targetID := targetIDFromBackfillJob(job)
+	ns, maxActive, ok := uc.deployer.ResolveTargetBackpressure(ctx, targetID)
 	if !ok || maxActive <= 0 {
 		return false
 	}
-	active, known := uc.deployer.ActiveWorkflowCount(ns)
+	// Read the observation under the same (cluster, namespace) key the watcher
+	// writes: two clusters sharing a namespace name must not read each other's
+	// count (CYB-3681 review). The watcher writer and this reader resolve
+	// cluster through different fallbacks ("cluster-default" vs "default"), so
+	// the key is normalized on both sides — see normalizeBackpressureCluster.
+	cluster := uc.deployer.ResolveTargetClusterID(ctx, targetID)
+	active, known := uc.deployer.ActiveWorkflowCount(cluster, ns)
 	if !known || active < maxActive {
-		metrics.DispatcherBackpressureActive.WithLabelValues(ns).Set(0)
+		metrics.DispatcherBackpressureActive.WithLabelValues(cluster, ns).Set(0)
 		return false
 	}
-	metrics.DispatcherBackpressureActive.WithLabelValues(ns).Set(1)
+	metrics.DispatcherBackpressureActive.WithLabelValues(cluster, ns).Set(1)
 	slog.Warn("submitter: backpressure — namespace at/over active-workflow ceiling, deferring dispatch",
-		"namespace", ns, "active", active, "threshold", maxActive, "jobID", job.ID)
+		"cluster", cluster, "namespace", ns, "active", active, "threshold", maxActive, "jobID", job.ID)
 	return true
 }
 

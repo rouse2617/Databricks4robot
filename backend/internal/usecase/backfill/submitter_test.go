@@ -88,7 +88,7 @@ type fakeDeployer struct {
 	runsByID          map[string]*models.PipelineRun
 	getRunErr         error
 	refreshNoUID      bool              // RefreshRunFromWorkflowByName returns a uid-less run
-	activeWFByNS      map[string]int    // namespace → observed active workflow count (backpressure tests)
+	activeWFByKey     map[string]int    // "cluster/namespace" → observed active workflow count (backpressure tests)
 	nsByTarget        map[string]string // targetID → namespace (backpressure tests)
 	maxActiveByTarget map[string]int    // targetID → maxActiveWorkflows (backpressure tests)
 
@@ -112,13 +112,13 @@ func (d *fakeDeployer) ResolveTargetClusterID(_ context.Context, targetID string
 	return "default"
 }
 
-func (d *fakeDeployer) ActiveWorkflowCount(namespace string) (int, bool) {
+func (d *fakeDeployer) ActiveWorkflowCount(cluster, namespace string) (int, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.activeWFByNS == nil {
+	if d.activeWFByKey == nil {
 		return 0, false
 	}
-	n, ok := d.activeWFByNS[namespace]
+	n, ok := d.activeWFByKey[cluster+"/"+namespace]
 	return n, ok
 }
 
@@ -431,7 +431,8 @@ func TestSubmitter_BackpressureDefersWhenNamespaceSaturated(t *testing.T) {
 	})
 	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
 	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
-	d.activeWFByNS = map[string]int{"ns-prod": 150} // at/over the 100 ceiling
+	// cluster unset → ResolveTargetClusterID returns "default" → key "default/ns-prod".
+	d.activeWFByKey = map[string]int{"default/ns-prod": 150} // at/over the 100 ceiling
 
 	uc.runSubmitterCycle(ctx)
 
@@ -455,7 +456,7 @@ func TestSubmitter_BackpressureAllowsBelowCeiling(t *testing.T) {
 	})
 	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
 	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
-	d.activeWFByNS = map[string]int{"ns-prod": 42} // under the ceiling
+	d.activeWFByKey = map[string]int{"default/ns-prod": 42} // under the ceiling
 
 	uc.runSubmitterCycle(ctx)
 
@@ -480,7 +481,7 @@ func TestSubmitter_BackpressureFailsOpenWhenCountUnknown(t *testing.T) {
 	})
 	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
 	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
-	// activeWFByNS empty → ActiveWorkflowCount returns (0,false) → fail open.
+	// activeWFByKey empty → ActiveWorkflowCount returns (0,false) → fail open.
 
 	uc.runSubmitterCycle(ctx)
 

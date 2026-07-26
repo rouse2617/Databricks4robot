@@ -80,11 +80,13 @@ type Usecase struct {
 	watcherRVMu      sync.Mutex
 	watcherAppliedRV map[string]string
 	// activeWFCount is the last active (pending+running) workflow count the
-	// bulk-pull watcher observed per cluster (CYB-3681 backpressure). The
-	// backfill submitter reads it via ActiveWorkflowCount as an admission
-	// signal — stop minting new workflows when the control plane is already
-	// saturated. In-memory; unknown until the first scan (backpressure fails
-	// open, i.e. dispatch proceeds, when unknown).
+	// bulk-pull watcher observed per (cluster, namespace) (CYB-3681
+	// backpressure). The backfill submitter reads it via ActiveWorkflowCount
+	// as an admission signal — stop minting new workflows when the control
+	// plane is already saturated. Keyed by backpressureKey (cluster+namespace)
+	// so two clusters sharing a namespace name (e.g. "argo") no longer
+	// overwrite each other's counts. In-memory; unknown until the first scan
+	// (backpressure fails open, i.e. dispatch proceeds, when unknown).
 	activeWFMu    sync.Mutex
 	activeWFCount map[string]int
 	// watcherLoadCursor paginates loadRunsForWatcherSync's active-run fetch
@@ -1318,7 +1320,8 @@ func (uc *Usecase) ExecutionTargetsStatus(ctx context.Context) ([]models.TargetR
 		if ns == "" {
 			ns = uc.namespace
 		}
-		active, observed := uc.ActiveWorkflowCount(ns)
+		cluster := uc.ResolveTargetClusterID(ctx, t.ID)
+		active, observed := uc.ActiveWorkflowCount(cluster, ns)
 		out = append(out, models.TargetRuntimeStatus{
 			TargetID:           t.ID,
 			Namespace:          ns,

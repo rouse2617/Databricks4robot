@@ -2143,7 +2143,9 @@ func TestExecutionTargetsStatus(t *testing.T) {
 		runRepo:    runRepo,
 		namespace:  "fallback-ns",
 	}
-	uc.activeWFCount = map[string]int{"ns-a": 147} // ns-b deliberately unobserved
+	// Keyed by (cluster, namespace): these targets have no ClusterID, so the
+	// reader resolves cluster "default" → key "default/ns-a". ns-b unobserved.
+	uc.activeWFCount = map[string]int{"default/ns-a": 147}
 
 	got, err := uc.ExecutionTargetsStatus(context.Background())
 	if err != nil {

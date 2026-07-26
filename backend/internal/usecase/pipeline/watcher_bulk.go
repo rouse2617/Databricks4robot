@@ -85,28 +85,56 @@ func (uc *Usecase) forgetWorkflowApplied(runID string) {
 	delete(uc.watcherAppliedRV, runID)
 }
 
+// normalizeBackpressureCluster collapses the two "default cluster" spellings
+// onto one key. The watcher's writer resolves cluster via resolveRunClusterID
+// (fallback "cluster-default"); the submitter's reader resolves via
+// ResolveTargetClusterID (fallback "default"). Without this, a default-cluster
+// namespace would be written under "cluster-default/ns" and read under
+// "default/ns" — the observation would never be found and backpressure would
+// silently fail open for the default cluster. Real cluster ids (non-empty,
+// non-default) pass through unchanged and match on both sides.
+func normalizeBackpressureCluster(cluster string) string {
+	switch strings.TrimSpace(cluster) {
+	case "", "default", "cluster-default":
+		return "default"
+	default:
+		return strings.TrimSpace(cluster)
+	}
+}
+
+// backpressureKey is the composite (cluster, namespace) key for the active
+// workflow observation map. Namespace alone collided across clusters that
+// share a namespace name (e.g. two clusters both using "argo"): the last
+// writer won, so one cluster read the other's count and either over-dispatched
+// into a saturated controller or wedged an idle one (CYB-3681 review).
+func backpressureKey(cluster, namespace string) string {
+	return normalizeBackpressureCluster(cluster) + "/" + strings.TrimSpace(namespace)
+}
+
 // recordActiveWorkflowCount stores (and publishes as a gauge) the active
-// (completed=false) workflow count the bulk watcher observed for a namespace
-// this scan. ActiveWorkflowCount reads it back for backfill admission
-// backpressure (CYB-3681).
-func (uc *Usecase) recordActiveWorkflowCount(namespace string, n int) {
+// (completed=false) workflow count the bulk watcher observed for a
+// (cluster, namespace) this scan. ActiveWorkflowCount reads it back for
+// backfill admission backpressure (CYB-3681).
+func (uc *Usecase) recordActiveWorkflowCount(cluster, namespace string, n int) {
 	uc.activeWFMu.Lock()
 	if uc.activeWFCount == nil {
 		uc.activeWFCount = map[string]int{}
 	}
-	uc.activeWFCount[namespace] = n
+	uc.activeWFCount[backpressureKey(cluster, namespace)] = n
 	uc.activeWFMu.Unlock()
-	metrics.DispatcherActiveWorkflows.WithLabelValues(namespace).Set(float64(n))
+	metrics.DispatcherActiveWorkflows.
+		WithLabelValues(normalizeBackpressureCluster(cluster), strings.TrimSpace(namespace)).
+		Set(float64(n))
 }
 
 // ActiveWorkflowCount returns the last active (pending+running) workflow count
-// observed for a namespace and whether any observation exists yet. The
-// backfill submitter gates dispatch on it; a missing observation (false) fails
-// open so dispatch is never wedged by a cold start or a stalled watcher.
-func (uc *Usecase) ActiveWorkflowCount(namespace string) (int, bool) {
+// observed for a (cluster, namespace) and whether any observation exists yet.
+// The backfill submitter gates dispatch on it; a missing observation (false)
+// fails open so dispatch is never wedged by a cold start or a stalled watcher.
+func (uc *Usecase) ActiveWorkflowCount(cluster, namespace string) (int, bool) {
 	uc.activeWFMu.Lock()
 	defer uc.activeWFMu.Unlock()
-	n, ok := uc.activeWFCount[namespace]
+	n, ok := uc.activeWFCount[backpressureKey(cluster, namespace)]
 	return n, ok
 }
 
@@ -131,11 +159,10 @@ func (uc *Usecase) bulkSyncActiveRuns(ctx context.Context, runs []models.Pipelin
 		wg.Add(1)
 		go func(cluster string, group []int) {
 			defer wg.Done()
-			n := uc.bulkSyncClusterRuns(ctx, runs, group, residualLimit, recalibrate)
+			n := uc.bulkSyncClusterRuns(ctx, cluster, runs, group, residualLimit, recalibrate)
 			mu.Lock()
 			synced += n
 			mu.Unlock()
-			_ = cluster
 		}(cluster, group)
 	}
 	wg.Wait()
@@ -144,7 +171,7 @@ func (uc *Usecase) bulkSyncActiveRuns(ctx context.Context, runs []models.Pipelin
 
 // bulkSyncClusterRuns handles one cluster's group: LIST once per namespace,
 // apply matches, probe absentees.
-func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.PipelineRun, group []int, residualLimit int, recalibrate bool) int {
+func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, cluster string, runs []models.PipelineRun, group []int, residualLimit int, recalibrate bool) int {
 	if len(group) == 0 {
 		return 0
 	}
@@ -188,13 +215,15 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 	if !listOK {
 		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
 	}
-	// Publish per-namespace active (completed=false) workflow counts so the
-	// backfill submitter can backpressure dispatch against control-plane
-	// saturation (CYB-3681). Per-namespace, not per-cluster: the Argo
-	// controller (the thing that OOMs) is scoped to one namespace, and a
-	// cluster can map to several namespaces.
+	// Publish active (completed=false) workflow counts per (cluster, namespace)
+	// so the backfill submitter can backpressure dispatch against control-plane
+	// saturation (CYB-3681). The key is composite because two clusters can
+	// share a namespace name (e.g. both "argo"): keying on namespace alone let
+	// the last writer clobber the other cluster's count, so one cluster read a
+	// foreign saturation signal. The Argo controller that actually OOMs is
+	// scoped to one (cluster, namespace) pair, which is exactly this key.
 	for ns, n := range nsActive {
-		uc.recordActiveWorkflowCount(ns, n)
+		uc.recordActiveWorkflowCount(cluster, ns, n)
 	}
 
 	// Snapshot-hit apply is serialized (no network — just DB writes with

@@ -62,10 +62,12 @@ type subtaskDeployer interface {
 	// maxActive=0 disables backpressure for the target.
 	ResolveTargetBackpressure(ctx context.Context, targetID string) (namespace string, maxActive int, ok bool)
 	// ActiveWorkflowCount returns the last active (pending+running) workflow
-	// count the watcher observed for a namespace, and whether an observation
-	// exists. Backpressure fails open (dispatch proceeds) when unknown, so a
-	// cold start or a stalled watcher never wedges dispatch.
-	ActiveWorkflowCount(namespace string) (int, bool)
+	// count the watcher observed for a (cluster, namespace), and whether an
+	// observation exists. Keyed by cluster too because two clusters can share
+	// a namespace name; namespace alone crossed their counts (CYB-3681 review).
+	// Backpressure fails open (dispatch proceeds) when unknown, so a cold start
+	// or a stalled watcher never wedges dispatch.
+	ActiveWorkflowCount(cluster, namespace string) (int, bool)
 }
 
 // SetSubmitQueue wires the submitter's persistence surface. In production

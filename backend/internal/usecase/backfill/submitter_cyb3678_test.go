@@ -258,7 +258,7 @@ func TestRunSubmitterCycle_TargetFairnessPreventsBackpressureStarvation(t *testi
 		clusterByTarget:   map[string]string{"target-a": "cluster-a", "target-b": "cluster-b"},
 		nsByTarget:        map[string]string{"target-a": "ns-a", "target-b": "ns-b"},
 		maxActiveByTarget: map[string]int{"target-a": 100, "target-b": 100},
-		activeWFByNS:      map[string]int{"ns-a": 150, "ns-b": 0},
+		activeWFByKey:     map[string]int{"cluster-a/ns-a": 150, "cluster-b/ns-b": 0},
 	}
 	uc := New(repo, nil)
 	uc.deployer = d
@@ -273,6 +273,57 @@ func TestRunSubmitterCycle_TargetFairnessPreventsBackpressureStarvation(t *testi
 		if got := itemStatus(repo, fmt.Sprintf("item-asset-a-%02d", i)); got != "pending" {
 			t.Fatalf("backpressured target-a item %02d status = %q, want pending", i, got)
 		}
+	}
+}
+
+// CYB-3681 review: two clusters that share a namespace NAME (e.g. both use
+// "argo") must not read each other's active-workflow count. Cluster-a's "argo"
+// is saturated (150 ≥ 100) while cluster-b's "argo" is idle (0). With the old
+// namespace-only key both collided on "argo" and the last watcher write won —
+// either wedging the idle cluster or over-dispatching into the saturated one.
+// The composite (cluster, namespace) key keeps the two observations distinct,
+// so cluster-a defers while cluster-b proceeds.
+func TestRunSubmitterCycle_BackpressureKeyIsolatesSharedNamespaceAcrossClusters(t *testing.T) {
+	old := perJobSubmitBatch
+	perJobSubmitBatch = 1
+	defer func() { perJobSubmitBatch = old }()
+
+	jobs := []models.BackfillJob{
+		{
+			ID: "job-a", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+			FilterJSON: map[string]interface{}{"target_id": "target-a"},
+		},
+		{
+			ID: "job-b", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+			FilterJSON: map[string]interface{}{"target_id": "target-b"},
+		},
+	}
+	items := []models.BackfillItem{
+		{ID: "item-a", JobID: "job-a", AssetID: "asset-a", Status: "pending"},
+		{ID: "item-b", JobID: "job-b", AssetID: "asset-b", Status: "pending"},
+	}
+
+	repo := &pausedSyncRepo{job: &jobs[0], extraJobs: jobs[1:], items: items}
+	q := &fakeSubmitQueue{repo: repo, jobs: jobs, lockedNow: map[string]bool{}}
+	d := &fakeDeployer{
+		deployErrByAsset:  map[string]error{},
+		runsByID:          map[string]*models.PipelineRun{},
+		clusterByTarget:   map[string]string{"target-a": "cluster-a", "target-b": "cluster-b"},
+		nsByTarget:        map[string]string{"target-a": "argo", "target-b": "argo"},
+		maxActiveByTarget: map[string]int{"target-a": 100, "target-b": 100},
+		activeWFByKey:     map[string]int{"cluster-a/argo": 150, "cluster-b/argo": 0},
+	}
+	uc := New(repo, nil)
+	uc.deployer = d
+	uc.SetSubmitQueue(q)
+
+	uc.runSubmitterCycle(context.Background())
+
+	if got := itemStatus(repo, "item-a"); got != "pending" {
+		t.Fatalf("cluster-a item status = %q, want pending (its own argo is saturated)", got)
+	}
+	if got := itemStatus(repo, "item-b"); got != "submitted" {
+		t.Fatalf("cluster-b item status = %q, want submitted (its own argo is idle, not cluster-a's count)", got)
 	}
 }
 

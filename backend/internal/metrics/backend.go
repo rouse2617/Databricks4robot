@@ -332,16 +332,16 @@ var (
 	DispatcherActiveWorkflows = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "backend_dispatcher_active_workflows",
-			Help: "Active (pending+running) workflows the bulk watcher observed per namespace — the backpressure input signal (CYB-3681)",
+			Help: "Active (pending+running) workflows the bulk watcher observed per (cluster, namespace) — the backpressure input signal (CYB-3681)",
 		},
-		[]string{"namespace"},
+		[]string{"cluster", "namespace"},
 	)
 	DispatcherBackpressureActive = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "backend_dispatcher_backpressure_active",
-			Help: "1 when a namespace's dispatch is deferred by control-plane backpressure (active workflows at/over the target's threshold) (CYB-3681)",
+			Help: "1 when a (cluster, namespace)'s dispatch is deferred by control-plane backpressure (active workflows at/over the target's threshold) (CYB-3681)",
 		},
-		[]string{"namespace"},
+		[]string{"cluster", "namespace"},
 	)
 	DispatcherChannelBreakerTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
