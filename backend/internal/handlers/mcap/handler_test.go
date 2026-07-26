@@ -101,11 +101,27 @@ func (m *mcapEventRepo) PublishStateCounts(context.Context) (map[string]int64, e
 type stubAssetRepo struct {
 	repository.AssetRepository
 	insertNewFn func(context.Context, *models.Asset) error
+	getFn       func(context.Context, string) (*models.Asset, error)
+	setFn       func(context.Context, *models.Asset) error
 }
 
 func (s *stubAssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
 	if s.insertNewFn != nil {
 		return s.insertNewFn(ctx, a)
+	}
+	return nil
+}
+
+// getFn/setFn added for CYB-4011 BackfillGraceVideoID (mirror-column update).
+func (s *stubAssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, assetID)
+	}
+	return nil, nil
+}
+func (s *stubAssetRepo) Set(ctx context.Context, a *models.Asset) error {
+	if s.setFn != nil {
+		return s.setFn(ctx, a)
 	}
 	return nil
 }
@@ -442,5 +458,71 @@ func TestMcapHandlers_AppendOutboxEvents(t *testing.T) {
 	}
 	if len(eventTypes) != 2 || eventTypes[0] != "mcap_file_created" || eventTypes[1] != "mcap_upload_finalized" {
 		t.Fatalf("unexpected event types: %#v", eventTypes)
+	}
+}
+
+// CYB-4011: PATCH /internal/mcap-files/:id/grace-video-id backfill endpoint.
+func TestBackfillGraceVideoID(t *testing.T) {
+	const gvid = "019f9893-3456-7376-ae68-30a89227eb46"
+
+	build := func() (*Handler, *mockMcapRepo, *stubAssetRepo, *mcapEventRepo) {
+		repo := &mockMcapRepo{
+			getFn: func(_ context.Context, id string) (*models.McapFile, error) {
+				return &models.McapFile{McapFileID: id, RawHashMD5: "md5-1"}, nil
+			},
+		}
+		asset := &stubAssetRepo{
+			getFn: func(_ context.Context, id string) (*models.Asset, error) {
+				return &models.Asset{AssetID: id, McapFileID: id, AssetType: "raw_mcap", Version: 1}, nil
+			},
+		}
+		ev := &mcapEventRepo{}
+		h := New(repo)
+		h.SetAssetRepo(asset)
+		h.SetEventRepo(ev)
+		return h, repo, asset, ev
+	}
+
+	route := func(h *Handler) *gin.Engine {
+		return setupMcapRouter(http.MethodPatch, "/internal/mcap-files/:id/grace-video-id", h.BackfillGraceVideoID)
+	}
+
+	// missing grace_video_id -> 400
+	h, _, _, _ := build()
+	w := doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/grace-video-id", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body: expected 400, got %d", w.Code)
+	}
+
+	// not found -> 404
+	h, repo, _, _ := build()
+	repo.getFn = func(context.Context, string) (*models.McapFile, error) { return nil, nil }
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/grace-video-id", map[string]any{"grace_video_id": gvid})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("not found: expected 404, got %d", w.Code)
+	}
+
+	// happy path: mcap Set + asset Set + asset_updated event
+	h, repo, asset, ev := build()
+	var mcapSet, assetSet string
+	var eventTypes []string
+	repo.setFn = func(_ context.Context, f *models.McapFile) error { mcapSet = f.GraceVideoID; return nil }
+	asset.setFn = func(_ context.Context, a *models.Asset) error { assetSet = a.GraceVideoID; return nil }
+	ev.appendFn = func(_ context.Context, in repository.AssetEventAppendInput) error {
+		eventTypes = append(eventTypes, in.EventType)
+		return nil
+	}
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/grace-video-id", map[string]any{"grace_video_id": gvid})
+	if w.Code != http.StatusOK {
+		t.Fatalf("happy: expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	if mcapSet != gvid {
+		t.Fatalf("mcap grace_video_id not written: %q", mcapSet)
+	}
+	if assetSet != gvid {
+		t.Fatalf("asset mirror grace_video_id not written: %q", assetSet)
+	}
+	if len(eventTypes) != 1 || eventTypes[0] != "asset_updated" {
+		t.Fatalf("expected one asset_updated event, got %#v", eventTypes)
 	}
 }

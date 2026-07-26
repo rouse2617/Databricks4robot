@@ -454,3 +454,95 @@ func (h *Handler) GetFile(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, f)
 }
+
+// BackfillGraceVideoID updates grace_video_id on an existing mcap file and its
+// mirrored raw_mcap asset. CYB-4011: there is no general mcap update endpoint,
+// so this internal route exists to backfill the Grace video link (resolved by
+// raw_hash_md5) onto rows created before the column existed. It updates the
+// source of truth (mcap_files) and the flattened mirror (assets) in one
+// transaction, then emits an asset_updated event so the ES document reindexes
+// and grace_video_id becomes filterable.
+//
+// PATCH /api/v1/internal/mcap-files/:id/grace-video-id  { "grace_video_id": "<uuid>" }
+func (h *Handler) BackfillGraceVideoID(c *gin.Context) {
+	mcapFileID := c.Param("id")
+	var req struct {
+		GraceVideoID string `json:"grace_video_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.GraceVideoID = strings.TrimSpace(req.GraceVideoID)
+	if req.GraceVideoID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "grace_video_id is required", nil)
+		return
+	}
+
+	ctx := c.Request.Context()
+	f, err := h.repo.Get(ctx, mcapFileID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if f == nil {
+		httpresp.NotFound(c, "MCAP_FILE_NOT_FOUND", "mcap file not found")
+		return
+	}
+	if f.GraceVideoID == req.GraceVideoID {
+		// Idempotent: nothing to change.
+		c.JSON(http.StatusOK, f)
+		return
+	}
+
+	err = h.withTx(ctx, func(txCtx context.Context) error {
+		// 1) source of truth: mcap_files (Set is an upsert; round-trips all
+		// columns read by Get, so only grace_video_id changes).
+		f.GraceVideoID = req.GraceVideoID
+		if err := h.repo.Set(txCtx, f); err != nil {
+			return err
+		}
+		// 2) mirror onto the raw_mcap asset (asset_id == mcap_file_id) if it
+		// still exists (non-deleted). Skip silently when absent.
+		if h.assetRepo != nil {
+			a, gerr := h.assetRepo.Get(txCtx, mcapFileID)
+			if gerr != nil {
+				return gerr
+			}
+			if a != nil && a.GraceVideoID != req.GraceVideoID {
+				a.GraceVideoID = req.GraceVideoID
+				if serr := h.assetRepo.Set(txCtx, a); serr != nil {
+					return serr
+				}
+				// 3) emit asset_updated so the ES subscriber rebuilds the doc
+				// (any asset-scoped event with asset_id triggers a full Build).
+				if h.eventRepo != nil {
+					body, _ := json.Marshal(map[string]any{
+						"asset_id":       a.AssetID,
+						"grace_video_id": req.GraceVideoID,
+					})
+					if aerr := h.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+						EventType:            "asset_updated",
+						AggregateType:        "asset",
+						PayloadSchemaVersion: "v1",
+						AssetID:              a.AssetID,
+						McapFileID:           a.McapFileID,
+						TenantID:             a.TenantID,
+						ProjectID:            a.ProjectID,
+						EventSource:          "backend",
+						RequestID:            c.GetHeader("X-Request-ID"),
+						EventPayload:         body,
+					}); aerr != nil {
+						return aerr
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, f)
+}
