@@ -40,15 +40,18 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       schema: ${{ steps.filter.outputs.schema }}
     steps:
-      # fetch-depth: 2 lets dorny/paths-filter compute a real
-      # `git diff <before>...<after>` for push events. The default
-      # fetch-depth=1 has no `before` commit available locally, so
-      # paths-filter falls back to "treat every filter as changed",
-      # which fired deploy-backend / deploy-mcap / deploy-migrate on
-      # every push even for pure Frontend-only changes. See CYB-3380.
+      # fetch-depth: 0 (full clone) — paths-filter needs a real
+      # `git diff <before>...<after>` for push events (see CYB-3380),
+      # AND it internally runs `git fetch --deepen` when computing the
+      # merge-base against `main`. On a shallow clone that deepen has
+      # a race: "fatal: shallow file has changed since we read it"
+      # (~20% flake rate on concurrent pushes, CYB-4259). Full clone
+      # skips the deepen entirely, so the race is gone. Checkout gets
+      # slower (~10-30s vs ~1s) but eliminates a whole failed run's
+      # ~4 min cost, net positive.
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
