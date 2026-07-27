@@ -258,8 +258,17 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 				os.Exit(1)
 			}
 		case "pubsub":
+			// algo_run gets its OWN subscription, never shared with the asset
+			// ES subscriber: on Pub/Sub each subscription receives an
+			// independent copy, so a shared sub would let one consumer Ack
+			// events the other still needs (algo_run's non-algo_run skip Acks
+			// asset events out of the queue). See OUTBOX_ALGORUN_SUBSCRIPTION.
+			if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OutboxAlgoRunSubscription) == "" {
+				slog.Error("algo_run es subscriber pubsub transport requires PUBSUB_PROJECT and OUTBOX_ALGORUN_SUBSCRIPTION")
+				os.Exit(1)
+			}
 			var err error
-			algoRunSub, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
+			algoRunSub, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxAlgoRunSubscription)
 			if err != nil {
 				slog.Error("algo_run pubsub subscriber init failed", "err", err)
 				os.Exit(1)
@@ -282,7 +291,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 				Runs: postgres.NewAlgoRunRepo(pg),
 			},
 		}
-		slog.Info("algo_run es subscriber starting", "transport", outboxTransport, "index", "algo_runs")
+		slog.Info("algo_run es subscriber starting", "transport", outboxTransport, "index", "algo_runs", "subscription", cfg.OutboxAlgoRunSubscription)
 		go func() {
 			if err := algoRunESSub.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("algo_run es subscriber exited", "err", err)
@@ -347,12 +356,14 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 				os.Exit(1)
 			}
 		case "pubsub":
-			if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OutboxESSubscription) == "" {
-				slog.Error("delivery eligibility projector pubsub transport requires PUBSUB_PROJECT and OUTBOX_ES_SUBSCRIPTION")
+			// Own subscription, never shared with asset/algo_run ES subscribers
+			// (shared Pub/Sub sub → competing consumers Ack each other's events).
+			if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OutboxDeliverySubscription) == "" {
+				slog.Error("delivery eligibility projector pubsub transport requires PUBSUB_PROJECT and OUTBOX_DELIVERY_SUBSCRIPTION")
 				os.Exit(1)
 			}
 			var err error
-			subscriber, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
+			subscriber, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxDeliverySubscription)
 			if err != nil {
 				slog.Error("delivery eligibility projector pubsub subscriber init failed", "err", err)
 				os.Exit(1)
@@ -378,7 +389,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			postgres.NewAssetRepo(pg),
 			postgres.NewCustomerRepo(pg),
 		)
-		slog.Info("delivery eligibility projector starting", "transport", outboxTransport)
+		slog.Info("delivery eligibility projector starting", "transport", outboxTransport, "subscription", cfg.OutboxDeliverySubscription)
 		go func() {
 			defer func() { _ = subscriber.Close() }()
 			if err := projector.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {

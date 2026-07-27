@@ -79,19 +79,21 @@ type Config struct {
 	ElasticsearchPassword string // optional; HTTP Basic auth to ES when non-empty
 
 	// Outbox relay (PG asset_events → Pub/Sub) and ES subscriber (Pub/Sub → Elasticsearch).
-	OutboxRelayEnabled        string
-	OutboxRelayBatchSize      string
-	OutboxRelayIntervalMs     string
-	OutboxRelaySafetyLagSec   string
-	OutboxRelayLeaseSec       string
-	OutboxRelayMaxRetries     string
-	OutboxProgressLogInterval string // seconds; 0 disables periodic relay progress logs
-	OutboxESSubscriberEnabled string
-	OutboxESSubscription      string // subscription id in PubSubProject (short name)
-	OutboxTransport           string // internal | pubsub | kafka (default internal)
-	OutboxKafkaBrokers        string // comma-separated brokers for kafka mode
-	OutboxKafkaTopic          string // topic for kafka mode (fallback: TOPIC_ASSET_EVENTS)
-	OutboxKafkaGroupID        string // consumer group for ES subscriber in kafka mode
+	OutboxRelayEnabled         string
+	OutboxRelayBatchSize       string
+	OutboxRelayIntervalMs      string
+	OutboxRelaySafetyLagSec    string
+	OutboxRelayLeaseSec        string
+	OutboxRelayMaxRetries      string
+	OutboxProgressLogInterval  string // seconds; 0 disables periodic relay progress logs
+	OutboxESSubscriberEnabled  string
+	OutboxESSubscription       string // subscription id in PubSubProject (short name)
+	OutboxAlgoRunSubscription  string // algo_run ES subscription id; required in pubsub mode (own sub, not shared with asset ES)
+	OutboxDeliverySubscription string // delivery eligibility projector subscription id; required in pubsub mode (own sub, not shared)
+	OutboxTransport            string // internal | pubsub | kafka (default internal)
+	OutboxKafkaBrokers         string // comma-separated brokers for kafka mode
+	OutboxKafkaTopic           string // topic for kafka mode (fallback: TOPIC_ASSET_EVENTS)
+	OutboxKafkaGroupID         string // consumer group for ES subscriber in kafka mode
 
 	// OUTBOX_TRANSPORT=internal only: parallel ES handlers (per routing key serial).
 	OutboxInternalSubscriberWorkers string
@@ -255,19 +257,21 @@ func Load() *Config {
 		ElasticsearchUsername: getenv("ELASTICSEARCH_USERNAME", ""),
 		ElasticsearchPassword: getenv("ELASTICSEARCH_PASSWORD", ""),
 
-		OutboxRelayEnabled:        getenv("OUTBOX_RELAY_ENABLED", "false"),
-		OutboxRelayBatchSize:      getenv("OUTBOX_RELAY_BATCH_SIZE", "200"),
-		OutboxRelayIntervalMs:     getenv("OUTBOX_RELAY_INTERVAL_MS", "500"),
-		OutboxRelaySafetyLagSec:   getenv("OUTBOX_RELAY_SAFETY_LAG_SEC", "2"),
-		OutboxRelayLeaseSec:       getenv("OUTBOX_RELAY_LEASE_SEC", "30"),
-		OutboxRelayMaxRetries:     getenv("OUTBOX_RELAY_MAX_RETRIES", "20"),
-		OutboxProgressLogInterval: getenv("OUTBOX_PROGRESS_LOG_INTERVAL_SEC", "60"),
-		OutboxESSubscriberEnabled: getenv("OUTBOX_ES_SUBSCRIBER_ENABLED", "false"),
-		OutboxESSubscription:      getenv("OUTBOX_ES_SUBSCRIPTION", ""),
-		OutboxTransport:           getenv("OUTBOX_TRANSPORT", "internal"),
-		OutboxKafkaBrokers:        getenv("OUTBOX_KAFKA_BROKERS", ""),
-		OutboxKafkaTopic:          getenv("OUTBOX_KAFKA_TOPIC", ""),
-		OutboxKafkaGroupID:        getenv("OUTBOX_KAFKA_GROUP_ID", "cyber-databrew-outbox-es"),
+		OutboxRelayEnabled:         getenv("OUTBOX_RELAY_ENABLED", "false"),
+		OutboxRelayBatchSize:       getenv("OUTBOX_RELAY_BATCH_SIZE", "200"),
+		OutboxRelayIntervalMs:      getenv("OUTBOX_RELAY_INTERVAL_MS", "500"),
+		OutboxRelaySafetyLagSec:    getenv("OUTBOX_RELAY_SAFETY_LAG_SEC", "2"),
+		OutboxRelayLeaseSec:        getenv("OUTBOX_RELAY_LEASE_SEC", "30"),
+		OutboxRelayMaxRetries:      getenv("OUTBOX_RELAY_MAX_RETRIES", "20"),
+		OutboxProgressLogInterval:  getenv("OUTBOX_PROGRESS_LOG_INTERVAL_SEC", "60"),
+		OutboxESSubscriberEnabled:  getenv("OUTBOX_ES_SUBSCRIBER_ENABLED", "false"),
+		OutboxESSubscription:       getenv("OUTBOX_ES_SUBSCRIPTION", ""),
+		OutboxAlgoRunSubscription:  getenv("OUTBOX_ALGORUN_SUBSCRIPTION", ""),
+		OutboxDeliverySubscription: getenv("OUTBOX_DELIVERY_SUBSCRIPTION", ""),
+		OutboxTransport:            getenv("OUTBOX_TRANSPORT", "internal"),
+		OutboxKafkaBrokers:         getenv("OUTBOX_KAFKA_BROKERS", ""),
+		OutboxKafkaTopic:           getenv("OUTBOX_KAFKA_TOPIC", ""),
+		OutboxKafkaGroupID:         getenv("OUTBOX_KAFKA_GROUP_ID", "cyber-databrew-outbox-es"),
 
 		OutboxInternalSubscriberWorkers:     getenv("OUTBOX_INTERNAL_SUBSCRIBER_WORKERS", "8"),
 		OutboxInternalBusBuffer:             getenv("OUTBOX_INTERNAL_BUS_BUFFER", "1024"),
