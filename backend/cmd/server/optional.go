@@ -116,7 +116,6 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			slog.Error("invalid OUTBOX_TRANSPORT", "value", outboxTransport, "allowed", "internal|pubsub|kafka")
 			os.Exit(1)
 		}
-		defer func() { _ = pub.Close() }()
 
 		batch, _ := strconv.Atoi(cfg.OutboxRelayBatchSize)
 		intervalMs, _ := strconv.Atoi(cfg.OutboxRelayIntervalMs)
@@ -144,6 +143,11 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		outboxRelayStarted = true
 		slog.Info("outbox relay starting", "transport", outboxTransport, "topic", cfg.TopicAssetEvents, "parallel_ordering_keys", relayCfg.ParallelOrderingKeys)
 		go func() {
+			// Close the publisher when the relay goroutine exits (on
+			// outboxCtx cancellation at shutdown), NOT when setupOptional
+			// returns. A setup-scope defer tears down the pubsub client's
+			// gRPC connection while relay.Run is still using it.
+			defer func() { _ = pub.Close() }()
 			if err := relay.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("outbox relay exited", "err", err)
 			}
@@ -187,7 +191,6 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			slog.Error("invalid OUTBOX_TRANSPORT", "value", outboxTransport, "allowed", "internal|pubsub|kafka")
 			os.Exit(1)
 		}
-		defer func() { _ = subscriber.Close() }()
 		esBatchSize, _ := strconv.Atoi(cfg.OutboxInternalSubscriberBatchSize)
 		if esBatchSize < 1 {
 			esBatchSize = 1
@@ -237,6 +240,12 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			"batch_wait_ms", esBatchWaitMs,
 		)
 		go func() {
+			// Close the subscriber when this goroutine exits (on outboxCtx
+			// cancellation at shutdown), NOT when setupOptional returns. A
+			// setup-scope defer closes the pubsub client's gRPC connection
+			// while esSub.Run is still receiving, killing it instantly with
+			// "grpc: the client connection is closing".
+			defer func() { _ = subscriber.Close() }()
 			if err := esSub.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("outbox es subscriber exited", "err", err)
 			}
@@ -293,6 +302,11 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		}
 		slog.Info("algo_run es subscriber starting", "transport", outboxTransport, "index", "algo_runs", "subscription", cfg.OutboxAlgoRunSubscription)
 		go func() {
+			// Close the subscriber when this goroutine exits (on outboxCtx
+			// cancellation at shutdown). Matches the asset ES / relay
+			// pattern; a setup-scope defer would close the pubsub client
+			// while Run is still receiving.
+			defer func() { _ = algoRunSub.Close() }()
 			if err := algoRunESSub.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("algo_run es subscriber exited", "err", err)
 			}
