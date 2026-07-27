@@ -171,12 +171,22 @@ jobs:
           # run-gmp collector sidecar so /metrics is scraped into Managed
           # Prometheus (CYB-4146). Instance CPU stays at 4 (app 2 + collector 2;
           # gcloud caps each container at {<=1,1,2,4,6,8}, so 2+2 is the flat-cost split).
+          # CLOUDRUN_OUTBOX_TRANSPORT=pubsub: dev runs the durable Pub/Sub outbox
+          # transport, NOT the default non-durable in-process `internal` bus
+          # (CYB-4025). backend-dev.sh force-writes OUTBOX_TRANSPORT to
+          # CLOUDRUN_OUTBOX_TRANSPORT (default `internal`) on every deploy — it is
+          # the one OUTBOX_* var NOT covered by preserve_all_cloudrun_env_vars — so
+          # without this the pubsub cutover silently reverts to `internal` (which
+          # is at-most-once and already dropped 6 asset→ES docs). The pubsub subs
+          # (OUTBOX_ES_SUBSCRIPTION / OUTBOX_ALGORUN_SUBSCRIPTION), TOPIC_ASSET_EVENTS
+          # and PUBSUB_PROJECT already survive via preserve_all_cloudrun_env_vars.
           IMAGE=${{ env.IMAGE }} \
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
           CLOUDRUN_ENV=development \
           DEPLOY_NO_TRAFFIC=true \
           ENABLE_GMP_SIDECAR=true \
+          CLOUDRUN_OUTBOX_TRANSPORT=pubsub \
           bash deploy/cloudrun/backend-dev.sh
 
       # The dev service has no real DATABREW_TOKEN / JWT_SECRET, so ENV=production
