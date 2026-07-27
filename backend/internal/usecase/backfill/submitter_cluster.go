@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -61,6 +62,19 @@ var clusterSubmitRate = func() float64 {
 	return 10
 }()
 
+// burstForRate derives a token-bucket burst from a per-second rate. It MUST
+// return at least 1: a burst of 0 makes rate.Limiter.Wait(ctx) for a single
+// event fail immediately ("exceeds limiter's burst 0"), which for a legal slow
+// rate (rate_per_sec 0.1–0.9, allowed by dispatcher_config / the UI) would
+// stall the whole cluster instead of merely throttling it (CYB-4026 D4).
+func burstForRate(ratePerSec float64) int {
+	b := int(math.Ceil(ratePerSec * 2))
+	if b < 1 {
+		return 1
+	}
+	return b
+}
+
 // consecutiveTransientBreaker trips a channel after this many transient
 // failures in a row within one cycle: the cluster is unhealthy — stop burning
 // tokens on it and let the next tick retry (items stay pending by design).
@@ -94,7 +108,7 @@ func newClusterGovernor(configured int) *clusterGovernor {
 		floor = 1
 	}
 	return &clusterGovernor{
-		limiter:    rate.NewLimiter(rate.Limit(clusterSubmitRate), int(clusterSubmitRate)*2),
+		limiter:    rate.NewLimiter(rate.Limit(clusterSubmitRate), burstForRate(clusterSubmitRate)),
 		configured: configured,
 		effective:  configured,
 		floor:      floor,
@@ -122,7 +136,7 @@ func (g *clusterGovernor) applyConfig(maxConcurrency int, ratePerSec float64, su
 	}
 	if ratePerSec > 0 && rate.Limit(ratePerSec) != g.limiter.Limit() {
 		g.limiter.SetLimit(rate.Limit(ratePerSec))
-		g.limiter.SetBurst(int(ratePerSec) * 2)
+		g.limiter.SetBurst(burstForRate(ratePerSec))
 	}
 	g.batchLimit = submitBatch
 }
@@ -279,7 +293,7 @@ func (uc *Usecase) runClusterChannel(ctx context.Context, cluster string, jobs [
 			if uc.deferForBackpressure(ctx, job) {
 				continue // target namespace saturated — items stay pending, re-checked next cycle
 			}
-			attempted, outcomes := uc.submitJobBatch(ctx, job, gov)
+			attempted, effectiveLimit, outcomes := uc.submitJobBatch(ctx, job, gov)
 			for _, o := range outcomes {
 				if o == outcomeTransient {
 					consecutiveTransient++
@@ -290,7 +304,12 @@ func (uc *Usecase) runClusterChannel(ctx context.Context, cluster string, jobs [
 			if attempted > 0 {
 				_ = uc.syncJobProgress(ctx, job.ID)
 			}
-			if attempted >= perJobSubmitBatch {
+			// CYB-4026 D3: compare against the EFFECTIVE limit used this cycle,
+			// not the compiled perJobSubmitBatch. With a per-cluster submit_batch
+			// override the batch fills at effectiveLimit; using the constant made
+			// a small override (e.g. 2) never trigger the self-kick, degrading a
+			// large backlog to one small batch per tick.
+			if attempted >= effectiveLimit {
 				refill = true
 			}
 			if consecutiveTransient >= consecutiveTransientBreaker {

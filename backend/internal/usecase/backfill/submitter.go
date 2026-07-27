@@ -192,9 +192,13 @@ func (uc *Usecase) runSubmitterCycle(ctx context.Context) {
 
 // submitJobBatch submits up to one batch of pending items for a job under
 // the cluster governor's bounds (token bucket rate + AIMD concurrency) and
-// returns the attempt count plus per-item outcomes for the channel breaker.
-// Pilot jobs only submit within the remaining pilot quota.
-func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, gov *clusterGovernor) (int, []submitOutcome) {
+// returns the attempt count, the EFFECTIVE per-cycle limit it used, and
+// per-item outcomes for the channel breaker. Pilot jobs only submit within the
+// remaining pilot quota. The caller compares attempts against the returned
+// limit (not the compiled default) to decide whether the batch filled — the
+// per-cluster submit_batch override (CYB-3679) makes those two differ
+// (CYB-4026 D3).
+func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, gov *clusterGovernor) (int, int, []submitOutcome) {
 	limit := perJobSubmitBatch
 	if gov != nil {
 		if sb := gov.submitBatchLimit(); sb > 0 {
@@ -205,12 +209,12 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		pending, err := uc.repo.CountItemsByStatus(ctx, job.ID, "pending")
 		if err != nil {
 			slog.Warn("submitter: count pending failed", "jobID", job.ID, "err", err)
-			return 0, nil
+			return 0, limit, nil
 		}
 		attempted := job.TotalCount - pending
 		quota := job.PilotCount - attempted
 		if quota <= 0 {
-			return 0, nil
+			return 0, limit, nil
 		}
 		if quota < limit {
 			limit = quota
@@ -219,10 +223,10 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 	ids, err := uc.submitQueue.ListSubmittableItemIDs(ctx, job.ID, limit)
 	if err != nil {
 		slog.Warn("submitter: list candidates failed", "jobID", job.ID, "err", err)
-		return 0, nil
+		return 0, limit, nil
 	}
 	if len(ids) == 0 {
-		return 0, nil
+		return 0, limit, nil
 	}
 	// Version pinning (CYB-3677 P0): the template_version column is
 	// authoritative — when set, the submitter must NEVER fall back to the
@@ -255,7 +259,16 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		// consumption, not API-server acceptance.
 		if gov != nil {
 			if err := gov.limiter.Wait(ctx); err != nil {
-				break // ctx cancelled — leave the rest pending
+				// CYB-4026 D4: only a real context cancellation should stop the
+				// cycle and leave the rest pending. burstForRate now guarantees
+				// burst>=1 so a single-event Wait can no longer fail on
+				// "exceeds limiter's burst 0"; if some other limiter error ever
+				// surfaces, log it and stop this cycle (next tick retries) rather
+				// than mislabelling it as a cancellation.
+				if ctx.Err() == nil {
+					slog.Warn("submitter limiter.Wait failed (non-cancel)", "jobID", job.ID, "err", err)
+				}
+				break
 			}
 		}
 		attempts++
@@ -274,7 +287,7 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		}(i, id)
 	}
 	wg.Wait()
-	return attempts, outcomes[:attempts]
+	return attempts, limit, outcomes[:attempts]
 }
 
 // submitOneCandidate re-checks and submits a single pending item.
@@ -463,8 +476,11 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			// human retry via the DLQ API resets the counter.
 			metrics.DispatcherDLQTotal.WithLabelValues("max_submit_attempts").Inc()
 			errMsg := fmt.Sprintf("max submit attempts (%d) exceeded: %v", maxSubmitAttempts, err)
+			// CYB-4026 D5: keep the run binding AND the failure reason. The old
+			// runID!="" path wrote via UpdateItemPipelineRun which has no
+			// error_message column, silently dropping the cause.
 			if runID != "" {
-				return outcomePermanent, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "failed")
+				return outcomePermanent, uc.repo.MarkItemFailedWithRun(ctx, item.ID, runID, workflowName, errMsg)
 			}
 			return outcomePermanent, uc.repo.UpdateItemStatus(ctx, item.ID, "failed", workflowName, errMsg)
 		}

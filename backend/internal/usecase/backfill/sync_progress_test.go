@@ -190,6 +190,24 @@ func (r *pausedSyncRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRu
 	}
 	return nil
 }
+func (r *pausedSyncRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	for i := range r.items {
+		if r.items[i].ID == id {
+			r.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				r.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				r.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				r.items[i].ErrorMessage = &em
+			}
+		}
+	}
+	return nil
+}
 func (r *pausedSyncRepo) UpdateJobProgress(_ context.Context, id string, completed, failed int, status string) error {
 	if r.job != nil && r.job.ID == id {
 		r.job.CompletedCount = completed

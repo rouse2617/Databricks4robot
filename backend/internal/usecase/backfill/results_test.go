@@ -143,6 +143,9 @@ func (s *stubBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID
 func (s *stubBackfillRepo) UpdateItemPipelineRun(context.Context, string, string, string, string) error {
 	return nil
 }
+func (s *stubBackfillRepo) MarkItemFailedWithRun(context.Context, string, string, string, string) error {
+	return nil
+}
 func (s *stubBackfillRepo) UpdateJobProgress(context.Context, string, int, int, string) error {
 	return nil
 }

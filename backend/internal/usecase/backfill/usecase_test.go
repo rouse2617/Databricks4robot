@@ -138,6 +138,24 @@ func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipeline
 	}
 	return nil
 }
+func (m *mockBackfillRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	for i := range m.items {
+		if m.items[i].ID == id {
+			m.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				m.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				m.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				m.items[i].ErrorMessage = &em
+			}
+		}
+	}
+	return nil
+}
 func (m *mockBackfillRepo) UpdateJobProgress(_ context.Context, id string, completed, failed int, status string) error {
 	if m.jobs != nil {
 		if j, ok := m.jobs[id]; ok {
@@ -845,6 +863,26 @@ func (r *trackingBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipe
 			}
 			if workflowName != "" {
 				r.items[i].WorkflowName = &workflowName
+			}
+		}
+	}
+	return nil
+}
+func (r *trackingBackfillRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.items {
+		if r.items[i].ID == id {
+			r.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				r.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				r.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				r.items[i].ErrorMessage = &em
 			}
 		}
 	}

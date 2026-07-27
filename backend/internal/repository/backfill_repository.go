@@ -40,6 +40,12 @@ type BackfillRepository interface {
 	FindItemByPipelineRunID(ctx context.Context, pipelineRunID string) (*models.BackfillItem, error)
 	UpdateItemStatus(ctx context.Context, id, status, workflowName, errorMsg string) error
 	UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error
+	// MarkItemFailedWithRun marks a backfill item failed while binding its
+	// pipeline_run_id / workflow_name AND persisting error_message in one write
+	// (CYB-4026 D5). UpdateItemPipelineRun cannot carry a reason, so the
+	// DLQ/max-attempts path that already has a run id previously lost the
+	// failure cause; this method keeps run binding and reason together.
+	MarkItemFailedWithRun(ctx context.Context, id, pipelineRunID, workflowName, errorMsg string) error
 	// AdvanceItemAndCountAtomic transitions a backfill item to a terminal
 	// status (completed / failed / cancelled) AND increments the corresponding
 	// job counter in one CTE. Idempotent by construction: the item is only

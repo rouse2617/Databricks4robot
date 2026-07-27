@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"golang.org/x/time/rate"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -213,6 +214,41 @@ func TestGovernorApplyConfig(t *testing.T) {
 	}
 }
 
+// CYB-4026 D4: burst must never be 0 — a legal slow rate (0.1–0.9/s) with
+// burst=0 makes limiter.Wait fail immediately and stalls the whole cluster.
+func TestBurstForRate_NeverZero(t *testing.T) {
+	cases := []struct {
+		rate float64
+		want int
+	}{
+		{0.1, 1}, {0.5, 1}, {0.9, 2}, {1, 2}, {5, 10}, {10, 20},
+	}
+	for _, tc := range cases {
+		if got := burstForRate(tc.rate); got != tc.want {
+			t.Errorf("burstForRate(%v) = %d, want %d", tc.rate, got, tc.want)
+		}
+		if burstForRate(tc.rate) < 1 {
+			t.Errorf("burstForRate(%v) < 1 — cluster would stall", tc.rate)
+		}
+	}
+}
+
+// CYB-4026 D4: applyConfig with a sub-1 rate keeps burst >= 1 (online-tuning
+// path), and the default constructor's burst is >= 1 too.
+func TestGovernorBurstFloor(t *testing.T) {
+	g := newClusterGovernor(8)
+	if g.limiter.Burst() < 1 {
+		t.Fatalf("constructor burst = %d, want >= 1", g.limiter.Burst())
+	}
+	g.applyConfig(8, 0.5, 0)
+	if g.limiter.Burst() < 1 {
+		t.Fatalf("applyConfig(rate=0.5) burst = %d, want >= 1", g.limiter.Burst())
+	}
+	if g.limiter.Limit() != rate.Limit(0.5) {
+		t.Fatalf("limit = %v, want 0.5", g.limiter.Limit())
+	}
+}
+
 // A paused cluster skips its whole channel: no deploys, gauge=1.
 func TestRunClusterChannel_PausedSkipsDispatch(t *testing.T) {
 	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
@@ -259,6 +295,39 @@ func TestSubmitJobBatch_ConfigOverridesBatchLimit(t *testing.T) {
 	// in production; the single test cycle stops at the override).
 	if len(d.deploys) != 2 {
 		t.Fatalf("deploys = %d, want 2 (submit_batch override)", len(d.deploys))
+	}
+}
+
+// CYB-4026 D3: with a per-cluster submit_batch override BELOW the compiled
+// perJobSubmitBatch default, a full batch must still self-kick. The old code
+// compared attempts against the compiled constant (128), so an override of 2
+// never triggered the kick and a large backlog degraded to one small batch per
+// tick. Keep the compiled default large here (unlike the pre-existing kick
+// test which set it to 2, masking the bug).
+func TestSubmitJobBatch_OverrideBelowDefaultStillKicks(t *testing.T) {
+	old := perJobSubmitBatch
+	perJobSubmitBatch = 128
+	defer func() { perJobSubmitBatch = old }()
+
+	items := make([]models.BackfillItem, 3)
+	for i := range items {
+		items[i] = models.BackfillItem{ID: string(rune('a' + i)), JobID: "job-1", AssetID: string(rune('a' + i)), Status: "pending"}
+	}
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 3}
+	uc, _, _, d := newSubmitterFixture(job, items)
+	store := &fakeDispatcherStore{rows: []models.DispatcherConfig{{ClusterID: "default", MaxConcurrency: 8, SubmitBatch: 2, RatePerSec: 50}}}
+	uc.SetDispatcherConfigRepo(store)
+	uc.submitKick = make(chan struct{}, 1)
+
+	uc.runSubmitterCycle(context.Background())
+
+	if len(d.deploys) != 2 {
+		t.Fatalf("deploys = %d, want 2 (submit_batch override)", len(d.deploys))
+	}
+	select {
+	case <-uc.submitKick:
+	default:
+		t.Fatal("override-sized full batch with backlog must self-kick (D3)")
 	}
 }
 

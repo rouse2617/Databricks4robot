@@ -223,6 +223,19 @@ func itemStatus(repo *pausedSyncRepo, id string) string {
 	return "<missing>"
 }
 
+// itemError returns a backfill item's persisted error_message ("" if unset).
+func itemError(repo *pausedSyncRepo, id string) string {
+	for i := range repo.items {
+		if repo.items[i].ID == id {
+			if repo.items[i].ErrorMessage == nil {
+				return ""
+			}
+			return *repo.items[i].ErrorMessage
+		}
+	}
+	return "<missing>"
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 // Happy path: a pending item is deployed and moves pending → submitted with

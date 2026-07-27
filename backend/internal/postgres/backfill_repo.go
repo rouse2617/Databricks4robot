@@ -613,6 +613,22 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 	return nil
 }
 
+// MarkItemFailedWithRun marks an item failed while keeping its run binding AND
+// persisting the failure reason (CYB-4026 D5). Sets status='failed',
+// pipeline_run_id/workflow_name, error_message, and finished_at.
+func (r *BackfillRepo) MarkItemFailedWithRun(ctx context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	const q = `UPDATE backfill_items SET
+	  pipeline_run_id = $2, workflow_name = $3, status = 'failed', error_message = $4,
+	  started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END,
+	  finished_at = NOW()
+	WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, nullIfEmpty(pipelineRunID), nullIfEmpty(workflowName), nullIfEmpty(errorMsg)); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkItemFailedWithRun: %w", err)
+	}
+	return nil
+}
+
 // UpdateJobProgress updates aggregate counters and job status.
 func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
 	// CYB-3491(数据新鲜度):

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,12 @@ func TestSubmitter_TransientRetriesThenDLQ(t *testing.T) {
 	uc.runSubmitterCycle(ctx) // attempt == cap → DLQ
 	if got := itemStatus(repo, "item-1"); got != "failed" {
 		t.Fatalf("status after cap = %q, want failed (DLQ)", got)
+	}
+	// CYB-4026 D5: the failure reason must be persisted even though the item
+	// already has a pipeline_run_id (the DLQ path goes through
+	// MarkItemFailedWithRun, not the reason-less UpdateItemPipelineRun).
+	if msg := itemError(repo, "item-1"); msg == "" || !strings.Contains(msg, "max submit attempts") {
+		t.Fatalf("DLQ error_message = %q, want it to contain the original cause", msg)
 	}
 }
 
@@ -419,7 +426,7 @@ func TestSubmitJobBatch_CancelledContextStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	attempts, _ := uc.submitJobBatch(ctx, job, uc.governorFor("default"))
+	attempts, _, _ := uc.submitJobBatch(ctx, job, uc.governorFor("default"))
 	if attempts != 0 {
 		t.Fatalf("attempts = %d, want 0 under cancelled ctx", attempts)
 	}
