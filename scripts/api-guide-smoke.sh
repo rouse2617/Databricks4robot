@@ -322,6 +322,27 @@ echo ""
 echo "--- § 注册表 ---"
 get "algo-registry" "/api/v1/algo-registry"
 get "tag-registry" "/api/v1/tag-registry"
+
+echo "--- § Admin API keys (CYB-3154 / CYB-3418) ---"
+get "admin api-keys list" "/api/v1/admin/api-keys"
+expect_code_post "admin api-keys create empty scopes -> 400" "/api/v1/admin/api-keys" '{"name":"api-guide-smoke","scopes":[]}' "400" >/dev/null
+expect_code_post "admin api-keys create whitespace scope -> 400" "/api/v1/admin/api-keys" '{"scopes":["   "]}' "400" >/dev/null
+# The create->revoke happy path mints a REAL dbk_ credential, so it is gated
+# behind RUN_WRITES. We capture only the id (never echo the plaintext key) and
+# revoke it immediately to leave no rows.
+if [[ -n "${RUN_WRITES:-}" ]]; then
+	AK_RESP=$(curl -sS --max-time 25 -X POST "${API_HDR[@]}" "${BASE}/api/v1/admin/api-keys" \
+		-d '{"name":"api-guide-smoke","owner":"api-guide-smoke","scopes":["assets:read"]}' 2>/dev/null || echo '{}')
+	AK_ID=$(echo "$AK_RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || echo "")
+	if [[ -n "$AK_ID" ]]; then
+		ok "admin api-keys create (RUN_WRITES)"
+		expect_code_delete "admin api-keys revoke -> 200" "/api/v1/admin/api-keys/${AK_ID}" "200" >/dev/null
+	else
+		RESP_CODE="?"; RESP_BODY="$AK_RESP"; bad "admin api-keys create (RUN_WRITES): no id returned"
+	fi
+else
+	echo "  skip admin api-keys create/revoke — set RUN_WRITES=1 (mints a real credential)"
+fi
 # CYB-4263: handler (asset.GetAssetTypeSchema) is implemented + unit-tested but
 # its route is not mounted in routes.go, so this 404s. WARN, don't FAIL, until
 # the mount-vs-deprecate decision on CYB-4263 lands.

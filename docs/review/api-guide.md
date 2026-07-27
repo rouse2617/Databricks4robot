@@ -3722,3 +3722,39 @@ curl -sS -H "X-Databrew-Token: $TOK" \
 
 - `createdBy` 省略时 `GET /api/v1/backfill` 与 `GET /api/v1/runs` 行为不变（返回全部）。
 - 未知 batch id 的 `/items` 返回 `200 {"items":[]}`（非 404）；空 id 返回 `400 INVALID_ARGUMENT`。
+
+## Admin API Keys (CYB-3154 / CYB-3418)
+
+`dbk_` API keys for external integrators (e.g. VibeCap grace-to-databrew). All endpoints are under `/api/v1/admin/api-keys` and require the `apikeys:manage` scope. The **plaintext key is returned exactly once** at creation — only its hash is stored, so it can never be retrieved again.
+
+```bash
+BASE=https://cyber-databrew-dev.cyberorigin.ai
+TOK="$DATABREW_TOKEN"   # must carry the apikeys:manage scope
+
+# Create — plaintext key returned ONCE. Store it immediately.
+curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/admin/api-keys" -d '{
+    "name": "vibecap-integration",
+    "owner": "grace-to-databrew",
+    "scopes": ["assets:read", "queries:run"],
+    "expiresAt": null
+  }'
+# -> 201 { "id":"...", "key":"dbk_...", "keyPrefix":"dbk_ab12", "scopes":[...],
+#          "note":"store this key now — it will not be shown again" }
+
+# List — the secret hash is never serialized
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/admin/api-keys"
+# -> 200 { "items":[{ "id":"...", "keyPrefix":"...", "scopes":[...], "status":"active", ... }] }
+
+# Revoke
+curl -sS -X DELETE -H "X-Databrew-Token: $TOK" "$BASE/api/v1/admin/api-keys/<ID>"
+# -> 200 { "status":"revoked", "id":"<ID>" }
+```
+
+**Field notes** (Create): `scopes` required, ≥1 entry, each non-empty. `name` / `owner` optional. `expiresAt` optional RFC 3339 (null/omitted = never expires).
+
+**Error paths**:
+- `400 INVALID_ARGUMENT` — `scopes` missing/empty (`scopes required (min 1)`), or a whitespace-only scope entry (`scope entries must be non-empty`).
+- `403 FORBIDDEN` — a **privileged** scope (`*` or `apikeys:manage`) was requested without the static admin token; a JWT (email-login) session cannot mint long-lived privileged keys (CYB-3417).
+
+**Smoke**: `scripts/api-guide-smoke.sh` (`admin/api-keys`) — list 200 + the two 400 validation paths run by default; the create→revoke round-trip is gated behind `RUN_WRITES=1` because it mints a real credential.

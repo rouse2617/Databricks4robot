@@ -56,6 +56,8 @@ tags:
     description: Product execution records served through the Run Kernel boundary, including the run ledger, runtime operations, and run tree projections
   - name: SubscriptionTasks
     description: Pub/Sub subscription-based auto-dispatch (CYB-3778) — consume asset-ids from a GCP Pub/Sub subscription and create batch jobs on a pipeline template.
+  - name: AdminApiKeys
+    description: "Admin API-key issuance / listing / revocation (dbk_ keys for external integrators; CYB-3154). Mounted under the apikeys:manage scope."
 components:
   securitySchemes:
     DatabrewToken:
@@ -87,6 +89,52 @@ components:
       schema:
         type: string
   schemas:
+    CreateAPIKeyRequest:
+      type: object
+      required: [scopes]
+      properties:
+        name: { type: string, description: "Human label (optional)" }
+        owner: { type: string, description: "Owner identifier (optional)" }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: "Granted scopes; at least one required, entries must be non-empty. Privileged scopes ('*', 'apikeys:manage') are only accepted from the static admin token, not a JWT session (CYB-3417)."
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Optional expiry (RFC 3339). Null/omitted = never expires."
+      example:
+        name: vibecap-integration
+        owner: grace-to-databrew
+        scopes: [assets:read, queries:run]
+    APIKey:
+      type: object
+      description: "API key metadata. The secret is only returned once at creation (see APIKeyCreated) and is never serialized here."
+      properties:
+        id: { type: string }
+        keyPrefix: { type: string, description: "Non-secret identifying prefix (e.g. dbk_ab12...)." }
+        name: { type: string }
+        owner: { type: string }
+        scopes: { type: array, items: { type: string } }
+        status: { type: string, example: active }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+    APIKeyCreated:
+      type: object
+      description: "Create response — the ONLY time the plaintext key is returned. Store it immediately; only its hash is persisted."
+      properties:
+        id: { type: string }
+        key: { type: string, description: "Plaintext API key, shown exactly once." }
+        keyPrefix: { type: string }
+        name: { type: string }
+        owner: { type: string }
+        scopes: { type: array, items: { type: string } }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        note: { type: string, description: "Reminder that the key will not be shown again." }
     ErrorResponse:
       type: object
       required: [code, message, request_id]
@@ -3601,6 +3649,78 @@ paths:
                 type: object
                 properties:
                   authenticated: { type: boolean }
+
+  # ── Admin: API keys (CYB-3154 / CYB-3418) ───────────────────────────────
+  /api/v1/admin/api-keys:
+    post:
+      tags: [AdminApiKeys]
+      summary: Mint an API key
+      description: |
+        Creates a `dbk_` API key for external integrators. The plaintext key is
+        returned exactly ONCE (response `key`); only its hash is stored, so it
+        cannot be retrieved later. Requires the `apikeys:manage` scope.
+        Privileged scopes (`*`, `apikeys:manage`) are rejected with 403 unless
+        the caller used the static admin token, not a JWT session (CYB-3417).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIKeyRequest' }
+      responses:
+        '201':
+          description: Created — plaintext key returned once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIKeyCreated' }
+        '400':
+          description: Missing/empty scopes or a whitespace-only scope entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Privileged scope requested without the static admin token (CYB-3417)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [AdminApiKeys]
+      summary: List API keys
+      description: Returns all API keys. The secret hash is never serialized.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+  /api/v1/admin/api-keys/{id}:
+    delete:
+      tags: [AdminApiKeys]
+      summary: Revoke an API key
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: revoked }
+                  id: { type: string }
+        '400':
+          description: Missing id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Assets ─────────────────────────────────────────────────────────────
   /api/v1/assets:
