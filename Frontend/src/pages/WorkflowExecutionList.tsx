@@ -1571,7 +1571,7 @@ export function WorkflowExecutionList({
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
-				title: "标签",
+				title: "资产 ID",
 				dataIndex: "labels",
 				key: "labels",
 				width: isBatchScope ? 200 : 240,
