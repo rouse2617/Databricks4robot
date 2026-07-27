@@ -4376,7 +4376,7 @@ paths:
           description: Tag validation failed (invalid enum value, over-length value, or source contract violation)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/tags/{key}:
     delete:
       tags: [AssetTags]
@@ -5274,7 +5274,7 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     post:
       tags: [Admin]
       summary: Register a managed tag definition (admin)
@@ -5293,17 +5293,17 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
           description: Tag key already exists (TAG_KEY_EXISTS)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '422':
           description: Validation failed (bad type, enum without values, missing key)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/admin/tag-registry/{key}:
     parameters:
       - in: path
@@ -5328,17 +5328,17 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Tag key not found (TAG_NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '422':
           description: Validation failed
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Admin]
       summary: Delete a managed tag definition (admin)
@@ -5356,12 +5356,12 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Tag key not found (TAG_NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/metric-registry:
     get:
       tags: [Registry]
@@ -5838,12 +5838,12 @@ paths:
           description: grace_video_id missing/empty
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: mcap file not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/internal/assets:batch_delete:
     post:
       tags: [Internal]
