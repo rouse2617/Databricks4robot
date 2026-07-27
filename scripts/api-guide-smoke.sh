@@ -34,15 +34,28 @@ RESP_BODY=""
 RESP_CODE=""
 PASS=0
 FAIL=0
+# CYB-4264: tally outcomes in a temp file, not the PASS/FAIL shell vars above.
+# Many checks run inside $(...) command-substitution, where PASS++/FAIL++ happen
+# in a subshell and are lost to the parent; file appends survive subshells, so
+# the summary + exit code at the bottom are accurate.
+SMOKE_RESULTS="$(mktemp)"
+trap 'rm -f "$SMOKE_RESULTS"' EXIT
+_pass() { echo P >> "$SMOKE_RESULTS"; }
+_fail() { echo F >> "$SMOKE_RESULTS"; }
+# fd 3 = the script's real stdout. ok()/bad() write human lines here so they
+# stay visible even when a check runs inside X=$(...) command-substitution
+# (which would otherwise capture fd 1 and swallow the OK/FAIL line). Callers
+# that capture a body still get only the body on fd 1.
+exec 3>&1
 PIPELINE_CONFIG_SMOKE_ID=""
 
-ok() { PASS=$((PASS + 1)); echo "  OK  $1"; }
+ok() { _pass; echo "  OK  $1" >&3; }
 bad() {
 	local label="$1"
-	FAIL=$((FAIL + 1))
-	echo "  FAIL $label (HTTP ${RESP_CODE})"
-	echo "$RESP_BODY" | head -c 400
-	echo
+	_fail
+	echo "  FAIL $label (HTTP ${RESP_CODE})" >&3
+	echo "$RESP_BODY" | head -c 400 >&3
+	echo >&3
 }
 
 get() {
@@ -84,7 +97,7 @@ get_report_or_skip() {
 	raw=$(curl -sS --max-time 25 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/lakehouse/report" 2>/dev/null) || raw=$'\n000'
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
-	if [[ "$RESP_CODE" == "200" ]]; then ok "lakehouse/report"; elif [[ "$RESP_CODE" == "404" ]]; then echo "  OK  lakehouse/report (404 — run make iceberg-mvp locally if you need file)"; PASS=$((PASS + 1)); else bad "lakehouse/report"; fi
+	if [[ "$RESP_CODE" == "200" ]]; then ok "lakehouse/report"; elif [[ "$RESP_CODE" == "404" ]]; then echo "  OK  lakehouse/report (404 — run make iceberg-mvp locally if you need file)"; _pass; else bad "lakehouse/report"; fi
 }
 
 post() {
@@ -104,10 +117,10 @@ post_json() {
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
 	if [[ "$RESP_CODE" =~ ^2 ]]; then
-		PASS=$((PASS + 1))
+		_pass
 		echo "  OK  $name" >&2
 	else
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
 		echo "$RESP_BODY" | head -c 400 >&2
 		echo >&2
@@ -122,10 +135,10 @@ put_json() {
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
 	if [[ "$RESP_CODE" =~ ^2 ]]; then
-		PASS=$((PASS + 1))
+		_pass
 		echo "  OK  $name" >&2
 	else
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
 		echo "$RESP_BODY" | head -c 400 >&2
 		echo >&2
@@ -291,7 +304,7 @@ if [[ "$RESP_CODE" == "200" ]]; then
 			ok "lakehouse/tables silver_asset_events_current visible"
 		else
 			echo "  OK  lakehouse/tables silver_asset_events_current absent — tolerated until Silver export job has run"
-			PASS=$((PASS + 1))
+			_pass
 		fi
 	else
 		bad "lakehouse/tables response shape"
@@ -427,7 +440,7 @@ for KWQ in "nonexistent-xxx-cyb-3713-regression-do-not-match" "备餐操作"; do
 		bad "queries run keyword q=${KWQ}"
 	elif [[ "$TOTAL" == "$KW_TOTAL_UNFILTERED" ]]; then
 		# Total == unfiltered means q was ignored — the pre-fix regression.
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL queries run keyword q=${KWQ}: total ${TOTAL} equals unfiltered ${KW_TOTAL_UNFILTERED} (q silently dropped — CYB-3713 regression)"
 	else
 		ok "queries run keyword q=${KWQ} (total=${TOTAL} != unfiltered ${KW_TOTAL_UNFILTERED})"
@@ -448,7 +461,7 @@ for F3715 in camera_model source_platform; do
 	if [[ "$RESP_CODE" != "200" ]]; then
 		bad "queries run filter ${F3715}"
 	elif [[ "$TOTAL" -le 0 ]]; then
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL queries run filter ${F3715}: total=${TOTAL} (expected >0 — field populated on dev)"
 	else
 		ok "queries run filter ${F3715} (total=${TOTAL} > 0)"
@@ -759,5 +772,8 @@ else
 fi
 
 echo ""
+# CYB-4264: tally from the results file so subshell-run checks are counted.
+PASS=$(grep -c '^P' "$SMOKE_RESULTS" || true)
+FAIL=$(grep -c '^F' "$SMOKE_RESULTS" || true)
 echo "=== done: ${PASS} passed, ${FAIL} failed ==="
-[[ "$FAIL" -eq 0 ]]
+[[ "${FAIL:-0}" -eq 0 ]]
