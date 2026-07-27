@@ -65,10 +65,18 @@ func (p *Publisher) Publish(ctx context.Context, orderingKey string, data []byte
 		if p.topic == nil {
 			return nil, fmt.Errorf("outbox publisher: nil topic")
 		}
-		return p.topic.Publish(ctx, &pubsub.Message{
-			Data:        data,
-			OrderingKey: orderingKey,
-		}), nil
+		msg := &pubsub.Message{Data: data}
+		// Only attach an OrderingKey when the topic actually has ordering
+		// enabled. The Pub/Sub client rejects any message carrying an
+		// OrderingKey while Topic.EnableMessageOrdering is false
+		// ("OrderingKey was set in Message"), which would fail every
+		// publish. Ordering is intentionally disabled here (see
+		// NewPublisher), so no key is attached; if a future topic enables
+		// ordering, the asset_id key is used automatically.
+		if p.topic.EnableMessageOrdering {
+			msg.OrderingKey = orderingKey
+		}
+		return p.topic.Publish(ctx, msg), nil
 	case "kafka":
 		return nil, fmt.Errorf("outbox kafka publisher is not compiled in this build")
 	case "internal":
