@@ -132,11 +132,28 @@ func buildFulltextClause(pred queryir.QueryPredicate, startParam int) (*SQLClaus
 	if !strings.Contains(pattern, "%") && !strings.Contains(pattern, "_") {
 		pattern = "%" + pattern + "%"
 	}
-	sql := fmt.Sprintf(
-		"(assets.asset_id::text ILIKE $%d OR assets.mcap_file_id::text ILIKE $%d OR owner ILIKE $%d OR reviewer ILIKE $%d OR asset_type ILIKE $%d OR lifecycle_state ILIKE $%d OR EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' AND t.tag_value ILIKE $%d))",
-		startParam, startParam,
-		startParam, startParam, startParam, startParam, startParam,
-	)
+	// Core built-in fulltext columns. Every predicate reuses the SAME
+	// $startParam placeholder (one bound pattern arg), matching the historical
+	// single-arg behavior.
+	clauses := []string{
+		fmt.Sprintf("assets.asset_id::text ILIKE $%d", startParam),
+		fmt.Sprintf("assets.mcap_file_id::text ILIKE $%d", startParam),
+		fmt.Sprintf("owner ILIKE $%d", startParam),
+		fmt.Sprintf("reviewer ILIKE $%d", startParam),
+		fmt.Sprintf("asset_type ILIKE $%d", startParam),
+		fmt.Sprintf("lifecycle_state ILIKE $%d", startParam),
+		fmt.Sprintf("EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' AND t.tag_value ILIKE $%d)", startParam),
+	}
+	// CYB-4011: flattened ID columns shared with the ES keyword path via
+	// queryir.FulltextExtraFields (single source of truth). ::text guards uuid
+	// columns (assets.device_id is uuid — see the assets.asset_id::text
+	// precedent) and is a no-op on text columns (assets.grace_video_id). Field
+	// names come from a compile-time constant slice, never user input, so
+	// interpolating them here is injection-safe.
+	for _, f := range queryir.FulltextExtraFields {
+		clauses = append(clauses, fmt.Sprintf("assets.%s::text ILIKE $%d", f, startParam))
+	}
+	sql := "(" + strings.Join(clauses, " OR ") + ")"
 	return &SQLClause{
 		SQL:  sql,
 		Args: []interface{}{pattern},

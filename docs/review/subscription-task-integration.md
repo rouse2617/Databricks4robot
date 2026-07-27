@@ -71,7 +71,7 @@ from google.cloud import pubsub_v1
 import json
 
 publisher = pubsub_v1.PublisherClient()
-topic = "projects/green-valley-442103/topics/databrew-ingest-youxin"
+topic = "projects/green-valley-442103/topics/databrew-ingest-youxin"  # pragma: allowlist secret
 
 # 单条资产 → 单个 run
 publisher.publish(topic, json.dumps({"asset_ids": ["video-001"]}).encode("utf-8"))

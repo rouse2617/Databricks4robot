@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 // Client wraps HTTP calls to an Elasticsearch cluster.
@@ -370,15 +371,27 @@ func buildSearchModeQuery(mode, query string) map[string]any {
 			return map[string]any{"match": map[string]any{field: body}}
 		}
 
+		should := []any{
+			map[string]any{"term": map[string]any{"asset_id": query}},
+			map[string]any{"term": map[string]any{"asset_type": query}},
+			matchClause("notes"),
+			matchClause("owner.text"),
+			matchClause("reviewer.text"),
+		}
+		// CYB-4011: flattened ID fields (grace_video_id, device_id, …) sourced
+		// from queryir.FulltextExtraFields — the single list PG fulltext shares.
+		// operator=and matches a full UUID/device id as a whole (all tokens
+		// required) so it never fuzzes across near-ids, and match works whether
+		// the dynamically-mapped field resolves to text or keyword. No fuzziness
+		// here even in semantic mode — approximate IDs are never desirable.
+		for _, f := range queryir.FulltextExtraFields {
+			should = append(should, map[string]any{
+				"match": map[string]any{f: map[string]any{"query": query, "operator": "and"}},
+			})
+		}
 		return map[string]any{
 			"bool": map[string]any{
-				"should": []any{
-					map[string]any{"term": map[string]any{"asset_id": query}},
-					map[string]any{"term": map[string]any{"asset_type": query}},
-					matchClause("notes"),
-					matchClause("owner.text"),
-					matchClause("reviewer.text"),
-				},
+				"should":               should,
 				"minimum_should_match": 1,
 			},
 		}
