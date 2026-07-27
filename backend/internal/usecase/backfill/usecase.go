@@ -299,6 +299,16 @@ func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
 	if uc.repo != nil {
 		if n, err := uc.repo.CountStaleBackfillItems(ctx); err == nil {
 			metrics.DispatcherStaleItems.Set(float64(n))
+			// CYB-3691: also push the gauge to GCP Cloud Monitoring so the
+			// "Dispatcher Metrics" dashboard (which reads
+			// custom.googleapis.com/dispatcher/stale_items) reflects the gap.
+			// Best-effort: monWriter is nil when the writer is disabled, and
+			// write errors are logged only — never block the reconcile cycle.
+			if uc.monWriter != nil {
+				if werr := uc.monWriter.WriteInt64Metric(ctx, "dispatcher/stale_items", int64(n)); werr != nil {
+					slog.Warn("cloudmonitoring: write dispatcher/stale_items failed", "err", werr)
+				}
+			}
 		}
 	}
 	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
