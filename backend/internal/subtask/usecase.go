@@ -29,13 +29,20 @@ type Notifier interface {
 	NotifyTaskEmpty(ctx context.Context, task Task)
 }
 
+// Puller is the message-pull seam of PubSubClient, narrowed to what the
+// dispatch loop needs. *PubSubClient satisfies it; extracting the interface
+// lets executeTask be tested without a live Pub/Sub subscriber.
+type Puller interface {
+	Pull(ctx context.Context, projectID, subscriptionID string, maxMessages int) (*PullResult, error)
+}
+
 type Options struct {
 	DefaultPullIntervalSec int
 }
 
 type Usecase struct {
 	repo    Repo
-	pubsub  *PubSubClient
+	puller  Puller
 	batches BatchCreator
 	runs    RunCreator
 	notify  Notifier
@@ -43,11 +50,11 @@ type Usecase struct {
 	now     func() time.Time
 }
 
-func New(repo Repo, ps *PubSubClient, batches BatchCreator, runs RunCreator, notify Notifier, opt Options) *Usecase {
+func New(repo Repo, ps Puller, batches BatchCreator, runs RunCreator, notify Notifier, opt Options) *Usecase {
 	if opt.DefaultPullIntervalSec <= 0 {
 		opt.DefaultPullIntervalSec = 10
 	}
-	return &Usecase{repo: repo, pubsub: ps, batches: batches, runs: runs, notify: notify, opt: opt, now: time.Now}
+	return &Usecase{repo: repo, puller: ps, batches: batches, runs: runs, notify: notify, opt: opt, now: time.Now}
 }
 
 func (uc *Usecase) StartLoop(ctx context.Context) {
@@ -93,7 +100,7 @@ func (uc *Usecase) executeTask(ctx context.Context, task Task) error {
 		maxMsg = 1000
 	}
 
-	result, err := uc.pubsub.Pull(ctx, task.ProjectID, task.SubscriptionID, maxMsg)
+	result, err := uc.puller.Pull(ctx, task.ProjectID, task.SubscriptionID, maxMsg)
 	if err != nil {
 		return uc.recordAndNotifyFailure(ctx, task, fmt.Errorf("pubsub pull: %w", err))
 	}
