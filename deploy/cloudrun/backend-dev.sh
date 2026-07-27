@@ -50,10 +50,28 @@ ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
 VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
 
-# Enable GMP (Google Managed Prometheus) scraping on Cloud Run.
-# When true, GCP automatically scrapes /metrics and ingests into Cloud Monitoring.
-# Cost: ~$0.04/month for the ~20 dispatcher metrics on dev.
-PROMETHEUS_SCRAPE="${PROMETHEUS_SCRAPE:-true}"
+# GMP (Google Managed Prometheus) collection on Cloud Run — CYB-4146.
+#
+# There is NO "GCP automatically scrapes /metrics" on Cloud Run. The old
+# `run.googleapis.com/prometheus_scrape` annotation is a GKE PodMonitoring
+# concept; Cloud Run silently drops it and nothing gets scraped. The supported
+# pull-based path is a multi-container `run-gmp-sidecar` collector that scrapes
+# the app container's localhost:8080/metrics and pushes to GMP.
+#
+# Gated OFF by default because this script is shared: dev CI + local deploy turn
+# it ON, but preview (deploy/preview/cloudbuild.yaml, CPU=1) must stay single
+# container. OFF = byte-for-byte the previous single-container behavior.
+ENABLE_GMP_SIDECAR="${ENABLE_GMP_SIDECAR:-false}"
+# Per-container split when the sidecar is ON. Instance CPU total (APP_CPU +
+# COLLECTOR_CPU) MUST be a supported Cloud Run value (1/2/4/8); individual
+# containers may take arbitrary fractions, so 3+1=4 keeps the instance total at
+# today's 4 (zero cost delta). If gcloud rejects the split, override at deploy
+# time with APP_CPU=2 COLLECTOR_CPU=2 (both individually-valid) — no code change.
+APP_CPU="${APP_CPU:-3}"
+APP_MEMORY="${APP_MEMORY:-3584Mi}"
+COLLECTOR_CPU="${COLLECTOR_CPU:-1}"
+COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-512Mi}"
+COLLECTOR_IMAGE="${COLLECTOR_IMAGE:-us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.2.0}"
 
 # Optional overrides for Cloud Run reachability.
 DB_HOST_OVERRIDE="${DB_HOST_OVERRIDE:-172.27.160.7}"
@@ -512,20 +530,19 @@ with open(dst, "w", encoding="utf-8") as f:
 PY
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run (${REGION}, ${PROJECT_ID})"
+# Service-level flags shared by both single- and multi-container paths.
+# Per-container flags (--image/--port/--cpu/--memory/--env-vars-file/--set-secrets)
+# are appended per-branch below: at top level for a single container, or scoped
+# under --container app/collector when the GMP sidecar is enabled (CYB-4146).
 deploy_args=(
   run deploy "${SERVICE_NAME}"
   --quiet
   --project "${PROJECT_ID}"
   --region "${REGION}"
   --platform managed
-  --image "${IMAGE}"
-  --port 8080
   --min-instances "${MIN_INSTANCES}"
   --max-instances "${MAX_INSTANCES}"
-  --cpu "${CPU}"
-  --memory "${MEMORY}"
   --timeout "${TIMEOUT}"
-  --env-vars-file "${ENV_VARS_FILE}"
 )
 if [[ "${CPU_THROTTLING}" == "true" ]]; then
   deploy_args+=(--cpu-throttling)
@@ -537,12 +554,17 @@ if [[ "${CPU_BOOST}" == "true" ]]; then
 else
   deploy_args+=(--no-cpu-boost)
 fi
+# Secret bindings are per-container. Build them once here, then append at the
+# correct scope below: top level (single container) or right after
+# --container app (GMP sidecar path). Binding to app keeps them off the
+# collector, which is zero-config and needs no secrets. (CYB-4146)
+container_secret_args=()
 if [[ ${#secret_mappings[@]} -gt 0 ]]; then
   secret_arg="$(IFS=,; echo "${secret_mappings[*]}")"
-  deploy_args+=(--set-secrets "${secret_arg}")
+  container_secret_args+=(--set-secrets "${secret_arg}")
 fi
 if [[ "${remove_es_password_secret}" == "true" && ${#secret_mappings[@]} -eq 0 ]]; then
-  deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
+  container_secret_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
 fi
 
 # CYB-3486d1c: when set, the new revision is created idle. Traffic must be
@@ -564,8 +586,46 @@ if [[ -n "${VPC_CONNECTOR}" ]]; then
   deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
 fi
 
-if [[ "${PROMETHEUS_SCRAPE}" == "true" ]]; then
-  deploy_args+=(--update-annotations "run.googleapis.com/prometheus_scrape=true,run.googleapis.com/prometheus_port=8080")
+# Per-container flags. Two shapes:
+#   OFF (default, incl. preview): single container at top level — byte-for-byte
+#     the pre-CYB-4146 behavior.
+#   ON  (dev CI + local deploy):  app container (ingress, port 8080) + run-gmp
+#     collector sidecar scraping app's localhost:8080/metrics into GMP.
+# CPU/memory split so the instance TOTAL stays at CPU/MEMORY (4 / 4Gi) — no cost
+# delta. app is the only container with --port, making it the ingress container.
+if [[ "${ENABLE_GMP_SIDECAR}" == "true" ]]; then
+  deploy_args+=(
+    --container app
+    --image "${IMAGE}"
+    --port 8080
+    --cpu "${APP_CPU}"
+    --memory "${APP_MEMORY}"
+    --env-vars-file "${ENV_VARS_FILE}"
+  )
+  # Guard the expansion: bash 3.2 (macOS /bin/bash) errors on "${arr[@]}" for an
+  # empty array under `set -u`. container_secret_args is empty when ES has no
+  # auth and no other secret is bound.
+  if [[ ${#container_secret_args[@]} -gt 0 ]]; then
+    deploy_args+=("${container_secret_args[@]}")
+  fi
+  deploy_args+=(
+    --container collector
+    --image "${COLLECTOR_IMAGE}"
+    --cpu "${COLLECTOR_CPU}"
+    --memory "${COLLECTOR_MEMORY}"
+    --depends-on app
+  )
+else
+  deploy_args+=(
+    --image "${IMAGE}"
+    --port 8080
+    --cpu "${CPU}"
+    --memory "${MEMORY}"
+    --env-vars-file "${ENV_VARS_FILE}"
+  )
+  if [[ ${#container_secret_args[@]} -gt 0 ]]; then
+    deploy_args+=("${container_secret_args[@]}")
+  fi
 fi
 
 gcloud "${deploy_args[@]}"

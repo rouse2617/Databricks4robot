@@ -167,11 +167,15 @@ jobs:
           # CYB-3486d1c — without --no-traffic, the new revision took 100%
           # traffic instantly and the migrate job ran against an already-live
           # broken revision (schema mismatch → "column does not exist").
+          # ENABLE_GMP_SIDECAR=true: deploy the app container alongside the
+          # run-gmp collector sidecar so /metrics is scraped into Managed
+          # Prometheus (CYB-4146). Instance CPU stays at 4 (app 3 + collector 1).
           IMAGE=${{ env.IMAGE }} \
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
           CLOUDRUN_ENV=development \
           DEPLOY_NO_TRAFFIC=true \
+          ENABLE_GMP_SIDECAR=true \
           bash deploy/cloudrun/backend-dev.sh
 
       # The dev service has no real DATABREW_TOKEN / JWT_SECRET, so ENV=production
