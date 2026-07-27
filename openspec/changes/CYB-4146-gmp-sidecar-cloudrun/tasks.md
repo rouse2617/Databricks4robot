@@ -26,7 +26,7 @@
 
 ## Phase 5 [live verify] 合并前用户手工 `!` 部署(沙箱无法 gcloud)
 - [ ] 用户跑给定 `! gcloud run deploy … --container app … --container collector …`(或 `ENABLE_GMP_SIDECAR=true … bash backend-dev.sh`)到 dev,`--no-traffic` 保护
-- [ ] 若 CPU 3+1 被拒 → `APP_CPU=2 COLLECTOR_CPU=2` 重试(env 覆盖,不改代码)
+- [x] CPU 3+1 首次部署被 gcloud 拒(逐容器校验)→ 默认改为 app=2 + collector=2(CYB-4146 fix)
 - [ ] `describe` 见 2 容器 + `/healthz` 200 → 切流量
 - [ ] Metrics Explorer 见 `prometheus.googleapis.com/backend_*` ≥ 2 min 数据 → 用户确认 → 合并 PR
 

@@ -62,14 +62,18 @@ VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
 # it ON, but preview (deploy/preview/cloudbuild.yaml, CPU=1) must stay single
 # container. OFF = byte-for-byte the previous single-container behavior.
 ENABLE_GMP_SIDECAR="${ENABLE_GMP_SIDECAR:-false}"
-# Per-container split when the sidecar is ON. Instance CPU total (APP_CPU +
-# COLLECTOR_CPU) MUST be a supported Cloud Run value (1/2/4/8); individual
-# containers may take arbitrary fractions, so 3+1=4 keeps the instance total at
-# today's 4 (zero cost delta). If gcloud rejects the split, override at deploy
-# time with APP_CPU=2 COLLECTOR_CPU=2 (both individually-valid) — no code change.
-APP_CPU="${APP_CPU:-3}"
+# Per-container split when the sidecar is ON. gcloud enforces the CPU limit
+# PER CONTAINER, not on the sum: each container's --cpu must itself be one of
+# {<=1, 1, 2, 4, 6, 8} (a 3 is rejected: "Must be equal to one of [.08-1], 1.0,
+# 2.0, 4.0, 6.0, 8.0"). app=2 + collector=2 is the only flat-cost split that is
+# both per-container legal AND lands on a supported instance total of 4 — same
+# billing as today's single CPU=4 container. The collector only needs ~0.1 vCPU,
+# but the total can't be 3, so it takes 2 to reach a legal total of 4. Override
+# both at deploy time (e.g. APP_CPU=4 COLLECTOR_CPU=2 → total 6) if app needs
+# more headroom back. (CYB-4146; 3+1 rejected on the first dev deploy.)
+APP_CPU="${APP_CPU:-2}"
 APP_MEMORY="${APP_MEMORY:-3584Mi}"
-COLLECTOR_CPU="${COLLECTOR_CPU:-1}"
+COLLECTOR_CPU="${COLLECTOR_CPU:-2}"
 COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-512Mi}"
 COLLECTOR_IMAGE="${COLLECTOR_IMAGE:-us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.2.0}"
 

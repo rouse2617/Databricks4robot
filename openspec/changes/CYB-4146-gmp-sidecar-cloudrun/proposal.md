@@ -26,7 +26,7 @@ CYB-3671 (monitoring-baseline) 的 **R5** 要求 Cloud Run backend-dev/prod 的 
 
 ## Scope
 
-- **In scope**:改造 dev 部署脚本为双容器;CPU 拆分 app=3 + collector=1(合计维持 4,零成本增量);删除死 annotation。
+- **In scope**:改造 dev 部署脚本为双容器;CPU 拆分 app=2 + collector=2(合计维持 4,零成本增量;gcloud 逐容器上限 {<=1,1,2,4,6,8},故 2+2 是零成本合法拆分);删除死 annotation。
 - **Out of scope**:prod 部署脚本(dev 验证后另起 issue);metric 白名单(Option 2,需 RunMonitoring secret,留作 CYB-3989 成本治理杠杆);Go 代码 / `/metrics` 端点本身(已存在,routes.go:115)。
 
 ## Success Criteria

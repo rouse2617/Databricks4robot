@@ -30,14 +30,14 @@
 
 ### D3 — CPU / Memory 拆分
 
-实例总量维持 **CPU=4 / MEM=4Gi**(月成本零增量)。默认拆分 app=3+1、mem=3584Mi+512Mi:
+实例总量维持 **CPU=4 / MEM=4Gi**(月成本零增量)。默认拆分 app=2+2、mem=3584Mi+512Mi:
 
 | 容器 | CPU | MEM | 依据 |
 |---|---|---|---|
-| app | `APP_CPU=3` | `APP_MEMORY=3584Mi` | 保留 line 27-31 注释的 4-core 意图的大头(load-test 下 dispatch 不再是单核瓶颈) |
-| collector | `COLLECTOR_CPU=1` | `COLLECTOR_MEMORY=512Mi` | sidecar 轻量,1 core / 512Mi 充裕 |
+| app | `APP_CPU=2` | `APP_MEMORY=3584Mi` | 保留 line 27-31 注释的多核意图的大头;总量维持 4 时这是唯一合法的 app 份额 |
+| collector | `COLLECTOR_CPU=2` | `COLLECTOR_MEMORY=512Mi` | sidecar 只需 ~0.1 vCPU,但总量不能取 3,故 collector 取 2 才能凑到合法总量 4 |
 
-**载荷假设 + 兜底**:依据 Cloud Run multi-container 规则 —— **每容器 CPU 之和** 必须是受支持值(1/2/4/8),单容器可取任意份额(fractional 允许),故 3+1=4 合法。此假设无法在本沙箱内经 googleapis 验证(egress 被 black-hole),但**失败是 fail-fast**:`gcloud run deploy` 在创建任何 revision 前就会拒绝非法 CPU,不会产生半坏状态。四项 CPU/MEM 全部 env 可覆盖 —— 若 3+1 被拒,合并前的手工 `!` 部署会立即暴露,一行 `APP_CPU=2 COLLECTOR_CPU=2` 即切到“两值各自合法”的保底组合,无需改已提交代码。
+**规则(已由首次 dev 部署证实,更正原假设)**:gcloud 对 CPU 的校验是**逐容器**、不是取和 —— 每个容器的 `--cpu` 自身必须是 `{<=1, 1, 2, 4, 6, 8}` 之一(`3` 被拒:`Must be equal to one of [.08-1], 1.0, 2.0, 4.0, 6.0, 8.0`)。因此原 `3+1` 的 app=3 非法。`2+2` 是唯一"每容器合法 **且** 实例总量落在受支持值 4"的零成本拆分。校验发生在创建任何 revision **之前**(fail-fast,不产生半坏状态):首次合并 3+1 触发的 deploy-dev 即在此步红掉,dev 仍服务旧单容器 revision。四项 CPU/MEM 仍全部 env 可覆盖 —— 若 app 要拿回更多算力,`APP_CPU=4 COLLECTOR_CPU=2`(总 6,+50% CPU 成本)一行覆盖,不改已提交代码。
 
 ### D4 — 零配置 collector,不新增 secret
 
