@@ -84,9 +84,14 @@ function HistogramBars({
 						<div
 							style={{
 								width: "100%",
+								// CYB-4323: cap bar width + center so a few buckets on a wide
+								// screen no longer stretch into heavy full-width slabs.
+								maxWidth: 72,
 								height: `${heightPct}%`,
-								background: "var(--color-primary, #1677ff)",
-								borderRadius: "4px 4px 0 0",
+								// CYB-4323: vertical gradient (light→brand blue) mirrors the
+								// 资产增长 bars — lighter than the old solid --color-primary fill.
+								background: "linear-gradient(180deg, #60a5fa 0%, #2563eb 100%)",
+								borderRadius: "6px 6px 0 0",
 								// Non-zero counts always show a visible sliver so bars never
 								// disappear behind the count label even when max is huge.
 								minHeight: b.count > 0 ? 8 : 0,
@@ -180,9 +185,10 @@ export default function DurationDistributionCard() {
 				<Empty description="所选类型下无资产" />
 			) : (
 				<>
-					<HistogramBars buckets={bars} />
+					{/* CYB-4323: KPI summary moved above the histogram (先数后图) so the
+					    key numbers land before the reader scrolls past the bars. */}
 					{data && (
-						<Row gutter={[16, 8]} style={{ marginTop: 20 }}>
+						<Row gutter={[16, 8]} style={{ marginBottom: 20 }}>
 							<Col xs={12} sm={8} lg={4}>
 								<Statistic
 									title="总资产"
@@ -209,6 +215,7 @@ export default function DurationDistributionCard() {
 							</Col>
 						</Row>
 					)}
+					<HistogramBars buckets={bars} />
 				</>
 			)}
 		</Card>

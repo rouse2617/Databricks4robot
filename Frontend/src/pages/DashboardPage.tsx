@@ -529,16 +529,26 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 			type: "category",
 			boundaryGap: true,
 			data: labels,
-			axisLine: { lineStyle: { color: "#e2e8f0" } },
-			axisLabel: { fontSize: 11, rotate: labels.length > 24 ? 32 : 0 },
+			// CYB-4323: lift axis line + date labels out of the faint-gray zone
+			// (#e2e8f0 → slate-300 line, labels to slate-600) for readability.
+			axisLine: { lineStyle: { color: "#cbd5e1" } },
+			axisLabel: {
+				fontSize: 11,
+				color: "#475569",
+				rotate: labels.length > 24 ? 32 : 0,
+			},
 		},
 		yAxis: [
 			{
 				type: "value",
+				// CYB-4323: tint left axis (新增) blue + right axis (累计) green so
+				// each scale maps to its series (bar/line) at a glance.
 				name: "新增",
+				nameTextStyle: { color: "#2563eb" },
 				splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
 				axisLabel: {
 					fontSize: 11,
+					color: "#2563eb",
 					formatter: (value: number) => {
 						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
@@ -549,9 +559,11 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 			{
 				type: "value",
 				name: "累计",
+				nameTextStyle: { color: "#16a34a" },
 				splitLine: { show: false },
 				axisLabel: {
 					fontSize: 11,
+					color: "#16a34a",
 					formatter: (value: number) => {
 						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
