@@ -8785,6 +8785,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8809,6 +8814,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8833,6 +8843,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8857,6 +8872,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8881,6 +8901,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8905,6 +8930,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
