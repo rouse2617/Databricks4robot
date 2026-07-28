@@ -743,6 +743,10 @@ func (h *Handler) ResubmitWorkflow(c *gin.Context) {
 		err = client.ResubmitWorkflow(c.Request.Context(), name, namespace)
 	}
 	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -807,6 +811,10 @@ func (h *Handler) workflowOperation(c *gin.Context, pick func(argo.WorkflowClien
 	}
 	client, namespace := h.resolveWorkflowRouting(c.Request.Context(), c, name)
 	if err := pick(client)(c.Request.Context(), name, namespace); err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+			return false
+		}
 		httpresp.Internal(c, err.Error())
 		return false
 	}

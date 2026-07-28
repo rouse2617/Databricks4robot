@@ -521,7 +521,7 @@ else
 fi
 expect_code_get "workflow missing detail -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
 for op in retry resubmit suspend resume terminate; do
-	expect_code_post "workflow ${op} missing workflow -> 500" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "500" >/dev/null
+	expect_code_post "workflow ${op} missing workflow -> 404" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "404" >/dev/null
 done
 if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
 	for op in retry resubmit suspend resume terminate; do
@@ -530,7 +530,7 @@ if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
 else
 	echo "  skip workflow operation happy paths — set WORKFLOW_OPERATION_NAME to a disposable workflow"
 fi
-expect_code_delete "workflow delete missing workflow -> 500" "/api/v1/workflows/__missing_workflow__" "500" >/dev/null
+expect_code_delete "workflow delete missing workflow -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
 if [[ -n "${WORKFLOW_DELETE_NAME:-}" ]]; then
 	delete "workflow delete" "/api/v1/workflows/${WORKFLOW_DELETE_NAME}" >/dev/null
 else
