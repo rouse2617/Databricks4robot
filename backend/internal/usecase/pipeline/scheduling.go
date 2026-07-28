@@ -243,6 +243,44 @@ func executionTargetPodAnnotations(target *models.ExecutionTarget) map[string]st
 	return out
 }
 
+// workflowLabelsFromTarget builds the workflow-level labels (Workflow CRD
+// ObjectMeta.Labels, not pod-level) for a run. Two sources:
+//
+//  1. The execution target's top-level `labels` JSONB. This is where
+//     sharded argo-controllers route via
+//     workflows.argoproj.io/controller-instanceid — the controller's
+//     --selector flag reads it at the workflow level (pod labels are too
+//     granular and arrive after the workflow is already routed).
+//
+//  2. The scheduling config's workflowLabels map, for pool operators who
+//     want to route via the same data path as PodLabels.
+//
+// Either source may be empty. Returns nil for an empty result so the
+// transpiler leaves ObjectMeta.Labels unset (preserving whatever it
+// already has).
+func workflowLabelsFromTarget(target *models.ExecutionTarget) map[string]string {
+	if target == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range target.Labels {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out[k] = s
+		}
+	}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "workflowLabels"); ok {
+			for k, v := range stringMapValue(raw) {
+				out[k] = v
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func jsonMapEnv(envName string) map[string]interface{} {
 	raw := strings.TrimSpace(os.Getenv(envName))
 	if raw == "" {

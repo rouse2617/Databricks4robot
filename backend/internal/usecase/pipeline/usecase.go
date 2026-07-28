@@ -4285,6 +4285,14 @@ func (uc *Usecase) Deploy(
 	wfOpts.PodAnnotations = executionTargetPodAnnotations(target)
 	wfOpts.PodPriorityClassName = executionTargetPriorityClassName(target)
 	wfOpts.SchedulerName = executionTargetSchedulerName(target)
+	// Workflow-level labels (CRD ObjectMeta.Labels, not pod-level). Source of
+	// truth is the execution target's `labels` JSONB — typically populated
+	// with the sharded argo-controller selector
+	// (workflows.argoproj.io/controller-instanceid=vpp-cpu) so each
+	// controller only claims workflows routed to its pool. Required for
+	// sharded-controller routing to work; without this, every workflow lands
+	// on the default controller and the sharded ones stay empty.
+	wfOpts.WorkflowLabels = workflowLabelsFromTarget(target)
 	// Argo workflow priority: pool default, overridden by a per-dispatch choice
 	// (CYB task priority). Only meaningful under controller parallelism
 	// saturation; never preempts running workflows.
@@ -4302,7 +4310,6 @@ func (uc *Usecase) Deploy(
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
-
 	// sigsyaml (sigs.k8s.io/yaml) round-trips through encoding/json first, so it
 	// correctly calls resource.Quantity's MarshalJSON (producing e.g. "500m")
 	// instead of yaml.v3's default reflection, which only sees Quantity's

@@ -79,6 +79,15 @@ type Options struct {
 	// this field; Transpile does not validate or mutate it. Nil/empty is a no-op.
 	PodLabels map[string]string
 
+	// WorkflowLabels are applied verbatim to the Workflow CRD's
+	// ObjectMeta.Labels (NOT Spec.PodMetadata, which PodLabels populates).
+	// Use for argo-controller routing selectors that read at the workflow
+	// level (e.g. workflows.argoproj.io/controller-instanceid for sharded
+	// controllers) — without this, a sharded controller can't claim its
+	// workflows. Callers own sanitizing values to valid label syntax;
+	// Transpile does not validate or mutate. Nil/empty is a no-op.
+	WorkflowLabels map[string]string
+
 	// PodAnnotations are applied verbatim to every pod (via Spec.PodMetadata),
 	// for pool scheduling annotations. Nil/empty is a no-op.
 	PodAnnotations map[string]string
@@ -255,6 +264,23 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 			md.Annotations = opts.PodAnnotations
 		}
 		wf.Spec.PodMetadata = md
+	}
+	if len(opts.WorkflowLabels) > 0 {
+		if wf.ObjectMeta.Labels == nil {
+			wf.ObjectMeta.Labels = map[string]string{}
+		}
+		for k, v := range opts.WorkflowLabels {
+			// Don't let callers clobber argo's own managed labels.
+			if strings.HasPrefix(k, "workflows.argoproj.io/") {
+				// allow only controller-instanceid — that's the only
+				// workflow-level selector users legitimately set; the rest
+				// are controller-managed.
+				if k != "workflows.argoproj.io/controller-instanceid" {
+					continue
+				}
+			}
+			wf.ObjectMeta.Labels[k] = v
+		}
 	}
 	if opts.PodPriorityClassName != "" {
 		wf.Spec.PodPriorityClassName = opts.PodPriorityClassName

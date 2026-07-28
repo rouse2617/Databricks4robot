@@ -1166,6 +1166,46 @@ func TestTranspileOmitsInstanceIDLabelWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestTranspileWorkflowLabels covers Options.WorkflowLabels: arbitrary labels
+// land on the Workflow CRD ObjectMeta, and the argo-managed prefix is guarded so
+// callers can set only controller-instanceid (the one workflow-level routing
+// selector) without clobbering the controller's other managed labels.
+func TestTranspileWorkflowLabels(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:      "wf-labels",
+		Namespace: "default",
+		WorkflowLabels: map[string]string{
+			"team": "vpp",
+			"workflows.argoproj.io/controller-instanceid": "vpp-cpu",
+			"workflows.argoproj.io/completed":             "true",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.ObjectMeta.Labels["team"]; got != "vpp" {
+		t.Errorf("arbitrary label: want vpp, got %q", got)
+	}
+	if got := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; got != "vpp-cpu" {
+		t.Errorf("controller-instanceid must pass the argo-prefix guard: want vpp-cpu, got %q", got)
+	}
+	if _, ok := wf.ObjectMeta.Labels["workflows.argoproj.io/completed"]; ok {
+		t.Error("other workflows.argoproj.io/ keys must be dropped, not applied")
+	}
+}
+
+// TestTranspileWorkflowLabelsNilIsNoop guards backward-compat: no WorkflowLabels
+// means the transpiler leaves ObjectMeta.Labels exactly as it found it.
+func TestTranspileWorkflowLabelsNilIsNoop(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nolabels", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wf.ObjectMeta.Labels["team"]; ok {
+		t.Error("nil WorkflowLabels must not inject arbitrary labels")
+	}
+}
+
 func TestTranspileSetsSchedulerName(t *testing.T) {
 	wf, err := Transpile(singleNodePipeline(), &Options{
 		Name:          "wf-sched",
