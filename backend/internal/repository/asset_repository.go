@@ -8,6 +8,16 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
+// DurationRow is a lightweight three-column projection used by the batch
+// duration-lookup endpoint (CYB-4294). Duplicated in the postgres package
+// so the concrete repo can return the same value type; kept here as the
+// repository-facing contract.
+type DurationRow struct {
+	AssetID      string
+	GraceVideoID string
+	DurationMs   int64
+}
+
 // ErrDuplicateAssetID is returned when inserting an asset whose asset_id already exists.
 var ErrDuplicateAssetID = errors.New("duplicate asset id")
 
@@ -51,4 +61,11 @@ type AssetRepository interface {
 	// asset_relations parent→child edges (recursive CTE). Used by the tag
 	// propagator (CYB-1068) to apply tags to the full descendant tree.
 	ListDescendants(ctx context.Context, assetID string) ([]*models.Asset, error)
+
+	// LookupDurations returns duration_ms for non-deleted assets whose
+	// asset_id OR grace_video_id matches any element of ids. Optional
+	// [minMs, maxMs] bounds filter the resulting rows in-SQL (0 disables the
+	// bound). Empty ids returns (nil, nil) without a round-trip. Used by the
+	// batch duration-lookup endpoint (CYB-4294).
+	LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]DurationRow, error)
 }

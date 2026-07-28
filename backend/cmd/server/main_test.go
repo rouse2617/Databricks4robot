@@ -8,6 +8,7 @@ import (
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
@@ -68,6 +69,10 @@ func (r *testAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interfa
 
 func (r *testAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64, _ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	return 0, nil
+}
+
+func (r *testAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
 }
 
 func buildTestAlgoRegistry(t *testing.T) *config.AlgoRegistry {

@@ -294,6 +294,44 @@ WHERE asset_id = ANY($1)
 	return out, nil
 }
 
+// LookupDurations returns one repository.DurationRow per non-deleted asset
+// whose asset_id OR grace_video_id matches any element of ids. When minMs or
+// maxMs are >0 they further constrain rows by duration_ms; a zero bound is
+// disabled. An empty ids slice returns (nil, nil) without hitting the DB.
+//
+// CYB-4294. The single WHERE + OR lets a mixed asset_id / grace_video_id paste
+// resolve in one round trip; both columns are indexed.
+func (r *AssetRepo) LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `
+SELECT asset_id, COALESCE(grace_video_id, ''), COALESCE(duration_ms, 0)
+FROM assets
+WHERE is_deleted = FALSE
+  AND (asset_id = ANY($1) OR grace_video_id = ANY($1))
+  AND ($2 = 0 OR duration_ms >= $2)
+  AND ($3 = 0 OR duration_ms <= $3)`
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, ids, minMs, maxMs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupDurations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.DurationRow, 0, len(ids))
+	for rows.Next() {
+		var row repository.DurationRow
+		if err := rows.Scan(&row.AssetID, &row.GraceVideoID, &row.DurationMs); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupDurations scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupDurations rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetAll returns an asset regardless of is_deleted status.
 // Used by GET /assets/:id to honor the API contract that soft-deleted
 // assets remain accessible.

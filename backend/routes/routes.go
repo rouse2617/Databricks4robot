@@ -266,6 +266,11 @@ func RegisterAll(
 		assets.DELETE("/:id/tags/:key", middleware.RequireScope("assets:write"), assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 
+		// CYB-4294: batch asset-duration lookup — one round trip, mixed
+		// asset_id / grace_video_id inputs, server-side stats + histogram
+		// buckets. Same `assets:read` scope group as GET /assets/:id.
+		assets.POST("/durations", assetHandler.LookupDurations)
+
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
 		// CYB-4263: read-only asset-type JSON schema (handler implemented +

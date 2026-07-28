@@ -481,3 +481,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 		t.Fatalf("expected Secure cookie in production, got %q", cookie)
 	}
 }
+
+func (r *routeAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

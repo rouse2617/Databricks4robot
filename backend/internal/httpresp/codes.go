@@ -39,4 +39,9 @@ const (
 	CodeTagKeyExists             = "TAG_KEY_EXISTS"              // CYB-3246
 	CodeTagNotFound              = "TAG_NOT_FOUND"               // CYB-3246
 	CodeSubscriptionTaskNotFound = "SUBSCRIPTION_TASK_NOT_FOUND" // CYB-3778
+
+	// CYB-4294: batch duration lookup — POST /api/v1/assets/durations.
+	CodeIdListRequired      = "ID_LIST_REQUIRED"
+	CodeIdListTooLarge      = "ID_LIST_TOO_LARGE"
+	CodeInvalidDurationRange = "INVALID_DURATION_RANGE"
 )

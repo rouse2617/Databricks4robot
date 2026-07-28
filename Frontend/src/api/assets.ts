@@ -57,6 +57,45 @@ export interface FoxgloveSourceResponse {
 	expires_at?: string;
 }
 
+// ─── CYB-4294: batch duration lookup ────────────────────────────────────────
+
+export type AssetDurationIdType = "auto" | "asset_id" | "grace_video_id";
+
+export interface AssetDurationsRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	min_duration_ms?: number;
+	max_duration_ms?: number;
+}
+
+export interface DurationLookupItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	duration_ms: number;
+	duration_sec: number;
+	formatted: string;
+}
+
+export interface DurationStats {
+	matched_count: number;
+	missing_count: number;
+	filtered_out_count: number;
+	total_ms: number;
+	mean_ms: number;
+	min_ms: number;
+	max_ms: number;
+	p50_ms: number;
+	p90_ms: number;
+}
+
+export interface AssetDurationsResponse {
+	items: DurationLookupItem[];
+	missing_ids: string[];
+	filtered_out_ids: string[];
+	stats: DurationStats;
+}
+
 export interface AssetMetadataResponse {
 	asset_id: string;
 	segment_locator: string;
@@ -302,6 +341,13 @@ export const assetsApi = {
 		apiClient
 			.post<{ items: Asset[] }>("/assets:batch_get", { asset_ids: assetIds })
 			.then((r) => r.data.items ?? []),
+
+	// CYB-4294: batch duration lookup. Server matches both `asset_id` and
+	// `grace_video_id` columns via OR, so ids may be mixed shapes.
+	lookupDurations: (req: AssetDurationsRequest) =>
+		apiClient
+			.post<AssetDurationsResponse>("/assets/durations", req)
+			.then((r) => r.data),
 
 	getPreviewManifest: (id: string) =>
 		apiClient

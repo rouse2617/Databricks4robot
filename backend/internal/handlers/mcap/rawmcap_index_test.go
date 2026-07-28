@@ -85,3 +85,7 @@ func TestCreateFile_EmitsAssetCreatedEventForRawMcap(t *testing.T) {
 		t.Errorf("asset_created AggregateType = %q, want asset", assetEvt.AggregateType)
 	}
 }
+
+func (rawMcapAssetRepoStub) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

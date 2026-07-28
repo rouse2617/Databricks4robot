@@ -1112,6 +1112,54 @@ func (h *Handler) BatchGet(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items})
 }
 
+// LookupDurations resolves duration_ms for a batch of asset ids and/or
+// grace_video_ids in one round trip and computes summary stats server-side.
+// Handles up to 5000 ids per request; larger sets must be split client-side.
+// See openspec/changes/CYB-4294-asset-durations for the full contract.
+//
+// @Summary      Batch lookup asset durations
+// @Description  Look up duration_ms for a mixed batch of asset_id + grace_video_id inputs
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetDurationsRequest true "Duration lookup request"
+// @Success      200 {object} models.AssetDurationsResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/durations [post]
+func (h *Handler) LookupDurations(c *gin.Context) {
+	var req models.AssetDurationsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	if req.MinDurationMs < 0 || req.MaxDurationMs < 0 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidDurationRange, "min_duration_ms and max_duration_ms must be non-negative", nil)
+		return
+	}
+	if req.MinDurationMs > 0 && req.MaxDurationMs > 0 && req.MinDurationMs > req.MaxDurationMs {
+		httpresp.BadRequest(c, httpresp.CodeInvalidDurationRange, "min_duration_ms must be <= max_duration_ms", nil)
+		return
+	}
+	resp, err := h.uc.LookupDurations(c.Request.Context(), req)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // PromoteRevision creates a new revision of an asset (B-route promote).
 // @Summary      Promote asset revision
 // @Description  Create a new revision of an asset within a logical asset family

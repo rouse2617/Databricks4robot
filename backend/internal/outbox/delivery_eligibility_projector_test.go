@@ -498,3 +498,7 @@ func TestProjector_payloadWithNoTagKey(t *testing.T) {
 		t.Error("expected no upserts for non-existent asset")
 	}
 }
+
+func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

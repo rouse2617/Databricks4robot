@@ -8,6 +8,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 type stubAssetRepo struct {
@@ -124,4 +125,8 @@ func TestNormalizeAssetIDs_DedupesAndTrims(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
 		t.Fatalf("normalized ids=%v", got)
 	}
+}
+
+func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
 }

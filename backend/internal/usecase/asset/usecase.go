@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -760,6 +761,216 @@ func (u *Usecase) GetAll(ctx context.Context, assetID string) (*models.Asset, er
 		return nil, err
 	}
 	return a, nil
+}
+
+// LookupDurationsMaxIDs bounds the batch duration-lookup request size. Peak
+// observed real batch on dev is ~1668 ids (CYB-4294); the 5000 cap is a 3x
+// safety margin that still fits comfortably in one Postgres ANY() index scan
+// and one ~500 KB response payload.
+const LookupDurationsMaxIDs = 5000
+
+// LookupDurations resolves duration_ms for a batch of asset_id and/or
+// grace_video_id inputs. The response classifies each requested id into
+// exactly one of items / missing_ids / filtered_out_ids and computes stats
+// server-side over the surviving items (CYB-4294).
+//
+// Contract:
+//   - dedup input ids (preserve first-occurrence order for stable output)
+//   - each requested id becomes either an item (matched and in range), a
+//     filtered_out_id (matched but outside [min,max]), or a missing_id (no row
+//     at all)
+//   - a row that matches by BOTH its asset_id AND its grace_video_id in the
+//     same request is attributed to whichever input id appeared first; the
+//     other collapses into the same item
+//   - stats (matched_count, total_ms, mean_ms, min/max, p50, p90) are computed
+//     over items only; percentiles use linear interpolation
+func (u *Usecase) LookupDurations(ctx context.Context, req models.AssetDurationsRequest) (*models.AssetDurationsResponse, error) {
+	// Dedup ids preserving input order; empty entries are treated as missing
+	// input and dropped (they can never match anything).
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// Fetch matching rows in a single round-trip. Empty dedup slice short-
+	// circuits the SQL and returns an empty response.
+	var rows []repository.DurationRow
+	if len(dedup) > 0 {
+		// Fetch WITHOUT the range filter so that rows matching by id but
+		// outside [min,max] can be reported as filtered_out_ids. Filtering
+		// in SQL would lose the "matched but out of range" signal.
+		var err error
+		rows, err = u.repo.LookupDurations(ctx, dedup, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build reverse maps: input id -> DurationRow (by whichever column hit).
+	// A row can be indexed by both its asset_id and grace_video_id.
+	byInput := make(map[string]*repository.DurationRow, len(rows)*2)
+	for i := range rows {
+		row := &rows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Apply range filter in-code so we can report filtered_out_ids.
+	minMs, maxMs := req.MinDurationMs, req.MaxDurationMs
+	inRange := func(d int64) bool {
+		if minMs > 0 && d < minMs {
+			return false
+		}
+		if maxMs > 0 && d > maxMs {
+			return false
+		}
+		return true
+	}
+
+	items := make([]models.DurationLookupItem, 0, len(dedup))
+	missing := make([]string, 0)
+	filteredOut := make([]string, 0)
+	// Track rows already emitted so a row named by BOTH its asset_id and
+	// grace_video_id in the same request collapses to one item.
+	emitted := make(map[*repository.DurationRow]struct{}, len(rows))
+
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		if !inRange(row.DurationMs) {
+			// Only report the first input that maps to a filtered-out row;
+			// a later input that maps to the same row would double-report.
+			if _, dup := emitted[row]; !dup {
+				filteredOut = append(filteredOut, in)
+				emitted[row] = struct{}{}
+			}
+			continue
+		}
+		if _, dup := emitted[row]; dup {
+			continue
+		}
+		emitted[row] = struct{}{}
+		items = append(items, models.DurationLookupItem{
+			InputID:      in,
+			AssetID:      row.AssetID,
+			GraceVideoID: row.GraceVideoID,
+			DurationMs:   row.DurationMs,
+			DurationSec:  float64(row.DurationMs) / 1000.0,
+			Formatted:    FormatDurationMs(row.DurationMs),
+		})
+	}
+
+	stats := computeDurationStats(items, len(missing), len(filteredOut))
+	return &models.AssetDurationsResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: filteredOut,
+		Stats:          stats,
+	}, nil
+}
+
+// FormatDurationMs renders a duration_ms as a short human string:
+//   - 0                       → "0s"
+//   - <60s                    → "Xs"
+//   - <60min                  → "Xm Ys"
+//   - ≥60min                  → "Xh Ym"
+//
+// Exported because tests and future callers may want the exact format used
+// by the API response's "formatted" field.
+func FormatDurationMs(ms int64) string {
+	if ms <= 0 {
+		return "0s"
+	}
+	totalSec := ms / 1000
+	if totalSec < 60 {
+		return fmt.Sprintf("%ds", totalSec)
+	}
+	totalMin := totalSec / 60
+	if totalMin < 60 {
+		return fmt.Sprintf("%dm %ds", totalMin, totalSec%60)
+	}
+	return fmt.Sprintf("%dh %dm", totalMin/60, totalMin%60)
+}
+
+// computeDurationStats reduces a slice of items to summary statistics.
+// Percentiles use linear interpolation on the sorted-ascending duration_ms
+// values (matching numpy.percentile default behavior). Zero items → zero
+// stats except the input counts.
+func computeDurationStats(items []models.DurationLookupItem, missingCount, filteredOutCount int) models.DurationStats {
+	stats := models.DurationStats{
+		MatchedCount:     len(items),
+		MissingCount:     missingCount,
+		FilteredOutCount: filteredOutCount,
+	}
+	if len(items) == 0 {
+		return stats
+	}
+	sorted := make([]int64, len(items))
+	for i, it := range items {
+		sorted[i] = it.DurationMs
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	var total int64
+	stats.MinMs = sorted[0]
+	stats.MaxMs = sorted[len(sorted)-1]
+	for _, d := range sorted {
+		total += d
+	}
+	stats.TotalMs = total
+	stats.MeanMs = total / int64(len(sorted))
+	stats.P50Ms = percentileLinear(sorted, 0.50)
+	stats.P90Ms = percentileLinear(sorted, 0.90)
+	return stats
+}
+
+// percentileLinear computes the p-th percentile via linear interpolation on
+// an already-sorted-ascending slice. p is in [0, 1]. For a single element
+// returns that element.
+func percentileLinear(sorted []int64, p float64) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	rank := p * float64(len(sorted)-1)
+	lo := int(rank)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := rank - float64(lo)
+	// Round to nearest int64 to keep the stat as an integer millisecond count.
+	interp := float64(sorted[lo]) + frac*float64(sorted[hi]-sorted[lo])
+	if interp < 0 {
+		interp -= 0.5
+	} else {
+		interp += 0.5
+	}
+	return int64(interp)
 }
 
 // BatchGet returns multiple assets by their IDs, skipping not-found ones.

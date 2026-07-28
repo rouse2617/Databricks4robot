@@ -239,6 +239,48 @@ func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64, _ map[
 	return 0, nil
 }
 
+// lookupDurationsFn lets a test inject specific rows returned by the mock
+// LookupDurations. When nil, the mock resolves ids by calling Get for each
+// requested id (asset_id path only). CYB-4294.
+type lookupDurationsCall struct {
+	ids   []string
+	minMs int64
+	maxMs int64
+}
+
+var _mockLookupCalls []lookupDurationsCall // shared per-test via TestMain reset; simple, tests reset before use
+
+func (m *mockAssetRepo) LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
+	_mockLookupCalls = append(_mockLookupCalls, lookupDurationsCall{ids: ids, minMs: minMs, maxMs: maxMs})
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]repository.DurationRow, 0, len(ids))
+	// Try each id as an asset_id via the getFn. This is enough for the
+	// handler-layer test where we only care about wiring and validation.
+	for _, id := range ids {
+		a, err := m.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			continue
+		}
+		if minMs > 0 && a.DurationMs < minMs {
+			continue
+		}
+		if maxMs > 0 && a.DurationMs > maxMs {
+			continue
+		}
+		out = append(out, repository.DurationRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			DurationMs:   a.DurationMs,
+		})
+	}
+	return out, nil
+}
+
 func setupAssetRouter(method, path string, fn gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -1856,5 +1898,102 @@ func TestBuildLineageResponse_scanErrorLogged(t *testing.T) {
 	a0 := algos[0].(map[string]any)
 	if a0["algo_name"] != "algo-a" {
 		t.Fatalf("expected algo-a, got %v", a0)
+	}
+}
+
+// CYB-4294: POST /assets/durations — happy path, empty-ids 400, over-cap
+// 400, invalid range 400.
+func TestLookupDurationsHandler(t *testing.T) {
+	repo := &mockAssetRepo{
+		getFn: func(_ context.Context, id string) (*models.Asset, error) {
+			switch id {
+			case "aaaaaaaa":
+				return &models.Asset{AssetID: "aaaaaaaa", DurationMs: 5_000}, nil
+			case "bbbbbbbb":
+				return &models.Asset{AssetID: "bbbbbbbb", DurationMs: 60_000}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := New(assetUC.New(repo), &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodPost, "/assets/durations", h.LookupDurations)
+
+	// Happy path: two known ids, one missing.
+	_mockLookupCalls = nil
+	body := map[string]any{
+		"ids":             []string{"aaaaaaaa", "bbbbbbbb", "zzzzzzzz"},
+		"min_duration_ms": 0,
+		"max_duration_ms": 0,
+	}
+	w := doReq(t, r, http.MethodPost, "/assets/durations", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, _ := got["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d: %+v", len(items), got)
+	}
+	missing, _ := got["missing_ids"].([]any)
+	if len(missing) != 1 || missing[0].(string) != "zzzzzzzz" {
+		t.Fatalf("expected missing=[zzzzzzzz], got %+v", missing)
+	}
+	stats, _ := got["stats"].(map[string]any)
+	if int(stats["matched_count"].(float64)) != 2 {
+		t.Fatalf("expected matched_count=2, got %+v", stats)
+	}
+	if int(stats["missing_count"].(float64)) != 1 {
+		t.Fatalf("expected missing_count=1, got %+v", stats)
+	}
+	// Repo was called with the 3 deduped ids and both bounds = 0.
+	if len(_mockLookupCalls) != 1 || len(_mockLookupCalls[0].ids) != 3 {
+		t.Fatalf("expected 1 repo call with 3 ids, got %+v", _mockLookupCalls)
+	}
+
+	// Empty ids → 400 IdListRequired.
+	w = doReq(t, r, http.MethodPost, "/assets/durations", map[string]any{"ids": []string{}})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty ids expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "ID_LIST_REQUIRED") {
+		t.Fatalf("expected ID_LIST_REQUIRED in body: %s", w.Body.String())
+	}
+
+	// Over 5000 → 400 IdListTooLarge.
+	big := make([]string, 5001)
+	for i := range big {
+		big[i] = "id" + fmt.Sprintf("%08d", i)
+	}
+	w = doReq(t, r, http.MethodPost, "/assets/durations", map[string]any{"ids": big})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("over-cap expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "ID_LIST_TOO_LARGE") {
+		t.Fatalf("expected ID_LIST_TOO_LARGE in body: %s", w.Body.String())
+	}
+
+	// min > max → 400 InvalidDurationRange.
+	w = doReq(t, r, http.MethodPost, "/assets/durations", map[string]any{
+		"ids":             []string{"aaaaaaaa"},
+		"min_duration_ms": 1000,
+		"max_duration_ms": 500,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("min>max expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "INVALID_DURATION_RANGE") {
+		t.Fatalf("expected INVALID_DURATION_RANGE in body: %s", w.Body.String())
+	}
+
+	// Negative bound → 400 InvalidDurationRange.
+	w = doReq(t, r, http.MethodPost, "/assets/durations", map[string]any{
+		"ids":             []string{"aaaaaaaa"},
+		"min_duration_ms": -1,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_DURATION_RANGE") {
+		t.Fatalf("negative bound: expected 400 INVALID_DURATION_RANGE, got %d %s", w.Code, w.Body.String())
 	}
 }

@@ -244,3 +244,7 @@ func TestCreate_DuplicateRunIDReturnsConflict(t *testing.T) {
 		t.Fatalf("second create err=%v, want ErrDuplicateRunID", err)
 	}
 }
+
+func (m *memAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

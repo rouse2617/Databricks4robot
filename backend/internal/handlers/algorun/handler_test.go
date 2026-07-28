@@ -140,3 +140,7 @@ func TestCreate_ReturnsAssetValidationDetails(t *testing.T) {
 		t.Fatalf("duplicate detail=%#v", resp.Details["duplicate_asset_ids"])
 	}
 }
+
+func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

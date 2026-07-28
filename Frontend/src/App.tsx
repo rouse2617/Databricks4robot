@@ -16,6 +16,7 @@ import "./styles/design-tokens.css";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const AssetsPage = lazy(() => import("./pages/AssetsPage"));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
+const AssetDurationLookup = lazy(() => import("./pages/AssetDurationLookup"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
 const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
 const AlgoRunsPage = lazy(() => import("./pages/AlgoRunsPage"));
@@ -57,6 +58,12 @@ function ProtectedRoutes() {
 						<Route path="/" element={<Navigate to="/dashboard" replace />} />
 						<Route path="/dashboard" element={<DashboardPage />} />
 						<Route path="/assets" element={<AssetsPage />} />
+						{/* CYB-4294: mount /assets/durations BEFORE /assets/:id so the
+						  duration lookup route wins over the :id wildcard. */}
+						<Route
+							path="/assets/durations"
+							element={<AssetDurationLookup />}
+						/>
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
 						<Route path="/algo" element={<AlgoProcessingPage />} />

@@ -5963,3 +5963,7 @@ func TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun(t *t
 		t.Fatalf("failure message must be preserved, got %q", runRepo.byID["run-1"].Message)
 	}
 }
+
+func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

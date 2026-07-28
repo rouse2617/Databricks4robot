@@ -2593,3 +2593,78 @@ func TestDeliveryRepo_RefreshAssetDeliveryIndex_RecomputesCounters(t *testing.T)
 		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
 	}
 }
+
+// CYB-4294: LookupDurations must handle a mixed asset_id + grace_video_id
+// input in one round-trip, pass range bounds as SQL params (so a zero
+// bound short-circuits), and short-circuit an empty input without hitting
+// the DB.
+func TestAssetRepoLookupDurations(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB (else a 5000-cap batch of ids that
+	// were all whitespace would still cost a round trip).
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	rows, err := repoEmpty.LookupDurations(ctx, nil, 0, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Two rows: one matched by its asset_id, one matched by its
+	// grace_video_id. The SQL's OR on both indexes returns both rows in a
+	// single scan.
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", int64(5_000)},
+			{"bbbbbbbb", "019f8319-0ef3-7da0-815c-30f23d21e7f1", int64(120_000)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	ids := []string{"aaaaaaaa", "019f8319-0ef3-7da0-815c-30f23d21e7f1"}
+	rows, err = repo.LookupDurations(ctx, ids, 1_000, 600_000)
+	if err != nil {
+		t.Fatalf("LookupDurations err: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].DurationMs != 5000 {
+		t.Fatalf("row[0] = %#v, want aaaaaaaa/5000", rows[0])
+	}
+	if rows[1].GraceVideoID != "019f8319-0ef3-7da0-815c-30f23d21e7f1" || rows[1].DurationMs != 120_000 {
+		t.Fatalf("row[1] = %#v, want grace/120000", rows[1])
+	}
+
+	// Verify the SQL uses ANY() on both columns and binds min/max as $2/$3.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"asset_id = ANY($1)",
+		"grace_video_id = ANY($1)",
+		"is_deleted = FALSE",
+		"$2 = 0 OR duration_ms >= $2",
+		"$3 = 0 OR duration_ms <= $3",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 3 {
+		t.Fatalf("expected 3 bind args (ids,min,max), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 2 {
+		t.Fatalf("expected []string ids arg with 2 elements, got %#v", db.queryArgs[0][0])
+	}
+	if got := db.queryArgs[0][1]; got != int64(1_000) {
+		t.Fatalf("min arg = %#v, want int64 1000", got)
+	}
+	if got := db.queryArgs[0][2]; got != int64(600_000) {
+		t.Fatalf("max arg = %#v, want int64 600000", got)
+	}
+}

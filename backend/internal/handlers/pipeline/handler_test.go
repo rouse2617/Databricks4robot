@@ -19,6 +19,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -2293,4 +2294,8 @@ func TestCreateRunByTemplate_EmptyBody_OK(t *testing.T) {
 	if w.Code == http.StatusBadRequest {
 		t.Fatalf("empty body should not be rejected as 400, got 400: %s", w.Body.String())
 	}
+}
+
+func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
 }

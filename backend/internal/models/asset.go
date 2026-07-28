@@ -133,6 +133,53 @@ type Asset struct {
 	Version   int64     `json:"version"`
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// CYB-4294: batch asset-duration lookup — request/response types for
+// POST /api/v1/assets/durations. See openspec/changes/CYB-4294-asset-durations.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// AssetDurationsRequest is the body accepted by POST /api/v1/assets/durations.
+// `ids` may contain any mix of asset_id (8-char) and grace_video_id (uuid).
+// `id_type` is a UI hint — the server always matches both columns.
+type AssetDurationsRequest struct {
+	IDs           []string `json:"ids"`
+	IDType        string   `json:"id_type,omitempty"`
+	MinDurationMs int64    `json:"min_duration_ms,omitempty"`
+	MaxDurationMs int64    `json:"max_duration_ms,omitempty"`
+}
+
+// DurationLookupItem is one row of the response `items` array.
+type DurationLookupItem struct {
+	InputID      string `json:"input_id"`
+	AssetID      string `json:"asset_id"`
+	GraceVideoID string `json:"grace_video_id,omitempty"`
+	DurationMs   int64  `json:"duration_ms"`
+	DurationSec  float64 `json:"duration_sec"`
+	Formatted    string `json:"formatted"`
+}
+
+// DurationStats are computed server-side over the filtered `items` array.
+// Percentiles use linear interpolation on sorted-ascending values.
+type DurationStats struct {
+	MatchedCount     int   `json:"matched_count"`
+	MissingCount     int   `json:"missing_count"`
+	FilteredOutCount int   `json:"filtered_out_count"`
+	TotalMs          int64 `json:"total_ms"`
+	MeanMs           int64 `json:"mean_ms"`
+	MinMs            int64 `json:"min_ms"`
+	MaxMs            int64 `json:"max_ms"`
+	P50Ms            int64 `json:"p50_ms"`
+	P90Ms            int64 `json:"p90_ms"`
+}
+
+// AssetDurationsResponse is the body returned by POST /api/v1/assets/durations.
+type AssetDurationsResponse struct {
+	Items          []DurationLookupItem `json:"items"`
+	MissingIDs     []string             `json:"missing_ids"`
+	FilteredOutIDs []string             `json:"filtered_out_ids"`
+	Stats          DurationStats        `json:"stats"`
+}
+
 // LogicalAsset is the version coordinator row for a family of asset revisions.
 type LogicalAsset struct {
 	LogicalAssetID  string                 `json:"logical_asset_id"`

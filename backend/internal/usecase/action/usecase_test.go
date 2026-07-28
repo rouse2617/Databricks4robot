@@ -464,3 +464,7 @@ func TestCreate_RejectsUnregisteredLabel(t *testing.T) {
 		t.Fatalf("expected ErrInvalidLabel, got %v", err)
 	}
 }
+
+func (r *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}

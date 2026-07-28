@@ -111,6 +111,55 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, assetID string) ([]*m
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }
+
+// LookupDurations synthesises DurationRow projections from the in-memory
+// asset map so usecase tests for CYB-4294 can exercise LookupDurations
+// without a real DB. Matches by asset_id and grace_video_id, applies the
+// range bounds when non-zero. Not a strict fidelity match with the real
+// SQL — enough to test the mapping/stats logic in the usecase layer.
+func (m *mockAssetRepo) LookupDurations(_ context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make([]repository.DurationRow, 0)
+	seen := make(map[string]struct{}, len(m.assets))
+	for _, a := range m.assets {
+		if _, dup := seen[a.AssetID]; dup {
+			continue
+		}
+		hit := false
+		if _, ok := want[a.AssetID]; ok {
+			hit = true
+		}
+		if !hit && a.GraceVideoID != "" {
+			if _, ok := want[a.GraceVideoID]; ok {
+				hit = true
+			}
+		}
+		if !hit {
+			continue
+		}
+		if minMs > 0 && a.DurationMs < minMs {
+			continue
+		}
+		if maxMs > 0 && a.DurationMs > maxMs {
+			continue
+		}
+		seen[a.AssetID] = struct{}{}
+		out = append(out, repository.DurationRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			DurationMs:   a.DurationMs,
+		})
+	}
+	return out, nil
+}
 func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64,
 	_ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	// Should never be called by the new AlgoUsecase. Returning an error
