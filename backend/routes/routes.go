@@ -271,6 +271,9 @@ func RegisterAll(
 		// CYB-4263: read-only asset-type JSON schema (handler implemented +
 		// unit-tested, previously unmounted).
 		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
+		// CYB-4265: logical-asset ratings history (handler implemented +
+		// unit-tested, previously unmounted — same forgotten wiring as CYB-4263).
+		api.GET("/logical-assets/:id/ratings-history", assetHandler.HandleRatingsHistory)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
