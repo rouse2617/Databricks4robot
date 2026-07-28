@@ -4021,6 +4021,53 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AssetProvenanceResponse' }
+  /api/v1/assets/{id}/runs:
+    get:
+      tags: [Assets]
+      summary: List pipeline runs that processed this asset (reverse lookup)
+      description: >-
+        Reverse lookup of pipeline runs whose asset_ids include this asset
+        (GIN-indexed scan on pipeline_runs.asset_ids). The id accepts a
+        grace_video_id or the short assets.asset_id; an unknown id yields an
+        empty items list (not 404). Summary projection only.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Pipeline run summary list for the asset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+        '400':
+          description: Invalid request (empty id)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/timeline:
     get:
       tags: [Assets]

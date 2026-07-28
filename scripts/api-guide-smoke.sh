@@ -575,6 +575,7 @@ LAID=$(echo "$LIST_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);pri
 if [[ -n "$AID" ]]; then
 	get "asset by id" "/api/v1/assets/${AID}"
 	get "asset provenance" "/api/v1/assets/${AID}/provenance"
+	get "asset runs reverse lookup (cyb-4297)" "/api/v1/assets/${AID}/runs?pageSize=5"
 	raw=$(curl -sS -N --max-time 3 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/assets/${AID}/events/stream" 2>/dev/null || true)
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')

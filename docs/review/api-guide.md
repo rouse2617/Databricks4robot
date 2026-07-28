@@ -554,6 +554,33 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
 
 错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
 
+### 1.7.1 反查资产跑过的流水线运行（CYB-4297）
+
+`GET /api/v1/assets/{id}/runs`
+
+"打开资产，看它跑过哪些流水线"。基于 `pipeline_runs.asset_ids` 的 GIN 索引反查。`{id}` 接受 `grace_video_id` 或短 `asset_id`（usecase 用 `assetRepo` 把短 id 解析为 grace id）。**未知 id 返回空 `items`，不是 404**。仅返回 summary 投影，形状与 `GET /api/v1/runs` 一致。
+
+查询参数：`status`（按运行状态过滤）、`batchJobId`（按批次过滤）、`page`（默认 1）、`pageSize`（默认 20，上限 200）。
+
+```bash
+curl "$BASE/api/v1/assets/{id}/runs?pageSize=5" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `200`：
+```json
+{
+  "items": [
+    {"id": "run-42", "pipeline_name": "hand-track", "status": "Succeeded", "created_at": "2026-07-27T10:00:00Z"}
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 5
+}
+```
+
+错误：`400` + `INVALID_ARGUMENT`（空 id）。
+
 ### 1.8 查询 logical asset 评分历史（CYB-1100）
 
 `GET /api/v1/logical-assets/{logical_asset_id}/ratings-history`
