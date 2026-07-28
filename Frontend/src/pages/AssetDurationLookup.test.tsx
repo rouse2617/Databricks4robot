@@ -6,11 +6,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import AssetDurationLookup, {
-	bucketItems,
-	exportDurationsCsv,
-	parseIdBlob,
-} from "./AssetDurationLookup";
+import { parseIdBlob } from "../components/batch-lookup/types";
+import AssetDurationLookup from "./AssetDurationLookup";
+import { bucketItems, exportDurationsCsv } from "./presets/durations";
 
 const { lookupDurationsMock } = vi.hoisted(() => ({
 	lookupDurationsMock: vi.fn(),
