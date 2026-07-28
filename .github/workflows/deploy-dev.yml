@@ -55,6 +55,14 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # CYB-4329: pin the diff base to the previous dev tip so the filter
+          # sees only THIS push's changes. Without this, paths-filter falls back
+          # to merge-base(main, dev) — since dev has diverged ~500 files from
+          # main, every filter matches and deploy-backend/mcap/migrate fire on
+          # every push, even pure-Frontend ones. Empty on a branch's first push
+          # (github.event.before = 000...) is handled by paths-filter as
+          # "everything changed" fail-open, which is the desired behavior.
+          base: ${{ github.event.before }}
           filters: |
             backend:
               - 'backend/**'
