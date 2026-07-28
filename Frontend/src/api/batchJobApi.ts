@@ -262,6 +262,56 @@ export function batchJobProgressStatus(
 	return "active";
 }
 
+export type BatchJobDisplayStatus =
+	| "running"
+	| "paused"
+	| "completed"
+	| "partial_failure"
+	| "failed";
+
+/** Minimal item-count shape the batch status is derived from. */
+export interface BatchStatusCounts {
+	completedCount: number;
+	failedCount: number;
+	totalCount: number;
+	/** Backend lifecycle status, used only for paused / in-flight fallback. */
+	status?: string;
+}
+
+/**
+ * Canonical batch-job display status, derived from item counts rather than the
+ * raw backend `status` field. CYB-4012: the backend rollup can report
+ * "completed" for a 0-success / all-failed batch, so the list (which trusted
+ * the raw status) rendered a green "已完成" for a fully-failed batch — hiding
+ * silent failures — while the detail page, which derives from counts, showed
+ * "失败". The mapping was also non-monotonic (near-identical ratios read as
+ * opposite states). Both views now share this one count-based function.
+ *
+ * Monotonic in failure rate — once every item is processed:
+ *   failed == 0            -> completed        (fully clean)
+ *   0 < failed < total     -> partial_failure  (mixed: some worked)
+ *   completed == 0         -> failed           (nothing worked)
+ * so a higher failure rate can never read as more successful, and only a
+ * fully-clean batch is ever "completed".
+ */
+export function deriveBatchJobStatus(
+	job: BatchStatusCounts,
+): BatchJobDisplayStatus {
+	if (job.status === "paused") return "paused";
+	const processed = job.completedCount + job.failedCount;
+	// All items processed (matches the detail page's allFinished check).
+	if (processed >= job.totalCount) {
+		if (job.failedCount === 0) return "completed";
+		if (job.completedCount === 0) return "failed";
+		return "partial_failure";
+	}
+	// Not fully processed: honor an explicit terminal failure from the backend;
+	// otherwise it is still in flight. Never surface "completed" before every
+	// item is processed — that premature-complete is the CYB-4012 mask.
+	if (job.status === "failed") return "failed";
+	return "running";
+}
+
 export interface BackfillItemAttempt {
 	runId: string;
 	attemptNo: number;

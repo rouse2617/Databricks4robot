@@ -10,6 +10,7 @@ const BATCH_JOB_STATUS_LABELS: Record<string, string> = {
 	running: "运行中",
 	paused: "已暂停",
 	completed: "已完成",
+	partial_failure: "部分失败",
 	failed: "失败",
 };
 
@@ -54,6 +55,7 @@ export function resolveStatusTagColor(status: string): string {
 			running: "processing",
 			paused: "warning",
 			completed: "success",
+			partial_failure: "warning",
 			failed: "error",
 		};
 		return map[status] ?? "default";

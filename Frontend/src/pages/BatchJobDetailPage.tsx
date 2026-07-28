@@ -31,11 +31,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	type BatchJob,
+	type BatchJobDisplayStatus,
 	type BatchNodeFailureItem,
 	type BatchNodeSummary,
 	type BatchNodeSummaryNode,
 	batchJobProgress,
 	continueFullBatchJob,
+	deriveBatchJobStatus,
 	getBatchJob,
 	getBatchNodeSummary,
 	listBatchNodeFailures,
@@ -293,38 +295,20 @@ export function batchJobPollIntervalMs(status?: string | null): number | null {
 function computeActualBatchStatus(
 	job: BatchJob,
 	nodeSummary: BatchNodeSummary | null,
-): "running" | "paused" | "completed" | "failed" {
-	// 如果没有节点概览数据，信任后端状态
+): BatchJobDisplayStatus {
+	// 没有节点概览数据时，信任后端生命周期状态。
 	if (!nodeSummary) {
-		return job.status as "running" | "paused" | "completed" | "failed";
+		return job.status as BatchJobDisplayStatus;
 	}
-
+	// CYB-4012: 用与列表页相同的、基于计数的派生函数计算状态，两个视图不再分叉。
+	// 子任务级暂停优先（有子任务暂停即视为批次暂停）。
 	const { subtasks } = nodeSummary;
-	const totalProcessed = subtasks.completed + subtasks.failed;
-	const allFinished = totalProcessed >= subtasks.total;
-
-	// 如果被明确暂停，返回暂停状态
-	if (subtasks.paused) {
-		return "paused";
-	}
-
-	// 如果所有任务都已完成或失败
-	if (allFinished) {
-		// 如果有失败的任务，状态为失败
-		if (subtasks.failed > 0) {
-			return "failed";
-		}
-		// 全部成功
-		return "completed";
-	}
-
-	// 如果有运行中或等待中的任务
-	if (subtasks.running > 0 || subtasks.pending > 0) {
-		return "running";
-	}
-
-	// 默认返回后端状态
-	return job.status as "running" | "paused" | "completed" | "failed";
+	return deriveBatchJobStatus({
+		completedCount: subtasks.completed,
+		failedCount: subtasks.failed,
+		totalCount: subtasks.total,
+		status: subtasks.paused ? "paused" : job.status,
+	});
 }
 
 function nodeStatusForDrawerFilter(
@@ -809,7 +793,9 @@ export default function BatchJobDetailPage() {
 	const actualStatus = job ? computeActualBatchStatus(job, nodeSummary) : null;
 	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
 	const batchTerminal =
-		actualStatus === "completed" || actualStatus === "failed";
+		actualStatus === "completed" ||
+		actualStatus === "failed" ||
+		actualStatus === "partial_failure";
 	// CYB-3491: while node data is still syncing (runsWithNodeRows < runsTotal),
 	// the 运行中/排队 split is an estimate the backend derives from subtask
 	// status, not authoritative per-node phase — so those two cells are marked

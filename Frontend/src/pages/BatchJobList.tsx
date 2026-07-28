@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type BatchJob,
+	deriveBatchJobStatus,
 	listBatchJobs,
 	pauseBatchJob,
 	resumeBatchJob,
@@ -256,18 +257,15 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			dataIndex: "status",
 			key: "status",
 			width: 110,
-			render: (status: string, record: BatchJob) => {
-				// "部分失败" is the finished-with-some-failures case: completed AND
-				// failedCount>0. Distinct from a fully failed batch. Uses a light-red
-				// outline so it reads as informational, not alarming.
-				// "部分失败" only when the batch finished with a mix of success and
-				// failure. All-failed (0 completed) keeps the plain "失败" tag so
-				// operators can distinguish "some worked" from "nothing worked".
-				if (
-					status === "completed" &&
-					record.failedCount > 0 &&
-					record.completedCount > 0
-				) {
+			render: (_status: string, record: BatchJob) => {
+				// CYB-4012: derive the tag from item counts, not the raw backend
+				// `status` — the backend rollup can report "completed" for an
+				// all-failed batch (green "已完成" hiding a 100% failure) and is
+				// non-monotonic. "部分失败" (mixed) keeps its light-red informational
+				// outline; all-failed (0 completed) now resolves to the plain "失败"
+				// tag so operators can distinguish "some worked" from "nothing worked".
+				const derived = deriveBatchJobStatus(record);
+				if (derived === "partial_failure") {
 					return (
 						<Tag
 							color="warning"
@@ -282,8 +280,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					);
 				}
 				return (
-					<Tag color={resolveStatusTagColor(status)}>
-						{formatBatchJobStatus(status)}
+					<Tag color={resolveStatusTagColor(derived)}>
+						{formatBatchJobStatus(derived)}
 					</Tag>
 				);
 			},
