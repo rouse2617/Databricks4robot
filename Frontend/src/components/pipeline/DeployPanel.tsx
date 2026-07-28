@@ -2144,7 +2144,9 @@ export function DeployPanel({
 							) : null}
 							{promotionPlan.requiredMappings.length > 0 ? (
 								<div>
-									<Text strong>资源映射（{promotionPlan.requiredMappings.length} 项）</Text>
+									<Typography.Text strong>
+										资源映射（{promotionPlan.requiredMappings.length} 项）
+									</Typography.Text>
 									{promotionPlan.requiredMappings.map((m, i) => (
 										<Tag
 											key={i}
