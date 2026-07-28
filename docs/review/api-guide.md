@@ -201,22 +201,25 @@ curl "$BASE/api/v1/lakehouse/report" \
 
 注意：上述 Lakehouse 接口在 1.0 阶段未上线；2.0 起 BigQuery 负责查询 BigLake-managed Iceberg 表，入湖由 Cloud Run Job + PyIceberg 完成。
 
-Dashboard 数据时长分布（CYB-4303）：
+Dashboard 数据时长分布（CYB-4303 / CYB-4338）：
 
 ```bash
-# 5 桶时长直方图 + 汇总统计（total_assets/total_ms/mean/min/max/p50/p90）
+# 10 桶时长直方图 + 汇总统计（total_assets/total_ms/mean/min/max/p50/p90）
+# CYB-4338 前密后疏细拆: <1m/1-5m/5-10m/10-15m/15-20m/20-25m/25-30m/30-45m/45-60m/60m+
 # asset_type 可选(如 raw_mcap)；缺省=全类聚合。宽容:无法识别的值只返回 total_assets=0,不报 400
 curl "$BASE/api/v1/dashboard/duration-distribution?asset_type=raw_mcap" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
-响应 `200`（`buckets` 恒为 5 个、按序返回，空数据时 `count=0/total_ms=0`；顶桶 `60min+` 的 `hi_ms=null`；无数据时统计字段为 0 而非 null/NaN）：
+响应 `200`（`buckets` 恒为 10 个、按序返回，空数据时 `count=0/total_ms=0`；顶桶 `60m+` 的 `hi_ms=null`；无数据时统计字段为 0 而非 null/NaN）：
 ```json
 {
   "asset_type": "raw_mcap",
   "buckets": [
-    {"label": "<1min", "lo_ms": 0, "hi_ms": 60000, "count": 12, "total_ms": 250000},
-    {"label": "60min+", "lo_ms": 3600000, "hi_ms": null, "count": 3, "total_ms": 15000000}
+    {"label": "<1m", "lo_ms": 0, "hi_ms": 60000, "count": 12, "total_ms": 250000},
+    {"label": "1-5m", "lo_ms": 60000, "hi_ms": 300000, "count": 40, "total_ms": 6000000},
+    {"label": "15-20m", "lo_ms": 900000, "hi_ms": 1200000, "count": 8, "total_ms": 8400000},
+    {"label": "60m+", "lo_ms": 3600000, "hi_ms": null, "count": 3, "total_ms": 15000000}
   ],
   "total_assets": 126, "total_ms": 119350000,
   "mean_ms": 947222, "min_ms": 500, "max_ms": 6500000,

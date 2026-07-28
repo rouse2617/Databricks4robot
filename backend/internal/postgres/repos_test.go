@@ -2775,16 +2775,16 @@ func TestAssetRepoLookupCosts(t *testing.T) {
 	}
 }
 
-// CYB-4303: DurationDistribution must
-//   - always ship all 5 buckets in DurationBucketOrder even when the SQL
+// CYB-4303 / CYB-4338: DurationDistribution must
+//   - always ship all 10 buckets in DurationBucketOrder even when the SQL
 //     returns fewer (missing rows are padded with count=0/total_ms=0);
 //   - pass assetType through as $1 on both the overall + bucket queries;
 //   - preserve the top-bucket HiMs=nil so the JSON serialization can emit null.
 func TestAssetRepoDurationDistribution(t *testing.T) {
 	ctx := context.Background()
 
-	// Overall row returned by the first QueryRow; only two of five buckets
-	// come back from the second Query. The repo must pad the other three.
+	// Overall row returned by the first QueryRow; only two of ten buckets
+	// come back from the second Query. The repo must pad the other eight.
 	db := &fakeDB{
 		queryRow: &fakeRow{values: []any{
 			int64(15),          // total_assets
@@ -2796,8 +2796,8 @@ func TestAssetRepoDurationDistribution(t *testing.T) {
 			int64(2_900_000),   // p90_ms
 		}},
 		rows: &fakeRows{data: [][]any{
-			{"<1min", int64(12), int64(250_000)},
-			{"60min+", int64(3), int64(15_000_000)},
+			{"<1m", int64(12), int64(250_000)},
+			{"60m+", int64(3), int64(15_000_000)},
 		}},
 	}
 	repo := &AssetRepo{c: &Client{db: db}}
@@ -2810,35 +2810,39 @@ func TestAssetRepoDurationDistribution(t *testing.T) {
 		t.Fatalf("overall stats wrong: %+v", dist)
 	}
 
-	// Always 5 buckets in the fixed order regardless of what the mock
+	// Always 10 buckets in the fixed order regardless of what the mock
 	// returned. Missing labels ship count/total_ms=0.
-	if len(dist.Buckets) != 5 {
-		t.Fatalf("buckets len = %d, want 5", len(dist.Buckets))
+	if len(dist.Buckets) != 10 {
+		t.Fatalf("buckets len = %d, want 10", len(dist.Buckets))
 	}
-	wantLabels := []string{"<1min", "1-10min", "10-30min", "30-60min", "60min+"}
+	wantLabels := []string{
+		"<1m", "1-5m", "5-10m", "10-15m", "15-20m",
+		"20-25m", "25-30m", "30-45m", "45-60m", "60m+",
+	}
 	for i, want := range wantLabels {
 		if dist.Buckets[i].Label != want {
 			t.Fatalf("buckets[%d].Label = %q, want %q", i, dist.Buckets[i].Label, want)
 		}
 	}
+	top := len(dist.Buckets) - 1
 	if dist.Buckets[0].Count != 12 || dist.Buckets[0].TotalMs != 250_000 {
 		t.Fatalf("buckets[0] = %+v, want count=12/total=250k", dist.Buckets[0])
 	}
-	if dist.Buckets[4].Count != 3 || dist.Buckets[4].TotalMs != 15_000_000 {
-		t.Fatalf("buckets[4] = %+v, want count=3/total=15M", dist.Buckets[4])
+	if dist.Buckets[top].Count != 3 || dist.Buckets[top].TotalMs != 15_000_000 {
+		t.Fatalf("buckets[%d] = %+v, want count=3/total=15M", top, dist.Buckets[top])
 	}
 	// Padded rows must be zero — never leave uninitialised garbage.
-	for i := 1; i <= 3; i++ {
+	for i := 1; i < top; i++ {
 		if dist.Buckets[i].Count != 0 || dist.Buckets[i].TotalMs != 0 {
 			t.Fatalf("padded buckets[%d] non-zero: %+v", i, dist.Buckets[i])
 		}
 	}
 	// Top bucket HiMs must remain nil for the JSON null path.
-	if dist.Buckets[4].HiMs != nil {
-		t.Fatalf("top bucket HiMs = %v, want nil", dist.Buckets[4].HiMs)
+	if dist.Buckets[top].HiMs != nil {
+		t.Fatalf("top bucket HiMs = %v, want nil", dist.Buckets[top].HiMs)
 	}
 	// The other buckets must have a finite HiMs (dereferenceable).
-	for i := 0; i < 4; i++ {
+	for i := 0; i < top; i++ {
 		if dist.Buckets[i].HiMs == nil {
 			t.Fatalf("buckets[%d].HiMs = nil, want finite", i)
 		}
@@ -2863,7 +2867,10 @@ func TestAssetRepoDurationDistribution(t *testing.T) {
 	}
 	// The bucket query is index 1 (overall is 0). Assert the CASE labels.
 	bucketQ := db.querySQLs[1]
-	for _, label := range []string{"<1min", "1-10min", "10-30min", "30-60min", "60min+"} {
+	for _, label := range []string{
+		"<1m", "1-5m", "5-10m", "10-15m", "15-20m",
+		"20-25m", "25-30m", "30-45m", "45-60m", "60m+",
+	} {
 		if !strings.Contains(bucketQ, "'"+label+"'") {
 			t.Fatalf("bucket query missing label %q:\n%s", label, bucketQ)
 		}
@@ -2907,8 +2914,8 @@ func TestAssetRepoDurationDistributionEmptyAssetType(t *testing.T) {
 	if dist.TotalAssets != 0 {
 		t.Fatalf("empty-corpus TotalAssets = %d, want 0", dist.TotalAssets)
 	}
-	if len(dist.Buckets) != 5 {
-		t.Fatalf("buckets len = %d, want 5", len(dist.Buckets))
+	if len(dist.Buckets) != 10 {
+		t.Fatalf("buckets len = %d, want 10", len(dist.Buckets))
 	}
 	for i, b := range dist.Buckets {
 		if b.Count != 0 || b.TotalMs != 0 {

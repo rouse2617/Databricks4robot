@@ -38,16 +38,9 @@ import {
 	type LakehouseOverviewResponse,
 	lakehouseApi,
 } from "../api/lakehouse";
-import {
-	type Cluster,
-	type ElasticQuota,
-	listClusters,
-	listElasticQuotas,
-} from "../api/pipelineApi";
 import { LazyECharts } from "../components/analytics/LazyECharts";
 import PageLoading from "../components/common/PageLoading";
 import DurationDistributionCard from "../components/dashboard/DurationDistributionCard";
-import { ElasticQuotaPanel } from "../components/pipeline/PoolManager";
 import { extractApiErrorMessage } from "../lib/apiError";
 import { getAppVersionLabel } from "../lib/appVersion";
 
@@ -709,41 +702,6 @@ export default function DashboardPage() {
 		customer: null,
 	});
 	const [errors, setErrors] = useState<EndpointErrors>({});
-	// CYB-3577: resource-pool (ElasticQuota) usage, surfaced on the overview so
-	// everyone can read cluster headroom at a glance without opening 资源池管理.
-	const [poolClusters, setPoolClusters] = useState<Cluster[]>([]);
-	const [poolQuotas, setPoolQuotas] = useState<ElasticQuota[]>([]);
-	const [poolQuotaLoading, setPoolQuotaLoading] = useState(true);
-
-	// CYB-3577: load resource-pool usage once on mount. Independent of the
-	// window-range data effect below so a quota API hiccup never blocks the KPIs.
-	useEffect(() => {
-		let cancelled = false;
-		(async () => {
-			try {
-				const [clusterList, quotaList] = await Promise.all([
-					listClusters(),
-					listElasticQuotas(),
-				]);
-				if (cancelled) return;
-				setPoolClusters(clusterList);
-				setPoolQuotas(quotaList);
-			} catch {
-				// Panel degrades to an empty state on its own; the overview must
-				// still render its business KPIs regardless of the pool API.
-				if (!cancelled) {
-					setPoolClusters([]);
-					setPoolQuotas([]);
-				}
-			} finally {
-				if (!cancelled) setPoolQuotaLoading(false);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, []);
-
 	useEffect(() => {
 		let cancelled = false;
 		const load = async () => {
@@ -1337,16 +1295,6 @@ export default function DashboardPage() {
 						/>
 					</Col>
 				</Row>
-
-				{/* CYB-3577: resource-pool (ElasticQuota) usage, front-and-center on
-				    the overview so every user can read cluster headroom at a glance. */}
-				<div style={{ marginBottom: 16 }}>
-					<ElasticQuotaPanel
-						initialQuotas={poolQuotas}
-						clusters={poolClusters}
-						loading={poolQuotaLoading}
-					/>
-				</div>
 
 				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
 					<Col xs={24} style={{ display: "flex" }}>

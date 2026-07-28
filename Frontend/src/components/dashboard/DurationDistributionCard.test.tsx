@@ -19,6 +19,30 @@ vi.mock("../../api/dashboard", () => ({
 	},
 }));
 
+// CYB-4323: the histogram is now an ECharts chart (canvas). Stub LazyECharts to
+// render the option's bucket labels (xAxis.data) + counts (series[0].data) as
+// real DOM text, so the existing findByText assertions still verify the data
+// actually reaches the chart — without a real canvas in jsdom.
+vi.mock("../analytics/LazyECharts", () => ({
+	LazyECharts: ({ option }: { option: Record<string, unknown> }) => {
+		const xAxis = (option?.xAxis ?? {}) as { data?: unknown[] };
+		const series = (option?.series ?? []) as Array<{ data?: unknown[] }>;
+		const labels = xAxis.data ?? [];
+		const counts = series[0]?.data ?? [];
+		return (
+			<div data-testid="mock-echarts">
+				{labels.map((l) => (
+					<span key={String(l)}>{String(l)}</span>
+				))}
+				{counts.map((c, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: stable order, mock only
+					<span key={`c-${i}`}>{Number(c).toLocaleString()}</span>
+				))}
+			</div>
+		);
+	},
+}));
+
 // AntD components rely on matchMedia; jsdom does not implement it.
 Object.defineProperty(window, "matchMedia", {
 	writable: true,
@@ -98,7 +122,13 @@ describe("DurationDistributionCard", () => {
 		expect(durationDistributionMock).toHaveBeenLastCalledWith(undefined);
 
 		// Bucket labels rendered.
-		for (const label of ["<1min", "1-10min", "10-30min", "30-60min", "60min+"]) {
+		for (const label of [
+			"<1min",
+			"1-10min",
+			"10-30min",
+			"30-60min",
+			"60min+",
+		]) {
 			expect(await screen.findByText(label)).toBeTruthy();
 		}
 		// Bucket count of the third bucket shows up.

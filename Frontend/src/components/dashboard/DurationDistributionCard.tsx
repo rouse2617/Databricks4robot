@@ -5,11 +5,13 @@
 // the CYB-4294 canonical order — the backend fills any missing bucket with
 // zero — so this component doesn't need to reason about gaps.
 //
-// The bar-chart style mirrors CYB-4294's BatchAssetLookup histogram (flexbox
-// bars, count on top, label below) so single-asset and fleet-scope views
-// speak the same visual language.
+// CYB-4323: the histogram is an ECharts bar chart (same engine as the 资产增长
+// chart) rather than raw flexbox bars — this gives a real Y axis + gridlines,
+// baseline-aligned bars (the old flex column top-aligned short bars, leaving
+// <1min "floating"), and thousand-separated counts for free. A Divider splits
+// the KPI row from the chart so the two rows no longer read as one grid.
 
-import { Card, Col, Empty, Row, Segmented, Statistic } from "antd";
+import { Card, Col, Divider, Empty, Row, Segmented, Statistic } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
 	type DurationDistributionResponse,
@@ -17,6 +19,7 @@ import {
 } from "../../api/dashboard";
 import { extractApiErrorMessage } from "../../lib/apiError";
 import { formatDurationMs } from "../../pages/presets/durations";
+import { LazyECharts } from "../analytics/LazyECharts";
 
 const dashSurface = {
 	cardBorder: "1px solid rgba(148, 163, 184, 0.45)",
@@ -34,84 +37,84 @@ const cardHeaderBar = {
 // Same segmented values the Segmented antd control accepts. `""` = 全部.
 type AssetTypeSegmentValue = "" | "raw_mcap" | "segment" | "clip";
 
-const SEGMENTED_OPTIONS: Array<{ label: string; value: AssetTypeSegmentValue }> =
-	[
-		{ label: "全部", value: "" },
-		{ label: "raw_mcap", value: "raw_mcap" },
-		{ label: "segment", value: "segment" },
-		{ label: "clip", value: "clip" },
-	];
+const SEGMENTED_OPTIONS: Array<{
+	label: string;
+	value: AssetTypeSegmentValue;
+}> = [
+	{ label: "全部", value: "" },
+	{ label: "raw_mcap", value: "raw_mcap" },
+	{ label: "segment", value: "segment" },
+	{ label: "clip", value: "clip" },
+];
 
-function HistogramBars({
-	buckets,
-}: {
-	buckets: Array<{ label: string; count: number }>;
-}) {
-	const max = Math.max(1, ...buckets.map((b) => b.count));
-	return (
-		<div
-			style={{
-				display: "flex",
-				alignItems: "flex-end",
-				gap: 12,
-				height: 200,
-			}}
-			aria-label="duration distribution histogram"
-		>
-			{buckets.map((b) => {
-				const heightPct = Math.round((b.count / max) * 100);
-				return (
-					<div
-						key={b.label}
-						style={{
-							flex: 1,
-							display: "flex",
-							flexDirection: "column",
-							alignItems: "center",
-							height: "100%",
-						}}
-					>
-						<div
-							style={{
-								fontSize: 12,
-								marginBottom: 4,
-								color: "var(--color-text-secondary)",
-								fontVariantNumeric: "tabular-nums",
-							}}
-						>
-							{b.count.toLocaleString()}
-						</div>
-						<div
-							style={{
-								width: "100%",
-								// CYB-4323: cap bar width + center so a few buckets on a wide
-								// screen no longer stretch into heavy full-width slabs.
-								maxWidth: 72,
-								height: `${heightPct}%`,
-								// CYB-4323: vertical gradient (light→brand blue) mirrors the
-								// 资产增长 bars — lighter than the old solid --color-primary fill.
-								background: "linear-gradient(180deg, #60a5fa 0%, #2563eb 100%)",
-								borderRadius: "6px 6px 0 0",
-								// Non-zero counts always show a visible sliver so bars never
-								// disappear behind the count label even when max is huge.
-								minHeight: b.count > 0 ? 8 : 0,
-							}}
-						/>
-						<div
-							style={{
-								marginTop: 6,
-								fontSize: 12,
-								color: "var(--color-text-secondary, #64748b)",
-								textAlign: "center",
-							}}
-						>
-							{b.label}
-						</div>
-					</div>
-				);
-			})}
-		</div>
-	);
+function compactCount(value: number): string {
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+	return value.toString();
+}
+
+// CYB-4323: ECharts bar option for the duration histogram. Category X axis
+// keeps the canonical 5 buckets; value Y axis + dashed gridlines restore the
+// height reference the flexbox version lacked; bars are baseline-aligned so a
+// short bucket (e.g. <1min) never floats.
+function buildHistogramOption(
+	buckets: Array<{ label: string; count: number }>,
+) {
+	return {
+		grid: { left: 56, right: 24, top: 28, bottom: 32 },
+		tooltip: {
+			trigger: "axis" as const,
+			axisPointer: { type: "shadow" as const },
+			backgroundColor: "rgba(15, 23, 42, 0.92)",
+			borderWidth: 0,
+			textStyle: { color: "#f8fafc", fontSize: 12 },
+			formatter: (params: unknown) => {
+				const arr = Array.isArray(params) ? params : [params];
+				const p = arr[0] as { name?: string; value?: number };
+				return `${p.name ?? ""}: <b>${(p.value ?? 0).toLocaleString()}</b> 个资产`;
+			},
+		},
+		xAxis: {
+			type: "category" as const,
+			data: buckets.map((b) => b.label),
+			axisLine: { lineStyle: { color: "#cbd5e1" } },
+			axisTick: { show: false },
+			axisLabel: { fontSize: 12, color: "#475569" },
+		},
+		yAxis: {
+			type: "value" as const,
+			splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
+			axisLabel: { fontSize: 11, color: "#64748b", formatter: compactCount },
+		},
+		series: [
+			{
+				type: "bar" as const,
+				data: buckets.map((b) => b.count),
+				barMaxWidth: 56,
+				itemStyle: {
+					color: {
+						type: "linear" as const,
+						x: 0,
+						y: 0,
+						x2: 0,
+						y2: 1,
+						colorStops: [
+							{ offset: 0, color: "#60a5fa" },
+							{ offset: 1, color: "#2563eb" },
+						],
+					},
+					borderRadius: [6, 6, 0, 0],
+				},
+				label: {
+					show: true,
+					position: "top" as const,
+					fontSize: 12,
+					color: "#64748b",
+					formatter: (p: { value?: number }) => (p.value ?? 0).toLocaleString(),
+				},
+			},
+		],
+	};
 }
 
 export default function DurationDistributionCard() {
@@ -143,9 +146,11 @@ export default function DurationDistributionCard() {
 		};
 	}, [assetType]);
 
-	const bars = useMemo(
+	const histogramOption = useMemo(
 		() =>
-			(data?.buckets ?? []).map((b) => ({ label: b.label, count: b.count })),
+			buildHistogramOption(
+				(data?.buckets ?? []).map((b) => ({ label: b.label, count: b.count })),
+			),
 		[data],
 	);
 
@@ -185,10 +190,11 @@ export default function DurationDistributionCard() {
 				<Empty description="所选类型下无资产" />
 			) : (
 				<>
-					{/* CYB-4323: KPI summary moved above the histogram (先数后图) so the
-					    key numbers land before the reader scrolls past the bars. */}
+					{/* CYB-4323: KPI summary above, chart below, split by a Divider so
+					    the two rows no longer read as one grid (fixes the false
+					    KPI↔bar column alignment). */}
 					{data && (
-						<Row gutter={[16, 8]} style={{ marginBottom: 20 }}>
+						<Row gutter={[16, 8]}>
 							<Col xs={12} sm={8} lg={4}>
 								<Statistic
 									title="总资产"
@@ -215,7 +221,11 @@ export default function DurationDistributionCard() {
 							</Col>
 						</Row>
 					)}
-					<HistogramBars buckets={bars} />
+					<Divider style={{ margin: "16px 0" }} />
+					<LazyECharts
+						option={histogramOption}
+						style={{ height: 280, width: "100%" }}
+					/>
 				</>
 			)}
 		</Card>

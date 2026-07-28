@@ -299,12 +299,13 @@ WHERE asset_id = ANY($1)
 // aggregate spans every non-deleted asset with a real duration_ms; otherwise
 // it restricts to assets whose asset_type matches exactly.
 //
-// The returned Buckets slice ALWAYS contains all 5 rows in models.DurationBucketOrder
-// even when the SQL emits fewer (missing buckets are padded with zeros). This
-// keeps the client render code free of "did the server include <1min?" checks.
+// The returned Buckets slice ALWAYS contains every row in models.DurationBucketOrder
+// (CYB-4338: 10) even when the SQL emits fewer (missing buckets are padded with
+// zeros). This keeps the client render code free of "did the server include <1m?"
+// checks. Bucket labels/edges here MUST stay in lockstep with DurationBucketOrder.
 //
-// CYB-4303. Percentiles are percentile_cont for parity with CYB-4294; both features
-// speak the same statistical language over the same corpus.
+// CYB-4303 / CYB-4338. Percentiles are percentile_cont; the histogram was refined
+// 5→10 buckets to expose the corpus shape the coarse buckets hid.
 func (r *AssetRepo) DurationDistribution(ctx context.Context, assetType string) (*models.DurationDistribution, error) {
 	// One filter, two queries. Split so percentile_cont doesn't have to
 	// group by bucket label — Postgres can't compute grouped percentiles
@@ -340,11 +341,16 @@ WITH filtered AS (
 )
 SELECT
   CASE
-    WHEN duration_ms < 60000    THEN '<1min'
-    WHEN duration_ms < 600000   THEN '1-10min'
-    WHEN duration_ms < 1800000  THEN '10-30min'
-    WHEN duration_ms < 3600000  THEN '30-60min'
-    ELSE                             '60min+'
+    WHEN duration_ms < 60000    THEN '<1m'
+    WHEN duration_ms < 300000   THEN '1-5m'
+    WHEN duration_ms < 600000   THEN '5-10m'
+    WHEN duration_ms < 900000   THEN '10-15m'
+    WHEN duration_ms < 1200000  THEN '15-20m'
+    WHEN duration_ms < 1500000  THEN '20-25m'
+    WHEN duration_ms < 1800000  THEN '25-30m'
+    WHEN duration_ms < 2700000  THEN '30-45m'
+    WHEN duration_ms < 3600000  THEN '45-60m'
+    ELSE                             '60m+'
   END AS label,
   COUNT(*)::bigint                       AS count,
   COALESCE(SUM(duration_ms), 0)::bigint  AS total_ms

@@ -43,8 +43,10 @@ func fixtureDistribution() *models.DurationDistribution {
 	}
 	buckets[0].Count = 12
 	buckets[0].TotalMs = 250_000
-	buckets[4].Count = 3
-	buckets[4].TotalMs = 15_000_000
+	// CYB-4338: top (open-ended) bucket is now index 9 of 10.
+	top := len(buckets) - 1
+	buckets[top].Count = 3
+	buckets[top].TotalMs = 15_000_000
 	return &models.DurationDistribution{
 		Buckets:     buckets,
 		TotalAssets: 15,
@@ -93,11 +95,15 @@ func TestDurationDistributionReturnsJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("buckets missing or wrong type: %T", body["buckets"])
 	}
-	if len(buckets) != 5 {
-		t.Fatalf("buckets len = %d, want 5", len(buckets))
+	if len(buckets) != 10 {
+		t.Fatalf("buckets len = %d, want 10", len(buckets))
 	}
 
-	labels := []string{"<1min", "1-10min", "10-30min", "30-60min", "60min+"}
+	// CYB-4338: 10-bucket "前密后疏" order, short labels.
+	labels := []string{
+		"<1m", "1-5m", "5-10m", "10-15m", "15-20m",
+		"20-25m", "25-30m", "30-45m", "45-60m", "60m+",
+	}
 	for i, want := range labels {
 		row, ok := buckets[i].(map[string]any)
 		if !ok {
@@ -115,7 +121,7 @@ func TestDurationDistributionReturnsJSONShape(t *testing.T) {
 	}
 
 	// Top bucket ships hi_ms=null, every other bucket ships a finite number.
-	top, _ := buckets[4].(map[string]any)
+	top, _ := buckets[9].(map[string]any)
 	if top["hi_ms"] != nil {
 		t.Fatalf("top bucket hi_ms = %v, want null", top["hi_ms"])
 	}

@@ -4924,12 +4924,13 @@ paths:
   /api/v1/dashboard/duration-distribution:
     get:
       tags: [Dashboard]
-      summary: Asset duration distribution (5-bucket histogram + summary stats)
+      summary: Asset duration distribution (10-bucket histogram + summary stats)
       description: >-
         Duration histogram over non-deleted assets with a non-null duration_ms.
         `asset_type` is optional and permissive — an absent or unrecognized
         value simply yields total_assets=0 (never 400), so a fresh install still
-        renders. Buckets are always the same 5, in order, even when empty.
+        renders. Buckets are always the same 10 (CYB-4338, "前密后疏": 5min steps
+        over 1-30min, 15min steps over 30-60min), in order, even when empty.
       security:
         - DatabrewToken: []
       parameters:
@@ -4952,13 +4953,15 @@ paths:
                     description: Echoes the query param; null when absent.
                   buckets:
                     type: array
-                    description: Always 5 buckets in ascending order.
+                    description: >-
+                      Always 10 buckets in ascending order: <1m, 1-5m, 5-10m,
+                      10-15m, 15-20m, 20-25m, 25-30m, 30-45m, 45-60m, 60m+.
                     items:
                       type: object
                       properties:
-                        label: { type: string, description: 'e.g. "<1min", "60min+"' }
+                        label: { type: string, description: 'e.g. "<1m", "15-20m", "60m+"' }
                         lo_ms: { type: integer, format: int64 }
-                        hi_ms: { type: integer, format: int64, nullable: true, description: Null for the open-ended top bucket (60min+). }
+                        hi_ms: { type: integer, format: int64, nullable: true, description: Null for the open-ended top bucket (60m+). }
                         count: { type: integer, format: int64 }
                         total_ms: { type: integer, format: int64 }
                   total_assets: { type: integer, format: int64 }
