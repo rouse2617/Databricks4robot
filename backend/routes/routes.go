@@ -257,6 +257,10 @@ func RegisterAll(
 		assets.GET("/:id/events", assetHandler.ListEvents)
 		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
+		// CYB-4263: provenance handler is implemented + unit-tested but was
+		// never mounted (dead since #59). Wire it onto the already-mounted
+		// asset handler.
+		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", middleware.RequireScope("assets:write"), assetHandler.UpsertTag)
 		assets.DELETE("/:id/tags/:key", middleware.RequireScope("assets:write"), assetHandler.DeleteTag)
@@ -264,6 +268,9 @@ func RegisterAll(
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
+		// CYB-4263: read-only asset-type JSON schema (handler implemented +
+		// unit-tested, previously unmounted).
+		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
@@ -328,6 +335,9 @@ func RegisterAll(
 
 		if auditHandler != nil {
 			api.GET("/audit/search", auditHandler.HandleAuditSearch)
+			// CYB-4263: lineage-search handler implemented + unit-tested but
+			// previously unmounted.
+			api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
 		}
 
 		if lakehouseHandler != nil {
