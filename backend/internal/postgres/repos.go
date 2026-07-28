@@ -294,6 +294,114 @@ WHERE asset_id = ANY($1)
 	return out, nil
 }
 
+// DurationDistribution returns the fleet-wide duration histogram + overall
+// stats used by the dashboard's 数据时长分布 card. When assetType is empty the
+// aggregate spans every non-deleted asset with a real duration_ms; otherwise
+// it restricts to assets whose asset_type matches exactly.
+//
+// The returned Buckets slice ALWAYS contains all 5 rows in models.DurationBucketOrder
+// even when the SQL emits fewer (missing buckets are padded with zeros). This
+// keeps the client render code free of "did the server include <1min?" checks.
+//
+// CYB-4303. Percentiles are percentile_cont for parity with CYB-4294; both features
+// speak the same statistical language over the same corpus.
+func (r *AssetRepo) DurationDistribution(ctx context.Context, assetType string) (*models.DurationDistribution, error) {
+	// One filter, two queries. Split so percentile_cont doesn't have to
+	// group by bucket label — Postgres can't compute grouped percentiles
+	// alongside global percentiles in a single aggregate frame without
+	// materializing the whole set client-side.
+	const overallQ = `
+WITH filtered AS (
+  SELECT duration_ms
+  FROM assets
+  WHERE is_deleted = FALSE
+    AND duration_ms IS NOT NULL
+    AND duration_ms >= 0
+    AND ($1 = '' OR asset_type = $1)
+)
+SELECT
+  COUNT(*)                                                                                AS total_assets,
+  COALESCE(SUM(duration_ms), 0)                                                           AS total_ms,
+  COALESCE(AVG(duration_ms), 0)::bigint                                                   AS mean_ms,
+  COALESCE(MIN(duration_ms), 0)                                                           AS min_ms,
+  COALESCE(MAX(duration_ms), 0)                                                           AS max_ms,
+  COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)::bigint           AS p50_ms,
+  COALESCE(percentile_cont(0.9) WITHIN GROUP (ORDER BY duration_ms), 0)::bigint           AS p90_ms
+FROM filtered`
+
+	const bucketQ = `
+WITH filtered AS (
+  SELECT duration_ms
+  FROM assets
+  WHERE is_deleted = FALSE
+    AND duration_ms IS NOT NULL
+    AND duration_ms >= 0
+    AND ($1 = '' OR asset_type = $1)
+)
+SELECT
+  CASE
+    WHEN duration_ms < 60000    THEN '<1min'
+    WHEN duration_ms < 600000   THEN '1-10min'
+    WHEN duration_ms < 1800000  THEN '10-30min'
+    WHEN duration_ms < 3600000  THEN '30-60min'
+    ELSE                             '60min+'
+  END AS label,
+  COUNT(*)::bigint                       AS count,
+  COALESCE(SUM(duration_ms), 0)::bigint  AS total_ms
+FROM filtered
+GROUP BY 1`
+
+	db := dbFromCtx(ctx, r.c.db)
+
+	var out models.DurationDistribution
+	if err := db.QueryRow(ctx, overallQ, assetType).Scan(
+		&out.TotalAssets, &out.TotalMs, &out.MeanMs, &out.MinMs, &out.MaxMs, &out.P50Ms, &out.P90Ms,
+	); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution overall: %w", err)
+	}
+
+	// Bucket rows returned by the query (may be a subset of the 5).
+	got := make(map[string]struct {
+		count   int64
+		totalMs int64
+	}, len(models.DurationBucketOrder))
+	rows, err := db.Query(ctx, bucketQ, assetType)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution buckets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var label string
+		var cnt, totalMs int64
+		if err := rows.Scan(&label, &cnt, &totalMs); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution bucket scan: %w", err)
+		}
+		got[label] = struct {
+			count   int64
+			totalMs int64
+		}{count: cnt, totalMs: totalMs}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution bucket rows: %w", err)
+	}
+
+	// Fill every bucket in canonical order — missing labels get zero rows.
+	out.Buckets = make([]models.DurationBucket, len(models.DurationBucketOrder))
+	for i, def := range models.DurationBucketOrder {
+		b := models.DurationBucket{
+			Label: def.Label,
+			LoMs:  def.LoMs,
+			HiMs:  def.HiMs,
+		}
+		if v, ok := got[def.Label]; ok {
+			b.Count = v.count
+			b.TotalMs = v.totalMs
+		}
+		out.Buckets[i] = b
+	}
+	return &out, nil
+}
+
 // LookupDurations returns one repository.DurationRow per non-deleted asset
 // whose asset_id OR grace_video_id matches any element of ids. When minMs or
 // maxMs are >0 they further constrain rows by duration_ms; a zero bound is

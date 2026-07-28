@@ -11,11 +11,13 @@ import (
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	apikeyH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/apikey"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
+	dashboardH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/dashboard"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	dashboardUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/dashboard"
 	"github.com/CyberOrigin2077/cyber-databrew/routes"
 )
 
@@ -66,6 +68,13 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		clusterHandler = adminH.NewClusterHandler(inf.clusterRepo, inf.k8sFactory, inf.argoFactory)
 	}
 
+	// CYB-4303: dashboard aggregations. Handler is nil-safe (nil pg → no
+	// registration), matching the lakehouse pattern above.
+	var dashboardHandler *dashboardH.Handler
+	if inf.pg != nil && core.assetRepo != nil {
+		dashboardHandler = dashboardH.New(dashboardUC.New(core.assetRepo))
+	}
+
 	routes.RegisterAll(
 		r,
 		cfg,
@@ -80,6 +89,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		auditH.New(inf.pg),
 		lakehouseH.New(cfg.LakehouseReportPath, inf.lake, inf.pg).
 			WithBronzeCheckpoint(postgres.NewLakehouseBronzeCheckpointRepo(inf.pg)),
+		dashboardHandler,
 		registryH.New(inf.algoRegistry, inf.tagRegistry, inf.metricRegistry, inf.actionLabelReg),
 		searchH.New(inf.es, opt.searchSyncFn, opt.searchProgressFn),
 		opt.admin,

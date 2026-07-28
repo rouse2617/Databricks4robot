@@ -23,6 +23,7 @@ import (
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
+	dashboardH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/dashboard"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryRuleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
@@ -61,6 +62,7 @@ func RegisterAll(
 	algoHandler *assetH.AlgoHandler,
 	auditHandler *auditH.Handler,
 	lakehouseHandler *lakehouseH.Handler,
+	dashboardHandler *dashboardH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
 	adminHandler *adminH.Handler,
@@ -366,6 +368,13 @@ func RegisterAll(
 			api.GET("/lakehouse/event-type-share", lakehouseHandler.EventTypeShare)
 			api.GET("/lakehouse/quality-distribution", lakehouseHandler.QualityDistribution)
 			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
+		}
+
+		// CYB-4303: dashboard aggregations. Mounted under the same authed
+		// api group as the lakehouse endpoints (the dashboard has no
+		// separate scope of its own).
+		if dashboardHandler != nil {
+			api.GET("/dashboard/duration-distribution", dashboardHandler.DurationDistribution)
 		}
 
 		if adminRoutesEnabled && adminHandler != nil {

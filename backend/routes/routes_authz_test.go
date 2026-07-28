@@ -68,7 +68,9 @@ func TestMutatingAssetRoutesRequireWriteScope(t *testing.T) {
 	RegisterAll(
 		r, cfg, nil,
 		assetHandler, mcapHandler, deliveryHandler,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, // customer, deliveryRule, algoRun, algo, audit, lakehouse
+		nil,                          // CYB-4303: dashboard handler
+		nil, nil, nil, nil,           // registry, search, admin, purge
 		evalHandler, actionHandler,
 		nil, nil, nil, nil, nil, nil, nil,
 		roRepo, nil, nil, nil,

@@ -2668,3 +2668,148 @@ func TestAssetRepoLookupDurations(t *testing.T) {
 		t.Fatalf("max arg = %#v, want int64 600000", got)
 	}
 }
+
+// CYB-4303: DurationDistribution must
+//   - always ship all 5 buckets in DurationBucketOrder even when the SQL
+//     returns fewer (missing rows are padded with count=0/total_ms=0);
+//   - pass assetType through as $1 on both the overall + bucket queries;
+//   - preserve the top-bucket HiMs=nil so the JSON serialization can emit null.
+func TestAssetRepoDurationDistribution(t *testing.T) {
+	ctx := context.Background()
+
+	// Overall row returned by the first QueryRow; only two of five buckets
+	// come back from the second Query. The repo must pad the other three.
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{
+			int64(15),          // total_assets
+			int64(15_250_000),  // total_ms
+			int64(1_016_666),   // mean_ms
+			int64(500),         // min_ms
+			int64(6_500_000),   // max_ms
+			int64(850_000),     // p50_ms
+			int64(2_900_000),   // p90_ms
+		}},
+		rows: &fakeRows{data: [][]any{
+			{"<1min", int64(12), int64(250_000)},
+			{"60min+", int64(3), int64(15_000_000)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	dist, err := repo.DurationDistribution(ctx, "raw_mcap")
+	if err != nil {
+		t.Fatalf("DurationDistribution err: %v", err)
+	}
+	if dist.TotalAssets != 15 || dist.P50Ms != 850_000 || dist.P90Ms != 2_900_000 {
+		t.Fatalf("overall stats wrong: %+v", dist)
+	}
+
+	// Always 5 buckets in the fixed order regardless of what the mock
+	// returned. Missing labels ship count/total_ms=0.
+	if len(dist.Buckets) != 5 {
+		t.Fatalf("buckets len = %d, want 5", len(dist.Buckets))
+	}
+	wantLabels := []string{"<1min", "1-10min", "10-30min", "30-60min", "60min+"}
+	for i, want := range wantLabels {
+		if dist.Buckets[i].Label != want {
+			t.Fatalf("buckets[%d].Label = %q, want %q", i, dist.Buckets[i].Label, want)
+		}
+	}
+	if dist.Buckets[0].Count != 12 || dist.Buckets[0].TotalMs != 250_000 {
+		t.Fatalf("buckets[0] = %+v, want count=12/total=250k", dist.Buckets[0])
+	}
+	if dist.Buckets[4].Count != 3 || dist.Buckets[4].TotalMs != 15_000_000 {
+		t.Fatalf("buckets[4] = %+v, want count=3/total=15M", dist.Buckets[4])
+	}
+	// Padded rows must be zero — never leave uninitialised garbage.
+	for i := 1; i <= 3; i++ {
+		if dist.Buckets[i].Count != 0 || dist.Buckets[i].TotalMs != 0 {
+			t.Fatalf("padded buckets[%d] non-zero: %+v", i, dist.Buckets[i])
+		}
+	}
+	// Top bucket HiMs must remain nil for the JSON null path.
+	if dist.Buckets[4].HiMs != nil {
+		t.Fatalf("top bucket HiMs = %v, want nil", dist.Buckets[4].HiMs)
+	}
+	// The other buckets must have a finite HiMs (dereferenceable).
+	for i := 0; i < 4; i++ {
+		if dist.Buckets[i].HiMs == nil {
+			t.Fatalf("buckets[%d].HiMs = nil, want finite", i)
+		}
+	}
+
+	// SQL sanity: both queries should reference the asset_type filter and
+	// bind assetType as $1; the bucket query should use the CASE labels
+	// verbatim so a rename lands on both sides at once.
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected 2 queries (overall + buckets), got %d: %v", len(db.querySQLs), db.querySQLs)
+	}
+	for i, q := range db.querySQLs {
+		if !strings.Contains(q, "is_deleted = FALSE") {
+			t.Fatalf("query %d missing is_deleted guard:\n%s", i, q)
+		}
+		if !strings.Contains(q, "duration_ms IS NOT NULL") {
+			t.Fatalf("query %d missing NULL guard:\n%s", i, q)
+		}
+		if !strings.Contains(q, "$1 = '' OR asset_type = $1") {
+			t.Fatalf("query %d missing asset_type filter:\n%s", i, q)
+		}
+	}
+	// The bucket query is index 1 (overall is 0). Assert the CASE labels.
+	bucketQ := db.querySQLs[1]
+	for _, label := range []string{"<1min", "1-10min", "10-30min", "30-60min", "60min+"} {
+		if !strings.Contains(bucketQ, "'"+label+"'") {
+			t.Fatalf("bucket query missing label %q:\n%s", label, bucketQ)
+		}
+	}
+	// Overall query must select percentile_cont for both 0.5 and 0.9 — parity
+	// with CYB-4294.
+	overallQ := db.querySQLs[0]
+	for _, want := range []string{"percentile_cont(0.5)", "percentile_cont(0.9)"} {
+		if !strings.Contains(overallQ, want) {
+			t.Fatalf("overall query missing %q:\n%s", want, overallQ)
+		}
+	}
+	if len(db.queryArgs) != 2 {
+		t.Fatalf("expected 2 arg sets, got %d", len(db.queryArgs))
+	}
+	if got := db.queryArgs[0][0]; got != "raw_mcap" {
+		t.Fatalf("overall arg[0] = %v, want raw_mcap", got)
+	}
+	if got := db.queryArgs[1][0]; got != "raw_mcap" {
+		t.Fatalf("bucket arg[0] = %v, want raw_mcap", got)
+	}
+}
+
+// Empty assetType must still flow through the SQL as $1='' so the filter
+// short-circuits and every asset is counted.
+func TestAssetRepoDurationDistributionEmptyAssetType(t *testing.T) {
+	ctx := context.Background()
+
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{
+			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		}},
+		rows: &fakeRows{},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	dist, err := repo.DurationDistribution(ctx, "")
+	if err != nil {
+		t.Fatalf("DurationDistribution err: %v", err)
+	}
+	if dist.TotalAssets != 0 {
+		t.Fatalf("empty-corpus TotalAssets = %d, want 0", dist.TotalAssets)
+	}
+	if len(dist.Buckets) != 5 {
+		t.Fatalf("buckets len = %d, want 5", len(dist.Buckets))
+	}
+	for i, b := range dist.Buckets {
+		if b.Count != 0 || b.TotalMs != 0 {
+			t.Fatalf("buckets[%d] = %+v, want zeros", i, b)
+		}
+	}
+	if got := db.queryArgs[0][0]; got != "" {
+		t.Fatalf("overall arg[0] = %v, want empty string", got)
+	}
+}
