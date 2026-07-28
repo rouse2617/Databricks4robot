@@ -82,6 +82,9 @@ func (s *stubBackfillRepo) FindAllJobs(context.Context, string) ([]models.Backfi
 func (s *stubBackfillRepo) FindJobByID(context.Context, string) (*models.BackfillJob, error) {
 	return nil, nil
 }
+func (s *stubBackfillRepo) TotalDurationByBatchIDs(context.Context, []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
 func (s *stubBackfillRepo) UpdateJobStatus(context.Context, string, string) error { return nil }
 func (s *stubBackfillRepo) UpdateJobPilotPhase(context.Context, string, string, string) error {
 	return nil

@@ -34,6 +34,10 @@ type pausedSyncRepo struct {
 	// extraJobs lets multi-job fixtures (CYB-3678 sharding) resolve every
 	// job by id, not just the primary one.
 	extraJobs []models.BackfillJob
+
+	// totalDurations seeds TotalDurationByBatchIDs so CYB-4350 tests can
+	// assert the notification / list carry the 总时长 line/field.
+	totalDurations map[string]int64
 }
 
 func (r *pausedSyncRepo) IncrementItemSubmitAttempts(_ context.Context, itemID string) (int, error) {
@@ -60,6 +64,15 @@ func (r *pausedSyncRepo) ResetFailedItems(_ context.Context, jobID string) (int6
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
 func (r *pausedSyncRepo) FindAllJobs(context.Context, string) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (r *pausedSyncRepo) TotalDurationByBatchIDs(_ context.Context, ids []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		if v, ok := r.totalDurations[id]; ok {
+			out[id] = v
+		}
+	}
+	return out, nil
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	for i := range r.extraJobs {

@@ -849,8 +849,33 @@ func backfillItemLedgerStatus(item models.BackfillItem) (status, message string)
 // ListJobs returns all backfill jobs from the database.
 // Listing must stay read-only: syncJobProgress (per-job DB + optional GetRun/Argo)
 // belongs on GetJob, ReconcileSubtaskRuns, and background runners — not on list.
+//
+// After the primary list resolves, one supplementary aggregate query populates
+// TotalDurationMs (CYB-4350) for each job. A repo error on the aggregate is
+// logged but does not fail the list — the field silently stays 0.
 func (uc *Usecase) ListJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error) {
-	return uc.repo.FindAllJobs(ctx, createdBy)
+	jobs, err := uc.repo.FindAllJobs(ctx, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return jobs, nil
+	}
+	ids := make([]string, 0, len(jobs))
+	for i := range jobs {
+		ids = append(ids, jobs[i].ID)
+	}
+	totals, err := uc.repo.TotalDurationByBatchIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("backfill: total duration lookup failed", "err", err)
+		return jobs, nil
+	}
+	for i := range jobs {
+		if v, ok := totals[jobs[i].ID]; ok {
+			jobs[i].TotalDurationMs = v
+		}
+	}
+	return jobs, nil
 }
 
 // ListItems returns the per-asset items of one batch job (asset id, status, and
@@ -867,7 +892,17 @@ func (uc *Usecase) ListItems(ctx context.Context, jobID string) ([]models.Backfi
 // convergence; a read must not fan out to Argo (latency scaled with failed
 // count, measured 12.7s at failed=76).
 func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, error) {
-	return uc.repo.FindJobByID(ctx, id)
+	job, err := uc.repo.FindJobByID(ctx, id)
+	if err != nil || job == nil {
+		return job, err
+	}
+	totals, err := uc.repo.TotalDurationByBatchIDs(ctx, []string{id})
+	if err != nil {
+		slog.Warn("backfill: total duration lookup failed", "jobID", id, "err", err)
+		return job, nil
+	}
+	job.TotalDurationMs = totals[id]
+	return job, nil
 }
 
 // PauseJobOptions controls optional pause side effects.
@@ -1659,7 +1694,13 @@ func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *m
 	if !claimed {
 		return
 	}
-	text := formatBatchJobNotificationText(previousJob, newStatus, summary, uc.frontendBaseURL)
+	var totalDurationMs int64
+	if totals, err := uc.repo.TotalDurationByBatchIDs(ctx, []string{previousJob.ID}); err != nil {
+		slog.Warn("backfill: total duration lookup for notification failed", "jobID", previousJob.ID, "err", err)
+	} else {
+		totalDurationMs = totals[previousJob.ID]
+	}
+	text := formatBatchJobNotificationText(previousJob, newStatus, summary, totalDurationMs, uc.frontendBaseURL)
 	if err := uc.notifier.SendText(ctx, text); err != nil {
 		slog.Warn("backfill: send completion notification failed", "jobID", previousJob.ID, "err", err)
 	}
@@ -1668,7 +1709,10 @@ func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *m
 // formatBatchJobNotificationText builds the Feishu message body for a batch
 // job reaching a terminal status. Kept in this package (not the notify
 // provider package) since it is specific to what a batch job is.
-func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, frontendBaseURL string) string {
+//
+// totalDurationMs is the CYB-4350 total asset duration; when 0 the 总时长 line
+// is omitted rather than rendering "总时长：0s" or "—".
+func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, totalDurationMs int64, frontendBaseURL string) string {
 	name := job.Name
 	if strings.TrimSpace(name) == "" {
 		name = job.ID
@@ -1677,6 +1721,9 @@ func formatBatchJobNotificationText(job *models.BackfillJob, status string, summ
 		"【批量任务完成】%s\n状态：%s\n总数：%d　成功：%d　失败：%d",
 		name, status, job.TotalCount, summary.Completed, summary.Failed,
 	)
+	if totalDurationMs > 0 {
+		text += fmt.Sprintf("\n总时长：%s", formatBatchDurationMs(totalDurationMs))
+	}
 	if job.CreatedBy != "" {
 		text += fmt.Sprintf("\n创建人：%s", job.CreatedBy)
 	}
@@ -1687,6 +1734,33 @@ func formatBatchJobNotificationText(job *models.BackfillJob, status string, summ
 		text += fmt.Sprintf("\n链接：%s/pipeline/batch/%s", strings.TrimRight(frontendBaseURL, "/"), job.ID)
 	}
 	return text
+}
+
+// formatBatchDurationMs renders a positive millisecond duration for human
+// notification text. Callers must gate on ms > 0 — for zero this returns "".
+//
+//	>= 1h  → "Xh Ym"  (seconds dropped at hour scale)
+//	>= 1m  → "Ym Ns"
+//	>= 1s  → "Ns"
+//	< 1s   → "<1s"
+func formatBatchDurationMs(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	if ms >= 3600_000 {
+		h := ms / 3600_000
+		m := (ms % 3600_000) / 60_000
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if ms >= 60_000 {
+		m := ms / 60_000
+		s := (ms % 60_000) / 1000
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	if ms >= 1000 {
+		return fmt.Sprintf("%ds", ms/1000)
+	}
+	return "<1s"
 }
 
 // fetchBatchRunsByIDMap retrieves runs for a batch job in a single query

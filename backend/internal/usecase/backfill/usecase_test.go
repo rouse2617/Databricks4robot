@@ -29,6 +29,9 @@ func (m *mockBackfillRepo) SaveJob(_ context.Context, _ *models.BackfillJob) err
 func (m *mockBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
+func (m *mockBackfillRepo) TotalDurationByBatchIDs(_ context.Context, batchIDs []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
 func (m *mockBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	if id == "missing" {
 		return nil, nil
@@ -769,6 +772,9 @@ func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJo
 }
 func (r *trackingBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (r *trackingBackfillRepo) TotalDurationByBatchIDs(_ context.Context, batchIDs []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 func (r *trackingBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	r.mu.Lock()

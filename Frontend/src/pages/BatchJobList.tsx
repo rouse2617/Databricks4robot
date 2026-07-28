@@ -48,6 +48,7 @@ import {
 	copyAssetIdsToClipboard,
 	exportAssetIdsCsv,
 	fetchAssetIdsForBatches,
+	formatDurationMs,
 	formatDurationSeconds,
 	sortBatchJobsByCreatedDesc,
 	statusFilterPredicate,
@@ -348,6 +349,22 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			render: (_: unknown, record: BatchJob) => {
 				const secs = batchJobRunDurationSeconds(record);
 				return secs === null ? "—" : formatDurationSeconds(secs);
+			},
+		},
+		{
+			title: (
+				<Tooltip title="总时长:该批次所有子任务的资源总时长,来自 assets.duration_ms 求和(排除软删除资产;重复出现按次计入)">
+					<span>总时长</span>
+				</Tooltip>
+			),
+			key: "totalDurationMs",
+			dataIndex: "totalDurationMs",
+			width: 110,
+			sorter: (a: BatchJob, b: BatchJob) =>
+				(a.totalDurationMs ?? 0) - (b.totalDurationMs ?? 0),
+			render: (_: unknown, record: BatchJob) => {
+				const ms = record.totalDurationMs ?? 0;
+				return ms > 0 ? formatDurationMs(ms) : "—";
 			},
 		},
 		{

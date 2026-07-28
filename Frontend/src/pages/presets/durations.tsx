@@ -14,6 +14,7 @@ import type {
 } from "../../api/assets";
 import { assetsApi } from "../../api/assets";
 import { downloadCsv } from "../../components/batch-lookup/BatchAssetLookup";
+import { formatDurationMs } from "../../lib/batchJobs";
 import type {
 	BatchLookupPreset,
 	BatchLookupRequest,
@@ -52,19 +53,10 @@ export function bucketItems(items: DurationLookupItem[]): BucketRow[] {
 	return counts;
 }
 
-// Format a millisecond count into a compact human string. Used for the
-// preset's aggregate stat cards (总时长 / 均值 / 最小 / 最大 / P50 / P90).
-export function formatDurationMs(ms: number): string {
-	if (!Number.isFinite(ms) || ms < 0) return "-";
-	if (ms < 1000) return `${ms}ms`;
-	const totalSec = Math.floor(ms / 1000);
-	const h = Math.floor(totalSec / 3600);
-	const m = Math.floor((totalSec % 3600) / 60);
-	const s = totalSec % 60;
-	if (h > 0) return `${h}h ${m}m ${s}s`;
-	if (m > 0) return `${m}m ${s}s`;
-	return `${s}s`;
-}
+// Re-export the canonical formatter (CYB-4350 moved it to lib/batchJobs.ts so
+// the batch job list column shares one source of truth). Kept here so existing
+// call sites that import from `pages/presets/durations` keep working.
+export { formatDurationMs };
 
 // Durations filter shape: two optional ms bounds. Both null/undefined means
 // no server-side filtering.

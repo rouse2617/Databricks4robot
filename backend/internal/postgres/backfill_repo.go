@@ -176,6 +176,43 @@ func (r *BackfillRepo) FindJobByID(ctx context.Context, id string) (*models.Back
 	return j, nil
 }
 
+// TotalDurationByBatchIDs returns batch_id → total asset duration (ms) for
+// the given batches. The total is SUM(assets.duration_ms) over every asset
+// referenced by every child pipeline_run's asset_ids array (with multiplicity),
+// excluding soft-deleted assets. A batch present in batchIDs but absent from
+// the result map has no matching child rows and gets implicit 0 at the caller.
+// Empty batchIDs short-circuits to an empty map with no SQL round trip.
+func (r *BackfillRepo) TotalDurationByBatchIDs(ctx context.Context, batchIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(batchIDs))
+	if len(batchIDs) == 0 {
+		return out, nil
+	}
+	const q = `SELECT pr.batch_job_id AS batch_id,
+	  COALESCE(SUM(a.duration_ms), 0) AS total_ms
+	FROM pipeline_runs pr
+	CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+	JOIN assets a ON a.asset_id = aid AND a.is_deleted = FALSE
+	WHERE pr.batch_job_id = ANY($1)
+	GROUP BY pr.batch_job_id`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, batchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.TotalDurationByBatchIDs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id    string
+			total int64
+		)
+		if err := rows.Scan(&id, &total); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.TotalDurationByBatchIDs scan: %w", err)
+		}
+		out[id] = total
+	}
+	return out, nil
+}
+
 // UpdateJobStatus sets the status for a backfill job.
 // finished_at is stamped when the status is a terminal state (completed/failed).
 func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) error {

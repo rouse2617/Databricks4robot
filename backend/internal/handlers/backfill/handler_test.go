@@ -30,6 +30,9 @@ func (missingJobRepo) FindAllJobs(_ context.Context, _ string) ([]models.Backfil
 func (missingJobRepo) FindJobByID(_ context.Context, _ string) (*models.BackfillJob, error) {
 	return nil, nil
 }
+func (missingJobRepo) TotalDurationByBatchIDs(_ context.Context, _ []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
 func (missingJobRepo) UpdateJobStatus(_ context.Context, _, _ string) error        { return nil }
 func (missingJobRepo) UpdateJobPilotPhase(_ context.Context, _, _, _ string) error { return nil }
 func (missingJobRepo) ClaimJobNotification(_ context.Context, _ string) (bool, error) {

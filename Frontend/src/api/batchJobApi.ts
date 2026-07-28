@@ -25,6 +25,10 @@ export interface BatchJob {
 	// queue/pause waiting, and as a completion-time fallback when finishedAt is unset.
 	runStartedAt?: string;
 	runFinishedAt?: string;
+	// CYB-4350: sum of assets.duration_ms across every child run's asset_ids,
+	// excluding soft-deleted assets. Optional in the type because old server
+	// responses omit it; a missing value is treated as 0 at render sites.
+	totalDurationMs?: number;
 }
 
 export interface CreateBatchJobRequest {

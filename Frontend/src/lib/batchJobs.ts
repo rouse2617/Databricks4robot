@@ -8,6 +8,25 @@ export function batchJobCreatedAtMs(job: BatchJob): number {
 	return Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Human-friendly ms duration used across the batch surfaces:
+ * `Xh Ym Ns` / `Ym Ns` / `Ns` / `Nms` for sub-second, `-` for invalid input.
+ * Moved from the durations preset for reuse by the batch job list column
+ * (CYB-4350). The presets file re-exports this so existing call sites keep
+ * working without churn.
+ */
+export function formatDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "-";
+	if (ms < 1000) return `${ms}ms`;
+	const totalSec = Math.floor(ms / 1000);
+	const h = Math.floor(totalSec / 3600);
+	const m = Math.floor((totalSec % 3600) / 60);
+	const s = totalSec % 60;
+	if (h > 0) return `${h}h ${m}m ${s}s`;
+	if (m > 0) return `${m}m ${s}s`;
+	return `${s}s`;
+}
+
 export function sortBatchJobsByCreatedDesc(jobs: BatchJob[]): BatchJob[] {
 	return [...jobs].sort(
 		(a, b) => batchJobCreatedAtMs(b) - batchJobCreatedAtMs(a),

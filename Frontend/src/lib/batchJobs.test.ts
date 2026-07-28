@@ -6,6 +6,7 @@ import {
 	extractAssetIds,
 	fetchAllBatchAssetIds,
 	fetchAssetIdsForBatches,
+	formatDurationMs,
 	statusFilterPredicate,
 	statusFilterServerValue,
 } from "./batchJobs";
@@ -200,5 +201,26 @@ describe("fetchAssetIdsForBatches with filterFn", () => {
 			filterFn: statusFilterPredicate("succeeded"),
 		});
 		expect(succeededOnly.sort()).toEqual(["a-good", "b-good"]);
+	});
+});
+
+// CYB-4350: shared duration formatter used by the batch job list 总时长
+// column and the durations preset stat cards.
+describe("formatDurationMs", () => {
+	it("returns - for invalid input", () => {
+		expect(formatDurationMs(NaN)).toBe("-");
+		expect(formatDurationMs(-1)).toBe("-");
+	});
+	it("renders sub-second in ms", () => {
+		expect(formatDurationMs(750)).toBe("750ms");
+	});
+	it("renders seconds only under 1 minute", () => {
+		expect(formatDurationMs(45_000)).toBe("45s");
+	});
+	it("renders minutes and seconds under 1 hour", () => {
+		expect(formatDurationMs(90_500)).toBe("1m 30s");
+	});
+	it("renders hours, minutes, seconds at hour scale", () => {
+		expect(formatDurationMs(3_665_500)).toBe("1h 1m 5s");
 	});
 });

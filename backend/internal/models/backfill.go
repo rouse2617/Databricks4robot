@@ -26,6 +26,11 @@ type BackfillJob struct {
 	// finished_at - created_at (wall-clock). Nil when no subtask has started.
 	RunStartedAt  *time.Time `json:"runStartedAt,omitempty"`
 	RunFinishedAt *time.Time `json:"runFinishedAt,omitempty"`
+	// TotalDurationMs is the sum of asset durations (assets.duration_ms) across
+	// every asset in every child pipeline run's asset_ids array, excluding
+	// soft-deleted assets. Same asset appearing in multiple runs counts once
+	// per occurrence. Computed on-demand in ListJobs / GetJob.
+	TotalDurationMs int64 `json:"totalDurationMs"`
 }
 
 // BackfillItem represents a single asset being processed in a backfill job.

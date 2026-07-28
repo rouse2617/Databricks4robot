@@ -15,6 +15,12 @@ type BackfillRepository interface {
 	// "subscription-task:<id>" to list a subscription task's dispatches).
 	FindAllJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error)
 	FindJobByID(ctx context.Context, id string) (*models.BackfillJob, error)
+	// TotalDurationByBatchIDs returns per-batch total asset duration (ms) —
+	// SUM(assets.duration_ms) over every asset referenced by every child
+	// pipeline_run's asset_ids array (with multiplicity), excluding
+	// soft-deleted assets. Missing batches carry implicit-0 at the caller.
+	// Empty ids short-circuits without SQL. CYB-4350.
+	TotalDurationByBatchIDs(ctx context.Context, batchIDs []string) (map[string]int64, error)
 	UpdateJobStatus(ctx context.Context, id, status string) error
 	UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error
 	IncrementCompleted(ctx context.Context, id string) error
