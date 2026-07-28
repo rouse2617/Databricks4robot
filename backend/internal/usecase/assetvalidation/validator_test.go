@@ -135,3 +135,7 @@ func (s *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.T
 func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }
+
+func (s *stubAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}

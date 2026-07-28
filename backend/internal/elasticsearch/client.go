@@ -167,6 +167,80 @@ func (c *Client) GetDocumentSource(ctx context.Context, id string) (map[string]a
 	return parsed.Source, parsed.Found, nil
 }
 
+// MgetSourceHit is one docs[] entry returned by MgetSource. Found=false
+// mirrors ES's own found:false response for an id that isn't in the index;
+// Source is the projected _source subset (empty when Found=false).
+type MgetSourceHit struct {
+	ID     string
+	Found  bool
+	Source map[string]any
+}
+
+// MgetSource runs an ES _mget against the client's index with the given
+// _source projection and returns docs in request-id order (matches ES's
+// documented behavior). Empty ids returns nil without a round trip. Missing
+// docs still emit an entry (Found=false, empty Source) so callers can join
+// by id without a lookup.
+//
+// Used by the batch lineage endpoint (CYB-4305) to fetch
+// `lineage_upstream_ids` / `lineage_downstream_ids` /
+// `lineage_relation_types` for a resolved asset_id set in one round trip.
+func (c *Client) MgetSource(ctx context.Context, ids []string, sourceFields []string) ([]MgetSourceHit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	docs := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		entry := map[string]any{"_id": id}
+		if len(sourceFields) > 0 {
+			entry["_source"] = sourceFields
+		}
+		docs = append(docs, entry)
+	}
+	body, err := json.Marshal(map[string]any{"docs": docs})
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: marshal mget body: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/%s/_mget", strings.TrimRight(c.baseURL, "/"), c.index)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doReq(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget read: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("elasticsearch: mget status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var parsed struct {
+		Docs []struct {
+			ID     string         `json:"_id"`
+			Found  bool           `json:"found"`
+			Source map[string]any `json:"_source"`
+		} `json:"docs"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget unmarshal: %w", err)
+	}
+
+	out := make([]MgetSourceHit, 0, len(parsed.Docs))
+	for _, d := range parsed.Docs {
+		out = append(out, MgetSourceHit{ID: d.ID, Found: d.Found, Source: d.Source})
+	}
+	return out, nil
+}
+
 // SearchBodyScroll is like SearchBody but adds scroll=2m and returns the scroll
 // ID so callers can continue fetching pages with ScrollNext.
 func (c *Client) SearchBodyScroll(ctx context.Context, body map[string]any) (*SearchResponse, string, error) {

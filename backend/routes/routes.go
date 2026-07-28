@@ -280,6 +280,9 @@ func RegisterAll(
 		// CYB-4306: batch asset-cost lookup — same shell as /durations plus
 		// a required time window and optional group_by=asset_algo axis.
 		assets.POST("/costs", assetHandler.LookupCosts)
+		// CYB-4305: batch asset-lineage lookup — resolve parent/root/logical
+		// and (depth="all") the ES lineage projection in one round trip.
+		assets.POST("/lineage-batch", assetHandler.LookupLineage)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)

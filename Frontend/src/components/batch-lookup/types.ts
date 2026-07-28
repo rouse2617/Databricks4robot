@@ -75,8 +75,11 @@ export interface BatchLookupPreset<
 	columns: ColumnsType<Item> | ((filters: Filters) => ColumnsType<Item>);
 	// Preset-specific stat cards rendered after the always-present three.
 	extraStats?: (res: BatchLookupResponse<Item>) => StatEntry[];
-	// Optional histogram rendered above the results Table.
-	histogram?: (items: Item[]) => BucketRow[];
+	// Optional histogram rendered above the results Table. Receives the
+	// current filters (CYB-4305: lineage skips the histogram entirely for
+	// depth=1). Return `undefined` to suppress the "分布" card even when
+	// items are present; return `[]` to render an empty-buckets card.
+	histogram?: (items: Item[], filters?: Filters) => BucketRow[] | undefined;
 	// CSV export config. filename receives the matched (items.length) count
 	// plus the filters that were used to fetch — presets whose filename
 	// wants to include the query window (e.g. costs) read those directly;

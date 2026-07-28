@@ -172,6 +172,63 @@ func (m *mockAssetRepo) LookupDurations(_ context.Context, ids []string, minMs, 
 	}
 	return out, nil
 }
+
+// LookupLineage synthesises LineageRow projections from the in-memory asset
+// map so usecase tests for CYB-4305 can exercise the batch endpoint without
+// a real DB. Matches by asset_id and grace_video_id; the parent/root/logical
+// pointers are populated when the Asset carries a non-empty value.
+func (m *mockAssetRepo) LookupLineage(_ context.Context, ids []string) ([]repository.LineageRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make([]repository.LineageRow, 0)
+	seen := make(map[string]struct{}, len(m.assets))
+	for _, a := range m.assets {
+		if _, dup := seen[a.AssetID]; dup {
+			continue
+		}
+		hit := false
+		if _, ok := want[a.AssetID]; ok {
+			hit = true
+		}
+		if !hit && a.GraceVideoID != "" {
+			if _, ok := want[a.GraceVideoID]; ok {
+				hit = true
+			}
+		}
+		if !hit {
+			continue
+		}
+		seen[a.AssetID] = struct{}{}
+		row := repository.LineageRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			IsCurrent:    a.IsCurrent,
+			Revision:     a.Revision,
+		}
+		if a.ParentAssetID != "" {
+			pid := a.ParentAssetID
+			row.ParentAssetID = &pid
+		}
+		if a.RootAssetID != "" {
+			rid := a.RootAssetID
+			row.RootAssetID = &rid
+		}
+		if a.LogicalAssetID != "" {
+			lid := a.LogicalAssetID
+			row.LogicalAssetID = &lid
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
 func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64,
 	_ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	// Should never be called by the new AlgoUsecase. Returning an error

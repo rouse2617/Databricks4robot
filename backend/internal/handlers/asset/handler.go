@@ -1223,6 +1223,85 @@ func (h *Handler) LookupCosts(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// LookupLineage resolves direct-hop parent/root/logical + version state for
+// a batch of asset_id / grace_video_id inputs. depth="all" additionally
+// pulls the pre-computed upstream/downstream/relation projections from ES
+// (cyb-3268) in one `_mget`. Same 5000-id cap as LookupDurations / LookupCosts.
+// See openspec/changes/CYB-4305-lineage for the full contract.
+//
+// @Summary      Batch lookup asset lineage
+// @Description  Resolve parent/root/logical + optional full upstream/downstream projection per asset
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetLineageBatchRequest true "Lineage lookup request"
+// @Success      200 {object} models.AssetLineageBatchResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/lineage-batch [post]
+func (h *Handler) LookupLineage(c *gin.Context) {
+	var req models.AssetLineageBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	wantAll, ok := normalizeLineageDepth(req.Depth)
+	if !ok {
+		httpresp.BadRequest(c, httpresp.CodeInvalidLineageDepth,
+			`depth must be 1, "1", or "all"`,
+			map[string]any{"got": req.Depth})
+		return
+	}
+	resp, err := h.uc.LookupLineage(c.Request.Context(), req, wantAll)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// normalizeLineageDepth accepts JSON `1` (number), `"1"` (string), or
+// `"all"` (string), plus the omitted/nil case (defaults to depth=1). Returns
+// (wantAll bool, ok bool); ok=false → 400.
+func normalizeLineageDepth(v any) (wantAll bool, ok bool) {
+	if v == nil {
+		return false, true
+	}
+	switch d := v.(type) {
+	case float64:
+		if d == 1 {
+			return false, true
+		}
+	case int:
+		if d == 1 {
+			return false, true
+		}
+	case int64:
+		if d == 1 {
+			return false, true
+		}
+	case string:
+		switch strings.TrimSpace(d) {
+		case "", "1":
+			return false, true
+		case "all":
+			return true, true
+		}
+	}
+	return false, false
+}
+
 // PromoteRevision creates a new revision of an asset (B-route promote).
 // @Summary      Promote asset revision
 // @Description  Create a new revision of an asset within a logical asset family

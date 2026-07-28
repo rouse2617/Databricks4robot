@@ -94,3 +94,7 @@ func (rawMcapAssetRepoStub) LookupCosts(context.Context, []string, time.Time, ti
 func (rawMcapAssetRepoStub) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }
+
+func (rawMcapAssetRepoStub) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}

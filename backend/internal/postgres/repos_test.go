@@ -2919,3 +2919,97 @@ func TestAssetRepoDurationDistributionEmptyAssetType(t *testing.T) {
 		t.Fatalf("overall arg[0] = %v, want empty string", got)
 	}
 }
+
+// CYB-4305: LookupLineage must OR asset_id + grace_video_id in one WHERE,
+// guard is_deleted=FALSE, scan pointer columns for parent/root/logical
+// (NULL → nil pointer), and short-circuit on empty ids.
+func TestAssetRepoLookupLineage(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB.
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	rows, err := repoEmpty.LookupLineage(ctx, nil)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Three rows exercising the pointer scan:
+	//   - a normal seg with parent + root + logical set
+	//   - a self-root raw_mcap: parent NULL, root == asset_id
+	//   - an orphan: both parent and root NULL
+	parentPtr := "parent01"
+	rootPtr := "root0001"
+	logicalPtr := "logical1"
+	rootSelfPtr := "bbbbbbbb"
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", &parentPtr, &rootPtr, &logicalPtr, true, int64(3)},
+			{"bbbbbbbb", "019eda00-0000-0000-0000-000000000001", nil, &rootSelfPtr, nil, true, int64(1)},
+			{"cccccccc", "", nil, nil, nil, false, int64(0)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	ids := []string{"aaaaaaaa", "019eda00-0000-0000-0000-000000000001", "cccccccc"}
+	rows, err = repo.LookupLineage(ctx, ids)
+	if err != nil {
+		t.Fatalf("LookupLineage err: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].ParentAssetID == nil || *rows[0].ParentAssetID != "parent01" {
+		t.Fatalf("row[0] parent = %#v, want parent01", rows[0])
+	}
+	if rows[0].RootAssetID == nil || *rows[0].RootAssetID != "root0001" {
+		t.Fatalf("row[0] root = %#v, want root0001", rows[0])
+	}
+	if rows[0].LogicalAssetID == nil || *rows[0].LogicalAssetID != "logical1" {
+		t.Fatalf("row[0] logical = %#v, want logical1", rows[0])
+	}
+	if !rows[0].IsCurrent || rows[0].Revision != 3 {
+		t.Fatalf("row[0] version = %v/%d", rows[0].IsCurrent, rows[0].Revision)
+	}
+	// Self-root row: parent nil, root points to own asset_id, logical nil.
+	if rows[1].ParentAssetID != nil {
+		t.Fatalf("row[1] parent should be nil, got %v", *rows[1].ParentAssetID)
+	}
+	if rows[1].RootAssetID == nil || *rows[1].RootAssetID != "bbbbbbbb" {
+		t.Fatalf("row[1] root = %#v, want self", rows[1])
+	}
+	if rows[1].LogicalAssetID != nil {
+		t.Fatalf("row[1] logical should be nil, got %v", *rows[1].LogicalAssetID)
+	}
+	// Orphan: all three pointer columns nil.
+	if rows[2].ParentAssetID != nil || rows[2].RootAssetID != nil || rows[2].LogicalAssetID != nil {
+		t.Fatalf("row[2] should have all-nil pointers, got %#v", rows[2])
+	}
+
+	// Verify SQL shape + bind args.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"asset_id = ANY($1)",
+		"grace_video_id = ANY($1)",
+		"is_deleted = FALSE",
+		"parent_asset_id, root_asset_id, logical_asset_id",
+		"COALESCE(is_current, FALSE)",
+		"COALESCE(revision, 0)",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 1 {
+		t.Fatalf("expected 1 bind arg (ids), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 3 {
+		t.Fatalf("expected []string ids arg with 3 elements, got %#v", db.queryArgs[0][0])
+	}
+}

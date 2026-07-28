@@ -49,4 +49,7 @@ const (
 	CodeInvalidTimeRange = "INVALID_TIME_RANGE"
 	CodeWindowTooLarge   = "WINDOW_TOO_LARGE"
 	CodeInvalidGroupBy   = "INVALID_GROUP_BY"
+
+	// CYB-4305: batch lineage lookup — POST /api/v1/assets/lineage-batch.
+	CodeInvalidLineageDepth = "INVALID_LINEAGE_DEPTH"
 )

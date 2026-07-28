@@ -182,10 +182,19 @@ export default function BatchAssetLookup<
 		parsed.ids.length > preset.maxIds ||
 		filterError !== null;
 
+	// Histogram is optional and — per CYB-4305 — can be filter-conditional:
+	// the lineage preset returns `undefined` for depth=1 to suppress the
+	// "分布" card entirely while still rendering it for depth="all". The
+	// shell must therefore distinguish "no card" (undefined) from "empty
+	// buckets" ([]).
 	const buckets = useMemo(
-		() => (result && preset.histogram ? preset.histogram(result.items) : []),
-		[result, preset.histogram],
+		() =>
+			result && preset.histogram
+				? preset.histogram(result.items, filters)
+				: undefined,
+		[result, preset.histogram, filters],
 	);
+	const showHistogram = buckets !== undefined;
 
 	const extraStats = useMemo(
 		() => (result && preset.extraStats ? preset.extraStats(result) : []),
@@ -334,12 +343,12 @@ export default function BatchAssetLookup<
 						</Row>
 					</Card>
 
-					{preset.histogram ? (
+					{showHistogram ? (
 						<Card style={{ marginTop: 16 }} title="分布">
 							{result.items.length === 0 ? (
 								<Empty description="无匹配项" />
 							) : (
-								<HistogramBars buckets={buckets} />
+								<HistogramBars buckets={buckets ?? []} />
 							)}
 						</Card>
 					) : null}

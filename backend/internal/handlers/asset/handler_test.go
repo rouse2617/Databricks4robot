@@ -37,6 +37,9 @@ type mockAssetRepo struct {
 	// CYB-4306: cost-lookup mock. Nil (default) returns empty rows so tests
 	// that don't set it exercise the missing/filtered_out paths.
 	lookupCostsFn func(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error)
+	// CYB-4305: lineage-lookup mock. Nil (default) resolves each id via
+	// getFn (parent/root/logical pulled from the found Asset).
+	lookupLineageFn func(ctx context.Context, ids []string) ([]repository.LineageRow, error)
 }
 
 type fakeAssetSQLQuerier struct {
@@ -289,6 +292,49 @@ func (m *mockAssetRepo) LookupDurations(ctx context.Context, ids []string, minMs
 			GraceVideoID: a.GraceVideoID,
 			DurationMs:   a.DurationMs,
 		})
+	}
+	return out, nil
+}
+
+// LookupLineage resolves each id via getFn (same fallback shape as
+// LookupDurations) and returns rows with the lineage columns pulled from the
+// found Asset. CYB-4305 handler tests use lookupLineageFn to inject custom
+// rows; nil (default) exercises the resolve-via-Get path.
+func (m *mockAssetRepo) LookupLineage(ctx context.Context, ids []string) ([]repository.LineageRow, error) {
+	if m.lookupLineageFn != nil {
+		return m.lookupLineageFn(ctx, ids)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]repository.LineageRow, 0, len(ids))
+	for _, id := range ids {
+		a, err := m.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			continue
+		}
+		row := repository.LineageRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			IsCurrent:    a.IsCurrent,
+			Revision:     a.Revision,
+		}
+		if a.ParentAssetID != "" {
+			pid := a.ParentAssetID
+			row.ParentAssetID = &pid
+		}
+		if a.RootAssetID != "" {
+			rid := a.RootAssetID
+			row.RootAssetID = &rid
+		}
+		if a.LogicalAssetID != "" {
+			lid := a.LogicalAssetID
+			row.LogicalAssetID = &lid
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -2148,5 +2194,133 @@ func TestLookupCostsHandler(t *testing.T) {
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("asset_algo: got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// CYB-4305: POST /assets/lineage-batch — happy path + validation branches.
+func TestLookupLineageHandler(t *testing.T) {
+	parent := "parent01"
+	root := "root0001"
+	repo := &mockAssetRepo{
+		getFn: func(_ context.Context, id string) (*models.Asset, error) {
+			switch id {
+			case "aaaaaaaa":
+				return &models.Asset{
+					AssetID: "aaaaaaaa", ParentAssetID: parent, RootAssetID: root, IsCurrent: true, Revision: 2,
+				}, nil
+			case "bbbbbbbb":
+				// self-root — is_root_count should count this as a root
+				return &models.Asset{AssetID: "bbbbbbbb", RootAssetID: "bbbbbbbb", IsCurrent: true}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := New(assetUC.New(repo), &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodPost, "/assets/lineage-batch", h.LookupLineage)
+
+	// Happy path depth=1 (JSON number).
+	body := map[string]any{
+		"ids":   []string{"aaaaaaaa", "bbbbbbbb", "zzzzzzzz"},
+		"depth": 1,
+	}
+	w := doReq(t, r, http.MethodPost, "/assets/lineage-batch", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("depth=1: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, _ := got["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d: %+v", len(items), got)
+	}
+	// depth=1 must NOT emit upstream_ids / downstream_ids / relation_types.
+	firstItem, _ := items[0].(map[string]any)
+	if _, ok := firstItem["upstream_ids"]; ok {
+		t.Fatalf("depth=1 must not emit upstream_ids: %+v", firstItem)
+	}
+	missing, _ := got["missing_ids"].([]any)
+	if len(missing) != 1 || missing[0].(string) != "zzzzzzzz" {
+		t.Fatalf("missing = %+v", missing)
+	}
+	stats, _ := got["stats"].(map[string]any)
+	if int(stats["matched_count"].(float64)) != 2 {
+		t.Fatalf("matched_count = %v", stats["matched_count"])
+	}
+	if int(stats["is_root_count"].(float64)) != 1 {
+		t.Fatalf("is_root_count = %v, want 1 (bbbbbbbb self-root)", stats["is_root_count"])
+	}
+	// depth=1: relation_type_counts must be absent from the JSON payload.
+	if _, ok := stats["relation_type_counts"]; ok {
+		t.Fatalf("depth=1 stats must not emit relation_type_counts: %+v", stats)
+	}
+
+	// depth="1" (string form) also accepted.
+	body["depth"] = "1"
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf(`depth="1" string: got %d %s`, w.Code, w.Body.String())
+	}
+
+	// depth omitted defaults to 1.
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", map[string]any{
+		"ids": []string{"aaaaaaaa"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("no depth: got %d %s", w.Code, w.Body.String())
+	}
+
+	// depth="all" with no ES wired still 200; empty upstream/downstream/relation slices per item.
+	body["depth"] = "all"
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("depth=all no ES: got %d %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal all: %v", err)
+	}
+	items, _ = got["items"].([]any)
+	firstItem, _ = items[0].(map[string]any)
+	if _, ok := firstItem["upstream_ids"]; !ok {
+		t.Fatalf(`depth="all" must emit upstream_ids: %+v`, firstItem)
+	}
+	stats, _ = got["stats"].(map[string]any)
+	if _, ok := stats["relation_type_counts"]; !ok {
+		t.Fatalf(`depth="all" stats must emit relation_type_counts: %+v`, stats)
+	}
+
+	// Empty ids → 400 IdListRequired.
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", map[string]any{"ids": []string{}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ID_LIST_REQUIRED") {
+		t.Fatalf("empty ids: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Over-cap → 400 IdListTooLarge.
+	big := make([]string, 5001)
+	for i := range big {
+		big[i] = fmt.Sprintf("id%08d", i)
+	}
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", map[string]any{"ids": big})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ID_LIST_TOO_LARGE") {
+		t.Fatalf("over-cap: got %d %s", w.Code, w.Body.String())
+	}
+
+	// depth=2 → 400 InvalidLineageDepth.
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", map[string]any{
+		"ids":   []string{"aaaaaaaa"},
+		"depth": 2,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_LINEAGE_DEPTH") {
+		t.Fatalf("bad depth number: got %d %s", w.Code, w.Body.String())
+	}
+
+	// depth="bogus" → 400 InvalidLineageDepth.
+	w = doReq(t, r, http.MethodPost, "/assets/lineage-batch", map[string]any{
+		"ids":   []string{"aaaaaaaa"},
+		"depth": "bogus",
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_LINEAGE_DEPTH") {
+		t.Fatalf("bad depth string: got %d %s", w.Code, w.Body.String())
 	}
 }

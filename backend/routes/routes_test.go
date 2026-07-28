@@ -490,3 +490,7 @@ func (r *routeAssetRepo) LookupCosts(context.Context, []string, time.Time, time.
 func (r *routeAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }
+
+func (r *routeAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}

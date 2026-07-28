@@ -5,13 +5,18 @@
 // the shared `BatchAssetLookup` shell. Adding a preset later is one import
 // plus one entry in the map and the options array — the key union grows too.
 
-import { ClockCircleOutlined, DollarOutlined } from "@ant-design/icons";
+import {
+	ClockCircleOutlined,
+	DollarOutlined,
+	PartitionOutlined,
+} from "@ant-design/icons";
 import type { ReactNode } from "react";
 import type { BatchLookupPreset } from "../../components/batch-lookup/types";
 import { costsPreset } from "./costs";
 import { durationsPreset } from "./durations";
+import { lineagePreset } from "./lineage";
 
-export type BatchLookupPresetKey = "durations" | "costs";
+export type BatchLookupPresetKey = "durations" | "costs" | "lineage";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyPreset = BatchLookupPreset<any, any>;
@@ -19,6 +24,7 @@ type AnyPreset = BatchLookupPreset<any, any>;
 export const BATCH_LOOKUP_PRESETS: Record<BatchLookupPresetKey, AnyPreset> = {
 	durations: durationsPreset,
 	costs: costsPreset,
+	lineage: lineagePreset,
 };
 
 // Default key when the URL has no `preset` param or an unknown one. Named
@@ -33,6 +39,7 @@ export const PRESET_OPTIONS: Array<{
 }> = [
 	{ key: "durations", label: "时长", icon: <ClockCircleOutlined /> },
 	{ key: "costs", label: "成本", icon: <DollarOutlined /> },
+	{ key: "lineage", label: "血缘", icon: <PartitionOutlined /> },
 ];
 
 // Silent fallback — bookmark to an unknown preset lands on the default and

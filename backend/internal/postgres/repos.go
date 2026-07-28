@@ -482,6 +482,51 @@ GROUP BY aid`
 	return out, nil
 }
 
+// LookupLineage returns identity + direct-hop lineage columns for non-deleted
+// assets whose asset_id OR grace_video_id matches any element of ids. Single
+// index scan on `assets` — both `asset_id` and `grace_video_id` are indexed.
+// The returned rows collapse "resolve id" and "read lineage" into one round
+// trip; the depth="all" path adds an ES `_mget` on top (see
+// searchindex.LineageBatchReader).
+//
+// NULL parent/root/logical columns come through as nil pointers, so the
+// caller can distinguish "unknown parent" from "empty string parent". Empty
+// ids short-circuits to (nil, nil) without a DB round trip. CYB-4305.
+func (r *AssetRepo) LookupLineage(ctx context.Context, ids []string) ([]repository.LineageRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `
+SELECT asset_id, COALESCE(grace_video_id, ''),
+       parent_asset_id, root_asset_id, logical_asset_id,
+       COALESCE(is_current, FALSE), COALESCE(revision, 0)
+FROM assets
+WHERE is_deleted = FALSE
+  AND (asset_id = ANY($1) OR grace_video_id = ANY($1))`
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupLineage: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.LineageRow, 0, len(ids))
+	for rows.Next() {
+		var row repository.LineageRow
+		if err := rows.Scan(
+			&row.AssetID, &row.GraceVideoID,
+			&row.ParentAssetID, &row.RootAssetID, &row.LogicalAssetID,
+			&row.IsCurrent, &row.Revision,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupLineage scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupLineage rows: %w", err)
+	}
+	return out, nil
+}
+
 // LookupDurations returns one repository.DurationRow per non-deleted asset
 // whose asset_id OR grace_video_id matches any element of ids. When minMs or
 // maxMs are >0 they further constrain rows by duration_ms; a zero bound is

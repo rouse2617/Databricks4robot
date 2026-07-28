@@ -33,6 +33,22 @@ type AssetCostRow struct {
 	RunCount     int64
 }
 
+// LineageRow is one asset's identity + lineage columns projected by
+// AssetRepository.LookupLineage — used by the batch lineage endpoint
+// (CYB-4305) to answer both "resolve this input_id" and "give me its parent /
+// root / version state" in a single index scan against `assets`. Pointer
+// fields carry NULL through: NULL parent means "no known parent", which
+// combined with a NULL root is what the endpoint reports as `orphan_count`.
+type LineageRow struct {
+	AssetID        string
+	GraceVideoID   string
+	ParentAssetID  *string
+	RootAssetID    *string
+	LogicalAssetID *string
+	IsCurrent      bool
+	Revision       int64
+}
+
 // ErrDuplicateAssetID is returned when inserting an asset whose asset_id already exists.
 var ErrDuplicateAssetID = errors.New("duplicate asset id")
 
@@ -93,4 +109,22 @@ type AssetRepository interface {
 	// (pipeline_repo.go:767) to avoid double-counting rollup nodes.
 	// CYB-4306.
 	LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]AssetCostRow, error)
+
+	// LookupLineage returns identity + lineage columns for non-deleted assets
+	// whose asset_id OR grace_video_id matches any element of ids. Single-
+	// query resolver — the returned rows carry both the identity columns
+	// (asset_id/grace_video_id) and the direct-hop lineage columns
+	// (parent/root/logical/is_current/revision) so the batch lineage endpoint
+	// doesn't need a separate resolve step. CYB-4305.
+	LookupLineage(ctx context.Context, ids []string) ([]LineageRow, error)
+}
+
+// AssetLineageBatchRepository is the ES-side surface used by the depth="all"
+// path of the batch lineage endpoint (CYB-4305). Returns the projection that
+// searchindex/builder.go writes onto every asset doc (upstream_ids /
+// downstream_ids / relation_types). Missing docs map to zero-value
+// AssetLineageProjection (all three fields nil). Split into its own interface
+// so the asset usecase can stay ignorant of ES transport.
+type AssetLineageBatchRepository interface {
+	LineageDocsByAssetID(ctx context.Context, assetIDs []string) (map[string]AssetLineageProjection, error)
 }

@@ -61,6 +61,10 @@ func (m *provenanceAssetRepo) LookupDurations(context.Context, []string, int64, 
 	return nil, nil
 }
 
+func (m *provenanceAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
 type provenanceEventRepo struct {
 	promoted []*models.AssetEvent
 }

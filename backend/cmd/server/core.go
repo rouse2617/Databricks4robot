@@ -29,6 +29,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/subtask"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
@@ -74,6 +75,12 @@ func setupCore(inf *infra) *coreHandlers {
 	))
 	assetUsecase.SetUsageStatsRepo(usageStatsRepo)          // CYB-1095/1096: usage stats
 	assetUsecase.SetActionLabelRegistry(inf.actionLabelReg) // CYB-3268: action label vocabulary
+	// CYB-4305: depth="all" branch of POST /assets/lineage-batch — reads the
+	// upstream/downstream/relation projection from ES via `_mget`. inf.es may
+	// be nil in local unit envs; the usecase degrades to empty slices then.
+	if inf.es != nil {
+		assetUsecase.SetLineageBatchRepo(searchindex.NewLineageBatchReader(inf.es))
+	}
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)

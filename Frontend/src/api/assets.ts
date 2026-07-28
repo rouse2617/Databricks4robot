@@ -149,6 +149,55 @@ export interface AssetCostsResponse {
 	stats: AssetCostStats;
 }
 
+// ─── CYB-4305: batch lineage lookup ─────────────────────────────────────────
+
+export type AssetLineageDepth = 1 | "1" | "all";
+
+export interface AssetLineageBatchRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	// Server accepts `1`, `"1"`, and `"all"`. Default 1.
+	depth?: AssetLineageDepth;
+}
+
+// LineageBatchItem carries the direct-hop fields on every response.
+// upstream_ids / downstream_ids / relation_types are absent when depth=1
+// (server does not emit them) and present as arrays when depth=all.
+export interface LineageBatchItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	parent_asset_id: string | null;
+	root_asset_id: string | null;
+	logical_asset_id: string | null;
+	is_current: boolean;
+	revision: number;
+	upstream_ids?: string[];
+	downstream_ids?: string[];
+	relation_types?: string[];
+}
+
+export interface LineageBatchStats {
+	matched_count: number;
+	missing_count: number;
+	has_parent_count: number;
+	is_root_count: number;
+	orphan_count: number;
+	is_current_count: number;
+	// Present when depth=all (server sets an empty map even when no items
+	// carry relation types); absent when depth=1.
+	relation_type_counts?: Record<string, number>;
+}
+
+export interface AssetLineageBatchResponse {
+	items: LineageBatchItem[];
+	missing_ids: string[];
+	// Kept in the envelope for symmetry with the durations / costs shells;
+	// lineage has no server-side range filter so this is always [].
+	filtered_out_ids: string[];
+	stats: LineageBatchStats;
+}
+
 export interface AssetMetadataResponse {
 	asset_id: string;
 	segment_locator: string;
@@ -409,6 +458,14 @@ export const assetsApi = {
 	lookupCosts: (req: AssetCostsRequest) =>
 		apiClient
 			.post<AssetCostsResponse>("/assets/costs", req)
+			.then((r) => r.data),
+
+	// CYB-4305: batch lineage lookup. depth=1 (default) returns direct-hop
+	// parent/root/logical/is_current/revision in one SQL scan; depth="all"
+	// overlays the ES lineage projection (upstream/downstream/relation).
+	lookupLineage: (req: AssetLineageBatchRequest) =>
+		apiClient
+			.post<AssetLineageBatchResponse>("/assets/lineage-batch", req)
 			.then((r) => r.data),
 
 	getPreviewManifest: (id: string) =>

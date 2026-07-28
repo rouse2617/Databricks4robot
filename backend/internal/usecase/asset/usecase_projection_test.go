@@ -150,6 +150,10 @@ func (r *readModelAssetRepo) LookupDurations(context.Context, []string, int64, i
 	return nil, nil
 }
 
+func (r *readModelAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
 func TestCreate_WritesTagProjectionAndOutbox(t *testing.T) {
 	repo := newMockAssetRepo()
 	tagRepo := newMockAssetTagRepo()

@@ -187,7 +187,10 @@ describe("BatchAssetLookup shell", () => {
 		expect(rows.length).toBe(1 + 2); // header + 2 items
 
 		fireEvent.click(screen.getByTestId("export-csv-button"));
-		expect(filenameSpy).toHaveBeenCalledWith(2);
+		// Shell passes (matchedCount, filters) — presets that ignore filters
+		// (like durations) still get the second arg; the test just asserts
+		// the first arg is the match count.
+		expect(filenameSpy).toHaveBeenCalledWith(2, expect.anything());
 		expect(clickSpy).toHaveBeenCalledTimes(1);
 		const anchor = clickSpy.mock.instances[0] as HTMLAnchorElement;
 		expect(anchor.download).toBe("test-2.csv");

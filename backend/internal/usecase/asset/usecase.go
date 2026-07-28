@@ -118,6 +118,11 @@ type Usecase struct {
 	// actionLabelRegistry validates action assets' controlled label vocabulary
 	// (CYB-3268). nil disables validation.
 	actionLabelRegistry *config.ActionLabelRegistry
+	// lineageBatchRepo backs the depth="all" branch of the batch lineage
+	// endpoint (CYB-4305). nil → depth="all" degrades to empty upstream /
+	// downstream / relation slices (still 200; the endpoint doesn't require
+	// ES to answer depth=1).
+	lineageBatchRepo repository.AssetLineageBatchRepository
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -187,6 +192,13 @@ func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
 // validate asset_type='action' creates/updates (CYB-3268). Pass nil to disable.
 func (u *Usecase) SetActionLabelRegistry(r *config.ActionLabelRegistry) {
 	u.actionLabelRegistry = r
+}
+
+// SetLineageBatchRepo wires the ES-side reader used by the depth="all" branch
+// of the batch lineage endpoint (CYB-4305). Pass nil to disable — depth="all"
+// requests still return 200, just without upstream/downstream/relation fields.
+func (u *Usecase) SetLineageBatchRepo(r repository.AssetLineageBatchRepository) {
+	u.lineageBatchRepo = r
 }
 
 func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
@@ -1219,6 +1231,202 @@ func percentileLinearFloat(sorted []float64, p float64) float64 {
 	}
 	frac := rank - float64(lo)
 	return sorted[lo] + frac*(sorted[hi]-sorted[lo])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CYB-4305: batch asset lineage lookup.
+// ─────────────────────────────────────────────────────────────────────────
+
+// LookupLineage resolves parent/root/logical/is_current/revision for a batch
+// of asset_id and/or grace_video_id inputs in one SQL round trip. When
+// wantAll is true the resolved asset_id set additionally gets an ES `_mget`
+// against the pre-computed lineage projection (cyb-3268) to fetch full
+// upstream/downstream/relation-type arrays; depth=1 skips that round trip.
+//
+// The response classifies each requested id into exactly one of items or
+// missing_ids (filtered_out_ids is always empty here — kept for envelope
+// symmetry with the durations/costs shells). Stats are computed over items
+// only.
+//
+// The caller (handler) is responsible for validation (empty ids, oversize
+// batch, depth normalization); this usecase assumes the request is
+// well-formed.
+func (u *Usecase) LookupLineage(ctx context.Context, req models.AssetLineageBatchRequest, wantAll bool) (*models.AssetLineageBatchResponse, error) {
+	// Dedup ids preserving input order; empty entries drop.
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// One-shot resolve + lineage read.
+	var rows []repository.LineageRow
+	if len(dedup) > 0 {
+		var err error
+		rows, err = u.repo.LookupLineage(ctx, dedup)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Reverse map: input id → row (index by both asset_id and grace_video_id
+	// so callers can address either).
+	byInput := make(map[string]*repository.LineageRow, len(rows)*2)
+	for i := range rows {
+		row := &rows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Walk input in insertion order → items + missing, collapsing an input
+	// that addresses an already-emitted row (caller sent both asset_id +
+	// grace_video_id for the same asset).
+	items := make([]models.LineageBatchItem, 0, len(dedup))
+	missing := make([]string, 0)
+	emitted := make(map[*repository.LineageRow]struct{}, len(rows))
+	orderedAssetIDs := make([]string, 0, len(rows))
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		if _, dup := emitted[row]; dup {
+			continue
+		}
+		emitted[row] = struct{}{}
+		orderedAssetIDs = append(orderedAssetIDs, row.AssetID)
+		items = append(items, models.LineageBatchItem{
+			InputID:        in,
+			AssetID:        row.AssetID,
+			GraceVideoID:   row.GraceVideoID,
+			ParentAssetID:  row.ParentAssetID,
+			RootAssetID:    row.RootAssetID,
+			LogicalAssetID: row.LogicalAssetID,
+			IsCurrent:      row.IsCurrent,
+			Revision:       row.Revision,
+		})
+	}
+
+	// Depth="all" overlay: one ES _mget for the resolved asset_ids. When the
+	// ES reader is unwired (u.lineageBatchRepo == nil) we still return 200
+	// with depth=1 fields — the frontend degrades gracefully.
+	var relationTypeCounts map[string]int
+	if wantAll {
+		relationTypeCounts = map[string]int{}
+		if u.lineageBatchRepo != nil && len(orderedAssetIDs) > 0 {
+			projs, err := u.lineageBatchRepo.LineageDocsByAssetID(ctx, orderedAssetIDs)
+			if err != nil {
+				return nil, err
+			}
+			for i := range items {
+				proj, ok := projs[items[i].AssetID]
+				if !ok {
+					// No ES doc for this asset — emit empty slices so the
+					// three depth=all fields still land in the payload
+					// (frontend distinguishes depth=1 by their absence).
+					empty := []string{}
+					items[i].UpstreamIDs = sliceToPtr(empty)
+					items[i].DownstreamIDs = sliceToPtr(empty)
+					items[i].RelationTypes = sliceToPtr(empty)
+					continue
+				}
+				up := stringSliceOrEmpty(proj.UpstreamIDs)
+				down := stringSliceOrEmpty(proj.DownstreamIDs)
+				rels := stringSliceOrEmpty(proj.RelationTypes)
+				items[i].UpstreamIDs = &up
+				items[i].DownstreamIDs = &down
+				items[i].RelationTypes = &rels
+				for _, rt := range rels {
+					relationTypeCounts[rt]++
+				}
+			}
+		} else {
+			// ES not wired or no assets to fetch — still emit the three
+			// depth=all fields as empty slices so the response shape stays
+			// stable for the frontend.
+			for i := range items {
+				empty := []string{}
+				items[i].UpstreamIDs = sliceToPtr(empty)
+				items[i].DownstreamIDs = sliceToPtr(empty)
+				items[i].RelationTypes = sliceToPtr(empty)
+			}
+		}
+	}
+
+	stats := computeLineageStats(items, len(missing), wantAll, relationTypeCounts)
+	return &models.AssetLineageBatchResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: []string{},
+		Stats:          stats,
+	}, nil
+}
+
+// sliceToPtr returns a pointer to a fresh slice header so the JSON marshaler
+// emits `[]` rather than dropping the field via omitempty.
+func sliceToPtr(v []string) *[]string {
+	out := v
+	return &out
+}
+
+// stringSliceOrEmpty normalizes a possibly-nil slice into a non-nil empty
+// slice so the marshaled JSON is `[]` rather than `null`.
+func stringSliceOrEmpty(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// computeLineageStats folds the assembled items into the summary bag. Called
+// after items are final so has_parent/is_root/orphan/is_current are all
+// walk-once — no second pass. RelationTypeCounts is passed through only when
+// wantAll; the caller keeps it nil for depth=1 so `omitempty` drops the key.
+func computeLineageStats(items []models.LineageBatchItem, missingCount int, wantAll bool, relCounts map[string]int) models.LineageBatchStats {
+	stats := models.LineageBatchStats{
+		MatchedCount: len(items),
+		MissingCount: missingCount,
+	}
+	for _, it := range items {
+		if it.ParentAssetID != nil && *it.ParentAssetID != "" {
+			stats.HasParentCount++
+		}
+		// "is_root" = "top of a lineage tree" — counts both the modern
+		// `root_asset_id == asset_id` case (newer ingest writes self-root)
+		// AND the historical NULL root (older assets left the column NULL
+		// when the asset was its own root). See decisions.md.
+		if it.RootAssetID == nil || *it.RootAssetID == "" || *it.RootAssetID == it.AssetID {
+			stats.IsRootCount++
+		}
+		// Orphan = strict "neither known" — usually a data-quality signal.
+		if (it.ParentAssetID == nil || *it.ParentAssetID == "") &&
+			(it.RootAssetID == nil || *it.RootAssetID == "") {
+			stats.OrphanCount++
+		}
+		if it.IsCurrent {
+			stats.IsCurrentCount++
+		}
+	}
+	if wantAll {
+		if relCounts == nil {
+			relCounts = map[string]int{}
+		}
+		stats.RelationTypeCounts = &relCounts
+	}
+	return stats
 }
 
 // BatchGet returns multiple assets by their IDs, skipping not-found ones.

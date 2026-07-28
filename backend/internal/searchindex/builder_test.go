@@ -601,6 +601,10 @@ func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64)
 	return nil, nil
 }
 
+func (s *stubAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
 func (s *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
 	return nil, nil
 }

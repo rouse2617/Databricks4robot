@@ -76,6 +76,10 @@ func (r *testAssetRepo) LookupDurations(context.Context, []string, int64, int64)
 	return nil, nil
 }
 
+func (r *testAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
 func (r *testAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
 	return nil, nil
 }
