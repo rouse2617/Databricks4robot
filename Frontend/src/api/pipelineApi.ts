@@ -603,6 +603,31 @@ export function deletePipelineRun(id: string): Promise<void> {
 	return request<void>("DELETE", `/pipeline-runs/${encodeURIComponent(id)}`);
 }
 
+// CYB-4297: reverse lookup "asset → pipeline runs" — powers AssetDetailPage
+// runs tab. `assetId` accepts either grace_video_id (matches
+// pipeline_runs.asset_ids directly) or the short assets.asset_id (backend
+// resolves via assetRepo). Server always returns summary shape.
+export function listPipelineRunsByAsset(
+	assetId: string,
+	options?: {
+		status?: string;
+		batchJobId?: string;
+		page?: number;
+		pageSize?: number;
+	},
+): Promise<PipelineRunListResponse> {
+	const search = new URLSearchParams();
+	if (options?.status) search.set("status", options.status);
+	if (options?.batchJobId) search.set("batchJobId", options.batchJobId);
+	if (options?.page) search.set("page", String(options.page));
+	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
+	const suffix = search.toString() ? `?${search.toString()}` : "";
+	return request<PipelineRunListResponse>(
+		"GET",
+		`/assets/${encodeURIComponent(assetId)}/runs${suffix}`,
+	);
+}
+
 export function listPipelineRuns(options?: {
 	view?: "summary" | "full";
 	excludeBatch?: boolean;

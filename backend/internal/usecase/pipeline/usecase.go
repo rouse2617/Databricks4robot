@@ -6814,6 +6814,50 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 	return asset, nil
 }
 
+// ── Asset → Runs Reverse Lookup (CYB-4297) ────────────────────────
+
+// ListRunsByAsset returns the pipeline runs whose asset_ids include the given
+// asset — the reverse of "given a run, what assets did it use". Input `id`
+// accepts both grace_video_id (uuid form, matches pipeline_runs.asset_ids
+// directly) and the short assets.asset_id (resolved to grace_video_id via
+// assetRepo first). Empty grace on the short-id path returns no runs (asset
+// exists but has never been dispatched — a legitimate empty result, not an
+// error).
+//
+// The heavy lifting is delegated to ListRunSummaries so callers get the same
+// pagination / status filter / batch filter / node hydration behavior as the
+// /pipeline-runs list handler.
+func (uc *Usecase) ListRunsByAsset(ctx context.Context, id string, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, 0, fmt.Errorf("%w: asset id is required", ErrInvalidArgument)
+	}
+	graceID := id
+	// grace_video_id is a 36-char UUID with hyphens; the short asset_id is
+	// base62 ~8 chars, no hyphens. The heuristic keeps callers from paying
+	// for an extra assetRepo round-trip when they already have a grace id.
+	if uc.assetRepo != nil && !looksLikeGraceVideoID(id) {
+		a, err := uc.assetRepo.Get(ctx, id)
+		if err == nil && a != nil && strings.TrimSpace(a.GraceVideoID) != "" {
+			graceID = a.GraceVideoID
+		}
+	}
+	filter.AssetID = graceID
+	return uc.ListRunSummaries(ctx, filter)
+}
+
+// looksLikeGraceVideoID is a cheap shape check: uuid canonical form is
+// 8-4-4-4-12 hyphen-separated hex (36 chars total). We don't need strict
+// RFC 4122 validation — anything of that shape is definitely NOT a short
+// assets.asset_id (which is base62 without hyphens), so we skip the extra DB
+// hop.
+func looksLikeGraceVideoID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+}
+
 // ── Lineage Query (F4.5) ──────────────────────────────────────────
 
 // AssetLineage describes how an asset was produced by a pipeline.

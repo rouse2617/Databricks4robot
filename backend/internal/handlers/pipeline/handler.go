@@ -1319,3 +1319,55 @@ func (h *Handler) GetLineage(c *gin.Context) {
 	}
 	c.JSON(200, lineage)
 }
+
+// ListRunsByAsset handles GET /api/v1/assets/:id/runs (CYB-4297).
+//
+// Reverse lookup — "what pipeline runs used this asset". Accepts both
+// grace_video_id (matches pipeline_runs.asset_ids directly) and the short
+// assets.asset_id (usecase resolves it to grace_video_id via assetRepo).
+// Returns the same summary-shape rows as GET /pipeline-runs so the frontend
+// can reuse its run-row rendering; only asset-scoped by construction.
+func (h *Handler) ListRunsByAsset(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset id is required", nil)
+		return
+	}
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
+	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
+	if pageSize <= 0 {
+		pageSize = 20
+	} else if pageSize > 200 {
+		pageSize = 200
+	}
+	if page <= 0 {
+		page = 1
+	}
+	filter := models.PipelineRunListFilter{
+		Status:      statusFilter,
+		BatchJobID:  batchJobID,
+		Page:        page,
+		PageSize:    pageSize,
+		SummaryOnly: true,
+	}
+	items, total, err := h.uc.ListRunsByAsset(c.Request.Context(), id, filter)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.PipelineRun{}
+	}
+	c.JSON(200, gin.H{
+		"items":    items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
+}

@@ -500,7 +500,13 @@ type PipelineRunListFilter struct {
 	NodeStatus          string
 	// CreatedBy filters to runs whose owner equals this exact string (e.g.
 	// "subscription-task:<id>" to list a subscription task's single runs).
-	CreatedBy     string
+	CreatedBy string
+	// AssetID filters runs whose asset_ids array contains this id. Match is
+	// exact against pipeline_runs.asset_ids elements — those elements are the
+	// grace_video_id form (业务 id),so callers with a short assets.asset_id
+	// must resolve it to grace_video_id first (Usecase.ListRunsByAsset does
+	// this). CYB-4297.
+	AssetID       string
 	Page          int
 	PageSize      int
 	RefreshActive bool

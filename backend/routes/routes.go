@@ -257,6 +257,11 @@ func RegisterAll(
 		assets.GET("/:id/events", assetHandler.ListEvents)
 		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
+		// CYB-4297: "打开资产,看它跑过哪些流水线" reverse lookup —
+		// pipeline_runs.asset_ids GIN-indexed reverse scan. Same summary
+		// shape as GET /pipeline-runs; :id accepts grace_video_id or the
+		// short assets.asset_id (usecase resolves via assetRepo).
+		assets.GET("/:id/runs", pipelineHandler.ListRunsByAsset)
 		// CYB-4263: provenance handler is implemented + unit-tested but was
 		// never mounted (dead since #59). Wire it onto the already-mounted
 		// asset handler.

@@ -1048,6 +1048,14 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		args = append(args, createdBy)
 		argPos++
 	}
+	// CYB-4297: reverse lookup — "runs that used this asset". asset_ids is a
+	// TEXT[] holding grace_video_id per input asset; `= ANY(asset_ids)` hits
+	// the GIN index (idx_pipeline_runs_asset_ids_gin).
+	if assetID := strings.TrimSpace(filter.AssetID); assetID != "" {
+		conds = append(conds, fmt.Sprintf("$%d = ANY(pr.asset_ids)", argPos))
+		args = append(args, assetID)
+		argPos++
+	}
 	if filter.BatchJobID != "" && strings.TrimSpace(filter.PipelineNodeID) != "" {
 		nodeStatus := strings.TrimSpace(filter.NodeStatus)
 		conds = append(conds, fmt.Sprintf(`EXISTS (

@@ -47,6 +47,8 @@ const EvalMetricsTab = lazy(
 );
 const FilesTab = lazy(() => import("../components/asset-detail/FilesTab"));
 const LineageTab = lazy(() => import("../components/asset-detail/LineageTab"));
+// CYB-4297: reverse "asset → pipeline runs" view.
+const RunsTab = lazy(() => import("../components/asset-detail/RunsTab"));
 
 import OverviewTab from "../components/asset-detail/OverviewTab";
 
@@ -83,6 +85,7 @@ const ASSET_DETAIL_TAB_KEYS = new Set([
 	"tags",
 	"deliveries",
 	"lineage",
+	"runs",
 	"files",
 ]);
 
@@ -465,6 +468,20 @@ export default function AssetDetailPage() {
 						assetType={asset.asset_type}
 						parentAssetId={asset.parent_asset_id}
 					/>
+				</Suspense>
+			),
+		},
+		{
+			// CYB-4297: which pipelines have run against this asset. Prefer
+			// grace_video_id when the asset carries one — that's the value
+			// pipeline_runs.asset_ids actually stores, so the backend can
+			// answer without an assets-table round trip; falls back to the
+			// short asset_id for assets that don't have a grace mirror.
+			key: "runs",
+			label: "运行历史",
+			children: (
+				<Suspense fallback={TAB_FALLBACK}>
+					<RunsTab assetId={asset.grace_video_id || asset.asset_id} />
 				</Suspense>
 			),
 		},
