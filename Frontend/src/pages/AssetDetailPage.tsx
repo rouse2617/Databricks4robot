@@ -47,6 +47,8 @@ const EvalMetricsTab = lazy(
 );
 const FilesTab = lazy(() => import("../components/asset-detail/FilesTab"));
 const LineageTab = lazy(() => import("../components/asset-detail/LineageTab"));
+// CYB-4297: reverse "asset → pipeline runs" view.
+const RunsTab = lazy(() => import("../components/asset-detail/RunsTab"));
 
 import OverviewTab from "../components/asset-detail/OverviewTab";
 
@@ -58,6 +60,7 @@ const TAB_FALLBACK = (
 
 import { buildPreviewManifestFromSources } from "../hooks/assets/useAssetPreview";
 import { extractApiErrorMessage } from "../lib/apiError";
+import { isUUID } from "../lib/assetId";
 import {
 	getAssetStateColor,
 	getLifecycleState,
@@ -82,6 +85,7 @@ const ASSET_DETAIL_TAB_KEYS = new Set([
 	"tags",
 	"deliveries",
 	"lineage",
+	"runs",
 	"files",
 ]);
 
@@ -191,6 +195,7 @@ export default function AssetDetailPage() {
 				setLoading(true);
 			}
 			setAssetError(null);
+			let redirected = false;
 			assetsApi
 				.get(id)
 				.then(async (nextAsset) => {
@@ -202,19 +207,31 @@ export default function AssetDetailPage() {
 						buildPreviewManifestFromSources(nextAsset, null, foxgloveSource),
 					);
 				})
-				.catch((err) => {
+				.catch(async (err) => {
+					// CYB-4011: a Grace video UUID may be used where a DataBrew
+					// asset_id is expected (pipeline/subtask links). When the id is a
+					// UUID and the direct lookup 404s, resolve it via grace_video_id
+					// and redirect to the real DataBrew asset page.
+					if (isUUID(id)) {
+						const resolved = await assetsApi.resolveByGraceVideoID(id);
+						if (resolved?.asset_id && resolved.asset_id !== id) {
+							redirected = true;
+							navigate(`/assets/${resolved.asset_id}`, { replace: true });
+							return;
+						}
+					}
 					const nextError = extractApiErrorMessage(err, "加载资产失败");
 					setAssetError(nextError);
 					msg.error(nextError);
 				})
 				.finally(() => {
-					if (!background) {
+					if (!background && !redirected) {
 						setLoading(false);
 						setDidInitialLoad(true);
 					}
 				});
 		},
-		[id, msg],
+		[id, msg, navigate],
 	);
 
 	const loadAlgoEvents = useCallback(
@@ -451,6 +468,20 @@ export default function AssetDetailPage() {
 						assetType={asset.asset_type}
 						parentAssetId={asset.parent_asset_id}
 					/>
+				</Suspense>
+			),
+		},
+		{
+			// CYB-4297: which pipelines have run against this asset. Prefer
+			// grace_video_id when the asset carries one — that's the value
+			// pipeline_runs.asset_ids actually stores, so the backend can
+			// answer without an assets-table round trip; falls back to the
+			// short asset_id for assets that don't have a grace mirror.
+			key: "runs",
+			label: "运行历史",
+			children: (
+				<Suspense fallback={TAB_FALLBACK}>
+					<RunsTab assetId={asset.grace_video_id || asset.asset_id} />
 				</Suspense>
 			),
 		},

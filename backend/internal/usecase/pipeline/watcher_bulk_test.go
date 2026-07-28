@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -26,6 +27,30 @@ func TestWatcherBulkModeEnabled(t *testing.T) {
 	t.Setenv(watcherModeEnv, "bulk")
 	if !watcherBulkModeEnabled() {
 		t.Fatal("explicit bulk must enable bulk")
+	}
+}
+
+// watcherResidualConcurrency's default (20) must be conservative enough to
+// stay well under a typical per-cluster client-go QPS (50 on this deployment,
+// see #470). Env override must accept positive ints; anything else falls back
+// to the default so a bad WATCHER_RESIDUAL_CONCURRENCY value doesn't silently
+// serialize the loop (CYB-3746).
+func TestWatcherResidualConcurrency(t *testing.T) {
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("default = %d, want 20", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "40")
+	if got := watcherResidualConcurrency(); got != 40 {
+		t.Fatalf("env=40 = %d, want 40", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "0")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("env=0 (invalid, non-positive) = %d, want default 20", got)
+	}
+	t.Setenv("WATCHER_RESIDUAL_CONCURRENCY", "not-a-number")
+	if got := watcherResidualConcurrency(); got != 20 {
+		t.Fatalf("env=<garbage> = %d, want default 20", got)
 	}
 }
 
@@ -218,17 +243,19 @@ func TestBulkSync_AbsentRunProbedViaGet(t *testing.T) {
 func TestBulkSync_ResidualLimitBoundsProbes(t *testing.T) {
 	uc, _, client, runs := bulkFixture(t, "wf-1", "wf-2", "wf-3")
 	client.listWorkflowsFn = func(context.Context, string, string) ([]wfv1.Workflow, error) { return nil, nil }
-	gets := 0
+	// Residual GETs now fan out concurrently (bounded pool), so the probe
+	// counter must be atomic — a plain int++ here races the workers.
+	var gets atomic.Int64
 	client.getWorkflowFn = func(_ context.Context, name, ns string) (*wfv1.Workflow, error) {
-		gets++
+		gets.Add(1)
 		wf := activeWorkflow(name, "1", wfv1.WorkflowRunning)
 		return &wf, nil
 	}
 	if n := uc.bulkSyncActiveRuns(context.Background(), runs, []int{0, 1, 2}, 2, false); n != 2 {
 		t.Fatalf("synced = %d, want 2 (residual budget)", n)
 	}
-	if gets != 2 {
-		t.Fatalf("gets = %d, want 2", gets)
+	if gets.Load() != 2 {
+		t.Fatalf("gets = %d, want 2", gets.Load())
 	}
 }
 
@@ -290,7 +317,7 @@ func TestBulkSync_EmptyActiveSet(t *testing.T) {
 	if n := uc.bulkSyncActiveRuns(context.Background(), runs, nil, 50, false); n != 0 {
 		t.Fatalf("synced = %d, want 0", n)
 	}
-	if n := uc.bulkSyncClusterRuns(context.Background(), runs, nil, 50, false); n != 0 {
+	if n := uc.bulkSyncClusterRuns(context.Background(), "default", runs, nil, 50, false); n != 0 {
 		t.Fatalf("cluster synced = %d, want 0", n)
 	}
 }

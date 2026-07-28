@@ -211,7 +211,18 @@ func (h *Handler) SetActiveVersion(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "activeVersion must be >= 0", nil)
 		return
 	}
-	if err := h.uc.SetActiveVersion(c.Request.Context(), id, req.ActiveVersion); err != nil {
+	role, _ := c.Get(middleware.CtxKeyRole)
+	roleText, _ := role.(string)
+	isAdmin := roleText == "admin" || middleware.GetUserEmail(c) == "sdk"
+	if err := h.uc.SetActiveVersion(c.Request.Context(), id, req.ActiveVersion, isAdmin); err != nil {
+		if errors.Is(err, pipelineUC.ErrProdLocked) {
+			httpresp.Error(c, http.StatusForbidden, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
+		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -412,6 +423,18 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items})
 }
 
+// ExecutionTargetsStatus handles GET /api/v1/execution-targets/status. It
+// returns each target's live active/ceiling and recent dispatch rate for the
+// pool manager runtime view (read-only; no k8s calls).
+func (h *Handler) ExecutionTargetsStatus(c *gin.Context) {
+	items, err := h.uc.ExecutionTargetsStatus(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
 // ListRuntimeMounts handles GET /api/v1/pipeline/runtime-mounts.
 func (h *Handler) ListRuntimeMounts(c *gin.Context) {
 	catalog, err := h.uc.ListRuntimeMounts(c.Request.Context())
@@ -434,6 +457,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	excludeBatchParents := strings.EqualFold(c.Query("excludeBatchParents"), "true") || c.Query("excludeBatchParents") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	query := strings.TrimSpace(c.Query("q"))
+	createdBy := strings.TrimSpace(c.Query("createdBy"))
 	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
 	nodeStatus := strings.TrimSpace(c.Query("nodeStatus"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
@@ -461,12 +485,13 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		ExcludeBatchParents: excludeBatchParents,
 		Status:              statusFilter,
 		Query:               query,
+		CreatedBy:           createdBy,
 		PipelineNodeID:      pipelineNodeID,
 		NodeStatus:          nodeStatus,
 		Page:                page,
 		PageSize:            pageSize,
 		RefreshActive:       refreshActive,
-		SummaryOnly:    summaryView,
+		SummaryOnly:         summaryView,
 	}
 	if batchJobID != "" && refreshActive && h.batchRuns != nil {
 		_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
@@ -747,9 +772,15 @@ func (h *Handler) ListRunChildren(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
+	// CYB-3822: optional server-side status filter — batch-export UX selects
+	// "仅成功 / 仅失败" and passes Argo TitleCase ("Succeeded" / "Failed") so
+	// the repo can drop non-matching rows before serialization instead of
+	// forcing the frontend to fetch every child then discard 95%.
+	status := strings.TrimSpace(c.Query("status"))
 	result, err := h.runs.ListRunChildren(c.Request.Context(), id, models.PipelineRunListFilter{
 		Page:     page,
 		PageSize: pageSize,
+		Status:   status,
 	})
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
@@ -1093,6 +1124,16 @@ func mapDeployError(c *gin.Context, err error) {
 		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, err.Error(), nil)
 		return
 	}
+	// Runtime accepted the submit but no Argo UID materialized within the
+	// bounded retry window. The CR is likely live but not yet readable — the
+	// caller should retry the same request. Batch paths self-heal on the next
+	// submitter cycle (deterministic name → AlreadyExists → uid backfill); the
+	// single-request path relies on the client to retry, so surface it as a
+	// retryable 503 rather than a generic 500.
+	if errors.Is(err, pipelineUC.ErrWorkflowSubmitIncomplete) {
+		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, err.Error(), nil)
+		return
+	}
 	httpresp.Internal(c, err.Error())
 }
 
@@ -1277,4 +1318,56 @@ func (h *Handler) GetLineage(c *gin.Context) {
 		return
 	}
 	c.JSON(200, lineage)
+}
+
+// ListRunsByAsset handles GET /api/v1/assets/:id/runs (CYB-4297).
+//
+// Reverse lookup — "what pipeline runs used this asset". Accepts both
+// grace_video_id (matches pipeline_runs.asset_ids directly) and the short
+// assets.asset_id (usecase resolves it to grace_video_id via assetRepo).
+// Returns the same summary-shape rows as GET /pipeline-runs so the frontend
+// can reuse its run-row rendering; only asset-scoped by construction.
+func (h *Handler) ListRunsByAsset(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset id is required", nil)
+		return
+	}
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
+	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
+	if pageSize <= 0 {
+		pageSize = 20
+	} else if pageSize > 200 {
+		pageSize = 200
+	}
+	if page <= 0 {
+		page = 1
+	}
+	filter := models.PipelineRunListFilter{
+		Status:      statusFilter,
+		BatchJobID:  batchJobID,
+		Page:        page,
+		PageSize:    pageSize,
+		SummaryOnly: true,
+	}
+	items, total, err := h.uc.ListRunsByAsset(c.Request.Context(), id, filter)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.PipelineRun{}
+	}
+	c.JSON(200, gin.H{
+		"items":    items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }

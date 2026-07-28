@@ -34,6 +34,10 @@ type pausedSyncRepo struct {
 	// extraJobs lets multi-job fixtures (CYB-3678 sharding) resolve every
 	// job by id, not just the primary one.
 	extraJobs []models.BackfillJob
+
+	// totalDurations seeds TotalDurationByBatchIDs so CYB-4350 tests can
+	// assert the notification / list carry the 总时长 line/field.
+	totalDurations map[string]int64
 }
 
 func (r *pausedSyncRepo) IncrementItemSubmitAttempts(_ context.Context, itemID string) (int, error) {
@@ -58,8 +62,17 @@ func (r *pausedSyncRepo) ResetFailedItems(_ context.Context, jobID string) (int6
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
-func (r *pausedSyncRepo) FindAllJobs(context.Context) ([]models.BackfillJob, error) {
+func (r *pausedSyncRepo) FindAllJobs(context.Context, string) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (r *pausedSyncRepo) TotalDurationByBatchIDs(_ context.Context, ids []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		if v, ok := r.totalDurations[id]; ok {
+			out[id] = v
+		}
+	}
+	return out, nil
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	for i := range r.extraJobs {
@@ -190,6 +203,24 @@ func (r *pausedSyncRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRu
 	}
 	return nil
 }
+func (r *pausedSyncRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	for i := range r.items {
+		if r.items[i].ID == id {
+			r.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				r.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				r.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				r.items[i].ErrorMessage = &em
+			}
+		}
+	}
+	return nil
+}
 func (r *pausedSyncRepo) UpdateJobProgress(_ context.Context, id string, completed, failed int, status string) error {
 	if r.job != nil && r.job.ID == id {
 		r.job.CompletedCount = completed
@@ -277,7 +308,14 @@ func (m *syncTestRunRepo) Save(context.Context, *models.PipelineRun) error { ret
 func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *syncTestRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return nil, nil
+}
+
 func (m *syncTestRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+func (m *syncTestRunRepo) FindActiveRunSummariesAfter(context.Context, time.Time, string, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
 

@@ -146,6 +146,12 @@ export interface ListRunsOptions {
 export interface ListRunChildrenOptions {
 	page?: number;
 	pageSize?: number;
+	// CYB-3822: optional server-side status filter (Argo TitleCase — e.g.
+	// "Succeeded", "Failed"). When set, the backend applies WHERE status=? in
+	// pipeline_repo.ListSummaries and returns only matching child runs, so
+	// the batch-export flow does not have to fetch every child and discard
+	// the non-matching ones client-side.
+	status?: string;
 }
 
 function buildRunListSearch(options?: ListRunsOptions) {
@@ -324,6 +330,7 @@ export function listRunChildren(
 	const search = new URLSearchParams();
 	if (options?.page) search.set("page", String(options.page));
 	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
+	if (options?.status) search.set("status", options.status);
 	return request<RunChildrenResponse>(
 		"GET",
 		withSearch(`/runs/${encodeURIComponent(runId)}/children`, search),

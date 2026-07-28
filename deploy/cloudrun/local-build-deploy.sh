@@ -46,9 +46,12 @@ echo "pushed: ${IMAGE}"
 ENDSSH
 
 echo "[3/3] deploying to Cloud Run dev..."
+# ENABLE_GMP_SIDECAR=true keeps parity with deploy-dev.yml (CYB-4146): a local
+# deploy must NOT silently strip the collector sidecar back to single-container.
 IMAGE="${IMAGE}" \
 USE_EXISTING_IMAGE=true \
 SOURCE_K8S_ENV=false \
+ENABLE_GMP_SIDECAR=true \
 bash "${SCRIPT_DIR}/backend-dev.sh"
 
 echo ""

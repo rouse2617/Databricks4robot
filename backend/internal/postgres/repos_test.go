@@ -427,7 +427,8 @@ func TestAssetRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "a1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 39 columns (including algo_inputs_uris/annot_inputs_uris JSONB)
+	// Get now scans 47 columns after CYB-3715 (39 + 7 mcap-file mirror
+	// columns) + CYB-4011 grace_video_id, all inserted before created_at.
 	db.queryRow = &fakeRow{values: []any{
 		"a1", "m1", int64(10), int64(20), (*string)(nil),
 		"ready", "segment", int64(1200),
@@ -439,6 +440,11 @@ func TestAssetRepo(t *testing.T) {
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
+		// CYB-3715: camera_model, (CYB-4011: grace_video_id), device_id,
+		// collector_id, scene_id, data_source, collection_method,
+		// source_platform — all NULL for this fixture.
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -558,14 +564,14 @@ func TestMcapRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "m1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 31 columns (all real columns including provenance/retention/metadata)
+	// Get now scans 32 columns (all real columns including provenance/retention/metadata + CYB-4011 grace_video_id)
 	db.queryRow = &fakeRow{values: []any{
 		"m1", "md5", (*string)(nil), // raw_hash_sha256
 		"gs://x", int64(10), (*int64)(nil), // file_duration_ms
 		int64(1), int64(2),
 		int(3), int(4), "pending", "o",
 		"", "", "", "", // vendor_id, collector_id, task_id, device_id
-		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		"", "", "", "", "", "", "", // camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method
 		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
 		[]byte(`{}`), []byte(`{"p":"done"}`), // metadata, process_state
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
@@ -789,7 +795,10 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 
 	// COUNT returns 2
 	db.queryRow = &fakeRow{values: []any{int64(2)}}
-	// DATA returns 2 rows (31 columns each — includes metadata/files/algo/annot JSONB)
+	// DATA returns 2 rows (47 columns: 39 base + 7 CYB-3715 flatten + 1 CYB-4011 grace_video_id
+	// columns — camera_model / device_id / collector_id / scene_id /
+	// data_source / collection_method / source_platform — between the
+	// logical_asset_id/revision/is_current triplet and created_at).
 	db.rows = &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -798,6 +807,8 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -806,6 +817,8 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -838,6 +851,8 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			(*string)(nil), (*int64)(nil), (*bool)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -1105,6 +1120,12 @@ func buildAssetRow(
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil), // logical_asset_id, revision, is_current
+		// CYB-3715: 7 mcap-file mirror columns — all NULL for these
+		// generic asset-shape fixture rows. Individual tests can copy
+		// the row and overwrite these positions when exercising the
+		// flatten path.
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1260,7 +1281,8 @@ func TestGet_SegTypeMirrorsAssetType(t *testing.T) {
 func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 	ctx := context.Background()
 
-	// List queries return 31 columns (includes metadata/files/algo/annot JSONB)
+	// List queries return 47 columns (39 base + 7 CYB-3715 flatten + 1 CYB-4011; includes metadata/files/
+	// algo/annot JSONB + 7 flatten mirror columns before created_at).
 	row := []any{
 		"lf-1", "m1", int64(100), int64(200), (*string)(nil),
 		"delivered", "frame_set", int64(5000),
@@ -1269,6 +1291,8 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 		(*string)(nil), (*int64)(nil), (*bool)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1895,7 +1919,7 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 // McapFileRepo tests
 // ---------------------------------------------------------------------------
 
-// buildMcapRow builds a fake row slice (31 columns) matching the SELECT in
+// buildMcapRow builds a fake row slice (32 columns) matching the SELECT in
 // McapFileRepo.Get() and List().
 func buildMcapRow(
 	mcapFileID string,
@@ -1916,7 +1940,7 @@ func buildMcapRow(
 		startNs, endNs,
 		channelCount, chunkCount, ingestState, owner,
 		"", "", "", "", // vendor_id, collector_id, task_id, device_id
-		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		"", "", "", "", "", "", "", // camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method
 		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
 		[]byte(`{}`), processState, // metadata, process_state
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
@@ -2016,9 +2040,9 @@ func TestMcapFileRepo_Set_WritesRealColumns(t *testing.T) {
 	}
 
 	args := tracker.calls[0]
-	// Set() passes 31 args (all real columns including provenance/retention/metadata)
-	if len(args) != 31 {
-		t.Fatalf("expected 31 args, got %d", len(args))
+	// Set() passes 32 args (all real columns including provenance/retention/metadata + CYB-4011 grace_video_id)
+	if len(args) != 32 {
+		t.Fatalf("expected 32 args, got %d", len(args))
 	}
 
 	if args[0] != "m-dw-1" {
@@ -2049,10 +2073,10 @@ func TestMcapFileRepo_Set_WritesRealColumns(t *testing.T) {
 		t.Errorf("owner: got %v, want bob", args[11])
 	}
 
-	// Verify process_state JSONB (arg index 27 in the new layout).
-	psRaw, ok := args[27].([]byte)
+	// Verify process_state JSONB (arg index 28 after CYB-4011 grace_video_id).
+	psRaw, ok := args[28].([]byte)
 	if !ok {
-		t.Fatalf("process_state arg is not []byte: %T", args[27])
+		t.Fatalf("process_state arg is not []byte: %T", args[28])
 	}
 	var ps map[string]string
 	if err := json.Unmarshal(psRaw, &ps); err != nil {
@@ -2242,8 +2266,8 @@ func TestProperty_McapFileRealColumnConsistency(t *testing.T) {
 		}
 
 		args := tracker.calls[0]
-		if len(args) != 31 {
-			t.Fatalf("expected 31 args, got %d", len(args))
+		if len(args) != 32 {
+			t.Fatalf("expected 32 args, got %d", len(args))
 		}
 
 		// Verify real column values.
@@ -2567,5 +2591,432 @@ func TestDeliveryRepo_RefreshAssetDeliveryIndex_RecomputesCounters(t *testing.T)
 	}
 	if got := db.execArgs[0][0]; got != "a1b2c3d4" {
 		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
+	}
+}
+
+// CYB-4294: LookupDurations must handle a mixed asset_id + grace_video_id
+// input in one round-trip, pass range bounds as SQL params (so a zero
+// bound short-circuits), and short-circuit an empty input without hitting
+// the DB.
+func TestAssetRepoLookupDurations(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB (else a 5000-cap batch of ids that
+	// were all whitespace would still cost a round trip).
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	rows, err := repoEmpty.LookupDurations(ctx, nil, 0, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Two rows: one matched by its asset_id, one matched by its
+	// grace_video_id. The SQL's OR on both indexes returns both rows in a
+	// single scan.
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", int64(5_000)},
+			{"bbbbbbbb", "019f8319-0ef3-7da0-815c-30f23d21e7f1", int64(120_000)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	ids := []string{"aaaaaaaa", "019f8319-0ef3-7da0-815c-30f23d21e7f1"}
+	rows, err = repo.LookupDurations(ctx, ids, 1_000, 600_000)
+	if err != nil {
+		t.Fatalf("LookupDurations err: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].DurationMs != 5000 {
+		t.Fatalf("row[0] = %#v, want aaaaaaaa/5000", rows[0])
+	}
+	if rows[1].GraceVideoID != "019f8319-0ef3-7da0-815c-30f23d21e7f1" || rows[1].DurationMs != 120_000 {
+		t.Fatalf("row[1] = %#v, want grace/120000", rows[1])
+	}
+
+	// Verify the SQL uses ANY() on both columns and binds min/max as $2/$3.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"asset_id = ANY($1)",
+		"grace_video_id = ANY($1)",
+		"is_deleted = FALSE",
+		"$2 = 0 OR duration_ms >= $2",
+		"$3 = 0 OR duration_ms <= $3",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 3 {
+		t.Fatalf("expected 3 bind args (ids,min,max), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 2 {
+		t.Fatalf("expected []string ids arg with 2 elements, got %#v", db.queryArgs[0][0])
+	}
+	if got := db.queryArgs[0][1]; got != int64(1_000) {
+		t.Fatalf("min arg = %#v, want int64 1000", got)
+	}
+	if got := db.queryArgs[0][2]; got != int64(600_000) {
+		t.Fatalf("max arg = %#v, want int64 600000", got)
+	}
+}
+
+// CYB-4306: LookupCosts must expand pr.asset_ids via CROSS JOIN LATERAL,
+// use the exact leaf-pod predicate from pipeline_repo.go:767, coerce
+// missing gpu/cpu keys in resources_duration to 0, and pass ids/start/end
+// as $1/$2/$3. Empty ids short-circuits without a query.
+func TestAssetRepoLookupCosts(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB.
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	start := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	rows, err := repoEmpty.LookupCosts(ctx, nil, start, end, false)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Two rows for group_by=asset: one asset with cost + gpu + cpu, one with
+	// only cpu (gpu_sec should still parse as 0 from the JSONB read).
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", 1.25, 120.0, 60.0, int64(3)},
+			{"bbbbbbbb", "", 0.05, 0.0, 20.0, int64(1)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+	ids := []string{"aaaaaaaa", "bbbbbbbb"}
+	rows, err = repo.LookupCosts(ctx, ids, start, end, false)
+	if err != nil {
+		t.Fatalf("LookupCosts err: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].TotalCostUSD != 1.25 || rows[0].GPUSec != 120 || rows[0].CPUSec != 60 || rows[0].RunCount != 3 {
+		t.Fatalf("row[0] = %#v", rows[0])
+	}
+	if rows[1].AssetID != "bbbbbbbb" || rows[1].TotalCostUSD != 0.05 || rows[1].GPUSec != 0 || rows[1].CPUSec != 20 || rows[1].RunCount != 1 {
+		t.Fatalf("row[1] = %#v", rows[1])
+	}
+
+	// SQL must expand asset_ids, use the leaf-pod predicate, filter by
+	// finished_at BETWEEN, and coerce missing gpu/cpu keys to 0.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid",
+		"WHERE aid = ANY($1)",
+		"pr.finished_at BETWEEN $2 AND $3",
+		"(n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))",
+		"n.estimated_cost_usd IS NOT NULL",
+		"resources_duration->>'nvidia.com/gpu'",
+		"resources_duration->>'cpu'",
+		"COUNT(DISTINCT pr.id)",
+		"GROUP BY aid",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	// asset mode must NOT group by algo_key.
+	if strings.Contains(q, "GROUP BY aid, COALESCE(n.template_name, '')") {
+		t.Fatalf("asset mode should not group by template_name:\n%s", q)
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 3 {
+		t.Fatalf("expected 3 bind args (ids,start,end), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 2 {
+		t.Fatalf("expected []string ids arg, got %#v", db.queryArgs[0][0])
+	}
+	if got := db.queryArgs[0][1]; got != start {
+		t.Fatalf("start arg = %#v, want %v", got, start)
+	}
+	if got := db.queryArgs[0][2]; got != end {
+		t.Fatalf("end arg = %#v, want %v", got, end)
+	}
+
+	// byAlgo=true must switch the GROUP BY to include template_name and
+	// SELECT it as algo_key.
+	dbA := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "extract-frames", 0.75, 60.0, 30.0, int64(2)},
+			{"aaaaaaaa", "encode-video", 0.50, 60.0, 30.0, int64(1)},
+		}},
+	}
+	repoA := &AssetRepo{c: &Client{db: dbA}}
+	rowsA, err := repoA.LookupCosts(ctx, []string{"aaaaaaaa"}, start, end, true)
+	if err != nil {
+		t.Fatalf("byAlgo LookupCosts err: %v", err)
+	}
+	if len(rowsA) != 2 {
+		t.Fatalf("expected 2 by-algo rows, got %d: %#v", len(rowsA), rowsA)
+	}
+	if rowsA[0].AlgoKey != "extract-frames" || rowsA[1].AlgoKey != "encode-video" {
+		t.Fatalf("algo keys = %v/%v", rowsA[0].AlgoKey, rowsA[1].AlgoKey)
+	}
+	if len(dbA.querySQLs) != 1 || !strings.Contains(dbA.querySQLs[0], "GROUP BY aid, COALESCE(n.template_name, '')") {
+		t.Fatalf("byAlgo query must group by algo:\n%s", dbA.querySQLs[0])
+	}
+}
+
+// CYB-4303 / CYB-4338: DurationDistribution must
+//   - always ship all 10 buckets in DurationBucketOrder even when the SQL
+//     returns fewer (missing rows are padded with count=0/total_ms=0);
+//   - pass assetType through as $1 on both the overall + bucket queries;
+//   - preserve the top-bucket HiMs=nil so the JSON serialization can emit null.
+func TestAssetRepoDurationDistribution(t *testing.T) {
+	ctx := context.Background()
+
+	// Overall row returned by the first QueryRow; only two of ten buckets
+	// come back from the second Query. The repo must pad the other eight.
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{
+			int64(15),          // total_assets
+			int64(15_250_000),  // total_ms
+			int64(1_016_666),   // mean_ms
+			int64(500),         // min_ms
+			int64(6_500_000),   // max_ms
+			int64(850_000),     // p50_ms
+			int64(2_900_000),   // p90_ms
+		}},
+		rows: &fakeRows{data: [][]any{
+			{"<1m", int64(12), int64(250_000)},
+			{"60m+", int64(3), int64(15_000_000)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	dist, err := repo.DurationDistribution(ctx, "raw_mcap")
+	if err != nil {
+		t.Fatalf("DurationDistribution err: %v", err)
+	}
+	if dist.TotalAssets != 15 || dist.P50Ms != 850_000 || dist.P90Ms != 2_900_000 {
+		t.Fatalf("overall stats wrong: %+v", dist)
+	}
+
+	// Always 10 buckets in the fixed order regardless of what the mock
+	// returned. Missing labels ship count/total_ms=0.
+	if len(dist.Buckets) != 10 {
+		t.Fatalf("buckets len = %d, want 10", len(dist.Buckets))
+	}
+	wantLabels := []string{
+		"<1m", "1-5m", "5-10m", "10-15m", "15-20m",
+		"20-25m", "25-30m", "30-45m", "45-60m", "60m+",
+	}
+	for i, want := range wantLabels {
+		if dist.Buckets[i].Label != want {
+			t.Fatalf("buckets[%d].Label = %q, want %q", i, dist.Buckets[i].Label, want)
+		}
+	}
+	top := len(dist.Buckets) - 1
+	if dist.Buckets[0].Count != 12 || dist.Buckets[0].TotalMs != 250_000 {
+		t.Fatalf("buckets[0] = %+v, want count=12/total=250k", dist.Buckets[0])
+	}
+	if dist.Buckets[top].Count != 3 || dist.Buckets[top].TotalMs != 15_000_000 {
+		t.Fatalf("buckets[%d] = %+v, want count=3/total=15M", top, dist.Buckets[top])
+	}
+	// Padded rows must be zero — never leave uninitialised garbage.
+	for i := 1; i < top; i++ {
+		if dist.Buckets[i].Count != 0 || dist.Buckets[i].TotalMs != 0 {
+			t.Fatalf("padded buckets[%d] non-zero: %+v", i, dist.Buckets[i])
+		}
+	}
+	// Top bucket HiMs must remain nil for the JSON null path.
+	if dist.Buckets[top].HiMs != nil {
+		t.Fatalf("top bucket HiMs = %v, want nil", dist.Buckets[top].HiMs)
+	}
+	// The other buckets must have a finite HiMs (dereferenceable).
+	for i := 0; i < top; i++ {
+		if dist.Buckets[i].HiMs == nil {
+			t.Fatalf("buckets[%d].HiMs = nil, want finite", i)
+		}
+	}
+
+	// SQL sanity: both queries should reference the asset_type filter and
+	// bind assetType as $1; the bucket query should use the CASE labels
+	// verbatim so a rename lands on both sides at once.
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected 2 queries (overall + buckets), got %d: %v", len(db.querySQLs), db.querySQLs)
+	}
+	for i, q := range db.querySQLs {
+		if !strings.Contains(q, "is_deleted = FALSE") {
+			t.Fatalf("query %d missing is_deleted guard:\n%s", i, q)
+		}
+		if !strings.Contains(q, "duration_ms IS NOT NULL") {
+			t.Fatalf("query %d missing NULL guard:\n%s", i, q)
+		}
+		if !strings.Contains(q, "$1 = '' OR asset_type = $1") {
+			t.Fatalf("query %d missing asset_type filter:\n%s", i, q)
+		}
+	}
+	// The bucket query is index 1 (overall is 0). Assert the CASE labels.
+	bucketQ := db.querySQLs[1]
+	for _, label := range []string{
+		"<1m", "1-5m", "5-10m", "10-15m", "15-20m",
+		"20-25m", "25-30m", "30-45m", "45-60m", "60m+",
+	} {
+		if !strings.Contains(bucketQ, "'"+label+"'") {
+			t.Fatalf("bucket query missing label %q:\n%s", label, bucketQ)
+		}
+	}
+	// Overall query must select percentile_cont for both 0.5 and 0.9 — parity
+	// with CYB-4294.
+	overallQ := db.querySQLs[0]
+	for _, want := range []string{"percentile_cont(0.5)", "percentile_cont(0.9)"} {
+		if !strings.Contains(overallQ, want) {
+			t.Fatalf("overall query missing %q:\n%s", want, overallQ)
+		}
+	}
+	if len(db.queryArgs) != 2 {
+		t.Fatalf("expected 2 arg sets, got %d", len(db.queryArgs))
+	}
+	if got := db.queryArgs[0][0]; got != "raw_mcap" {
+		t.Fatalf("overall arg[0] = %v, want raw_mcap", got)
+	}
+	if got := db.queryArgs[1][0]; got != "raw_mcap" {
+		t.Fatalf("bucket arg[0] = %v, want raw_mcap", got)
+	}
+}
+
+// Empty assetType must still flow through the SQL as $1='' so the filter
+// short-circuits and every asset is counted.
+func TestAssetRepoDurationDistributionEmptyAssetType(t *testing.T) {
+	ctx := context.Background()
+
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{
+			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		}},
+		rows: &fakeRows{},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	dist, err := repo.DurationDistribution(ctx, "")
+	if err != nil {
+		t.Fatalf("DurationDistribution err: %v", err)
+	}
+	if dist.TotalAssets != 0 {
+		t.Fatalf("empty-corpus TotalAssets = %d, want 0", dist.TotalAssets)
+	}
+	if len(dist.Buckets) != 10 {
+		t.Fatalf("buckets len = %d, want 10", len(dist.Buckets))
+	}
+	for i, b := range dist.Buckets {
+		if b.Count != 0 || b.TotalMs != 0 {
+			t.Fatalf("buckets[%d] = %+v, want zeros", i, b)
+		}
+	}
+	if got := db.queryArgs[0][0]; got != "" {
+		t.Fatalf("overall arg[0] = %v, want empty string", got)
+	}
+}
+
+// CYB-4305: LookupLineage must OR asset_id + grace_video_id in one WHERE,
+// guard is_deleted=FALSE, scan pointer columns for parent/root/logical
+// (NULL → nil pointer), and short-circuit on empty ids.
+func TestAssetRepoLookupLineage(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB.
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	rows, err := repoEmpty.LookupLineage(ctx, nil)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Three rows exercising the pointer scan:
+	//   - a normal seg with parent + root + logical set
+	//   - a self-root raw_mcap: parent NULL, root == asset_id
+	//   - an orphan: both parent and root NULL
+	parentPtr := "parent01"
+	rootPtr := "root0001"
+	logicalPtr := "logical1"
+	rootSelfPtr := "bbbbbbbb"
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", &parentPtr, &rootPtr, &logicalPtr, true, int64(3)},
+			{"bbbbbbbb", "019eda00-0000-0000-0000-000000000001", nil, &rootSelfPtr, nil, true, int64(1)},
+			{"cccccccc", "", nil, nil, nil, false, int64(0)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	ids := []string{"aaaaaaaa", "019eda00-0000-0000-0000-000000000001", "cccccccc"}
+	rows, err = repo.LookupLineage(ctx, ids)
+	if err != nil {
+		t.Fatalf("LookupLineage err: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].ParentAssetID == nil || *rows[0].ParentAssetID != "parent01" {
+		t.Fatalf("row[0] parent = %#v, want parent01", rows[0])
+	}
+	if rows[0].RootAssetID == nil || *rows[0].RootAssetID != "root0001" {
+		t.Fatalf("row[0] root = %#v, want root0001", rows[0])
+	}
+	if rows[0].LogicalAssetID == nil || *rows[0].LogicalAssetID != "logical1" {
+		t.Fatalf("row[0] logical = %#v, want logical1", rows[0])
+	}
+	if !rows[0].IsCurrent || rows[0].Revision != 3 {
+		t.Fatalf("row[0] version = %v/%d", rows[0].IsCurrent, rows[0].Revision)
+	}
+	// Self-root row: parent nil, root points to own asset_id, logical nil.
+	if rows[1].ParentAssetID != nil {
+		t.Fatalf("row[1] parent should be nil, got %v", *rows[1].ParentAssetID)
+	}
+	if rows[1].RootAssetID == nil || *rows[1].RootAssetID != "bbbbbbbb" {
+		t.Fatalf("row[1] root = %#v, want self", rows[1])
+	}
+	if rows[1].LogicalAssetID != nil {
+		t.Fatalf("row[1] logical should be nil, got %v", *rows[1].LogicalAssetID)
+	}
+	// Orphan: all three pointer columns nil.
+	if rows[2].ParentAssetID != nil || rows[2].RootAssetID != nil || rows[2].LogicalAssetID != nil {
+		t.Fatalf("row[2] should have all-nil pointers, got %#v", rows[2])
+	}
+
+	// Verify SQL shape + bind args.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"asset_id = ANY($1)",
+		"grace_video_id = ANY($1)",
+		"is_deleted = FALSE",
+		"parent_asset_id, root_asset_id, logical_asset_id",
+		"COALESCE(is_current, FALSE)",
+		"COALESCE(revision, 0)",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 1 {
+		t.Fatalf("expected 1 bind arg (ids), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 3 {
+		t.Fatalf("expected []string ids arg with 3 elements, got %#v", db.queryArgs[0][0])
 	}
 }

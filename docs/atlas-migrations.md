@@ -40,6 +40,39 @@ scripts/setup-atlas-secrets.sh           # gh secret set ATLAS_TOKEN
 
 > 排序校验：CI 比 PR 新文件的数字前缀 vs main 最新。时间戳前缀天然递增，别用比现有更小的前缀。
 
+## 常见坑与最佳实践
+
+**踩过的坑,新迁移写之前先看这里。**
+
+### 1. `CREATE INDEX CONCURRENTLY`:必须加 `-- atlas:txmode none` **且顶部留空行**
+
+Atlas 默认 `txmode=file`(每个 migration 文件在一个事务里跑),但 `CONCURRENTLY` 不能在 tx 里 —— 会报 `pq: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (25001)`。
+
+关掉整文件事务:文件**第一行**写 `-- atlas:txmode none`,并**与后续 SQL / 注释之间留一个纯空行**(不是 `--` 空注释,是真的空行 `\n\n`)—— 否则 Atlas 会把 directive 吞成普通注释,失效。
+
+```sql
+-- atlas:txmode none
+
+-- 说明写这里
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_foo_bar
+  ON foo USING GIN (bar);
+```
+
+本地校验:`atlas migrate lint --dir file://migrations --dev-url "docker://postgres/17/dev?search_path=public" --latest 1` —— 若 directive 位置错,会明确报 `concurrent index violations detected`,并给出 fix hint。CI(`db-migrate-lint.yml`)在 fresh PG17 上重放全部 migration,一样能抓到。
+
+### 2. Postgres GIN on `TEXT[]`:必须用 containment 操作符,不认 `= ANY(col)`
+
+在数组列上建 GIN 索引后,只有 `@>` / `&&` / `<@` 会被 planner 用来走 Bitmap Index Scan;**`scalar = ANY(col)` 的写法即便有 GIN 也会退化为 Parallel Seq Scan**。dev 45w 行 `pipeline_runs.asset_ids` 实测:
+
+- `WHERE 'X' = ANY(asset_ids)` → 291ms + 117k buffer hit,Parallel Seq Scan
+- `WHERE asset_ids @> ARRAY['X']::text[]` → 0.7ms + 19 hits,Bitmap Index Scan
+
+差 400 倍。写 repo SQL 反查数组时**统一用 `@> ARRAY[$N]::type[]`**,别用直觉的 `= ANY()`(那语义等价,性能不等价)。CYB-4297 因此发了 #607 修一个已合并的 #604。
+
+### 3. 时间戳前缀严格递增
+
+CI 的排序守卫比新文件的数字前缀 vs main 最新。用 `date -u +%Y%m%d%H%M%S` 产生前缀,别手写。
+
 ## Postgres 版本 & 扩展
 
 - dev/prod CloudSQL 都是 **PostgreSQL 17** → atlas.hcl 的 `dev-url` 必须 `docker://postgres/17`，CI service 用 `postgres:17`（写 16 会出假阳性 diff）。

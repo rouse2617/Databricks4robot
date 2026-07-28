@@ -97,8 +97,9 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 	return nil
 }
 
-// FindAllJobs returns all backfill jobs ordered by created_at DESC.
-func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, error) {
+// FindAllJobs returns backfill jobs ordered by created_at DESC. When createdBy
+// is non-empty it filters to jobs with that exact created_by.
+func (r *BackfillRepo) FindAllJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error) {
 	// Enrich the list with each job's subtask run span (earliest start, latest
 	// finish) so the UI can show a real run duration that excludes submit/queue/
 	// pause waiting. MIN/MAX ignore NULL item timestamps, so jobs whose subtasks
@@ -109,10 +110,17 @@ func (r *BackfillRepo) FindAllJobs(ctx context.Context) ([]models.BackfillJob, e
 	LEFT JOIN (
 	  SELECT job_id, MIN(started_at) AS run_started_at, MAX(finished_at) AS run_finished_at
 	  FROM backfill_items GROUP BY job_id
-	) rs ON rs.job_id = backfill_jobs.id
+	) rs ON rs.job_id = backfill_jobs.id`
+	var args []any
+	if createdBy != "" {
+		q += `
+	WHERE backfill_jobs.created_by = $1`
+		args = append(args, createdBy)
+	}
+	q += `
 	ORDER BY created_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
-	rows, err := db.Query(ctx, q)
+	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres BackfillRepo.FindAllJobs: %w", err)
 	}
@@ -166,6 +174,43 @@ func (r *BackfillRepo) FindJobByID(ctx context.Context, id string) (*models.Back
 		return nil, fmt.Errorf("postgres BackfillRepo.FindJobByID: %w", err)
 	}
 	return j, nil
+}
+
+// TotalDurationByBatchIDs returns batch_id → total asset duration (ms) for
+// the given batches. The total is SUM(assets.duration_ms) over every asset
+// referenced by every child pipeline_run's asset_ids array (with multiplicity),
+// excluding soft-deleted assets. A batch present in batchIDs but absent from
+// the result map has no matching child rows and gets implicit 0 at the caller.
+// Empty batchIDs short-circuits to an empty map with no SQL round trip.
+func (r *BackfillRepo) TotalDurationByBatchIDs(ctx context.Context, batchIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(batchIDs))
+	if len(batchIDs) == 0 {
+		return out, nil
+	}
+	const q = `SELECT pr.batch_job_id AS batch_id,
+	  COALESCE(SUM(a.duration_ms), 0) AS total_ms
+	FROM pipeline_runs pr
+	CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+	JOIN assets a ON a.asset_id = aid AND a.is_deleted = FALSE
+	WHERE pr.batch_job_id = ANY($1)
+	GROUP BY pr.batch_job_id`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, batchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.TotalDurationByBatchIDs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id    string
+			total int64
+		)
+		if err := rows.Scan(&id, &total); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.TotalDurationByBatchIDs scan: %w", err)
+		}
+		out[id] = total
+	}
+	return out, nil
 }
 
 // UpdateJobStatus sets the status for a backfill job.
@@ -551,7 +596,7 @@ ORDER BY created_at ASC`
 func (r *BackfillRepo) FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
 	q := `SELECT
   bi.id, bi.job_id, bi.asset_id, bi.status,
-  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.started_at, bi.finished_at, bi.created_at
+  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.attempts, bi.started_at, bi.finished_at, bi.created_at
 FROM (
   SELECT DISTINCT ON (job_id, asset_id) *
   FROM backfill_items
@@ -601,6 +646,22 @@ func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRu
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, nullIfEmpty(pipelineRunID), nullIfEmpty(workflowName), status); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateItemPipelineRun: %w", err)
+	}
+	return nil
+}
+
+// MarkItemFailedWithRun marks an item failed while keeping its run binding AND
+// persisting the failure reason (CYB-4026 D5). Sets status='failed',
+// pipeline_run_id/workflow_name, error_message, and finished_at.
+func (r *BackfillRepo) MarkItemFailedWithRun(ctx context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	const q = `UPDATE backfill_items SET
+	  pipeline_run_id = $2, workflow_name = $3, status = 'failed', error_message = $4,
+	  started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END,
+	  finished_at = NOW()
+	WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, nullIfEmpty(pipelineRunID), nullIfEmpty(workflowName), nullIfEmpty(errorMsg)); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.MarkItemFailedWithRun: %w", err)
 	}
 	return nil
 }
@@ -681,6 +742,12 @@ ORDER BY bi.created_at ASC`
 	return out, nil
 }
 
+// PrepareItemsForRerun re-queues the given items for a human rerun: status →
+// pending with error_message, started_at and finished_at cleared, and
+// submit_attempts reset to 0 so the retry earns a fresh transient-retry budget
+// (parity with ResetFailedItems on the DLQ path — CYB-3678). Its only
+// production caller is Rerun (an explicit human retry), so zeroing the counter
+// here never touches automatic-dispatch attempt accounting.
 func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []string) error {
 	if len(itemIDs) == 0 {
 		return nil
@@ -689,7 +756,8 @@ func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []strin
 	  status = 'pending',
 	  error_message = NULL,
 	  started_at = NULL,
-	  finished_at = NULL
+	  finished_at = NULL,
+	  submit_attempts = 0
 	WHERE id = ANY($1)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, itemIDs); err != nil {

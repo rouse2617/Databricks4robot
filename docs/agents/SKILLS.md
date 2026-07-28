@@ -27,6 +27,7 @@ Skills are reusable expert workflows. Read and follow the SKILL.md file when a m
 | Converting context into a PRD | to-prd | `.agents/skills/to-prd/SKILL.md` |
 | Triaging incoming issues | triage | `.agents/skills/triage/SKILL.md` |
 | Generating user-facing changelogs from commits | changelog-generator | [`skills/changelog-generator/SKILL.md`](skills/changelog-generator/SKILL.md) |
+| 通过 Pub/Sub 下发资产到 Databrew(触发订阅任务)| dispatch-asset — 消息格式、单/批语义、gcloud/Python 示例、验证步骤 | [`skills/dispatch-asset/SKILL.md`](skills/dispatch-asset/SKILL.md) |
 
 ## Restricted (conditional use only)
 

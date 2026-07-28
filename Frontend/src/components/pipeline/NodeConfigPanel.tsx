@@ -62,6 +62,8 @@ type FormValues = {
 	storageMounts?: RuntimeStorageFormItem[];
 	cpu: string;
 	memory: string;
+	cpuLimit: string;
+	memoryLimit: string;
 	disk: string;
 	gpu: string;
 	computeTier: string;
@@ -481,6 +483,8 @@ export function NodeConfigPanel({
 			storageMounts: storageMountsToForm(node.data.storageMounts),
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
+			cpuLimit: node.data.cpuLimit || "",
+			memoryLimit: node.data.memoryLimit || "",
 			disk: node.data.disk || "",
 			gpu: node.data.gpu || "",
 			computeTier: node.data.computeTier || "",
@@ -714,6 +718,8 @@ export function NodeConfigPanel({
 			),
 			cpu: values.cpu || "",
 			memory: values.memory || "",
+			cpuLimit: values.cpuLimit || "",
+			memoryLimit: values.memoryLimit || "",
 			disk: values.disk || "",
 			gpu: values.gpu || "",
 			computeTier: values.computeTier || "",
@@ -1115,11 +1121,33 @@ export function NodeConfigPanel({
 						gap: 12,
 					}}
 				>
-					<Form.Item label="CPU" name="cpu">
+					<Form.Item
+						label="CPU"
+						name="cpu"
+						tooltip="调度按请求预留资源。留空 CPU 上限时，请求即上限（Guaranteed）。"
+					>
 						<Input placeholder="500m" />
 					</Form.Item>
-					<Form.Item label="内存" name="memory">
+					<Form.Item
+						label="内存"
+						name="memory"
+						tooltip="调度按请求预留资源。留空内存上限时，请求即上限（Guaranteed）。"
+					>
 						<Input placeholder="256Mi" />
+					</Form.Item>
+					<Form.Item
+						label="CPU 上限"
+						name="cpuLimit"
+						tooltip="留空表示与 CPU 请求相同。填更大的值可让该步骤在有空闲时突发到上限（Burstable），按请求打包节点、提高密度。必须 ≥ 请求。"
+					>
+						<Input placeholder="留空=同请求" />
+					</Form.Item>
+					<Form.Item
+						label="内存上限"
+						name="memoryLimit"
+						tooltip="留空表示与内存请求相同。填更大的值允许内存突发到上限。必须 ≥ 请求。"
+					>
+						<Input placeholder="留空=同请求" />
 					</Form.Item>
 					<Form.Item label="磁盘" name="disk">
 						<Input placeholder="1Gi" />

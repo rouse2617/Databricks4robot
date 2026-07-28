@@ -464,6 +464,7 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 			VendorID:       "vendor-x",
 			DeviceID:       "device-y",
 			CameraModel:    "CyberCap2",
+			GraceVideoID:   "019f9893-3456-7376-ae68-30a89227eb46",
 			DataSource:     "vendor",
 			SceneID:        "scene-z",
 			EnvironmentID:  "warehouse",
@@ -484,6 +485,7 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 		"vendor_id":        "vendor-x",
 		"device_id":        "device-y",
 		"camera_model":     "CyberCap2",
+		"grace_video_id":   "019f9893-3456-7376-ae68-30a89227eb46",
 		"data_source":      "vendor",
 		"scene_id":         "scene-z",
 		"environment_id":   "warehouse",
@@ -494,6 +496,79 @@ func TestBuild_EmitsMcapCaptureFields(t *testing.T) {
 	for k, v := range want {
 		if got := mcap[k]; got != v {
 			t.Errorf("mcap[%q] = %#v, want %#v", k, got, v)
+		}
+	}
+}
+
+// CYB-3715: 7 flatten mirror columns on the Asset struct project to
+// top-level string fields in the ES doc so filter/facet paths that address
+// them by direct name (instead of mcap.<col>) actually resolve.
+func TestBuild_EmitsCYB3715TopLevelFlattenFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:          "seg37150",
+			McapFileID:       "m-3715",
+			AssetType:        "raw_mcap",
+			CameraModel:      "CyberCap2",
+			GraceVideoID:     "019f9893-3456-7376-ae68-30a89227eb46",
+			DeviceID:         "11111111-1111-1111-1111-111111111111",
+			CollectorID:      "22222222-2222-2222-2222-222222222222",
+			SceneID:          "33333333-3333-3333-3333-333333333333",
+			DataSource:       "vibecap",
+			CollectionMethod: "manual",
+			SourcePlatform:   "vibecap",
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "seg37150")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	wantTop := map[string]any{
+		"camera_model":      "CyberCap2",
+		"grace_video_id":    "019f9893-3456-7376-ae68-30a89227eb46",
+		"device_id":         "11111111-1111-1111-1111-111111111111",
+		"collector_id":      "22222222-2222-2222-2222-222222222222",
+		"scene_id":          "33333333-3333-3333-3333-333333333333",
+		"data_source":       "vibecap",
+		"collection_method": "manual",
+		"source_platform":   "vibecap",
+	}
+	for k, v := range wantTop {
+		if got, present := doc[k]; !present {
+			t.Errorf("doc top-level %q missing", k)
+		} else if got != v {
+			t.Errorf("doc[%q] = %#v, want %#v", k, got, v)
+		}
+	}
+}
+
+// CYB-3715: empty flatten mirror columns stay absent so ES dynamic mapping
+// doesn't create empty-string keyword buckets for every asset.
+func TestBuild_OmitsEmptyCYB3715FlattenFields(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID: "seg37151", AssetType: "raw_mcap",
+			CreatedAt: now, UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "seg37151")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	for _, k := range []string{
+		"camera_model", "grace_video_id", "device_id", "collector_id", "scene_id",
+		"data_source", "collection_method", "source_platform",
+	} {
+		if _, present := doc[k]; present {
+			t.Errorf("doc top-level %q should be absent when Asset field is empty", k)
 		}
 	}
 }
@@ -520,4 +595,16 @@ func TestBuild_OmitsEmptyMcapFields(t *testing.T) {
 			t.Errorf("mcap[%q] should be absent when source is empty", k)
 		}
 	}
+}
+
+func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (s *stubAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
+func (s *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
 }

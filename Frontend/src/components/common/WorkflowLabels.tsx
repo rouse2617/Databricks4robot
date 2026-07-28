@@ -1,4 +1,4 @@
-import { Tag } from "antd";
+import { Tag, Typography } from "antd";
 import {
 	formatWorkflowLabelKey,
 	getDisplayLabelEntries,
@@ -22,7 +22,16 @@ export function WorkflowLabels({
 						{formatWorkflowLabelKey(key)}
 					</span>
 					<span style={{ margin: "0 3px", color: "#94a3b8" }}>·</span>
-					<span>{value}</span>
+					{/* Asset ids are 36-char UUIDs that operators paste into
+					    other tools (Grace lookup, queries/run filters), so give
+					    them a one-click copy. Other labels stay plain text. */}
+					{key === "asset_id" ? (
+						<Typography.Text copyable={{ text: value }}>
+							{value}
+						</Typography.Text>
+					) : (
+						<span>{value}</span>
+					)}
 				</Tag>
 			))}
 		</div>

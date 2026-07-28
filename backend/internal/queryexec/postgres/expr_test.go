@@ -72,4 +72,17 @@ func TestBuildExprWhereClause_FulltextIncludesIDs(t *testing.T) {
 	if !strings.Contains(clause.SQL, "assets.mcap_file_id::text ILIKE $1") {
 		t.Fatalf("expected mcap_file_id fulltext in SQL, got %q", clause.SQL)
 	}
+	// CYB-4011: every shared flattened field must appear as an ::text ILIKE
+	// predicate reusing the same $1 placeholder. Iterating the source list keeps
+	// this test honest as fields are added/removed.
+	for _, f := range queryir.FulltextExtraFields {
+		want := "assets." + f + "::text ILIKE $1"
+		if !strings.Contains(clause.SQL, want) {
+			t.Fatalf("expected %q in fulltext SQL, got %q", want, clause.SQL)
+		}
+	}
+	// The single bound arg must still be reused (no extra params introduced).
+	if nextParam != 2 || len(clause.Args) != 1 {
+		t.Fatalf("shared fields must reuse $1: nextParam=%d args=%#v", nextParam, clause.Args)
+	}
 }

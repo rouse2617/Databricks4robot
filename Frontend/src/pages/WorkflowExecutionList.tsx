@@ -36,6 +36,7 @@ import {
 	useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { assetsApi } from "../api/assets";
 import {
 	type BackfillItemAttemptsResult,
 	getBatchItemAttempts,
@@ -60,7 +61,7 @@ import { deleteWorkflow, type WorkflowSummary } from "../api/workflowApi";
 import AssetIdLink from "../components/common/AssetIdLink";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
-import { isCanonicalAssetId } from "../lib/assetId";
+import { isCanonicalAssetId, isUUID } from "../lib/assetId";
 import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
 import {
 	STATUS_ACCENT_COLORS,
@@ -115,6 +116,9 @@ type ExecutionRecord = WorkflowSummary & {
 	// CYB-3486: 资源池不再以命名空间示人 —— 列表用 executionTargetId 反查池名。
 	executionTargetId?: string;
 	videoDurationSec?: number;
+	// CYB-4011: source asset ids (often Grace UUIDs) — used to resolve the
+	// video duration via grace_video_id when video_durations has no row.
+	assetIds?: string[];
 	// CYB-3392: propagate the parent batch id so the row can render a
 	// clickable "批次" badge that jumps to BatchJobList detail.
 	batchJobId?: string;
@@ -128,6 +132,16 @@ type WorkflowErrorState = {
 };
 
 const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
+// 与后端 state_machine.go 的 run 状态词表对齐（Succeeded/Failed/Error/
+// Cancelled/Expired）。仅这些明确终态才抑制 runtime_missing；空值、未知或
+// 未来新增的状态保持可诊断，不会被“非活动即终态”的反向判断误伤。
+const terminalWorkflowStatuses = new Set([
+	"Succeeded",
+	"Failed",
+	"Error",
+	"Cancelled",
+	"Expired",
+]);
 
 interface RunListFilterParams {
 	status?: string;
@@ -137,14 +151,16 @@ interface RunListFilterParams {
 	finishedBefore?: string;
 }
 
-// CYB-3491: 停滞判定使用 updatedAt (freshness) + 30min 阈值 —— 之前用
-// createdAt + 48h 只在任务活了两天之后才亮标,而实际停滞往往是"新任务
-// 十几分钟无进展"(收不到 webhook / poll 掉了)。仍是纯展示提示,不改
-// run status —— 原则:任务可以等,不该自动判死 (see #417)。
-const STALE_ACTIVE_RUN_MS = 30 * 60 * 1000;
+// CYB-3691: 停滞判定使用 updatedAt (freshness) + 3h 阈值 —— 大任务
+// 跑两三小时是常态（容器计算无阶段更新）,30min 过于敏感 (see #417)。
+// 仍是纯展示提示,不改 run status —— 原则:任务可以等,不该自动判死。
+const STALE_ACTIVE_RUN_MS = 3 * 60 * 60 * 1000;
 
 const isActiveWorkflowStatus = (status?: string): boolean =>
 	activeWorkflowStatuses.has(status ?? "");
+
+const isTerminalWorkflowStatus = (status?: string): boolean =>
+	terminalWorkflowStatuses.has(status ?? "");
 
 const isStaleRunningWorkflow = (record: WorkflowSummary): boolean => {
 	if (!isActiveWorkflowStatus(record.status)) return false;
@@ -318,8 +334,23 @@ const isRedundantRunReason = (reason?: string, status?: string): boolean => {
 	return status === "Failed" || status === "Error";
 };
 
-const renderRunReasonTag = (reason?: string, message?: string) => {
+// runtime_missing 是任务在运行中才会有的临时状态（同步断流、ledger 还没更新
+// 等），任务一旦进入终态（成功/失败/过期/取消）就不应再展示，否则会误导排障。
+const shouldSuppressRuntimeMissing = (
+	reason?: string,
+	status?: string,
+): boolean => reason === "runtime_missing" && isTerminalWorkflowStatus(status);
+
+const renderRunReasonTag = (
+	reason?: string,
+	message?: string,
+	status?: string,
+) => {
 	if (!reason) return null;
+	// 对于已完成的任务（成功/失败/过期/取消等），不显示 runtime_missing
+	if (shouldSuppressRuntimeMissing(reason, status)) {
+		return null;
+	}
 	const tag = (
 		<Tag
 			color={RUN_REASON_COLORS[reason] ?? "default"}
@@ -459,6 +490,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		argoNamespace: run.argoNamespace,
 		executionTargetId: run.executionTargetId,
 		videoDurationSec: run.videoDurationSec,
+		assetIds: run.assetIds,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
@@ -527,6 +559,12 @@ export function WorkflowExecutionList({
 	messageApiRef.current = messageApi;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<ExecutionRecord[]>([]);
+	// CYB-4011: grace UUID → resolved video duration (seconds), used as a
+	// fallback when video_durations has no row for the Grace video id but the
+	// mirrored DataBrew asset carries duration_sec (resolved via grace_video_id).
+	const [resolvedDurationByUUID, setResolvedDurationByUUID] = useState<
+		Record<string, number>
+	>({});
 	// CYB-3486: executionTargetId → 资源池,用于把"命名空间"列换成"资源池"列。
 	// 加载失败时保持空表,render 会优雅回退到命名空间显示(不回归)。
 	const [targetById, setTargetById] = useState<Map<string, ExecutionTarget>>(
@@ -891,13 +929,13 @@ export function WorkflowExecutionList({
 			};
 			const pipelineRunResponse = await listRuns({
 				view: "summary",
-				// CYB-3392b: was excludeBatch:true which dropped ALL runs
-				// tied to a batch (parent + children), so the CYB-3392 batch
-				// badge never had a row to render on. Switch to
-				// excludeBatchParents: only the aggregate parent row hides;
-				// children stay visible with a clickable badge that jumps
-				// to the batch detail page.
-				excludeBatchParents: true,
+				// CYB-3709: the single-execution tab shows only genuine single
+				// runs — exclude ALL batch rows (parents AND children). cyb-3392b
+				// had used excludeBatchParents to keep children here with a badge,
+				// but at 60k+ children that buries the ~4.4k single runs. Batch
+				// children remain listed in the batch detail view (batchJobId
+				// branch above), so nothing is lost.
+				excludeBatch: true,
 				status: statusFilter,
 				q: nameSearch.trim() || undefined,
 				page,
@@ -1060,6 +1098,45 @@ export function WorkflowExecutionList({
 		}));
 	}, [items]);
 
+	// CYB-4011: fill the video-duration column for rows whose source asset is a
+	// Grace UUID that video_durations has no row for. Resolve the UUID to its
+	// DataBrew asset via grace_video_id and use that asset's duration_sec.
+	// Read-only, per-UUID, cached; skips UUIDs already resolved (incl. misses).
+	useEffect(() => {
+		const pending = new Set<string>();
+		for (const r of items) {
+			if (r.videoDurationSec != null) continue;
+			for (const a of r.assetIds ?? []) {
+				if (a && isUUID(a) && !(a in resolvedDurationByUUID)) {
+					pending.add(a);
+				}
+			}
+		}
+		if (pending.size === 0) return;
+		let cancelled = false;
+		(async () => {
+			const entries = await Promise.all(
+				[...pending].map(async (uuid) => {
+					const asset = await assetsApi.resolveByGraceVideoID(uuid);
+					// -1 marks "resolved but no duration" so we don't re-query.
+					const sec =
+						asset?.duration_sec ??
+						(asset?.duration_ms != null ? asset.duration_ms / 1000 : -1);
+					return [uuid, sec] as const;
+				}),
+			);
+			if (cancelled) return;
+			setResolvedDurationByUUID((prev) => {
+				const next = { ...prev };
+				for (const [uuid, sec] of entries) next[uuid] = sec;
+				return next;
+			});
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [items, resolvedDurationByUUID]);
+
 	const executeOperation = useCallback(
 		async (
 			record: ExecutionRecord,
@@ -1097,7 +1174,9 @@ export function WorkflowExecutionList({
 				operation.key === "delete" ||
 				operation.key === "terminate" ||
 				operation.key === "resubmit" ||
-				operation.key === "retry"
+				operation.key === "retry" ||
+				operation.key === "stop" ||
+				operation.key === "suspend"
 			) {
 				setPendingOperation({ record, operation });
 				return;
@@ -1278,8 +1357,17 @@ export function WorkflowExecutionList({
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					(a.status ?? "").localeCompare(b.status ?? ""),
 				render: (s: string, record: ExecutionRecord) => {
-					const reason = record.blockingReason || record.failureReason;
-					const reasonMessage = record.blockingMessage || record.message;
+					// 终态以 failureReason 为准，活动态以 blockingReason 为准
+					// （对齐后端 AnnotateRunDiagnostics：终态写 failureReason、
+					// 活动态写 blockingReason）。避免残留的 blockingReason（如 stale
+					// runtime_missing）在终态遮住真实失败原因。
+					const terminal = isTerminalWorkflowStatus(s);
+					const reason = terminal
+						? record.failureReason || record.blockingReason
+						: record.blockingReason || record.failureReason;
+					const reasonMessage = terminal
+						? record.message || record.blockingMessage
+						: record.blockingMessage || record.message;
 					const redundant = isRedundantRunReason(reason, s);
 					const statusTag = (
 						<Tag
@@ -1304,11 +1392,11 @@ export function WorkflowExecutionList({
 							{isStaleRunningWorkflow(record) ? (
 								// CYB-3491: 展示提示,不再对应"将自动标为失败"—— 任务保持
 								// Argo 真值,恢复更新后 tag 自然消失。
-								<Tooltip title="任务长时间无状态更新（>30 分钟）,可能停滞或平台跟丢了状态回执。刷新页面查看最新状态。">
+								<Tooltip title="任务长时间无状态更新（>3 小时）,可能停滞或平台跟丢了状态回执。刷新页面查看最新状态。">
 									<Tag color="warning">疑似停滞</Tag>
 								</Tooltip>
 							) : null}
-							{redundant ? null : renderRunReasonTag(reason, reasonMessage)}
+							{redundant ? null : renderRunReasonTag(reason, reasonMessage, s)}
 						</Space>
 					);
 				},
@@ -1483,7 +1571,7 @@ export function WorkflowExecutionList({
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
-				title: "标签",
+				title: "资产 ID",
 				dataIndex: "labels",
 				key: "labels",
 				width: isBatchScope ? 200 : 240,
@@ -1514,8 +1602,21 @@ export function WorkflowExecutionList({
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					((a as ExecutionRecord).videoDurationSec ?? -1) -
 					((b as ExecutionRecord).videoDurationSec ?? -1),
-				render: (_: unknown, record: WorkflowSummary) =>
-					formatVideoDurationSec((record as ExecutionRecord).videoDurationSec),
+				render: (_: unknown, record: WorkflowSummary) => {
+					const rec = record as ExecutionRecord;
+					let sec = rec.videoDurationSec;
+					if (sec == null) {
+						// CYB-4011: fall back to a Grace-UUID-resolved duration.
+						for (const a of rec.assetIds ?? []) {
+							const r = resolvedDurationByUUID[a];
+							if (r != null && r >= 0) {
+								sec = r;
+								break;
+							}
+						}
+					}
+					return formatVideoDurationSec(sec);
+				},
 			},
 			{
 				title: (
@@ -1724,6 +1825,7 @@ export function WorkflowExecutionList({
 		targetById,
 		messageApi,
 		navigate,
+		resolvedDurationByUUID,
 	]);
 
 	const showSkeleton = !initializedOnce;

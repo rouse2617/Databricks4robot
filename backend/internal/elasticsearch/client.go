@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 // Client wraps HTTP calls to an Elasticsearch cluster.
@@ -164,6 +165,80 @@ func (c *Client) GetDocumentSource(ctx context.Context, id string) (map[string]a
 		return nil, false, fmt.Errorf("elasticsearch: get document unmarshal: %w", err)
 	}
 	return parsed.Source, parsed.Found, nil
+}
+
+// MgetSourceHit is one docs[] entry returned by MgetSource. Found=false
+// mirrors ES's own found:false response for an id that isn't in the index;
+// Source is the projected _source subset (empty when Found=false).
+type MgetSourceHit struct {
+	ID     string
+	Found  bool
+	Source map[string]any
+}
+
+// MgetSource runs an ES _mget against the client's index with the given
+// _source projection and returns docs in request-id order (matches ES's
+// documented behavior). Empty ids returns nil without a round trip. Missing
+// docs still emit an entry (Found=false, empty Source) so callers can join
+// by id without a lookup.
+//
+// Used by the batch lineage endpoint (CYB-4305) to fetch
+// `lineage_upstream_ids` / `lineage_downstream_ids` /
+// `lineage_relation_types` for a resolved asset_id set in one round trip.
+func (c *Client) MgetSource(ctx context.Context, ids []string, sourceFields []string) ([]MgetSourceHit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	docs := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		entry := map[string]any{"_id": id}
+		if len(sourceFields) > 0 {
+			entry["_source"] = sourceFields
+		}
+		docs = append(docs, entry)
+	}
+	body, err := json.Marshal(map[string]any{"docs": docs})
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: marshal mget body: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/%s/_mget", strings.TrimRight(c.baseURL, "/"), c.index)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doReq(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget read: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("elasticsearch: mget status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var parsed struct {
+		Docs []struct {
+			ID     string         `json:"_id"`
+			Found  bool           `json:"found"`
+			Source map[string]any `json:"_source"`
+		} `json:"docs"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("elasticsearch: mget unmarshal: %w", err)
+	}
+
+	out := make([]MgetSourceHit, 0, len(parsed.Docs))
+	for _, d := range parsed.Docs {
+		out = append(out, MgetSourceHit{ID: d.ID, Found: d.Found, Source: d.Source})
+	}
+	return out, nil
 }
 
 // SearchBodyScroll is like SearchBody but adds scroll=2m and returns the scroll
@@ -370,15 +445,27 @@ func buildSearchModeQuery(mode, query string) map[string]any {
 			return map[string]any{"match": map[string]any{field: body}}
 		}
 
+		should := []any{
+			map[string]any{"term": map[string]any{"asset_id": query}},
+			map[string]any{"term": map[string]any{"asset_type": query}},
+			matchClause("notes"),
+			matchClause("owner.text"),
+			matchClause("reviewer.text"),
+		}
+		// CYB-4011: flattened ID fields (grace_video_id, device_id, …) sourced
+		// from queryir.FulltextExtraFields — the single list PG fulltext shares.
+		// operator=and matches a full UUID/device id as a whole (all tokens
+		// required) so it never fuzzes across near-ids, and match works whether
+		// the dynamically-mapped field resolves to text or keyword. No fuzziness
+		// here even in semantic mode — approximate IDs are never desirable.
+		for _, f := range queryir.FulltextExtraFields {
+			should = append(should, map[string]any{
+				"match": map[string]any{f: map[string]any{"query": query, "operator": "and"}},
+			})
+		}
 		return map[string]any{
 			"bool": map[string]any{
-				"should": []any{
-					map[string]any{"term": map[string]any{"asset_id": query}},
-					map[string]any{"term": map[string]any{"asset_type": query}},
-					matchClause("notes"),
-					matchClause("owner.text"),
-					matchClause("reviewer.text"),
-				},
+				"should":               should,
 				"minimum_should_match": 1,
 			},
 		}

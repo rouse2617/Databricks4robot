@@ -19,6 +19,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -183,6 +184,7 @@ func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, 
 	}
 	return out, nil
 }
+
 // summaries is a private test helper (formerly the FindAllSummaries interface
 // method, dropped as dead production code) — it returns lightweight copies the
 // mock's ListSummaries then filters.
@@ -199,7 +201,14 @@ func (m *mockPipelineRunRepo) summaries() []models.PipelineRun {
 	}
 	return out
 }
+func (m *mockPipelineRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return nil, nil
+}
+
 func (m *mockPipelineRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+func (m *mockPipelineRunRepo) FindActiveRunSummariesAfter(context.Context, time.Time, string, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
 
@@ -594,7 +603,6 @@ func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, strin
 func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) (string, error) {
 	return "", nil
 }
-
 
 func (m *mockBatchSubtaskReconciler) SyncJob(_ context.Context, jobID string) error {
 	m.syncJobCalls++
@@ -2286,4 +2294,16 @@ func TestCreateRunByTemplate_EmptyBody_OK(t *testing.T) {
 	if w.Code == http.StatusBadRequest {
 		t.Fatalf("empty body should not be rejected as 400, got 400: %s", w.Body.String())
 	}
+}
+
+func (m *mockAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
+func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (m *mockAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
 }

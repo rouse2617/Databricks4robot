@@ -109,6 +109,8 @@ interface ComponentFormValues {
 	args?: string;
 	cpu?: string;
 	memory?: string;
+	cpuLimit?: string;
+	memoryLimit?: string;
 	disk?: string;
 	gpu?: string;
 	computeTier?: string;
@@ -799,6 +801,8 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 		args: joinInputItems(component.args || []),
 		cpu: resourceString(resources, "cpu"),
 		memory: resourceString(resources, "memory"),
+		cpuLimit: resourceString(resources, "cpuLimit"),
+		memoryLimit: resourceString(resources, "memoryLimit"),
 		disk: resourceString(resources, "disk"),
 		gpu: resourceString(resources, "gpu"),
 		computeTier: resourceString(resources, "computeTier"),
@@ -848,6 +852,10 @@ function toPayload(
 			env,
 			...(values.cpu?.trim() ? { cpu: values.cpu.trim() } : {}),
 			...(values.memory?.trim() ? { memory: values.memory.trim() } : {}),
+			...(values.cpuLimit?.trim() ? { cpuLimit: values.cpuLimit.trim() } : {}),
+			...(values.memoryLimit?.trim()
+				? { memoryLimit: values.memoryLimit.trim() }
+				: {}),
 			...(values.disk?.trim() ? { disk: values.disk.trim() } : {}),
 			...(values.gpu?.trim() ? { gpu: values.gpu.trim() } : {}),
 			...(values.computeTier?.trim()
@@ -2370,10 +2378,26 @@ export function ComponentManager() {
 									gap: 12,
 								}}
 							>
-								<Form.Item name="cpu" label="CPU" extra="例如 500m、4">
+								<Form.Item
+									name="cpu"
+									label="CPU"
+									extra="调度按请求预留；留空上限时请求即上限。例如 500m、4"
+								>
 									<Input
 										data-testid="component-resource-cpu"
 										placeholder="500m"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item
+									name="cpuLimit"
+									label="CPU 上限"
+									extra="留空=同请求；填更大值允许突发（Burstable），须 ≥ 请求"
+								>
+									<Input
+										data-testid="component-resource-cpu-limit"
+										placeholder="留空=同请求"
 										autoComplete="off"
 										onFocus={(e) => e.target.select()}
 									/>
@@ -2382,6 +2406,18 @@ export function ComponentManager() {
 									<Input
 										data-testid="component-resource-memory"
 										placeholder="256Mi"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item
+									name="memoryLimit"
+									label="内存上限"
+									extra="留空=同请求；填更大值允许突发，须 ≥ 请求"
+								>
+									<Input
+										data-testid="component-resource-memory-limit"
+										placeholder="留空=同请求"
 										autoComplete="off"
 										onFocus={(e) => e.target.select()}
 									/>

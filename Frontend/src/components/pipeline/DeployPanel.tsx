@@ -43,12 +43,14 @@ import {
 	type ElasticQuota,
 	type ExecutionTarget,
 	getPipeline,
+	getPromotionPlan,
 	type ListPipelinesParams,
 	listDeployments,
 	listElasticQuotas,
 	listExecutionTargets,
 	listPipelines,
 	listPipelineVersions,
+	type PipelinePromotionPlan,
 	type PipelineTemplate,
 	promotePipeline,
 } from "../../api/pipelineApi";
@@ -60,6 +62,10 @@ import {
 } from "../../api/pipelineConfigs";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
+import {
+	PRIORITY_TIER_OPTIONS,
+	priorityBadge,
+} from "../../lib/workflowPriority";
 import AssetPicker, { type AssetPickerHandle } from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
@@ -529,6 +535,10 @@ export function DeployPanel({
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
+	// Per-dispatch Argo priority override; undefined = inherit the pool default.
+	const [priorityOverride, setPriorityOverride] = useState<number | undefined>(
+		undefined,
+	);
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
@@ -540,6 +550,12 @@ export function DeployPanel({
 	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
 	const [versionDrawerTemplate, setVersionDrawerTemplate] =
 		useState<PipelineTemplate | null>(null);
+	const [promotionTarget, setPromotionTarget] =
+		useState<PipelineTemplate | null>(null);
+	const [promotionPlan, setPromotionPlan] =
+		useState<PipelinePromotionPlan | null>(null);
+	const [promotionPlanLoading, setPromotionPlanLoading] = useState(false);
+	const [promotionExecuting, setPromotionExecuting] = useState(false);
 	const refreshInFlightRef = useRef(false);
 	const templatesInFlightRef = useRef(false);
 	const templateSearchDebounceRef = useRef<ReturnType<
@@ -701,6 +717,11 @@ export function DeployPanel({
 		() => poolTargets.find((target) => target.id === selectedTargetId),
 		[poolTargets, selectedTargetId],
 	);
+	// Effective priority for the badge: the per-dispatch override wins, else the
+	// selected pool's default (undefined → normal).
+	const effectivePriority =
+		priorityOverride ?? selectedPool?.resourceDefaults?.priority;
+	const effectiveBadge = priorityBadge(effectivePriority);
 	const selectedPoolEq = useMemo(
 		() => (selectedPool ? matchPoolEq(selectedPool, eqsByCluster) : undefined),
 		[selectedPool, eqsByCluster],
@@ -1068,6 +1089,7 @@ export function DeployPanel({
 				version: selectedDeployVersion,
 				batchName: template ? `${template.name}-${Date.now()}` : undefined,
 				configSelection,
+				priority: priorityOverride,
 			});
 			if (result.mode === "batch") {
 				messageApi.success(
@@ -1208,25 +1230,37 @@ export function DeployPanel({
 		setVersionDrawerOpen(true);
 	};
 
-	const handlePromote = (template: PipelineTemplate) => {
-		modal.confirm({
-			title: `发布 ${template.name} v${template.version} 到正式版？`,
-			content:
-				"将生成 prod 正式版模板（只读、不可删除）。dev 草稿仍可继续编辑；「活跃版本」仅影响默认运行版本，不等于 prod。",
-			okText: "发布",
-			cancelText: "取消",
-			onOk: async () => {
-				try {
-					const promoted = await promotePipeline(template.id);
-					messageApi.success(
-						`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
-					);
-					await refreshAll();
-				} catch (err) {
-					messageApi.error(`发布失败: ${String(err)}`);
-				}
-			},
-		});
+	const handlePromotePlan = async (template: PipelineTemplate) => {
+		setPromotionTarget(template);
+		setPromotionPlan(null);
+		setPromotionPlanLoading(true);
+		try {
+			const plan = await getPromotionPlan(template.id);
+			setPromotionPlan(plan);
+		} catch (err) {
+			messageApi.error(`加载 promotion plan 失败: ${String(err)}`);
+			setPromotionTarget(null);
+		} finally {
+			setPromotionPlanLoading(false);
+		}
+	};
+
+	const handlePromoteExecute = async () => {
+		if (!promotionTarget) return;
+		setPromotionExecuting(true);
+		try {
+			const promoted = await promotePipeline(promotionTarget.id);
+			messageApi.success(
+				`已发布 ${promotionTarget.name} v${promoted.version} 到正式版（prod）`,
+			);
+			setPromotionTarget(null);
+			setPromotionPlan(null);
+			await refreshAll();
+		} catch (err) {
+			messageApi.error(`发布失败: ${String(err)}`);
+		} finally {
+			setPromotionExecuting(false);
+		}
 	};
 
 	const handleSetActiveVersion = async (
@@ -1272,7 +1306,7 @@ export function DeployPanel({
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
 				onVersionHistory={handleVersionHistory}
-				onPromote={handlePromote}
+				onPromote={handlePromotePlan}
 				onView={handleViewTemplate}
 				activeVersion={activeVersionByTemplate[t.name]}
 				recommended={t.id === recommendedTemplateId}
@@ -1725,6 +1759,36 @@ export function DeployPanel({
 							};
 						})}
 					/>
+					<div
+						style={{
+							marginTop: 8,
+							display: "flex",
+							alignItems: "center",
+							gap: 8,
+							flexWrap: "wrap",
+						}}
+					>
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							优先级
+						</Typography.Text>
+						<Select
+							size="small"
+							aria-label="工作流优先级"
+							style={{ width: 200 }}
+							value={priorityOverride ?? "inherit"}
+							onChange={(v) =>
+								setPriorityOverride(v === "inherit" ? undefined : (v as number))
+							}
+							options={[
+								{ value: "inherit", label: "跟随池子默认" },
+								...PRIORITY_TIER_OPTIONS,
+							]}
+						/>
+						<Tag color={effectiveBadge.color}>{effectiveBadge.label}优先级</Tag>
+						<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+							集群繁忙时的下发顺序;不中断在跑的任务
+						</Typography.Text>
+					</div>
 					{selectedPool ? (
 						<div style={{ marginTop: 8 }} data-testid="pool-usage">
 							{selectedPoolEq ? (
@@ -2014,6 +2078,93 @@ export function DeployPanel({
 					resetKey={assetPickerResetKey}
 				/>
 			</Modal>
+			{promotionTarget ? (
+				<Modal
+					title={`发布 "${promotionTarget.name}" v${promotionTarget.version} 到正式版`}
+					open={!!promotionTarget}
+					onCancel={() => {
+						setPromotionTarget(null);
+						setPromotionPlan(null);
+					}}
+					footer={
+						<Space>
+							<Button
+								onClick={() => {
+									setPromotionTarget(null);
+									setPromotionPlan(null);
+								}}
+							>
+								取消
+							</Button>
+							<Button
+								type="primary"
+								icon={<RocketOutlined />}
+								loading={promotionExecuting}
+								disabled={
+									promotionPlanLoading ||
+									!promotionPlan?.ready
+								}
+								onClick={() => void handlePromoteExecute()}
+							>
+								确认发布
+							</Button>
+						</Space>
+					}
+					width={560}
+				>
+					{promotionPlanLoading ? (
+						<Skeleton active paragraph={{ rows: 4 }} />
+					) : promotionPlan ? (
+						<div style={{ display: "grid", gap: 12 }}>
+							{promotionPlan.ready ? (
+								<Alert
+									type="success"
+									showIcon
+									message="就绪 — 未发现阻塞项"
+								/>
+							) : (
+								<Alert
+									type="error"
+									showIcon
+									message={`${promotionPlan.blockers.length} 个阻塞项`}
+									description={promotionPlan.blockers.map((b, i) => (
+										<div key={i}>• {b}</div>
+									))}
+								/>
+							)}
+							{promotionPlan.warnings.length > 0 ? (
+								<Alert
+									type="warning"
+									showIcon
+									message={`${promotionPlan.warnings.length} 个警告`}
+									description={promotionPlan.warnings.map((w, i) => (
+										<div key={i}>• {w}</div>
+									))}
+								/>
+							) : null}
+							{promotionPlan.requiredMappings.length > 0 ? (
+								<div>
+									<Text strong>资源映射（{promotionPlan.requiredMappings.length} 项）</Text>
+									{promotionPlan.requiredMappings.map((m, i) => (
+										<Tag
+											key={i}
+											color={m.targetId ? "green" : "red"}
+											style={{ margin: 4 }}
+										>
+											{m.kind}: {m.sourceId}
+											{m.targetId ? ` → ${m.targetId}` : " （缺少映射）"}
+										</Tag>
+									))}
+								</div>
+							) : null}
+							<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+								计划摘要: {promotionPlan.planDigest.slice(0, 20)}...
+								· {promotionPlan.bundle.dependencies.length} 个依赖
+							</Typography.Text>
+						</div>
+					) : null}
+				</Modal>
+			) : null}
 			{versionDrawerTemplate ? (
 				<VersionHistoryDrawer
 					open={versionDrawerOpen}

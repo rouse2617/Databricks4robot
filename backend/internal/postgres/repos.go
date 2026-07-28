@@ -258,6 +258,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
@@ -293,6 +294,283 @@ WHERE asset_id = ANY($1)
 	return out, nil
 }
 
+// DurationDistribution returns the fleet-wide duration histogram + overall
+// stats used by the dashboard's 数据时长分布 card. When assetType is empty the
+// aggregate spans every non-deleted asset with a real duration_ms; otherwise
+// it restricts to assets whose asset_type matches exactly.
+//
+// The returned Buckets slice ALWAYS contains every row in models.DurationBucketOrder
+// (CYB-4338: 10) even when the SQL emits fewer (missing buckets are padded with
+// zeros). This keeps the client render code free of "did the server include <1m?"
+// checks. Bucket labels/edges here MUST stay in lockstep with DurationBucketOrder.
+//
+// CYB-4303 / CYB-4338. Percentiles are percentile_cont; the histogram was refined
+// 5→10 buckets to expose the corpus shape the coarse buckets hid.
+func (r *AssetRepo) DurationDistribution(ctx context.Context, assetType string) (*models.DurationDistribution, error) {
+	// One filter, two queries. Split so percentile_cont doesn't have to
+	// group by bucket label — Postgres can't compute grouped percentiles
+	// alongside global percentiles in a single aggregate frame without
+	// materializing the whole set client-side.
+	const overallQ = `
+WITH filtered AS (
+  SELECT duration_ms
+  FROM assets
+  WHERE is_deleted = FALSE
+    AND duration_ms IS NOT NULL
+    AND duration_ms >= 0
+    AND ($1 = '' OR asset_type = $1)
+)
+SELECT
+  COUNT(*)                                                                                AS total_assets,
+  COALESCE(SUM(duration_ms), 0)                                                           AS total_ms,
+  COALESCE(AVG(duration_ms), 0)::bigint                                                   AS mean_ms,
+  COALESCE(MIN(duration_ms), 0)                                                           AS min_ms,
+  COALESCE(MAX(duration_ms), 0)                                                           AS max_ms,
+  COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)::bigint           AS p50_ms,
+  COALESCE(percentile_cont(0.9) WITHIN GROUP (ORDER BY duration_ms), 0)::bigint           AS p90_ms
+FROM filtered`
+
+	const bucketQ = `
+WITH filtered AS (
+  SELECT duration_ms
+  FROM assets
+  WHERE is_deleted = FALSE
+    AND duration_ms IS NOT NULL
+    AND duration_ms >= 0
+    AND ($1 = '' OR asset_type = $1)
+)
+SELECT
+  CASE
+    WHEN duration_ms < 60000    THEN '<1m'
+    WHEN duration_ms < 300000   THEN '1-5m'
+    WHEN duration_ms < 600000   THEN '5-10m'
+    WHEN duration_ms < 900000   THEN '10-15m'
+    WHEN duration_ms < 1200000  THEN '15-20m'
+    WHEN duration_ms < 1500000  THEN '20-25m'
+    WHEN duration_ms < 1800000  THEN '25-30m'
+    WHEN duration_ms < 2700000  THEN '30-45m'
+    WHEN duration_ms < 3600000  THEN '45-60m'
+    ELSE                             '60m+'
+  END AS label,
+  COUNT(*)::bigint                       AS count,
+  COALESCE(SUM(duration_ms), 0)::bigint  AS total_ms
+FROM filtered
+GROUP BY 1`
+
+	db := dbFromCtx(ctx, r.c.db)
+
+	var out models.DurationDistribution
+	if err := db.QueryRow(ctx, overallQ, assetType).Scan(
+		&out.TotalAssets, &out.TotalMs, &out.MeanMs, &out.MinMs, &out.MaxMs, &out.P50Ms, &out.P90Ms,
+	); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution overall: %w", err)
+	}
+
+	// Bucket rows returned by the query (may be a subset of the 5).
+	got := make(map[string]struct {
+		count   int64
+		totalMs int64
+	}, len(models.DurationBucketOrder))
+	rows, err := db.Query(ctx, bucketQ, assetType)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution buckets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var label string
+		var cnt, totalMs int64
+		if err := rows.Scan(&label, &cnt, &totalMs); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution bucket scan: %w", err)
+		}
+		got[label] = struct {
+			count   int64
+			totalMs int64
+		}{count: cnt, totalMs: totalMs}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.DurationDistribution bucket rows: %w", err)
+	}
+
+	// Fill every bucket in canonical order — missing labels get zero rows.
+	out.Buckets = make([]models.DurationBucket, len(models.DurationBucketOrder))
+	for i, def := range models.DurationBucketOrder {
+		b := models.DurationBucket{
+			Label: def.Label,
+			LoMs:  def.LoMs,
+			HiMs:  def.HiMs,
+		}
+		if v, ok := got[def.Label]; ok {
+			b.Count = v.count
+			b.TotalMs = v.totalMs
+		}
+		out.Buckets[i] = b
+	}
+	return &out, nil
+}
+
+// LookupCosts aggregates leaf-pod cost / GPU-seconds / CPU-seconds / run_count
+// per (asset_id[, template_name]) over the finished_at window. assetIDs must
+// already be resolved to short asset_ids by the caller; grace_video_id inputs
+// are resolved in the upstream LookupDurations query.
+//
+// CYB-4306. The leaf-pod predicate matches pipeline_repo.go:767 exactly —
+// diverging would produce inconsistent totals across the batch endpoint and
+// the single-run cost aggregate.
+//
+// Extraction of gpu_sec/cpu_sec from the resources_duration JSONB uses
+// COALESCE(...->>...,0) so a node missing the key contributes zero (not NULL).
+func (r *AssetRepo) LookupCosts(
+	ctx context.Context,
+	assetIDs []string,
+	startAt, endAt time.Time,
+	byAlgo bool,
+) ([]repository.AssetCostRow, error) {
+	if len(assetIDs) == 0 {
+		return nil, nil
+	}
+	// CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+	// rollup resourcesDuration and would double-count the total. Same
+	// predicate as pipeline_repo.go:767.
+	const leafPodPredicate = `(n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))`
+	var q string
+	if byAlgo {
+		q = `
+SELECT
+  aid AS asset_id,
+  COALESCE(n.template_name, '') AS algo_key,
+  COALESCE(SUM(n.estimated_cost_usd), 0)::DOUBLE PRECISION AS total_cost_usd,
+  COALESCE(SUM(CAST(n.resources_duration->>'nvidia.com/gpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS gpu_sec,
+  COALESCE(SUM(CAST(n.resources_duration->>'cpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS cpu_sec,
+  COUNT(DISTINCT pr.id)::BIGINT AS run_count
+FROM pipeline_runs pr
+JOIN pipeline_run_nodes n ON n.run_id = pr.id
+CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+WHERE aid = ANY($1)
+  AND pr.finished_at BETWEEN $2 AND $3
+  AND ` + leafPodPredicate + `
+  AND n.estimated_cost_usd IS NOT NULL
+GROUP BY aid, COALESCE(n.template_name, '')`
+	} else {
+		q = `
+SELECT
+  aid AS asset_id,
+  '' AS algo_key,
+  COALESCE(SUM(n.estimated_cost_usd), 0)::DOUBLE PRECISION AS total_cost_usd,
+  COALESCE(SUM(CAST(n.resources_duration->>'nvidia.com/gpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS gpu_sec,
+  COALESCE(SUM(CAST(n.resources_duration->>'cpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS cpu_sec,
+  COUNT(DISTINCT pr.id)::BIGINT AS run_count
+FROM pipeline_runs pr
+JOIN pipeline_run_nodes n ON n.run_id = pr.id
+CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+WHERE aid = ANY($1)
+  AND pr.finished_at BETWEEN $2 AND $3
+  AND ` + leafPodPredicate + `
+  AND n.estimated_cost_usd IS NOT NULL
+GROUP BY aid`
+	}
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, assetIDs, startAt, endAt)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupCosts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.AssetCostRow, 0, len(assetIDs))
+	for rows.Next() {
+		var row repository.AssetCostRow
+		if err := rows.Scan(&row.AssetID, &row.AlgoKey, &row.TotalCostUSD, &row.GPUSec, &row.CPUSec, &row.RunCount); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupCosts scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupCosts rows: %w", err)
+	}
+	return out, nil
+}
+
+// LookupLineage returns identity + direct-hop lineage columns for non-deleted
+// assets whose asset_id OR grace_video_id matches any element of ids. Single
+// index scan on `assets` — both `asset_id` and `grace_video_id` are indexed.
+// The returned rows collapse "resolve id" and "read lineage" into one round
+// trip; the depth="all" path adds an ES `_mget` on top (see
+// searchindex.LineageBatchReader).
+//
+// NULL parent/root/logical columns come through as nil pointers, so the
+// caller can distinguish "unknown parent" from "empty string parent". Empty
+// ids short-circuits to (nil, nil) without a DB round trip. CYB-4305.
+func (r *AssetRepo) LookupLineage(ctx context.Context, ids []string) ([]repository.LineageRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `
+SELECT asset_id, COALESCE(grace_video_id, ''),
+       parent_asset_id, root_asset_id, logical_asset_id,
+       COALESCE(is_current, FALSE), COALESCE(revision, 0)
+FROM assets
+WHERE is_deleted = FALSE
+  AND (asset_id = ANY($1) OR grace_video_id = ANY($1))`
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupLineage: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.LineageRow, 0, len(ids))
+	for rows.Next() {
+		var row repository.LineageRow
+		if err := rows.Scan(
+			&row.AssetID, &row.GraceVideoID,
+			&row.ParentAssetID, &row.RootAssetID, &row.LogicalAssetID,
+			&row.IsCurrent, &row.Revision,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupLineage scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupLineage rows: %w", err)
+	}
+	return out, nil
+}
+
+// LookupDurations returns one repository.DurationRow per non-deleted asset
+// whose asset_id OR grace_video_id matches any element of ids. When minMs or
+// maxMs are >0 they further constrain rows by duration_ms; a zero bound is
+// disabled. An empty ids slice returns (nil, nil) without hitting the DB.
+//
+// CYB-4294. The single WHERE + OR lets a mixed asset_id / grace_video_id paste
+// resolve in one round trip; both columns are indexed.
+func (r *AssetRepo) LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `
+SELECT asset_id, COALESCE(grace_video_id, ''), COALESCE(duration_ms, 0)
+FROM assets
+WHERE is_deleted = FALSE
+  AND (asset_id = ANY($1) OR grace_video_id = ANY($1))
+  AND ($2 = 0 OR duration_ms >= $2)
+  AND ($3 = 0 OR duration_ms <= $3)`
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, ids, minMs, maxMs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupDurations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.DurationRow, 0, len(ids))
+	for rows.Next() {
+		var row repository.DurationRow
+		if err := rows.Scan(&row.AssetID, &row.GraceVideoID, &row.DurationMs); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupDurations scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupDurations rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetAll returns an asset regardless of is_deleted status.
 // Used by GET /assets/:id to honor the API contract that soft-deleted
 // assets remain accessible.
@@ -308,6 +586,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   ` + assetVersionSelectCols + `
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1`
@@ -340,6 +619,17 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		logicalID       *string
 		revision        *int64
 		isCurrent       *bool
+		// CYB-3715: 7 mcap-file mirror columns. All nullable; scanned as
+		// *string so callers see empty string when NULL (matches the model
+		// convention where absence == "").
+		cameraModel      *string
+		graceVideoID     *string // CYB-4011
+		deviceID         *string
+		collectorID      *string
+		sceneID          *string
+		dataSource       *string
+		collectionMethod *string
+		sourcePlatform   *string
 	)
 	err := row.Scan(
 		&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -352,6 +642,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		&tenantID, &projectID,
 		&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 		&logicalID, &revision, &isCurrent,
+		&cameraModel, &graceVideoID, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -415,6 +706,32 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	if len(annotInputsURIs) > 0 {
 		_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
 	}
+	// CYB-3715: hydrate 7 mirror columns onto the asset. Nil pointer ⇒
+	// column was NULL in DB ⇒ leave as empty string.
+	if cameraModel != nil {
+		a.CameraModel = *cameraModel
+	}
+	if graceVideoID != nil { // CYB-4011
+		a.GraceVideoID = *graceVideoID
+	}
+	if deviceID != nil {
+		a.DeviceID = *deviceID
+	}
+	if collectorID != nil {
+		a.CollectorID = *collectorID
+	}
+	if sceneID != nil {
+		a.SceneID = *sceneID
+	}
+	if dataSource != nil {
+		a.DataSource = *dataSource
+	}
+	if collectionMethod != nil {
+		a.CollectionMethod = *collectionMethod
+	}
+	if sourcePlatform != nil {
+		a.SourcePlatform = *sourcePlatform
+	}
 	finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 	a.SyncLegacyFields()
 	return &a, nil
@@ -432,6 +749,9 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	prepAssetForWrite(a)
 
+	// CYB-3715: 7 mirror columns added — camera_model / device_id /
+	// collector_id / scene_id / data_source / collection_method /
+	// source_platform. Uuid fields go through bindAssetUUID (empty ⇒ NULL).
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
@@ -441,6 +761,7 @@ INSERT INTO assets(
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
   tenant_id, project_id,
   is_deleted,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -450,7 +771,8 @@ INSERT INTO assets(
   $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
   $25,$26,
   FALSE,
-  $27,$28,$29
+  $27,$28,$29,$30,$31,$32,$33,$34,
+  $35,$36,$37
 )
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
@@ -478,6 +800,14 @@ ON CONFLICT (asset_id) DO UPDATE SET
   annot_inputs_uris=EXCLUDED.annot_inputs_uris,
   tenant_id=EXCLUDED.tenant_id,
   project_id=EXCLUDED.project_id,
+  camera_model=EXCLUDED.camera_model,
+  grace_video_id=EXCLUDED.grace_video_id,
+  device_id=EXCLUDED.device_id,
+  collector_id=EXCLUDED.collector_id,
+  scene_id=EXCLUDED.scene_id,
+  data_source=EXCLUDED.data_source,
+  collection_method=EXCLUDED.collection_method,
+  source_platform=EXCLUDED.source_platform,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version
 WHERE assets.version = EXCLUDED.version - 1`
@@ -492,6 +822,8 @@ WHERE assets.version = EXCLUDED.version - 1`
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
+		nullableText(a.CameraModel), nullableText(a.GraceVideoID), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
@@ -507,6 +839,11 @@ WHERE assets.version = EXCLUDED.version - 1`
 func (r *AssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
 	prepAssetForWrite(a)
 
+	// CYB-3715: added 7 mcap-file mirror columns (camera_model / device_id /
+	// collector_id / scene_id / data_source / collection_method /
+	// source_platform). Uuid fields are stored as uuid; the Go side keeps
+	// them as strings so callers can pass "" for absent — bindAssetUUID
+	// converts "" → nil.
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
@@ -517,6 +854,7 @@ INSERT INTO assets(
   tenant_id, project_id,
   is_deleted,
   logical_asset_id, revision, is_current,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -527,7 +865,8 @@ INSERT INTO assets(
   $25,$26,
   FALSE,
   $27,$28,$29,
-  $30,$31,$32
+  $30,$31,$32,$33,$34,$35,$36,$37,
+  $38,$39,$40
 )`
 
 	metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON, parentAssetID, rootAssetID, tenantID, projectID := bindAssetJSONAndRefs(a)
@@ -542,6 +881,8 @@ INSERT INTO assets(
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
 		logicalID, revision, isCurrent,
+		nullableText(a.CameraModel), nullableText(a.GraceVideoID), bindAssetUUID(a.DeviceID), bindAssetUUID(a.CollectorID), bindAssetUUID(a.SceneID),
+		nullableText(a.DataSource), nullableText(a.CollectionMethod), nullableText(a.SourcePlatform),
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
@@ -552,6 +893,28 @@ INSERT INTO assets(
 		return fmt.Errorf("postgres AssetRepo.InsertNew: %w", err)
 	}
 	return nil
+}
+
+// nullableText converts a Go string to a *string suitable for a nullable
+// text column: empty ⇒ nil (SQL NULL), non-empty ⇒ pointer to the value.
+// Used for the CYB-3715 mirror columns whose absence should be NULL, not
+// empty string (partial indexes filter on IS NOT NULL).
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// bindAssetUUID coerces a text uuid to a driver value for a uuid column.
+// Empty string → NULL. Non-empty non-uuid input errors out at INSERT time
+// (rare — the mcap ingest path already validates upstream). Kept alongside
+// nullableText for parallel structure.
+func bindAssetUUID(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
@@ -851,7 +1214,7 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
   COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
   COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
-  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(camera_model, ''), COALESCE(grace_video_id, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version,
@@ -874,6 +1237,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		taskID            *string
 		deviceID          *string
 		cameraModel       *string
+		graceVideoID      *string // CYB-4011
 		dataSource        *string
 		locationID        *string
 		sceneID           *string
@@ -886,7 +1250,7 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		&f.StartTimestampNs, &f.EndTimestampNs,
 		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner,
 		&vendorID, &collectorID, &taskID, &deviceID,
-		&cameraModel, &dataSource, &locationID, &sceneID, &environmentID, &collectionMethod,
+		&cameraModel, &graceVideoID, &dataSource, &locationID, &sceneID, &environmentID, &collectionMethod,
 		&retentionTier, &expireAt, &tenantID, &projectID,
 		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
@@ -919,6 +1283,9 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	}
 	if cameraModel != nil {
 		f.CameraModel = *cameraModel
+	}
+	if graceVideoID != nil { // CYB-4011
+		f.GraceVideoID = *graceVideoID
 	}
 	if dataSource != nil {
 		f.DataSource = *dataSource
@@ -991,7 +1358,7 @@ INSERT INTO mcap_files(
   start_timestamp_ns, end_timestamp_ns,
   channel_count, chunk_count, ingest_state,
   owner, vendor_id, collector_id, task_id, device_id,
-  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
+  camera_model, grace_video_id, data_source, location_id, scene_id, environment_id, collection_method,
   retention_tier, expire_at, tenant_id, project_id,
   metadata, process_state,
   created_at, updated_at, version
@@ -1001,10 +1368,10 @@ INSERT INTO mcap_files(
   $7,$8,
   $9,$10,$11,
   $12,$13,$14,$15,$16,
-  $17,$18,$19,$20,$21,$22,
-  $23,$24,$25,$26,
-  $27::jsonb,$28::jsonb,
-  $29,$30,$31
+  $17,$18,$19,$20,$21,$22,$23,
+  $24,$25,$26,$27,
+  $28::jsonb,$29::jsonb,
+  $30,$31,$32
 )
 ON CONFLICT (mcap_file_id) DO UPDATE SET
   raw_hash_md5=EXCLUDED.raw_hash_md5,
@@ -1023,6 +1390,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
   task_id=EXCLUDED.task_id,
   device_id=EXCLUDED.device_id,
   camera_model=EXCLUDED.camera_model,
+  grace_video_id=EXCLUDED.grace_video_id,
   data_source=EXCLUDED.data_source,
   location_id=EXCLUDED.location_id,
   scene_id=EXCLUDED.scene_id,
@@ -1042,7 +1410,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
 		f.StartTimestampNs, f.EndTimestampNs,
 		f.ChannelCount, f.ChunkCount, string(f.IngestState),
 		f.Owner, nullable(f.VendorID), nullable(f.CollectorID), nullable(f.TaskID), nullable(f.DeviceID),
-		nullable(f.CameraModel), nullable(f.DataSource), nullable(f.LocationID), nullable(f.SceneID), nullable(f.EnvironmentID), nullable(f.CollectionMethod),
+		nullable(f.CameraModel), nullable(f.GraceVideoID), nullable(f.DataSource), nullable(f.LocationID), nullable(f.SceneID), nullable(f.EnvironmentID), nullable(f.CollectionMethod),
 		nullable(f.RetentionTier), f.ExpireAt, nullable(f.TenantID), nullable(f.ProjectID),
 		metadataJSON, processStateJSON,
 		f.CreatedAt, f.UpdatedAt, f.Version,
@@ -1091,7 +1459,7 @@ SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
   COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
   COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
   COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
-  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(camera_model, ''), COALESCE(grace_video_id, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version,
@@ -1128,7 +1496,7 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 			&f.StartTimestampNs, &f.EndTimestampNs,
 			&f.ChannelCount, &f.ChunkCount, &is, &f.Owner,
 			&f.VendorID, &f.CollectorID, &f.TaskID, &f.DeviceID,
-			&f.CameraModel, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
+			&f.CameraModel, &f.GraceVideoID, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
 			&retentionTier, &expireAt, &tenantID, &projectID,
 			&metadataBytes, &processStateBytes,
 			&f.CreatedAt, &f.UpdatedAt, &f.Version,
@@ -2618,6 +2986,7 @@ func (r *AssetRepo) listWithFiltersData(ctx context.Context, whereSQL string, wh
   parent_asset_id, root_asset_id, tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
   logical_asset_id, revision, is_current,
+  camera_model, grace_video_id, device_id, collector_id, scene_id, data_source, collection_method, source_platform,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBySQL, len(allArgs)+1, len(allArgs)+2,
@@ -2633,21 +3002,29 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 	var out []*models.Asset
 	for rows.Next() {
 		var (
-			a               models.Asset
-			lifecycleState  string
-			mcapFileID      *string
-			segLoc          *string
-			parentID        *string
-			rootID          *string
-			tenantID        *string
-			projectID       *string
-			metadataBytes   []byte
-			filesBytes      []byte
-			algoInputsURIs  []byte
-			annotInputsURIs []byte
-			logicalID       *string
-			revision        *int64
-			isCurrent       *bool
+			a                models.Asset
+			lifecycleState   string
+			mcapFileID       *string
+			segLoc           *string
+			parentID         *string
+			rootID           *string
+			tenantID         *string
+			projectID        *string
+			metadataBytes    []byte
+			filesBytes       []byte
+			algoInputsURIs   []byte
+			annotInputsURIs  []byte
+			logicalID        *string
+			revision         *int64
+			isCurrent        *bool
+			cameraModel      *string
+			graceVideoID     *string // CYB-4011
+			deviceID         *string
+			collectorID      *string
+			sceneID          *string
+			dataSource       *string
+			collectionMethod *string
+			sourcePlatform   *string
 		)
 		if err := rows.Scan(
 			&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -2657,9 +3034,34 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			&parentID, &rootID, &tenantID, &projectID,
 			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
 			&logicalID, &revision, &isCurrent,
+			&cameraModel, &graceVideoID, &deviceID, &collectorID, &sceneID, &dataSource, &collectionMethod, &sourcePlatform,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
+		}
+		if cameraModel != nil {
+			a.CameraModel = *cameraModel
+		}
+		if graceVideoID != nil { // CYB-4011
+			a.GraceVideoID = *graceVideoID
+		}
+		if deviceID != nil {
+			a.DeviceID = *deviceID
+		}
+		if collectorID != nil {
+			a.CollectorID = *collectorID
+		}
+		if sceneID != nil {
+			a.SceneID = *sceneID
+		}
+		if dataSource != nil {
+			a.DataSource = *dataSource
+		}
+		if collectionMethod != nil {
+			a.CollectionMethod = *collectionMethod
+		}
+		if sourcePlatform != nil {
+			a.SourcePlatform = *sourcePlatform
 		}
 		if mcapFileID != nil {
 			a.McapFileID = *mcapFileID

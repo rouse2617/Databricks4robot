@@ -62,3 +62,10 @@
 - **Decision**: Keep this runtime fix scoped and run pre-commit on changed files, which passed.
 - **Alternatives**: Modify the unrelated report file to add an allowlist marker.
 - **Rationale**: The failing file is outside this change and is not staged; changing it would mix unrelated report maintenance into the backend watcher fix.
+
+## 2026-07-26 - Use PR CI/CD instead of manual dev deployment
+
+- **Context**: The user explicitly instructed: “不用，推送了pr，自动会cicd的”. The local pre-push all-files gate is also blocked by unrelated environment/baseline issues (Terraform/TFLint unavailable, Docker unavailable, and a pre-existing detect-secrets finding outside this diff).
+- **Decision**: Skip the manual frontend dev deploy and Chrome DevTools MCP verification for this PR, and use `SKIP_PREPUSH=1` for this push only; rely on GitHub PR CI/CD for remote verification.
+- **Alternatives**: Complete a manual Wrangler dev deployment and browser verification, and repair all unrelated local pre-push prerequisites before pushing.
+- **Rationale**: The current explicit user instruction takes precedence, while this append-only record preserves the verification exception and the skipped local-gate rationale for reviewers.

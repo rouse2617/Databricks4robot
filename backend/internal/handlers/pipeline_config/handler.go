@@ -168,7 +168,7 @@ func (h *Handler) UpdateVersionStatus(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Status  string `json:"status"`
+		Status string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})

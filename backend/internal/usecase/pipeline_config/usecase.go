@@ -3,8 +3,8 @@ package pipeline_config
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -113,7 +113,10 @@ func (uc *Usecase) Create(ctx context.Context, in CreateConfigInput) (*models.Pi
 		return nil, err
 	}
 	if err := uc.repo.Create(ctx, cfg, version); err != nil {
-		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) {
+			return nil, ErrConfigNameExists
+		}
+		return nil, err
 	}
 	cfg.VersionCount = 1
 	cfg.Versions = []models.PipelineConfigVersion{withoutContent(*version)}
@@ -141,7 +144,10 @@ func (uc *Usecase) Update(ctx context.Context, id string, in UpdateConfigInput) 
 		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
 			return nil, ErrConfigNotFound
 		}
-		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) {
+			return nil, ErrConfigNameExists
+		}
+		return nil, err
 	}
 	return uc.Get(ctx, id)
 }
@@ -168,7 +174,10 @@ func (uc *Usecase) CreateVersion(ctx context.Context, configID string, in Create
 		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
 			return nil, ErrConfigNotFound
 		}
-		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) {
+			return nil, ErrConfigNameExists
+		}
+		return nil, err
 	}
 	return version, nil
 }

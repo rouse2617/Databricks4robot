@@ -53,6 +53,17 @@ func (m *provenanceAssetRepo) ListDescendants(_ context.Context, _ string) ([]*m
 func (m *provenanceAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }
+func (m *provenanceAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
+func (m *provenanceAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (m *provenanceAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
 
 type provenanceEventRepo struct {
 	promoted []*models.AssetEvent

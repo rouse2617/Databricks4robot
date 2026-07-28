@@ -202,6 +202,15 @@ export function getWorkflowOperationConfirmText(
 	if (key === "delete") {
 		return "若这是 DataBrew 执行记录，将从执行记录列表删除，并尝试删除关联 Argo Workflow；外部 Workflow 只会删除 Argo Workflow。";
 	}
+	if (key === "stop") {
+		return "停止会向 Argo 发送优雅停止信号（shutdown=Stop），中断正在运行的工作流（会先执行退出处理再停），已跑的进度不保留。";
+	}
+	if (key === "suspend") {
+		return "暂停会挂起工作流：已在运行的节点跑完、不再调度新节点；可稍后「恢复」继续。";
+	}
+	if (key === "terminate") {
+		return "终止会立即删除所有运行中的 pod 并标记工作流失败，不执行退出处理。";
+	}
 	return null;
 }
 

@@ -57,6 +57,147 @@ export interface FoxgloveSourceResponse {
 	expires_at?: string;
 }
 
+// ─── CYB-4294: batch duration lookup ────────────────────────────────────────
+
+export type AssetDurationIdType = "auto" | "asset_id" | "grace_video_id";
+
+export interface AssetDurationsRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	min_duration_ms?: number;
+	max_duration_ms?: number;
+}
+
+export interface DurationLookupItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	duration_ms: number;
+	duration_sec: number;
+	formatted: string;
+}
+
+export interface DurationStats {
+	matched_count: number;
+	missing_count: number;
+	filtered_out_count: number;
+	total_ms: number;
+	mean_ms: number;
+	min_ms: number;
+	max_ms: number;
+	p50_ms: number;
+	p90_ms: number;
+}
+
+export interface AssetDurationsResponse {
+	items: DurationLookupItem[];
+	missing_ids: string[];
+	filtered_out_ids: string[];
+	stats: DurationStats;
+}
+
+// ─── CYB-4306: batch cost lookup ────────────────────────────────────────────
+
+export type AssetCostGroupBy = "asset" | "asset_algo";
+
+export interface AssetCostsRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	start_at: string; // RFC3339
+	end_at: string; // RFC3339
+	group_by?: AssetCostGroupBy;
+}
+
+export interface AssetCostByAlgo {
+	algo_key: string;
+	cost_usd: number;
+	gpu_sec: number;
+	cpu_sec: number;
+	run_count: number;
+}
+
+export interface AssetCostItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	total_cost_usd: number;
+	gpu_sec: number;
+	cpu_sec: number;
+	gpu_min: number;
+	cpu_min: number;
+	run_count: number;
+	by_algo: AssetCostByAlgo[] | null;
+}
+
+export interface AssetCostStats {
+	matched_count: number;
+	missing_count: number;
+	filtered_out_count: number;
+	total_cost_usd: number;
+	mean_cost_usd: number;
+	p50_cost_usd: number;
+	p90_cost_usd: number;
+	total_gpu_sec: number;
+	total_cpu_sec: number;
+	total_run_count: number;
+}
+
+export interface AssetCostsResponse {
+	items: AssetCostItem[];
+	missing_ids: string[];
+	filtered_out_ids: string[];
+	stats: AssetCostStats;
+}
+
+// ─── CYB-4305: batch lineage lookup ─────────────────────────────────────────
+
+export type AssetLineageDepth = 1 | "1" | "all";
+
+export interface AssetLineageBatchRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	// Server accepts `1`, `"1"`, and `"all"`. Default 1.
+	depth?: AssetLineageDepth;
+}
+
+// LineageBatchItem carries the direct-hop fields on every response.
+// upstream_ids / downstream_ids / relation_types are absent when depth=1
+// (server does not emit them) and present as arrays when depth=all.
+export interface LineageBatchItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	parent_asset_id: string | null;
+	root_asset_id: string | null;
+	logical_asset_id: string | null;
+	is_current: boolean;
+	revision: number;
+	upstream_ids?: string[];
+	downstream_ids?: string[];
+	relation_types?: string[];
+}
+
+export interface LineageBatchStats {
+	matched_count: number;
+	missing_count: number;
+	has_parent_count: number;
+	is_root_count: number;
+	orphan_count: number;
+	is_current_count: number;
+	// Present when depth=all (server sets an empty map even when no items
+	// carry relation types); absent when depth=1.
+	relation_type_counts?: Record<string, number>;
+}
+
+export interface AssetLineageBatchResponse {
+	items: LineageBatchItem[];
+	missing_ids: string[];
+	// Kept in the envelope for symmetry with the durations / costs shells;
+	// lineage has no server-side range filter so this is always [].
+	filtered_out_ids: string[];
+	stats: LineageBatchStats;
+}
+
 export interface AssetMetadataResponse {
 	asset_id: string;
 	segment_locator: string;
@@ -287,10 +428,45 @@ export const assetsApi = {
 	get: (id: string) =>
 		apiClient.get<Asset>(`/assets/${id}`).then((r) => r.data),
 
+	// CYB-4011: resolve a Grace video UUID to its DataBrew asset via the
+	// backfilled grace_video_id column. Returns the first matching asset, or
+	// null if none. Used as a frontend fallback when a Grace UUID is used
+	// where a DataBrew asset_id is expected (asset detail redirect; subtask
+	// video-duration column).
+	resolveByGraceVideoID: (graceVideoID: string) =>
+		assetsApi
+			.list({ filter: [`grace_video_id:eq:${graceVideoID}`], page_size: 1 })
+			.then((r) => r.items[0] ?? null)
+			.catch(() => null),
+
 	batchGet: (assetIds: string[]) =>
 		apiClient
 			.post<{ items: Asset[] }>("/assets:batch_get", { asset_ids: assetIds })
 			.then((r) => r.data.items ?? []),
+
+	// CYB-4294: batch duration lookup. Server matches both `asset_id` and
+	// `grace_video_id` columns via OR, so ids may be mixed shapes.
+	lookupDurations: (req: AssetDurationsRequest) =>
+		apiClient
+			.post<AssetDurationsResponse>("/assets/durations", req)
+			.then((r) => r.data),
+
+	// CYB-4306: batch cost lookup. Server resolves ids via the same OR-on-
+	// both-columns index scan, then aggregates leaf-pod costs over the
+	// [start_at, end_at] window (required, ≤90 days). Set group_by to
+	// "asset_algo" for a per-algo breakdown.
+	lookupCosts: (req: AssetCostsRequest) =>
+		apiClient
+			.post<AssetCostsResponse>("/assets/costs", req)
+			.then((r) => r.data),
+
+	// CYB-4305: batch lineage lookup. depth=1 (default) returns direct-hop
+	// parent/root/logical/is_current/revision in one SQL scan; depth="all"
+	// overlays the ES lineage projection (upstream/downstream/relation).
+	lookupLineage: (req: AssetLineageBatchRequest) =>
+		apiClient
+			.post<AssetLineageBatchResponse>("/assets/lineage-batch", req)
+			.then((r) => r.data),
 
 	getPreviewManifest: (id: string) =>
 		apiClient

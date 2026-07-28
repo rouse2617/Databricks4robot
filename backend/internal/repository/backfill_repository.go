@@ -10,8 +10,17 @@ import (
 type BackfillRepository interface {
 	// Job operations.
 	SaveJob(ctx context.Context, j *models.BackfillJob) error
-	FindAllJobs(ctx context.Context) ([]models.BackfillJob, error)
+	// FindAllJobs lists jobs newest-first. When createdBy is non-empty, only
+	// jobs with that exact created_by are returned (e.g.
+	// "subscription-task:<id>" to list a subscription task's dispatches).
+	FindAllJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error)
 	FindJobByID(ctx context.Context, id string) (*models.BackfillJob, error)
+	// TotalDurationByBatchIDs returns per-batch total asset duration (ms) —
+	// SUM(assets.duration_ms) over every asset referenced by every child
+	// pipeline_run's asset_ids array (with multiplicity), excluding
+	// soft-deleted assets. Missing batches carry implicit-0 at the caller.
+	// Empty ids short-circuits without SQL. CYB-4350.
+	TotalDurationByBatchIDs(ctx context.Context, batchIDs []string) (map[string]int64, error)
 	UpdateJobStatus(ctx context.Context, id, status string) error
 	UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error
 	IncrementCompleted(ctx context.Context, id string) error
@@ -37,6 +46,12 @@ type BackfillRepository interface {
 	FindItemByPipelineRunID(ctx context.Context, pipelineRunID string) (*models.BackfillItem, error)
 	UpdateItemStatus(ctx context.Context, id, status, workflowName, errorMsg string) error
 	UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error
+	// MarkItemFailedWithRun marks a backfill item failed while binding its
+	// pipeline_run_id / workflow_name AND persisting error_message in one write
+	// (CYB-4026 D5). UpdateItemPipelineRun cannot carry a reason, so the
+	// DLQ/max-attempts path that already has a run id previously lost the
+	// failure cause; this method keeps run binding and reason together.
+	MarkItemFailedWithRun(ctx context.Context, id, pipelineRunID, workflowName, errorMsg string) error
 	// AdvanceItemAndCountAtomic transitions a backfill item to a terminal
 	// status (completed / failed / cancelled) AND increments the corresponding
 	// job counter in one CTE. Idempotent by construction: the item is only
@@ -62,9 +77,6 @@ type BackfillRepository interface {
 	CountRunsWithNodeRowsByBatchJobID(ctx context.Context, jobID string) (int, error)
 	FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error)
 	FindItemByJobAndAssetID(ctx context.Context, jobID, assetID string) (*models.BackfillItem, error)
-
-
-
 
 	// FindActiveJobs returns non-terminal, non-paused batch jobs up to limit,
 	// oldest first, regardless of whether items are still pending. Used by the

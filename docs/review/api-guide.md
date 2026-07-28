@@ -201,6 +201,32 @@ curl "$BASE/api/v1/lakehouse/report" \
 
 注意：上述 Lakehouse 接口在 1.0 阶段未上线；2.0 起 BigQuery 负责查询 BigLake-managed Iceberg 表，入湖由 Cloud Run Job + PyIceberg 完成。
 
+Dashboard 数据时长分布（CYB-4303 / CYB-4338）：
+
+```bash
+# 10 桶时长直方图 + 汇总统计（total_assets/total_ms/mean/min/max/p50/p90）
+# CYB-4338 前密后疏细拆: <1m/1-5m/5-10m/10-15m/15-20m/20-25m/25-30m/30-45m/45-60m/60m+
+# asset_type 可选(如 raw_mcap)；缺省=全类聚合。宽容:无法识别的值只返回 total_assets=0,不报 400
+curl "$BASE/api/v1/dashboard/duration-distribution?asset_type=raw_mcap" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `200`（`buckets` 恒为 10 个、按序返回，空数据时 `count=0/total_ms=0`；顶桶 `60m+` 的 `hi_ms=null`；无数据时统计字段为 0 而非 null/NaN）：
+```json
+{
+  "asset_type": "raw_mcap",
+  "buckets": [
+    {"label": "<1m", "lo_ms": 0, "hi_ms": 60000, "count": 12, "total_ms": 250000},
+    {"label": "1-5m", "lo_ms": 60000, "hi_ms": 300000, "count": 40, "total_ms": 6000000},
+    {"label": "15-20m", "lo_ms": 900000, "hi_ms": 1200000, "count": 8, "total_ms": 8400000},
+    {"label": "60m+", "lo_ms": 3600000, "hi_ms": null, "count": 3, "total_ms": 15000000}
+  ],
+  "total_assets": 126, "total_ms": 119350000,
+  "mean_ms": 947222, "min_ms": 500, "max_ms": 6500000,
+  "p50_ms": 850000, "p90_ms": 2900000
+}
+```
+
 ## 1. 资产查询工作台 / 资产管理 (Assets)
 
 > **`asset_id`（资产主键）**：固定 **8 位** ASCII **字母与数字**（`[0-9A-Za-z]{8}`），与 `mcap_file_id`（同为 8 位字母数字 ID）无关。创建资产时通常由服务端随机分配；也可在请求体中传入自定义 `asset_id`（须符合格式且未被占用，冲突返回 `409`、`DUPLICATE_ASSET_ID`）。凡路径中的 `{asset_id}` 均指该字段。
@@ -409,7 +435,20 @@ curl -sS -X POST "$BASE/api/v1/queries/run?include_history=true" \
     "page": {"page": 1, "page_size": 20}
   }'
 
-# keyword / semantic / similar 也统一从 Query API 进入
+# keyword / semantic / similar — 两种等价写法(CYB-3713):
+# (A) 顶级 q 字段(推荐,简洁):Normalize 会自动注入 `_fulltext ilike q` 到 where 树。
+curl -sS -X POST "$BASE/api/v1/queries/run" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_version": "v1",
+    "mode": "keyword",
+    "q": "warehouse rain",
+    "scope": {"resource": "assets"},
+    "page": {"page": 1, "page_size": 20}
+  }'
+
+# (B) 显式 _fulltext predicate(高级用法,可与其他 predicate 组合):
 curl -sS -X POST "$BASE/api/v1/queries/run" \
   -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
@@ -423,6 +462,12 @@ curl -sS -X POST "$BASE/api/v1/queries/run" \
     "page": {"page": 1, "page_size": 20, "offset": 0, "limit": 20}
   }'
 ```
+
+**关键点(CYB-3713)**:
+- `q` 仅在 `mode ∈ {keyword, semantic, similar}` 时生效,`structured` 会被丢弃
+- 空 `q` 保持"无过滤"行为(向后兼容),配合 `where` 使用
+- 覆盖字段:`asset_id`, `asset_type`, `owner`, `reviewer`, `mcap_file_id`, `notes` tag。 `mcap_files.metadata` JSONB **不在覆盖范围**(另行 CYB-3714 / CYB-3715 追踪)
+- ES 不可用时自动 fallback PG `ILIKE`,`debug_plan.warnings` 里会有 `"keyword search degraded to postgres ilike"`
 
 错误语义：
 - `400 INVALID_ARGUMENT`：请求结构不合法（如 `scope.resource` 非法、排序方向非法）
@@ -534,6 +579,64 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
 > **CYB-3281**：`upstream` 现在**在保留 raw-mcap 顶层字段**（`mcap_file_id`/`mcap_uri`/`ingest_state`，前端沿用)的同时,新增**直接父资产**(`asset_id`/`asset_type`/`root_asset_id`/`start`/`end`,来自 `assets.parent_asset_id`；segment 的父是 raw_mcap 资产,其 `asset_id == mcap_file_id`)。`downstream.children[]` 新增,列出直接子资产(mcap 下的 segment、seg 下的 action/frame),与 `algo_results`/`deliveries`/`eval_results` 并列。
 
 错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
+
+### 1.7.1 反查资产跑过的流水线运行（CYB-4297）
+
+`GET /api/v1/assets/{id}/runs`
+
+"打开资产，看它跑过哪些流水线"。基于 `pipeline_runs.asset_ids` 的 GIN 索引反查。`{id}` 接受 `grace_video_id` 或短 `asset_id`（usecase 用 `assetRepo` 把短 id 解析为 grace id）。**未知 id 返回空 `items`，不是 404**。仅返回 summary 投影，形状与 `GET /api/v1/runs` 一致。
+
+查询参数：`status`（按运行状态过滤）、`batchJobId`（按批次过滤）、`page`（默认 1）、`pageSize`（默认 20，上限 200）。
+
+```bash
+curl "$BASE/api/v1/assets/{id}/runs?pageSize=5" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `200`：
+```json
+{
+  "items": [
+    {"id": "run-42", "pipeline_name": "hand-track", "status": "Succeeded", "created_at": "2026-07-27T10:00:00Z"}
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 5
+}
+```
+
+错误：`400` + `INVALID_ARGUMENT`（空 id）。
+
+### 1.7.2 批量成本 / GPU 时长反查（CYB-4306）
+
+`POST /api/v1/assets/costs`
+
+一批 asset_id + 时间窗,反查每个在窗口内烧了多少 GPU-min / $（FinOps 归因 + "贵/便宜 asset"排序）。`start_at`/`end_at` 必填(否则会扫全表),窗口 ≤ 90 天。未知 id 进 `missing_ids`,不报错。
+
+请求体:`ids`(string[],非空,≤5000)、`id_type`(可选)、`start_at`/`end_at`(RFC3339 必填,end≥start)、`group_by`(`""`|`asset`|`asset_algo`,空默认 `asset`;`asset_algo` 额外给每算法拆分)。
+
+```bash
+curl -sS -X POST "$BASE/api/v1/assets/costs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"ids":["p4t2m03a"],"start_at":"2026-07-01T00:00:00Z","end_at":"2026-07-28T00:00:00Z","group_by":"asset"}'
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {"input_id":"p4t2m03a","asset_id":"p4t2m03a","total_cost_usd":0.0034,
+     "gpu_sec":120,"cpu_sec":300,"gpu_min":2,"cpu_min":5,"run_count":3,"by_algo":null}
+  ],
+  "missing_ids": [],
+  "filtered_out_ids": [],
+  "stats": {"matched_count":1,"missing_count":0,"filtered_out_count":0,
+    "total_cost_usd":0.0034,"mean_cost_usd":0.0034,"p50_cost_usd":0.0034,"p90_cost_usd":0.0034,
+    "total_gpu_sec":120,"total_cpu_sec":300,"total_run_count":3}
+}
+```
+
+错误码(`400`):`INVALID_ARGUMENT`(请求体非法)、`ID_LIST_REQUIRED`(ids 空)、`ID_LIST_TOO_LARGE`(>5000)、`INVALID_TIME_RANGE`(缺 start/end 或 end<start)、`WINDOW_TOO_LARGE`(窗口>90 天)、`INVALID_GROUP_BY`;`500` `INTERNAL`。
 
 ### 1.8 查询 logical asset 评分历史（CYB-1100）
 
@@ -1686,6 +1789,16 @@ curl -X POST "$BASE/api/v1/mcap-files" \
 
 响应 `201`：返回完整 `McapFile` JSON。
 
+**自动打 tag(CYB-3797)**:后端在同一个事务里从 `metadata` 里 extract 3 个字段自动生成 tag 行:
+
+| Metadata 路径 | Tag key | 说明 |
+|---|---|---|
+| `metadata.vibecap_tasks[]`(数组 或 JSON-encoded 字符串)| `task` | 数组每个值一行 tag |
+| `metadata.source_platform` | `source` | 单条 |
+| `metadata.location.address` | `city` | 反向 comma-split 找 `X市`,过滤 `超市/大厦/商店/商场/广场/医院` POI 名 |
+
+所有自动 tag 用 `source_type="system"` + `source_name="mcap_ingest"`,方便审计和未来变更 rule 后重新提取。 未知 metadata key(如 `weather` / `collector_height`)不会成为 tag,`metadata` JSONB 原样保留。 值 shape 异常(如 `vibecap_tasks` 不是数组也不是 JSON string)那条 tag skip,mcap POST 仍然 201。
+
 ### 5.2 列出 MCAP 文件
 
 ```bash
@@ -1946,6 +2059,22 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID/resume" \
   -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
+### 7.2.2b Internal：回填 mcap 的 grace_video_id（CYB-4011）
+
+> mcap 没有通用 update 端点。此内部路由用于把 Grace video id（按 `raw_hash_md5` 解析）回填到**已存在**的 mcap 行——同时更新事实源 `mcap_files.grace_video_id` 和镜像列 `assets.grace_video_id`，并发 `asset_updated` 事件触发 ES 重建，使 `grace_video_id` 可过滤。幂等（已是该值时直接 200 返回不变）。鉴权同 `X-Databrew-Token`（生产另需 `X-Admin-Token`）。
+
+```bash
+curl -sS -X PATCH "$BASE/api/v1/internal/mcap-files/$MCAP_ID/grace-video-id" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"grace_video_id": "019f9893-3456-7376-ae68-30a89227eb46"}' | jq .
+```
+
+- `200` — 返回更新后的 mcap（`grace_video_id` 已写入）。
+- `400 INVALID_ARGUMENT` — 未传 `grace_video_id` 或为空。
+- `404 MCAP_FILE_NOT_FOUND` — mcap 不存在。
+
+回填后 mcap 详情页与资产详情页两处均显示 Grace Video ID；`filter=grace_video_id:eq:<uuid>` 可命中。
+
 ### 7.2.3 Internal：硬删除 assets / mcap_files
 
 > ⚠️ 这是**物理删除**接口，与公共 `DELETE /api/v1/assets/:id`（soft delete）行为不同。仅在导入失控、需要彻底清理时使用。
@@ -2143,9 +2272,11 @@ curl "$BASE/api/v1/search/sync-progress" \
 字段前缀约定:
 
 - `tags_flat.<key>` — 物化扁平字段，**首选**等值过滤路径（如 `tags_flat.scene`、`tags_flat.time_of_day`）。
-- `mcap.<col>` — mcap 反范式属性（`vendor_id` / `device_id` / `scene_id` / `camera_model` 等）。
+- `mcap.<col>` — mcap 反范式属性（`vendor_id` / `device_id` / `scene_id` / `camera_model` 等）。CYB-3715 之后同名字段也可直接作顶层字段使用（下方一栏），mcap.* 保留给需要走 mcap_files subquery 的旧调用。
 - `algos.<key>.status` / `algos.<key>.score` — 算法状态（nested，后端自动转 nested query）。
 - 顶层字段：`lifecycle_state` / `asset_type` / `owner` / `duration_ms` / `created_at` / `updated_at`。
+- 顶层字段（CYB-3715 新增，mcap 反范式镜像）：`camera_model` / `device_id` / `collector_id` / `scene_id` / `data_source` / `collection_method` / `source_platform`。前四条同时作为 facet 桶字段(uuid 类 filter-only,camera_model/data_source/collection_method/source_platform 支持 facet)。示例：`{"where":{"pred":{"field":"camera_model","op":"eq","value":"CyberCap2"}}}`。
+- 顶层字段（CYB-4011）：`grace_video_id` — Grace video UUID，从 `mcap_files.grace_video_id` 镜像到 assets。**仅精确过滤（filter-only），不作 facet 桶**（UUID 高基数）。默认未填充（可空）。示例：`filter=grace_video_id:eq:019f9893-3456-7376-ae68-30a89227eb46` 或 Query IR `{"where":{"pred":{"field":"grace_video_id","op":"eq","value":"019f9893-3456-7376-ae68-30a89227eb46"}}}`。创建 mcap 时可选传 `grace_video_id`；mcap get/list 与 `/queries/run` 响应回读该字段。
 
 常见误区:
 
@@ -2534,6 +2665,48 @@ curl -s "$BASE/api/v1/pipelines/<ID1>/diff/<ID2>" \
 #   "added_edges": [{"source": "a.out", "target": "b.in"}],
 #   "removed_edges": [{"source": "c.out", "target": "d.in"}]
 # }
+# 404: template 不存在
+```
+
+### Pipeline 发布到正式版（promotion，CYB-3914）
+
+将 dev 草稿流水线复制到 prod scope（同库）。发布前可预览 readiness（blockers / warnings / mappings）。
+
+**前置条件：** 调用者需要 admin 角色（admin email 或 `sdk` 用户）。
+
+#### 预览 promotion plan
+
+```bash
+# POST /api/v1/pipelines/<DEV_TEMPLATE_ID>/promotion-plan
+curl -s "$BASE/api/v1/pipelines/<ID>/promotion-plan" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"target": "prod"}'
+
+# 响应示例 (ready):
+# {
+#   "targetEnvironment": "prod",
+#   "planDigest": "sha256:...",
+#   "bundle": { "sourceTemplateId": "<ID>", "sourceVersion": 3, ... },
+#   "requiredMappings": [],
+#   "blockers": [],
+#   "warnings": [],
+#   "ready": true
+# }
+# ready=false 时 blockers 列出所有阻塞项（非 digest 镜像 / 敏感明文 env / 缺少映射）
+# 403: 无 admin 权限
+```
+
+#### 执行 promotion
+
+```bash
+# POST /api/v1/pipelines/<DEV_TEMPLATE_ID>/promote
+curl -X POST "$BASE/api/v1/pipelines/<ID>/promote" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# { "id": "<PROD_ID>", "name": "my-pipeline", "scope": "prod", "version": 1, ... }
+# 201: 发布成功（返回 prod 模板）
+# 403: 无 admin 权限
 # 404: template 不存在
 ```
 
@@ -3560,3 +3733,112 @@ Notes:
 - The Argo hook is injected at transpile time only when `ARGO_RUN_WEBHOOK_URL` is set (empty = poll-only fallback). The token is sent from a K8s Secret (`databrew-run-webhook-token`) via `valueFrom.secretKeyRef`, never embedded in the manifest.
 - The polling watcher remains a reconcile backstop (`PIPELINE_RUN_WATCHER_INTERVAL_SEC`, default 30s); dropped pokes are eventually reconciled.
 - Smoke: `scripts/smoke-argo-push-dev.sh` (covers 401/400/404, plus 200 when passed a known workflow name).
+
+## Subscription Tasks (CYB-3778)
+
+Pub/Sub-driven auto-dispatch rules. External publishers push a message `{"asset_ids": ["a","b"], "topic": "..."}` to a GCP Pub/Sub topic; Databrew subscribes and, per message, dispatches to **every** bound pipeline template (fan-out): **1 asset → a single pipeline run** (surfaces in 执行记录), **≥2 assets → a batch** (批量任务). `topic` is a reserved field (parsed, not yet acted on). Legacy single-field `{"asset_id":"x"}` is **no longer supported** — use `asset_ids` (CYB-3801).
+
+**Base**: all endpoints under `/api/v1/subscription-tasks`, authenticated via `X-Databrew-Token` (or the session cookie the frontend already uses).
+
+```bash
+BASE=https://cyber-databrew-dev.cyberorigin.ai
+TOK="$DATABREW_TOKEN"
+
+# List
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks?enabled=true"
+# -> {"items":[...], "total":N, "page":1, "pageSize":50}
+
+# Create — one subscription fans out to multiple pipeline templates
+curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/subscription-tasks" -d '{
+    "name": "youxin-ingest",
+    "enabled": true,
+    "projectId": "green-valley-442103",
+    "subscriptionId": "databrew-ingest-youxin-sub",
+    "pullIntervalSeconds": 10,
+    "maxMessagesPerPull": 1000,
+    "pipelineBindings": [
+      { "templateId": "tpl_sea_v2", "targetId": "cluster-default" },
+      { "templateId": "tpl_hand_track", "targetId": "gpu-pool", "templateVersion": 3 }
+    ]
+  }'
+# -> 201 { "id": "sub_...", ... }
+# Per message: 1 asset → a single run per binding; ≥2 assets → a batch per binding.
+
+# Get / Update / Delete
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$ID"
+curl -sS -X PUT -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/subscription-tasks/$ID" -d '{...same body as create...}'
+curl -sS -o /dev/null -w '%{http_code}\n' -X DELETE -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/subscription-tasks/$ID"   # 204
+
+# Pause / Resume
+curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$ID/pause"
+curl -sS -X POST -H "X-Databrew-Token: $TOK" "$BASE/api/v1/subscription-tasks/$ID/resume"
+```
+
+**Error paths**:
+- `400 INVALID_ARGUMENT` — missing required fields (name/projectId/subscriptionId), empty `pipelineBindings`, a binding missing templateId/targetId, or invalid pullIntervalSeconds/maxMessagesPerPull.
+- `404 SUBSCRIPTION_TASK_NOT_FOUND` — get/update against an unknown id.
+
+**Smoke**: `scripts/smoke-subscription-tasks-dev.sh` (happy path + 400 + 404 + history endpoints).
+
+### 历史下发追溯：批次 (CYB-3798) + 单 run (CYB-3801)
+
+从订阅任务反查它下发过的**批次**和**单个 run**。链路靠 `backfill_jobs.created_by` / `pipeline_runs.owner = "subscription-task:<id>"`，均为只读。
+
+```bash
+# 该订阅任务下发过的全部批次（≥2 资产的消息，newest-first）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/backfill?createdBy=subscription-task:$ID"
+# -> {"items":[{ "id":"batch_...", "name":"...", "status":"...", "totalCount":N, ... }]}
+
+# 该订阅任务下发过的单个 run（单资产的消息，standalone，CYB-3801）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/runs?createdBy=subscription-task:$ID&excludeBatch=true"
+# -> {"items":[{ "id":"...", "pipelineName":"...", "status":"...", "assetIds":[...] }], "total":N}
+
+# 某批次跑过的资产明细（assetId + 状态 + pipelineRunId）
+curl -sS -H "X-Databrew-Token: $TOK" \
+  "$BASE/api/v1/backfill/<BATCH_ID>/items"
+# -> {"items":[{ "assetId":"...", "status":"completed", "pipelineRunId":"...?" }]}
+```
+
+- `createdBy` 省略时 `GET /api/v1/backfill` 与 `GET /api/v1/runs` 行为不变（返回全部）。
+- 未知 batch id 的 `/items` 返回 `200 {"items":[]}`（非 404）；空 id 返回 `400 INVALID_ARGUMENT`。
+
+## Admin API Keys (CYB-3154 / CYB-3418)
+
+`dbk_` API keys for external integrators (e.g. VibeCap grace-to-databrew). All endpoints are under `/api/v1/admin/api-keys` and require the `apikeys:manage` scope. The **plaintext key is returned exactly once** at creation — only its hash is stored, so it can never be retrieved again.
+
+```bash
+BASE=https://cyber-databrew-dev.cyberorigin.ai
+TOK="$DATABREW_TOKEN"   # must carry the apikeys:manage scope
+
+# Create — plaintext key returned ONCE. Store it immediately.
+curl -sS -X POST -H "X-Databrew-Token: $TOK" -H "Content-Type: application/json" \
+  "$BASE/api/v1/admin/api-keys" -d '{
+    "name": "vibecap-integration",
+    "owner": "grace-to-databrew",
+    "scopes": ["assets:read", "queries:run"],
+    "expiresAt": null
+  }'
+# -> 201 { "id":"...", "key":"dbk_...", "keyPrefix":"dbk_ab12", "scopes":[...],
+#          "note":"store this key now — it will not be shown again" }
+
+# List — the secret hash is never serialized
+curl -sS -H "X-Databrew-Token: $TOK" "$BASE/api/v1/admin/api-keys"
+# -> 200 { "items":[{ "id":"...", "keyPrefix":"...", "scopes":[...], "status":"active", ... }] }
+
+# Revoke
+curl -sS -X DELETE -H "X-Databrew-Token: $TOK" "$BASE/api/v1/admin/api-keys/<ID>"
+# -> 200 { "status":"revoked", "id":"<ID>" }
+```
+
+**Field notes** (Create): `scopes` required, ≥1 entry, each non-empty. `name` / `owner` optional. `expiresAt` optional RFC 3339 (null/omitted = never expires).
+
+**Error paths**:
+- `400 INVALID_ARGUMENT` — `scopes` missing/empty (`scopes required (min 1)`), or a whitespace-only scope entry (`scope entries must be non-empty`).
+- `403 FORBIDDEN` — a **privileged** scope (`*` or `apikeys:manage`) was requested without the static admin token; a JWT (email-login) session cannot mint long-lived privileged keys (CYB-3417).
+
+**Smoke**: `scripts/api-guide-smoke.sh` (`admin/api-keys`) — list 200 + the two 400 validation paths run by default; the create→revoke round-trip is gated behind `RUN_WRITES=1` because it mints a real credential.

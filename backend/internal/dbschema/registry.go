@@ -5,12 +5,12 @@ package dbschema
 // tables across 28 SQL migrations (000_initial + 039-064).
 //
 // When adding a new model:
-//   1. Write the struct with full gorm tags (column, type, nullability,
-//      default). CHECK constraints and indexes are NOT expressible in
-//      GORM tags and should remain in the SQL migration.
-//   2. Add a TableName() method returning the SQL table name.
-//   3. Append the pointer here in alphabetical order (or by SQL file
-//      order — pick one and stay consistent).
+//  1. Write the struct with full gorm tags (column, type, nullability,
+//     default). CHECK constraints and indexes are NOT expressible in
+//     GORM tags and should remain in the SQL migration.
+//  2. Add a TableName() method returning the SQL table name.
+//  3. Append the pointer here in alphabetical order (or by SQL file
+//     order — pick one and stay consistent).
 //
 // When modifying a model:
 //   - Edit the tags to match the intended new schema.

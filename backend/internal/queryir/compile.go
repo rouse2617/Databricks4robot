@@ -206,8 +206,30 @@ func Normalize(req QueryRequest) QueryRequest {
 		normalized.SchemaVersion = SchemaVersionV1
 	}
 	normalized.Mode = strings.ToLower(strings.TrimSpace(normalized.Mode))
+	normalized.Q = strings.TrimSpace(normalized.Q)
 	normalized.Scope.Resource = strings.TrimSpace(normalized.Scope.Resource)
 	normalized.Where = normalizeExpr(normalized.Where)
+	// CYB-3713: keyword mode (and its sibling fulltext modes) previously
+	// dropped the `q` param entirely — no field on QueryRequest, no
+	// injection into Where — so the planner saw an empty where tree and
+	// returned the unfiltered asset list. Synthesize a `_fulltext ilike Q`
+	// predicate here so the existing dispatch (planner → ES recall or PG
+	// buildFulltextClause fallback) picks it up. Skip for empty Q so
+	// callers who supply mode without q keep the no-filter behavior.
+	if IsFulltextMode(normalized.Mode) && normalized.Q != "" {
+		fulltextPred := &QueryExpr{Pred: &QueryPredicate{
+			Field: "_fulltext",
+			Op:    "ilike",
+			Value: normalized.Q,
+		}}
+		if normalized.Where == nil {
+			normalized.Where = fulltextPred
+		} else {
+			normalized.Where = &QueryExpr{
+				And: []QueryExpr{*normalized.Where, *fulltextPred},
+			}
+		}
+	}
 	normalized.Sort = normalizeSort(normalized.Sort)
 	page, pageSize := normalizePage(normalized.Page)
 	normalized.Page = QueryPage{

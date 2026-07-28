@@ -142,6 +142,17 @@ func (r *readModelAssetRepo) ListDescendants(_ context.Context, _ string) ([]*mo
 func (r *readModelAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return r.listWithFiltersFn(ctx, whereSQL, args, page, pageSize, orderBy)
 }
+func (r *readModelAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
+func (r *readModelAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (r *readModelAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
 
 func TestCreate_WritesTagProjectionAndOutbox(t *testing.T) {
 	repo := newMockAssetRepo()

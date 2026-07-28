@@ -108,6 +108,14 @@ const ASSET_DISCOVERY_FACETS: NonNullable<QueryRequest["facets"]> = [
 	// CYB-3297 Phase B: env is free-form data (metadata.env); request it as a
 	// facet so the sidebar can list the real values instead of a hardcoded set.
 	{ field: "env", size: 50 },
+	// CYB-3715: 4 flatten mirror columns exposed as top-level asset fields.
+	// Text columns are facet-able (low cardinality — camera model families,
+	// data source enum, source_platform enum). UUID fields (device_id /
+	// collector_id / scene_id) remain filter-only, no facet request.
+	{ field: "camera_model", size: 20 },
+	{ field: "data_source", size: 20 },
+	{ field: "collection_method", size: 20 },
+	{ field: "source_platform", size: 20 },
 ];
 
 function buildStructuredQueryWhereExpr(

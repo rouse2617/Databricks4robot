@@ -167,7 +167,7 @@ func TestRunSubmitterCycle_LockErrorRunsUnguarded(t *testing.T) {
 
 // Missing wiring (no queue / no deployer) is a silent no-op, never a panic.
 func TestRunSubmitterCycle_NoQueueOrDeployerIsNoop(t *testing.T) {
-	(&Usecase{}).runSubmitterCycle(context.Background())                          // both nil
+	(&Usecase{}).runSubmitterCycle(context.Background())                                // both nil
 	(&Usecase{submitQueue: &fakeSubmitQueue{}}).runSubmitterCycle(context.Background()) // deployer nil
 }
 

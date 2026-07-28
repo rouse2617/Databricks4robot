@@ -193,6 +193,96 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 	t.Fatal("step-gpu template not found")
 }
 
+// CPURequest/CPULimit (and the memory pair) make a step Burstable: the scheduler
+// packs by the low request while the pod may burst to the higher limit.
+func TestTranspileBurstableRequestBelowLimit(t *testing.T) {
+	p := &Pipeline{Name: "burst", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox", Command: []string{"true"},
+			Resources: &ResourceRequirements{
+				CPURequest: "1", CPULimit: "1500m",
+				MemoryRequest: "512Mi", MemoryLimit: "1Gi",
+			},
+		},
+	}}}
+	wf, err := Transpile(p, &Options{Name: "burst"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-slim" || tmpl.Container == nil {
+			continue
+		}
+		found = true
+		r := tmpl.Container.Resources
+		if got := r.Requests[corev1.ResourceCPU]; got.String() != "1" {
+			t.Fatalf("cpu request = %q, want 1", got.String())
+		}
+		if got := r.Limits[corev1.ResourceCPU]; got.String() != "1500m" {
+			t.Fatalf("cpu limit = %q, want 1500m", got.String())
+		}
+		if got := r.Requests[corev1.ResourceMemory]; got.String() != "512Mi" {
+			t.Fatalf("mem request = %q, want 512Mi", got.String())
+		}
+		if got := r.Limits[corev1.ResourceMemory]; got.String() != "1Gi" {
+			t.Fatalf("mem limit = %q, want 1Gi", got.String())
+		}
+	}
+	if !found {
+		t.Fatal("step-slim template not found")
+	}
+}
+
+// The simple single-value form stays Guaranteed: request == limit (unchanged).
+func TestTranspileSingleValueStaysGuaranteed(t *testing.T) {
+	p := &Pipeline{Name: "guar", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox", Command: []string{"true"},
+			Resources: &ResourceRequirements{CPU: "2", Memory: "256Mi"},
+		},
+	}}}
+	wf, err := Transpile(p, &Options{Name: "guar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-slim" || tmpl.Container == nil {
+			continue
+		}
+		r := tmpl.Container.Resources
+		if req, lim := r.Requests[corev1.ResourceCPU], r.Limits[corev1.ResourceCPU]; req.String() != "2" || lim.String() != "2" {
+			t.Fatalf("cpu req/lim = %q/%q, want 2/2 (request==limit)", req.String(), lim.String())
+		}
+		if req, lim := r.Requests[corev1.ResourceMemory], r.Limits[corev1.ResourceMemory]; req.String() != "256Mi" || lim.String() != "256Mi" {
+			t.Fatalf("mem req/lim = %q/%q, want 256Mi/256Mi", req.String(), lim.String())
+		}
+		return
+	}
+	t.Fatal("step-slim template not found")
+}
+
+// A request above its limit is rejected up front (k8s would otherwise reject it
+// at admission with an opaque error).
+func TestValidatePipelineRejectsCPURequestOverLimit(t *testing.T) {
+	p := &Pipeline{Name: "bad", Nodes: []Node{{
+		ID: "slim",
+		Component: Component{
+			Name: "slim", Image: "busybox",
+			Resources: &ResourceRequirements{CPURequest: "2", CPULimit: "1"},
+		},
+	}}}
+	err := ValidatePipeline(p)
+	if err == nil {
+		t.Fatal("expected validation error for cpu request > limit")
+	}
+	if !strings.Contains(err.Error(), "request") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %q, want a cpu request>limit message", err.Error())
+	}
+}
+
 func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
 	t.Helper()
 	for _, tol := range tmpl.Tolerations {
@@ -201,6 +291,151 @@ func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value strin
 		}
 	}
 	t.Fatalf("missing toleration %s=%s in %#v", key, value, tmpl.Tolerations)
+}
+
+// GpuStepNodeSelector must merge onto a GPU step's NodeSelector alongside the
+// auto-added GKE accelerator hint, giving the pool the ability to pin its GPU
+// workload to a specific node pool.
+func TestTranspileAppliesGpuStepNodeSelectorToGpuStep(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pin",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:  "gpu",
+				Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Resources: &ResourceRequirements{
+					CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "gpu-pin",
+		GpuStepNodeSelector: map[string]string{
+			"cloud.google.com/gke-nodepool": "g2-l4-dev-pool",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu" {
+			continue
+		}
+		if got := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; got != "g2-l4-dev-pool" {
+			t.Fatalf("gke-nodepool selector = %q, want g2-l4-dev-pool", got)
+		}
+		// The GKE accelerator hint must still be there (GPU-only auto path).
+		if got := tmpl.NodeSelector["cloud.google.com/gke-accelerator"]; got != "nvidia-l4" {
+			t.Fatalf("gke-accelerator selector = %q, want nvidia-l4", got)
+		}
+		return
+	}
+	t.Fatal("step-gpu template not found")
+}
+
+// GpuStepNodeSelector must NOT leak onto CPU steps — that's the whole point of
+// the separate field. If it did, a mixed GPU+CPU pipeline's CPU pods would
+// inherit a GPU-only pool label and get rejected by that pool's GPU taint.
+func TestTranspileDoesNotApplyGpuStepNodeSelectorToCpuStep(t *testing.T) {
+	p := &Pipeline{
+		Name: "mixed",
+		Nodes: []Node{
+			{
+				ID: "cpu-step",
+				Component: Component{
+					Name:  "cpu",
+					Image: "busybox:latest",
+					Resources: &ResourceRequirements{
+						CPU: "2000m", Memory: "4Gi",
+					},
+				},
+			},
+			{
+				ID: "gpu-step",
+				Component: Component{
+					Name:  "gpu",
+					Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+					Resources: &ResourceRequirements{
+						CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+					},
+				},
+			},
+		},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "mixed",
+		GpuStepNodeSelector: map[string]string{
+			"cloud.google.com/gke-nodepool": "g2-l4-dev-pool",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCPU, sawGPU bool
+	for _, tmpl := range wf.Spec.Templates {
+		switch tmpl.Name {
+		case "step-cpu":
+			sawCPU = true
+			if _, ok := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; ok {
+				t.Fatalf("CPU step must not inherit GpuStepNodeSelector; got %#v", tmpl.NodeSelector)
+			}
+		case "step-gpu":
+			sawGPU = true
+			if got := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; got != "g2-l4-dev-pool" {
+				t.Fatalf("GPU step gke-nodepool selector = %q, want g2-l4-dev-pool", got)
+			}
+		}
+	}
+	if !sawCPU || !sawGPU {
+		t.Fatalf("expected both step-cpu and step-gpu templates; sawCPU=%v sawGPU=%v", sawCPU, sawGPU)
+	}
+}
+
+// A GpuStepNodeSelector entry with an empty key or value must be silently
+// dropped (defensive; mirrors the TemplateNodeSelector guard).
+func TestTranspileGpuStepNodeSelectorSkipsEmptyEntries(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-empty",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:  "gpu",
+				Image: "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Resources: &ResourceRequirements{
+					CPU: "4000m", Memory: "16Gi", GPU: "1", ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "gpu-empty",
+		GpuStepNodeSelector: map[string]string{
+			"":                              "ignored",
+			"cloud.google.com/gke-nodepool": "",
+			"real":                          "value",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu" {
+			continue
+		}
+		if got := tmpl.NodeSelector["real"]; got != "value" {
+			t.Fatalf("real selector = %q, want value", got)
+		}
+		if _, ok := tmpl.NodeSelector[""]; ok {
+			t.Fatalf("empty key must not be applied; got %#v", tmpl.NodeSelector)
+		}
+		if got, ok := tmpl.NodeSelector["cloud.google.com/gke-nodepool"]; ok && got == "" {
+			t.Fatalf("empty value must not be applied; got %#v", tmpl.NodeSelector)
+		}
+		return
+	}
+	t.Fatal("step-gpu template not found")
 }
 
 func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
@@ -868,9 +1103,109 @@ func TestTranspileOmitsPodPriorityClassNameWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestTranspileSetsPriority verifies the Argo workflow-level priority
+// (wf.Spec.Priority) is set from Options.Priority so the controller admits
+// higher-priority workflows first when the parallelism queue is saturated.
+func TestTranspileSetsPriority(t *testing.T) {
+	p := int32(-100)
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:      "wf-prio",
+		Namespace: "default",
+		Priority:  &p,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Priority == nil || *wf.Spec.Priority != -100 {
+		t.Errorf("Priority: want -100, got %v", wf.Spec.Priority)
+	}
+}
+
+// TestTranspileOmitsPriorityWhenNil guards backward-compat: nil leaves the
+// field unset, and Argo treats an absent priority as 0 (normal).
+func TestTranspileOmitsPriorityWhenNil(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noprio", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Priority != nil {
+		t.Errorf("nil option must leave Priority unset, got %v", *wf.Spec.Priority)
+	}
+}
+
 // TestTranspileSetsSchedulerName verifies pool (CYB-3486) injects the pool's
 // scheduler onto the workflow spec. Data-driven: transpiler sets whatever
 // string it's given, no hardcoded scheduler.
+// TestTranspileSetsInstanceIDLabel verifies the workflow-level
+// controller-instanceid label is set from Options.InstanceID, routing the
+// workflow to the Argo controller configured with that instanceID.
+func TestTranspileSetsInstanceIDLabel(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:       "wf-iid",
+		Namespace:  "default",
+		InstanceID: "vpp-gpu",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; got != "vpp-gpu" {
+		t.Errorf("controller-instanceid label: want vpp-gpu, got %q", got)
+	}
+}
+
+// TestTranspileOmitsInstanceIDLabelWhenEmpty guards backward-compat: no
+// instanceID → no label, so the default (no-instanceid) controller keeps owning
+// the workflow.
+func TestTranspileOmitsInstanceIDLabelWhenEmpty(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-noiid", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; ok {
+		t.Error("empty InstanceID must not set the controller-instanceid label")
+	}
+}
+
+// TestTranspileWorkflowLabels covers Options.WorkflowLabels: arbitrary labels
+// land on the Workflow CRD ObjectMeta, and the argo-managed prefix is guarded so
+// callers can set only controller-instanceid (the one workflow-level routing
+// selector) without clobbering the controller's other managed labels.
+func TestTranspileWorkflowLabels(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{
+		Name:      "wf-labels",
+		Namespace: "default",
+		WorkflowLabels: map[string]string{
+			"team": "vpp",
+			"workflows.argoproj.io/controller-instanceid": "vpp-cpu",
+			"workflows.argoproj.io/completed":             "true",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.ObjectMeta.Labels["team"]; got != "vpp" {
+		t.Errorf("arbitrary label: want vpp, got %q", got)
+	}
+	if got := wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"]; got != "vpp-cpu" {
+		t.Errorf("controller-instanceid must pass the argo-prefix guard: want vpp-cpu, got %q", got)
+	}
+	if _, ok := wf.ObjectMeta.Labels["workflows.argoproj.io/completed"]; ok {
+		t.Error("other workflows.argoproj.io/ keys must be dropped, not applied")
+	}
+}
+
+// TestTranspileWorkflowLabelsNilIsNoop guards backward-compat: no WorkflowLabels
+// means the transpiler leaves ObjectMeta.Labels exactly as it found it.
+func TestTranspileWorkflowLabelsNilIsNoop(t *testing.T) {
+	wf, err := Transpile(singleNodePipeline(), &Options{Name: "wf-nolabels", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wf.ObjectMeta.Labels["team"]; ok {
+		t.Error("nil WorkflowLabels must not inject arbitrary labels")
+	}
+}
+
 func TestTranspileSetsSchedulerName(t *testing.T) {
 	wf, err := Transpile(singleNodePipeline(), &Options{
 		Name:          "wf-sched",

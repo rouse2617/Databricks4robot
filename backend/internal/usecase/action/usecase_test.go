@@ -464,3 +464,15 @@ func TestCreate_RejectsUnregisteredLabel(t *testing.T) {
 		t.Fatalf("expected ErrInvalidLabel, got %v", err)
 	}
 }
+
+func (r *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
+func (r *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (r *stubAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}

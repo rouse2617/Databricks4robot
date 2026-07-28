@@ -34,15 +34,28 @@ RESP_BODY=""
 RESP_CODE=""
 PASS=0
 FAIL=0
+# CYB-4264: tally outcomes in a temp file, not the PASS/FAIL shell vars above.
+# Many checks run inside $(...) command-substitution, where PASS++/FAIL++ happen
+# in a subshell and are lost to the parent; file appends survive subshells, so
+# the summary + exit code at the bottom are accurate.
+SMOKE_RESULTS="$(mktemp)"
+trap 'rm -f "$SMOKE_RESULTS"' EXIT
+_pass() { echo P >> "$SMOKE_RESULTS"; }
+_fail() { echo F >> "$SMOKE_RESULTS"; }
+# fd 3 = the script's real stdout. ok()/bad() write human lines here so they
+# stay visible even when a check runs inside X=$(...) command-substitution
+# (which would otherwise capture fd 1 and swallow the OK/FAIL line). Callers
+# that capture a body still get only the body on fd 1.
+exec 3>&1
 PIPELINE_CONFIG_SMOKE_ID=""
 
-ok() { PASS=$((PASS + 1)); echo "  OK  $1"; }
+ok() { _pass; echo "  OK  $1" >&3; }
 bad() {
 	local label="$1"
-	FAIL=$((FAIL + 1))
-	echo "  FAIL $label (HTTP ${RESP_CODE})"
-	echo "$RESP_BODY" | head -c 400
-	echo
+	_fail
+	echo "  FAIL $label (HTTP ${RESP_CODE})" >&3
+	echo "$RESP_BODY" | head -c 400 >&3
+	echo >&3
 }
 
 get() {
@@ -55,12 +68,12 @@ get() {
 }
 
 warn_get() {
-	local name="$1" path="$2"
+	local name="$1" path="$2" reason="${3:-optional / needs full Iceberg MVP}"
 	local raw
 	raw=$(curl -sS --max-time 25 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}${path}" 2>/dev/null) || raw=$'\n000'
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
-	if [[ "$RESP_CODE" =~ ^2 ]]; then ok "$name"; else echo "  WARN $name (HTTP ${RESP_CODE}) — optional / needs full Iceberg MVP"; fi
+	if [[ "$RESP_CODE" =~ ^2 ]]; then ok "$name"; else echo "  WARN $name (HTTP ${RESP_CODE}) — ${reason}"; fi
 }
 
 expect_code_get() {
@@ -84,7 +97,7 @@ get_report_or_skip() {
 	raw=$(curl -sS --max-time 25 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/lakehouse/report" 2>/dev/null) || raw=$'\n000'
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
-	if [[ "$RESP_CODE" == "200" ]]; then ok "lakehouse/report"; elif [[ "$RESP_CODE" == "404" ]]; then echo "  OK  lakehouse/report (404 — run make iceberg-mvp locally if you need file)"; PASS=$((PASS + 1)); else bad "lakehouse/report"; fi
+	if [[ "$RESP_CODE" == "200" ]]; then ok "lakehouse/report"; elif [[ "$RESP_CODE" == "404" ]]; then echo "  OK  lakehouse/report (404 — run make iceberg-mvp locally if you need file)"; _pass; else bad "lakehouse/report"; fi
 }
 
 post() {
@@ -104,10 +117,10 @@ post_json() {
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
 	if [[ "$RESP_CODE" =~ ^2 ]]; then
-		PASS=$((PASS + 1))
+		_pass
 		echo "  OK  $name" >&2
 	else
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
 		echo "$RESP_BODY" | head -c 400 >&2
 		echo >&2
@@ -122,10 +135,10 @@ put_json() {
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
 	if [[ "$RESP_CODE" =~ ^2 ]]; then
-		PASS=$((PASS + 1))
+		_pass
 		echo "  OK  $name" >&2
 	else
-		FAIL=$((FAIL + 1))
+		_fail
 		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
 		echo "$RESP_BODY" | head -c 400 >&2
 		echo >&2
@@ -202,7 +215,21 @@ else
 fi
 RESP_CODE=$(echo "$raw" | tail -n1)
 RESP_BODY=$(echo "$raw" | sed '$d')
-if [[ "$RESP_CODE" == "200" ]]; then ok "GET /healthz"; else bad "GET /healthz"; fi
+if [[ "$RESP_CODE" == "200" ]]; then
+	ok "GET /healthz"
+elif [[ "$RESP_CODE" == "404" && "$BASE" == https://* ]]; then
+	# On hosted URLs an edge/GFE layer can shadow /healthz before it reaches the
+	# container (observed on Cloud Run: /healthz -> 404 with no x-request-id,
+	# while /readyz and every API route reach the app). Don't FAIL — assert app
+	# health via /readyz just below, which does reach the container.
+	echo "  WARN GET /healthz (HTTP 404) — shadowed by edge on hosted URL; app health asserted via /readyz"
+else
+	bad "GET /healthz"
+fi
+# /readyz reaches the container and is the authoritative in-process health probe.
+raw=$(curl -sS --max-time 15 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/readyz" 2>/dev/null) || raw=$'\n000'
+RESP_CODE=$(echo "$raw" | tail -n1)
+if [[ "$RESP_CODE" == "200" ]]; then ok "GET /readyz"; else bad "GET /readyz"; fi
 
 echo ""
 echo "--- § Pipeline execution targets ---"
@@ -268,6 +295,7 @@ expect_code_post "pipeline save duplicate fan-in -> 400" "/api/v1/pipelines" '{"
 
 echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
+get "dashboard duration-distribution (cyb-4303)" "/api/v1/dashboard/duration-distribution"
 get "lakehouse/status" "/api/v1/lakehouse/status"
 get "lakehouse/tables" "/api/v1/lakehouse/tables"
 if [[ "$RESP_CODE" == "200" ]]; then
@@ -277,7 +305,7 @@ if [[ "$RESP_CODE" == "200" ]]; then
 			ok "lakehouse/tables silver_asset_events_current visible"
 		else
 			echo "  OK  lakehouse/tables silver_asset_events_current absent — tolerated until Silver export job has run"
-			PASS=$((PASS + 1))
+			_pass
 		fi
 	else
 		bad "lakehouse/tables response shape"
@@ -295,6 +323,27 @@ echo ""
 echo "--- § 注册表 ---"
 get "algo-registry" "/api/v1/algo-registry"
 get "tag-registry" "/api/v1/tag-registry"
+
+echo "--- § Admin API keys (CYB-3154 / CYB-3418) ---"
+get "admin api-keys list" "/api/v1/admin/api-keys"
+expect_code_post "admin api-keys create empty scopes -> 400" "/api/v1/admin/api-keys" '{"name":"api-guide-smoke","scopes":[]}' "400" >/dev/null
+expect_code_post "admin api-keys create whitespace scope -> 400" "/api/v1/admin/api-keys" '{"scopes":["   "]}' "400" >/dev/null
+# The create->revoke happy path mints a REAL dbk_ credential, so it is gated
+# behind RUN_WRITES. We capture only the id (never echo the plaintext key) and
+# revoke it immediately to leave no rows.
+if [[ -n "${RUN_WRITES:-}" ]]; then
+	AK_RESP=$(curl -sS --max-time 25 -X POST "${API_HDR[@]}" "${BASE}/api/v1/admin/api-keys" \
+		-d '{"name":"api-guide-smoke","owner":"api-guide-smoke","scopes":["assets:read"]}' 2>/dev/null || echo '{}')
+	AK_ID=$(echo "$AK_RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || echo "")
+	if [[ -n "$AK_ID" ]]; then
+		ok "admin api-keys create (RUN_WRITES)"
+		expect_code_delete "admin api-keys revoke -> 200" "/api/v1/admin/api-keys/${AK_ID}" "200" >/dev/null
+	else
+		RESP_CODE="?"; RESP_BODY="$AK_RESP"; bad "admin api-keys create (RUN_WRITES): no id returned"
+	fi
+else
+	echo "  skip admin api-keys create/revoke — set RUN_WRITES=1 (mints a real credential)"
+fi
 get "asset type schema dataset" "/api/v1/asset-types/dataset/schema"
 expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/schema" "404" >/dev/null
 
@@ -392,6 +441,51 @@ expect_code_get "search lineage invalid direction -> 400" "/api/v1/search/assets
 post "queries run (structured)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (include_history)" "/api/v1/queries/run?include_history=true" '{"schema_version":"v1","scope":{"resource":"assets","include_history":true},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null
+
+# CYB-3713 regression pack: keyword mode `q` param must be honored (was
+# silently dropped, returning full unfiltered list). Compare filtered vs
+# unfiltered totals to prove the injection is live.
+KW_BODY=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+	-d '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":1}}' 2>/dev/null || echo '{}')
+KW_TOTAL_UNFILTERED=$(echo "$KW_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+
+for KWQ in "nonexistent-xxx-cyb-3713-regression-do-not-match" "备餐操作"; do
+	RAW=$(curl -sS --max-time 20 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+		-d "{\"schema_version\":\"v1\",\"mode\":\"keyword\",\"q\":\"${KWQ}\",\"scope\":{\"resource\":\"assets\"},\"page\":{\"page\":1,\"page_size\":1}}" 2>/dev/null || echo $'\n000')
+	RESP_CODE=$(echo "$RAW" | tail -n1)
+	RESP_BODY=$(echo "$RAW" | sed '$d')
+	TOTAL=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+	if [[ "$RESP_CODE" != "200" ]]; then
+		bad "queries run keyword q=${KWQ}"
+	elif [[ "$TOTAL" == "$KW_TOTAL_UNFILTERED" ]]; then
+		# Total == unfiltered means q was ignored — the pre-fix regression.
+		_fail
+		echo "  FAIL queries run keyword q=${KWQ}: total ${TOTAL} equals unfiltered ${KW_TOTAL_UNFILTERED} (q silently dropped — CYB-3713 regression)"
+	else
+		ok "queries run keyword q=${KWQ} (total=${TOTAL} != unfiltered ${KW_TOTAL_UNFILTERED})"
+	fi
+done
+
+# CYB-3715 regression pack: flatten mcap-file columns onto assets must be
+# filter-able as top-level fields. Pre-fix was HTTP 422 UNSUPPORTED_FIELD.
+# Uses `camera_model` and `source_platform` because those have populated
+# rows on dev (mirror columns backfilled from mcap_files). Success = HTTP
+# 200 and filtered total < unfiltered total (proves the WHERE landed).
+for F3715 in camera_model source_platform; do
+	RAW=$(curl -sS --max-time 20 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" \
+		-d "{\"schema_version\":\"v1\",\"mode\":\"structured\",\"scope\":{\"resource\":\"assets\"},\"where\":{\"pred\":{\"field\":\"${F3715}\",\"op\":\"ilike\",\"value\":\"%\"}},\"page\":{\"page\":1,\"page_size\":1}}" 2>/dev/null || echo $'\n000')
+	RESP_CODE=$(echo "$RAW" | tail -n1)
+	RESP_BODY=$(echo "$RAW" | sed '$d')
+	TOTAL=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', -1))" 2>/dev/null || echo -1)
+	if [[ "$RESP_CODE" != "200" ]]; then
+		bad "queries run filter ${F3715}"
+	elif [[ "$TOTAL" -le 0 ]]; then
+		_fail
+		echo "  FAIL queries run filter ${F3715}: total=${TOTAL} (expected >0 — field populated on dev)"
+	else
+		ok "queries run filter ${F3715} (total=${TOTAL} > 0)"
+	fi
+done
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
 
@@ -428,7 +522,7 @@ else
 fi
 expect_code_get "workflow missing detail -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
 for op in retry resubmit suspend resume terminate; do
-	expect_code_post "workflow ${op} missing workflow -> 500" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "500" >/dev/null
+	expect_code_post "workflow ${op} missing workflow -> 404" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "404" >/dev/null
 done
 if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
 	for op in retry resubmit suspend resume terminate; do
@@ -437,7 +531,7 @@ if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
 else
 	echo "  skip workflow operation happy paths — set WORKFLOW_OPERATION_NAME to a disposable workflow"
 fi
-expect_code_delete "workflow delete missing workflow -> 500" "/api/v1/workflows/__missing_workflow__" "500" >/dev/null
+expect_code_delete "workflow delete missing workflow -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
 if [[ -n "${WORKFLOW_DELETE_NAME:-}" ]]; then
 	delete "workflow delete" "/api/v1/workflows/${WORKFLOW_DELETE_NAME}" >/dev/null
 else
@@ -482,6 +576,9 @@ LAID=$(echo "$LIST_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);pri
 if [[ -n "$AID" ]]; then
 	get "asset by id" "/api/v1/assets/${AID}"
 	get "asset provenance" "/api/v1/assets/${AID}/provenance"
+	get "asset runs reverse lookup (cyb-4297)" "/api/v1/assets/${AID}/runs?pageSize=5"
+	expect_code_post "asset costs batch (cyb-4306)" "/api/v1/assets/costs" "{\"ids\":[\"${AID}\"],\"start_at\":\"2026-07-01T00:00:00Z\",\"end_at\":\"2026-07-28T00:00:00Z\",\"group_by\":\"asset\"}" "200" >/dev/null
+	expect_code_post "asset costs empty ids -> 400" "/api/v1/assets/costs" "{\"ids\":[],\"start_at\":\"2026-07-01T00:00:00Z\",\"end_at\":\"2026-07-28T00:00:00Z\"}" "400" >/dev/null
 	raw=$(curl -sS -N --max-time 3 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/assets/${AID}/events/stream" 2>/dev/null || true)
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')
@@ -520,6 +617,8 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	echo "--- RUN_WRITES=1 — §1.1 mcap-files + assets (unique ids) ---"
 	MCAP_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(8)))")
 	HASH=$(openssl rand -hex 16 2>/dev/null || python3 -c "import secrets; print(secrets.token_hex(16))")
+	# CYB-4011: exercise grace_video_id round-trip (create → get → filter).
+	GRACE_VID="019f9893-3456-7376-ae68-30a89227eb46"
 	MCAP_JSON=$(cat <<EOF
 {
   "mcap_file_id": "${MCAP_ID}",
@@ -535,11 +634,20 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
   "vendor_id": "smoke",
   "device_id": "smoke-1",
   "scene_id": "indoor",
+  "grace_video_id": "${GRACE_VID}",
   "owner": "api-guide-smoke"
 }
 EOF
 )
 	post "POST mcap-files" "/api/v1/mcap-files" "$MCAP_JSON" >/dev/null
+	# CYB-4011: mcap get returns the grace_video_id we wrote.
+	MCAP_GET=$(get "GET mcap-files/{id} (CYB-4011 grace_video_id)" "/api/v1/mcap-files/${MCAP_ID}")
+	GOT_GVID=$(echo "$MCAP_GET" | python3 -c "import sys,json; print(json.load(sys.stdin).get('grace_video_id',''))" 2>/dev/null || echo "")
+	if [[ "$GOT_GVID" == "$GRACE_VID" ]]; then ok "mcap grace_video_id round-trips"; else bad "mcap grace_video_id expected ${GRACE_VID}, got ${GOT_GVID:-<empty>}"; fi
+	# CYB-4011: filter by grace_video_id (filter-only exact field) hits the mirrored raw_mcap asset.
+	GVID_FILTER=$(post "POST queries/run filter=grace_video_id (CYB-4011)" "/api/v1/queries/run" "{\"schema_version\":\"v1\",\"mode\":\"structured\",\"scope\":{\"resource\":\"assets\"},\"where\":{\"pred\":{\"field\":\"grace_video_id\",\"op\":\"eq\",\"value\":\"${GRACE_VID}\"}},\"page\":{\"page\":1,\"page_size\":5}}")
+	GVID_HIT=$(echo "$GVID_FILTER" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('1' if any(i.get('grace_video_id')=='${GRACE_VID}' or i.get('asset_id')=='${MCAP_ID}' for i in items) else '0')" 2>/dev/null || echo "0")
+	if [[ "$GVID_HIT" == "1" ]]; then ok "grace_video_id filter returns the mirrored asset"; else bad "grace_video_id filter did not return the mirrored asset"; fi
 	ASSET_JSON=$(cat <<EOF
 {
   "mcap_file_id": "${MCAP_ID}",
@@ -684,5 +792,8 @@ else
 fi
 
 echo ""
+# CYB-4264: tally from the results file so subshell-run checks are counted.
+PASS=$(grep -c '^P' "$SMOKE_RESULTS" || true)
+FAIL=$(grep -c '^F' "$SMOKE_RESULTS" || true)
 echo "=== done: ${PASS} passed, ${FAIL} failed ==="
-[[ "$FAIL" -eq 0 ]]
+[[ "${FAIL:-0}" -eq 0 ]]

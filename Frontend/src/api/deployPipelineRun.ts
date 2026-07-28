@@ -24,6 +24,9 @@ export async function deployPipelineForAssets(
 		version?: number;
 		batchName?: string;
 		configSelection?: DeployConfigSelection;
+		// Per-dispatch Argo priority override (batch path only; a single run
+		// inherits the target pool default). Omit to inherit the pool default.
+		priority?: number;
 	},
 ): Promise<DeployPipelineResult> {
 	if (exceedsBatchAssetLimit(assetIds.length)) {
@@ -38,6 +41,7 @@ export async function deployPipelineForAssets(
 			targetId: options?.targetId,
 			templateVersion: options?.version,
 			configSelection: options?.configSelection,
+			priority: options?.priority,
 		});
 		return { mode: "batch", batchJob };
 	}

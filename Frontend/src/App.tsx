@@ -14,7 +14,7 @@ import "./styles/design-tokens.css";
 
 // Lazy-load pages to keep initial bundle small (steering: Priority 2 Bundle Size)
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
-const AssetsPage = lazy(() => import("./pages/AssetsPage"));
+const AssetsWorkbenchPage = lazy(() => import("./pages/AssetsWorkbenchPage"));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
 const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
@@ -56,7 +56,11 @@ function ProtectedRoutes() {
 					<Routes>
 						<Route path="/" element={<Navigate to="/dashboard" replace />} />
 						<Route path="/dashboard" element={<DashboardPage />} />
-						<Route path="/assets" element={<AssetsPage />} />
+						{/* CYB-4294b: /assets is a workbench with a top tab strip that
+						  swaps between the discovery view and the duration-lookup view
+						  (?view=durations). Keep it BEFORE /assets/:id so the wildcard
+						  doesn't shadow the workbench. */}
+						<Route path="/assets" element={<AssetsWorkbenchPage />} />
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
 						<Route path="/algo" element={<AlgoProcessingPage />} />

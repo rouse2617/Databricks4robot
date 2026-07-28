@@ -574,6 +574,86 @@ describe("WorkflowDetailPage", () => {
 		await waitFor(() => expect(mockDeleteRun).toHaveBeenCalledWith("run-1"));
 	});
 
+	it("confirms before stopping a running run", async () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		// 操作按钮带图标 → 无障碍名是「pause-circle 停止」,故不锚定匹配中文文案;
+		// 「停止实时日志」仅在跟随日志时渲染,此场景不出现,不会冲突。
+		fireEvent.click(screen.getByRole("button", { name: /停\s*止/ }));
+		expect(
+			await screen.findByText(/停止会向 Argo 发送优雅停止信号/),
+		).toBeInTheDocument();
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(within(dialog).getByRole("button", { name: /停\s*止/ }));
+
+		await waitFor(() => expect(mockStopRun).toHaveBeenCalledWith("run-1"));
+	});
+
+	it("confirms before suspending a running run", async () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		fireEvent.click(screen.getByRole("button", { name: /暂\s*停/ }));
+		expect(await screen.findByText(/暂停会挂起工作流/)).toBeInTheDocument();
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(within(dialog).getByRole("button", { name: /暂\s*停/ }));
+
+		await waitFor(() => expect(mockSuspendRun).toHaveBeenCalledWith("run-1"));
+	});
+
 	it("shows a not-found alert instead of an indefinite spinner", () => {
 		mockWorkflowDetailState({
 			workflow: null,

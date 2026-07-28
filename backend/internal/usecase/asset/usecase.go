@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -117,6 +118,11 @@ type Usecase struct {
 	// actionLabelRegistry validates action assets' controlled label vocabulary
 	// (CYB-3268). nil disables validation.
 	actionLabelRegistry *config.ActionLabelRegistry
+	// lineageBatchRepo backs the depth="all" branch of the batch lineage
+	// endpoint (CYB-4305). nil → depth="all" degrades to empty upstream /
+	// downstream / relation slices (still 200; the endpoint doesn't require
+	// ES to answer depth=1).
+	lineageBatchRepo repository.AssetLineageBatchRepository
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -186,6 +192,13 @@ func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
 // validate asset_type='action' creates/updates (CYB-3268). Pass nil to disable.
 func (u *Usecase) SetActionLabelRegistry(r *config.ActionLabelRegistry) {
 	u.actionLabelRegistry = r
+}
+
+// SetLineageBatchRepo wires the ES-side reader used by the depth="all" branch
+// of the batch lineage endpoint (CYB-4305). Pass nil to disable — depth="all"
+// requests still return 200, just without upstream/downstream/relation fields.
+func (u *Usecase) SetLineageBatchRepo(r repository.AssetLineageBatchRepository) {
+	u.lineageBatchRepo = r
 }
 
 func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
@@ -760,6 +773,660 @@ func (u *Usecase) GetAll(ctx context.Context, assetID string) (*models.Asset, er
 		return nil, err
 	}
 	return a, nil
+}
+
+// LookupDurationsMaxIDs bounds the batch duration-lookup request size. Peak
+// observed real batch on dev is ~1668 ids (CYB-4294); the 5000 cap is a 3x
+// safety margin that still fits comfortably in one Postgres ANY() index scan
+// and one ~500 KB response payload.
+const LookupDurationsMaxIDs = 5000
+
+// LookupDurations resolves duration_ms for a batch of asset_id and/or
+// grace_video_id inputs. The response classifies each requested id into
+// exactly one of items / missing_ids / filtered_out_ids and computes stats
+// server-side over the surviving items (CYB-4294).
+//
+// Contract:
+//   - dedup input ids (preserve first-occurrence order for stable output)
+//   - each requested id becomes either an item (matched and in range), a
+//     filtered_out_id (matched but outside [min,max]), or a missing_id (no row
+//     at all)
+//   - a row that matches by BOTH its asset_id AND its grace_video_id in the
+//     same request is attributed to whichever input id appeared first; the
+//     other collapses into the same item
+//   - stats (matched_count, total_ms, mean_ms, min/max, p50, p90) are computed
+//     over items only; percentiles use linear interpolation
+func (u *Usecase) LookupDurations(ctx context.Context, req models.AssetDurationsRequest) (*models.AssetDurationsResponse, error) {
+	// Dedup ids preserving input order; empty entries are treated as missing
+	// input and dropped (they can never match anything).
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// Fetch matching rows in a single round-trip. Empty dedup slice short-
+	// circuits the SQL and returns an empty response.
+	var rows []repository.DurationRow
+	if len(dedup) > 0 {
+		// Fetch WITHOUT the range filter so that rows matching by id but
+		// outside [min,max] can be reported as filtered_out_ids. Filtering
+		// in SQL would lose the "matched but out of range" signal.
+		var err error
+		rows, err = u.repo.LookupDurations(ctx, dedup, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build reverse maps: input id -> DurationRow (by whichever column hit).
+	// A row can be indexed by both its asset_id and grace_video_id.
+	byInput := make(map[string]*repository.DurationRow, len(rows)*2)
+	for i := range rows {
+		row := &rows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Apply range filter in-code so we can report filtered_out_ids.
+	minMs, maxMs := req.MinDurationMs, req.MaxDurationMs
+	inRange := func(d int64) bool {
+		if minMs > 0 && d < minMs {
+			return false
+		}
+		if maxMs > 0 && d > maxMs {
+			return false
+		}
+		return true
+	}
+
+	items := make([]models.DurationLookupItem, 0, len(dedup))
+	missing := make([]string, 0)
+	filteredOut := make([]string, 0)
+	// Track rows already emitted so a row named by BOTH its asset_id and
+	// grace_video_id in the same request collapses to one item.
+	emitted := make(map[*repository.DurationRow]struct{}, len(rows))
+
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		if !inRange(row.DurationMs) {
+			// Only report the first input that maps to a filtered-out row;
+			// a later input that maps to the same row would double-report.
+			if _, dup := emitted[row]; !dup {
+				filteredOut = append(filteredOut, in)
+				emitted[row] = struct{}{}
+			}
+			continue
+		}
+		if _, dup := emitted[row]; dup {
+			continue
+		}
+		emitted[row] = struct{}{}
+		items = append(items, models.DurationLookupItem{
+			InputID:      in,
+			AssetID:      row.AssetID,
+			GraceVideoID: row.GraceVideoID,
+			DurationMs:   row.DurationMs,
+			DurationSec:  float64(row.DurationMs) / 1000.0,
+			Formatted:    FormatDurationMs(row.DurationMs),
+		})
+	}
+
+	stats := computeDurationStats(items, len(missing), len(filteredOut))
+	return &models.AssetDurationsResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: filteredOut,
+		Stats:          stats,
+	}, nil
+}
+
+// FormatDurationMs renders a duration_ms as a short human string:
+//   - 0                       → "0s"
+//   - <60s                    → "Xs"
+//   - <60min                  → "Xm Ys"
+//   - ≥60min                  → "Xh Ym"
+//
+// Exported because tests and future callers may want the exact format used
+// by the API response's "formatted" field.
+func FormatDurationMs(ms int64) string {
+	if ms <= 0 {
+		return "0s"
+	}
+	totalSec := ms / 1000
+	if totalSec < 60 {
+		return fmt.Sprintf("%ds", totalSec)
+	}
+	totalMin := totalSec / 60
+	if totalMin < 60 {
+		return fmt.Sprintf("%dm %ds", totalMin, totalSec%60)
+	}
+	return fmt.Sprintf("%dh %dm", totalMin/60, totalMin%60)
+}
+
+// computeDurationStats reduces a slice of items to summary statistics.
+// Percentiles use linear interpolation on the sorted-ascending duration_ms
+// values (matching numpy.percentile default behavior). Zero items → zero
+// stats except the input counts.
+func computeDurationStats(items []models.DurationLookupItem, missingCount, filteredOutCount int) models.DurationStats {
+	stats := models.DurationStats{
+		MatchedCount:     len(items),
+		MissingCount:     missingCount,
+		FilteredOutCount: filteredOutCount,
+	}
+	if len(items) == 0 {
+		return stats
+	}
+	sorted := make([]int64, len(items))
+	for i, it := range items {
+		sorted[i] = it.DurationMs
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	var total int64
+	stats.MinMs = sorted[0]
+	stats.MaxMs = sorted[len(sorted)-1]
+	for _, d := range sorted {
+		total += d
+	}
+	stats.TotalMs = total
+	stats.MeanMs = total / int64(len(sorted))
+	stats.P50Ms = percentileLinear(sorted, 0.50)
+	stats.P90Ms = percentileLinear(sorted, 0.90)
+	return stats
+}
+
+// percentileLinear computes the p-th percentile via linear interpolation on
+// an already-sorted-ascending slice. p is in [0, 1]. For a single element
+// returns that element.
+func percentileLinear(sorted []int64, p float64) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	rank := p * float64(len(sorted)-1)
+	lo := int(rank)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := rank - float64(lo)
+	// Round to nearest int64 to keep the stat as an integer millisecond count.
+	interp := float64(sorted[lo]) + frac*float64(sorted[hi]-sorted[lo])
+	if interp < 0 {
+		interp -= 0.5
+	} else {
+		interp += 0.5
+	}
+	return int64(interp)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CYB-4306: batch asset cost / gpu-min lookup.
+// ─────────────────────────────────────────────────────────────────────────
+
+// LookupCostsMaxWindow is the widest [start_at, end_at] window the batch
+// cost endpoint accepts. Wider scans against pipeline_run_nodes on dev take
+// multi-second time and are unattributed — the FinOps use case is week/month
+// grain anyway (see decisions.md).
+const LookupCostsMaxWindow = 90 * 24 * time.Hour
+
+// LookupCostsGroupByAsset / LookupCostsGroupByAssetAlgo are the accepted
+// values for AssetCostsRequest.GroupBy. Empty defaults to
+// LookupCostsGroupByAsset.
+const (
+	LookupCostsGroupByAsset     = "asset"
+	LookupCostsGroupByAssetAlgo = "asset_algo"
+)
+
+// LookupCosts aggregates leaf-pod cost / GPU-seconds / CPU-seconds / run_count
+// per asset over a [start_at, end_at] window on pipeline_runs.finished_at.
+// Two-step server pipeline:
+//
+//  1. Resolve request ids (asset_id and/or grace_video_id) to their
+//     underlying asset row via the existing LookupDurations query. Any
+//     input that doesn't resolve goes into missing_ids.
+//  2. Aggregate cost/gpu/cpu/run_count over pipeline_run_nodes joined to
+//     pipeline_runs, expanding pr.asset_ids with CROSS JOIN LATERAL so
+//     multi-asset runs contribute to every asset in the array (matches
+//     the existing pipeline_repo.go:767 convention — see decisions.md).
+//
+// A resolved asset with no rows in the window goes into filtered_out_ids;
+// stats are computed over items only.
+//
+// The caller is responsible for validation (empty ids, oversize batch,
+// invalid window, unknown group_by); this usecase assumes the request is
+// well-formed.
+func (u *Usecase) LookupCosts(ctx context.Context, req models.AssetCostsRequest) (*models.AssetCostsResponse, error) {
+	// Dedup ids preserving input order; empty entries drop.
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// Step 1: resolve ids → known assets via the existing duration-lookup
+	// query (asset_id OR grace_video_id → row). We only need the identity
+	// columns; the duration is discarded.
+	var resolveRows []repository.DurationRow
+	if len(dedup) > 0 {
+		var err error
+		resolveRows, err = u.repo.LookupDurations(ctx, dedup, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build reverse map: input id → resolved row. A row is indexed by
+	// both its asset_id and grace_video_id when both exist so callers can
+	// address either.
+	byInput := make(map[string]*repository.DurationRow, len(resolveRows)*2)
+	for i := range resolveRows {
+		row := &resolveRows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Walk request ids in input order to partition into
+	// resolved-assets vs missing.
+	type resolvedInput struct {
+		inputID string
+		row     *repository.DurationRow
+	}
+	resolvedByAsset := make(map[string]*resolvedInput, len(resolveRows))
+	orderedResolved := make([]*resolvedInput, 0, len(resolveRows))
+	missing := make([]string, 0)
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		// Collapse an input that addresses an already-resolved asset (the
+		// caller sent both the asset_id and its grace_video_id for the same
+		// row).
+		if _, dup := resolvedByAsset[row.AssetID]; dup {
+			continue
+		}
+		e := &resolvedInput{inputID: in, row: row}
+		resolvedByAsset[row.AssetID] = e
+		orderedResolved = append(orderedResolved, e)
+	}
+
+	// Step 2: cost aggregate over the resolved asset ids.
+	byAlgo := req.GroupBy == LookupCostsGroupByAssetAlgo
+	var costRows []repository.AssetCostRow
+	if len(resolvedByAsset) > 0 {
+		assetIDs := make([]string, 0, len(resolvedByAsset))
+		for aid := range resolvedByAsset {
+			assetIDs = append(assetIDs, aid)
+		}
+		var err error
+		costRows, err = u.repo.LookupCosts(ctx, assetIDs, req.StartAt, req.EndAt, byAlgo)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Fold cost rows into per-asset aggregates. In asset_algo mode a single
+	// asset appears once per template_name; we keep the algo breakdown on
+	// item.ByAlgo and roll totals into the item fields so callers can sort
+	// by total_cost_usd without a second pass.
+	type aggregate struct {
+		total    float64
+		gpuSec   float64
+		cpuSec   float64
+		runCount int64
+		byAlgo   []models.AssetCostByAlgo
+	}
+	perAsset := make(map[string]*aggregate, len(costRows))
+	for _, r := range costRows {
+		agg, ok := perAsset[r.AssetID]
+		if !ok {
+			agg = &aggregate{}
+			perAsset[r.AssetID] = agg
+		}
+		agg.total += r.TotalCostUSD
+		agg.gpuSec += r.GPUSec
+		agg.cpuSec += r.CPUSec
+		agg.runCount += r.RunCount
+		if byAlgo {
+			agg.byAlgo = append(agg.byAlgo, models.AssetCostByAlgo{
+				AlgoKey:  r.AlgoKey,
+				CostUSD:  r.TotalCostUSD,
+				GPUSec:   r.GPUSec,
+				CPUSec:   r.CPUSec,
+				RunCount: r.RunCount,
+			})
+		}
+	}
+
+	// Emit items in resolved input order; assets without aggregate rows
+	// bucket into filtered_out (existed but no runs in the window).
+	items := make([]models.AssetCostItem, 0, len(orderedResolved))
+	filteredOut := make([]string, 0)
+	for _, r := range orderedResolved {
+		agg, hasRows := perAsset[r.row.AssetID]
+		if !hasRows {
+			filteredOut = append(filteredOut, r.inputID)
+			continue
+		}
+		item := models.AssetCostItem{
+			InputID:      r.inputID,
+			AssetID:      r.row.AssetID,
+			GraceVideoID: r.row.GraceVideoID,
+			TotalCostUSD: agg.total,
+			GPUSec:       agg.gpuSec,
+			CPUSec:       agg.cpuSec,
+			GPUMin:       agg.gpuSec / 60.0,
+			CPUMin:       agg.cpuSec / 60.0,
+			RunCount:     agg.runCount,
+			ByAlgo:       nil,
+		}
+		if byAlgo {
+			// Sort by cost desc so the UI can display the "expensive step"
+			// first without a client-side sort.
+			sort.SliceStable(agg.byAlgo, func(i, j int) bool {
+				return agg.byAlgo[i].CostUSD > agg.byAlgo[j].CostUSD
+			})
+			bucket := agg.byAlgo
+			item.ByAlgo = &bucket
+		}
+		items = append(items, item)
+	}
+
+	stats := computeCostStats(items, len(missing), len(filteredOut))
+	return &models.AssetCostsResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: filteredOut,
+		Stats:          stats,
+	}, nil
+}
+
+// computeCostStats reduces a slice of cost items to summary statistics.
+// Percentiles use linear interpolation on sorted-asc total_cost_usd (matches
+// numpy.percentile default). Zero items → zero stats except the counter
+// fields so the response never carries null/NaN.
+func computeCostStats(items []models.AssetCostItem, missingCount, filteredOutCount int) models.AssetCostStats {
+	stats := models.AssetCostStats{
+		MatchedCount:     len(items),
+		MissingCount:     missingCount,
+		FilteredOutCount: filteredOutCount,
+	}
+	if len(items) == 0 {
+		return stats
+	}
+	sorted := make([]float64, len(items))
+	for i, it := range items {
+		sorted[i] = it.TotalCostUSD
+		stats.TotalCostUSD += it.TotalCostUSD
+		stats.TotalGPUSec += it.GPUSec
+		stats.TotalCPUSec += it.CPUSec
+		stats.TotalRunCount += it.RunCount
+	}
+	sort.Float64s(sorted)
+	stats.MeanCostUSD = stats.TotalCostUSD / float64(len(sorted))
+	stats.P50CostUSD = percentileLinearFloat(sorted, 0.50)
+	stats.P90CostUSD = percentileLinearFloat(sorted, 0.90)
+	return stats
+}
+
+// percentileLinearFloat is the float64 analogue of percentileLinear used by
+// the duration endpoint. Same linear interpolation on a sorted-asc slice.
+func percentileLinearFloat(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	rank := p * float64(len(sorted)-1)
+	lo := int(rank)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := rank - float64(lo)
+	return sorted[lo] + frac*(sorted[hi]-sorted[lo])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CYB-4305: batch asset lineage lookup.
+// ─────────────────────────────────────────────────────────────────────────
+
+// LookupLineage resolves parent/root/logical/is_current/revision for a batch
+// of asset_id and/or grace_video_id inputs in one SQL round trip. When
+// wantAll is true the resolved asset_id set additionally gets an ES `_mget`
+// against the pre-computed lineage projection (cyb-3268) to fetch full
+// upstream/downstream/relation-type arrays; depth=1 skips that round trip.
+//
+// The response classifies each requested id into exactly one of items or
+// missing_ids (filtered_out_ids is always empty here — kept for envelope
+// symmetry with the durations/costs shells). Stats are computed over items
+// only.
+//
+// The caller (handler) is responsible for validation (empty ids, oversize
+// batch, depth normalization); this usecase assumes the request is
+// well-formed.
+func (u *Usecase) LookupLineage(ctx context.Context, req models.AssetLineageBatchRequest, wantAll bool) (*models.AssetLineageBatchResponse, error) {
+	// Dedup ids preserving input order; empty entries drop.
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// One-shot resolve + lineage read.
+	var rows []repository.LineageRow
+	if len(dedup) > 0 {
+		var err error
+		rows, err = u.repo.LookupLineage(ctx, dedup)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Reverse map: input id → row (index by both asset_id and grace_video_id
+	// so callers can address either).
+	byInput := make(map[string]*repository.LineageRow, len(rows)*2)
+	for i := range rows {
+		row := &rows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Walk input in insertion order → items + missing, collapsing an input
+	// that addresses an already-emitted row (caller sent both asset_id +
+	// grace_video_id for the same asset).
+	items := make([]models.LineageBatchItem, 0, len(dedup))
+	missing := make([]string, 0)
+	emitted := make(map[*repository.LineageRow]struct{}, len(rows))
+	orderedAssetIDs := make([]string, 0, len(rows))
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		if _, dup := emitted[row]; dup {
+			continue
+		}
+		emitted[row] = struct{}{}
+		orderedAssetIDs = append(orderedAssetIDs, row.AssetID)
+		items = append(items, models.LineageBatchItem{
+			InputID:        in,
+			AssetID:        row.AssetID,
+			GraceVideoID:   row.GraceVideoID,
+			ParentAssetID:  row.ParentAssetID,
+			RootAssetID:    row.RootAssetID,
+			LogicalAssetID: row.LogicalAssetID,
+			IsCurrent:      row.IsCurrent,
+			Revision:       row.Revision,
+		})
+	}
+
+	// Depth="all" overlay: one ES _mget for the resolved asset_ids. When the
+	// ES reader is unwired (u.lineageBatchRepo == nil) we still return 200
+	// with depth=1 fields — the frontend degrades gracefully.
+	var relationTypeCounts map[string]int
+	if wantAll {
+		relationTypeCounts = map[string]int{}
+		if u.lineageBatchRepo != nil && len(orderedAssetIDs) > 0 {
+			projs, err := u.lineageBatchRepo.LineageDocsByAssetID(ctx, orderedAssetIDs)
+			if err != nil {
+				return nil, err
+			}
+			for i := range items {
+				proj, ok := projs[items[i].AssetID]
+				if !ok {
+					// No ES doc for this asset — emit empty slices so the
+					// three depth=all fields still land in the payload
+					// (frontend distinguishes depth=1 by their absence).
+					empty := []string{}
+					items[i].UpstreamIDs = sliceToPtr(empty)
+					items[i].DownstreamIDs = sliceToPtr(empty)
+					items[i].RelationTypes = sliceToPtr(empty)
+					continue
+				}
+				up := stringSliceOrEmpty(proj.UpstreamIDs)
+				down := stringSliceOrEmpty(proj.DownstreamIDs)
+				rels := stringSliceOrEmpty(proj.RelationTypes)
+				items[i].UpstreamIDs = &up
+				items[i].DownstreamIDs = &down
+				items[i].RelationTypes = &rels
+				for _, rt := range rels {
+					relationTypeCounts[rt]++
+				}
+			}
+		} else {
+			// ES not wired or no assets to fetch — still emit the three
+			// depth=all fields as empty slices so the response shape stays
+			// stable for the frontend.
+			for i := range items {
+				empty := []string{}
+				items[i].UpstreamIDs = sliceToPtr(empty)
+				items[i].DownstreamIDs = sliceToPtr(empty)
+				items[i].RelationTypes = sliceToPtr(empty)
+			}
+		}
+	}
+
+	stats := computeLineageStats(items, len(missing), wantAll, relationTypeCounts)
+	return &models.AssetLineageBatchResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: []string{},
+		Stats:          stats,
+	}, nil
+}
+
+// sliceToPtr returns a pointer to a fresh slice header so the JSON marshaler
+// emits `[]` rather than dropping the field via omitempty.
+func sliceToPtr(v []string) *[]string {
+	out := v
+	return &out
+}
+
+// stringSliceOrEmpty normalizes a possibly-nil slice into a non-nil empty
+// slice so the marshaled JSON is `[]` rather than `null`.
+func stringSliceOrEmpty(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// computeLineageStats folds the assembled items into the summary bag. Called
+// after items are final so has_parent/is_root/orphan/is_current are all
+// walk-once — no second pass. RelationTypeCounts is passed through only when
+// wantAll; the caller keeps it nil for depth=1 so `omitempty` drops the key.
+func computeLineageStats(items []models.LineageBatchItem, missingCount int, wantAll bool, relCounts map[string]int) models.LineageBatchStats {
+	stats := models.LineageBatchStats{
+		MatchedCount: len(items),
+		MissingCount: missingCount,
+	}
+	for _, it := range items {
+		if it.ParentAssetID != nil && *it.ParentAssetID != "" {
+			stats.HasParentCount++
+		}
+		// "is_root" = "top of a lineage tree" — counts both the modern
+		// `root_asset_id == asset_id` case (newer ingest writes self-root)
+		// AND the historical NULL root (older assets left the column NULL
+		// when the asset was its own root). See decisions.md.
+		if it.RootAssetID == nil || *it.RootAssetID == "" || *it.RootAssetID == it.AssetID {
+			stats.IsRootCount++
+		}
+		// Orphan = strict "neither known" — usually a data-quality signal.
+		if (it.ParentAssetID == nil || *it.ParentAssetID == "") &&
+			(it.RootAssetID == nil || *it.RootAssetID == "") {
+			stats.OrphanCount++
+		}
+		if it.IsCurrent {
+			stats.IsCurrentCount++
+		}
+	}
+	if wantAll {
+		if relCounts == nil {
+			relCounts = map[string]int{}
+		}
+		stats.RelationTypeCounts = &relCounts
+	}
+	return stats
 }
 
 // BatchGet returns multiple assets by their IDs, skipping not-found ones.

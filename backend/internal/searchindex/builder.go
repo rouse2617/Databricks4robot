@@ -97,6 +97,35 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	if a.LastDeliveredTo != "" {
 		doc["last_delivered_to"] = a.LastDeliveredTo
 	}
+	// CYB-3715: top-level flatten fields mirrored from mcap_files onto assets.
+	// Distinct from the nested mcap.<col> object below — the top-level form is
+	// what filter/facet paths address after CYB-3715 landed in #526/#527.
+	// Emit only when non-empty so dynamic mapping doesn't create every asset
+	// doc with 7 empty-string properties.
+	if a.CameraModel != "" {
+		doc["camera_model"] = a.CameraModel
+	}
+	if a.GraceVideoID != "" { // CYB-4011
+		doc["grace_video_id"] = a.GraceVideoID
+	}
+	if a.DeviceID != "" {
+		doc["device_id"] = a.DeviceID
+	}
+	if a.CollectorID != "" {
+		doc["collector_id"] = a.CollectorID
+	}
+	if a.SceneID != "" {
+		doc["scene_id"] = a.SceneID
+	}
+	if a.DataSource != "" {
+		doc["data_source"] = a.DataSource
+	}
+	if a.CollectionMethod != "" {
+		doc["collection_method"] = a.CollectionMethod
+	}
+	if a.SourcePlatform != "" {
+		doc["source_platform"] = a.SourcePlatform
+	}
 	if a.ExpireAt != nil {
 		doc["expire_at"] = a.ExpireAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -202,6 +231,9 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			}
 			if mf.CameraModel != "" {
 				mcapObj["camera_model"] = mf.CameraModel
+			}
+			if mf.GraceVideoID != "" { // CYB-4011
+				mcapObj["grace_video_id"] = mf.GraceVideoID
 			}
 			if mf.DataSource != "" {
 				mcapObj["data_source"] = mf.DataSource

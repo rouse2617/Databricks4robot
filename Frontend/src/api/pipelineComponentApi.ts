@@ -15,6 +15,10 @@ export interface EnvVarDef {
 export interface PipelineComponentResources {
 	cpu?: string;
 	memory?: string;
+	// Optional Burstable overrides: cpu/memory act as the request (or the single
+	// request==limit value when these are empty); *Limit sets a higher ceiling.
+	cpuLimit?: string;
+	memoryLimit?: string;
 	disk?: string;
 	gpu?: string;
 	computeTier?: string;

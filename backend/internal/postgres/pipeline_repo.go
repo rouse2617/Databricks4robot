@@ -1043,6 +1043,24 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		args = append(args, "%"+query+"%")
 		argPos++
 	}
+	if createdBy := strings.TrimSpace(filter.CreatedBy); createdBy != "" {
+		conds = append(conds, fmt.Sprintf("COALESCE(pr.owner, '') = $%d", argPos))
+		args = append(args, createdBy)
+		argPos++
+	}
+	// CYB-4297: reverse lookup — "runs that used this asset". asset_ids is a
+	// TEXT[] holding grace_video_id per input asset. Postgres GIN on array
+	// columns is only picked up by the containment operator @> (or &&); the
+	// scalar `X = ANY(col)` form is left to a parallel Seq Scan even when a
+	// GIN index exists on that column — measured on dev: 291ms + 117k
+	// buffer hits vs 0.7ms + 19 hits after switching to @>. Feed a single-
+	// element array literal so we stay pure SQL (no []string round-trip in
+	// pgx).
+	if assetID := strings.TrimSpace(filter.AssetID); assetID != "" {
+		conds = append(conds, fmt.Sprintf("pr.asset_ids @> ARRAY[$%d]::text[]", argPos))
+		args = append(args, assetID)
+		argPos++
+	}
 	if filter.BatchJobID != "" && strings.TrimSpace(filter.PipelineNodeID) != "" {
 		nodeStatus := strings.TrimSpace(filter.NodeStatus)
 		conds = append(conds, fmt.Sprintf(`EXISTS (
@@ -1153,6 +1171,117 @@ LIMIT $2`
 		run, err := scanPipelineRunSummary(rows)
 		if err != nil {
 			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummaries scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, nil
+}
+
+// RecentDispatchStatsByTarget counts runs CREATED within the trailing `since`
+// window, grouped by execution_target_id and status, then bucketed for the pool
+// runtime-status view. The created_at predicate is served by
+// idx_pipeline_runs_created_at, so only recent rows enter the plan and the
+// query stays cheap as pipeline_runs history grows (it is deliberately
+// window-bounded — a full-table aggregation is what caused the webhook SyncJob
+// avalanche). Rows whose target was deleted (execution_target_id NULL) collapse
+// into the "" key. Runs are bucketed by created_at, so a run that reached a
+// terminal status is only counted while its creation is still inside the
+// window — this is a dispatch-cadence signal, not lifetime totals.
+func (r *PipelineRunRepo) RecentDispatchStatsByTarget(
+	ctx context.Context, since time.Duration,
+) (map[string]models.TargetDispatchStats, error) {
+	if since <= 0 {
+		since = 15 * time.Minute
+	}
+	cutoff := time.Now().UTC().Add(-since)
+	const q = `SELECT COALESCE(execution_target_id, ''), status, count(*)
+FROM pipeline_runs
+WHERE created_at >= $1
+GROUP BY 1, 2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.RecentDispatchStatsByTarget: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]models.TargetDispatchStats{}
+	for rows.Next() {
+		var targetID, status string
+		var n int
+		if err := rows.Scan(&targetID, &status, &n); err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.RecentDispatchStatsByTarget scan: %w", err)
+		}
+		s := out[targetID]
+		s.Total += n
+		switch {
+		case strings.EqualFold(status, "Succeeded"):
+			s.Succeeded += n
+		case strings.EqualFold(status, "Failed"), strings.EqualFold(status, "Error"):
+			s.Failed += n
+		default:
+			// Running / Pending / Unknown / Suspended (and any unrecognized
+			// status) count as still-active work.
+			s.Active += n
+		}
+		out[targetID] = s
+	}
+	return out, rows.Err()
+}
+
+// FindActiveRunSummariesAfter is the paginated variant of
+// FindActiveRunSummaries — same status filter and newest-first sort, but
+// resumes AFTER the (createdAt, id) tuple of the last-seen row. Passing zero
+// createdAt + empty id starts at the newest end.
+//
+// The watcher uses this to rotate through more active runs than a single
+// scan's cap can carry: cap=3000 with 30k active runs would otherwise leave
+// older-than-3000-newest runs stale forever (a 3-concurrent-batch scenario
+// on this deployment). The recent-500 union in loadRunsForWatcherSync still
+// covers fresh work every tick, so pagination only affects the rotating
+// tail — no starvation of live batches.
+func (r *PipelineRunRepo) FindActiveRunSummariesAfter(
+	ctx context.Context, afterCreatedAt time.Time, afterID string, limit int,
+) ([]models.PipelineRun, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	// Composite (created_at, id) cursor: created_at anchors newest-first
+	// order (index idx_pipeline_runs_status_created_at); id breaks ties on
+	// bulk-inserted rows sharing a timestamp so pagination doesn't skip or
+	// re-emit rows.
+	var (
+		q    string
+		args []interface{}
+	)
+	if afterID == "" {
+		q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+ORDER BY pr.created_at DESC, pr.id DESC
+LIMIT $2`
+		args = []interface{}{activeRunStatuses, limit}
+	} else {
+		q = `SELECT ` + pipelineRunSummarySelectSQL(false) + `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
+WHERE pr.status = ANY($1)
+  AND (pr.created_at, pr.id) < ($2, $3)
+ORDER BY pr.created_at DESC, pr.id DESC
+LIMIT $4`
+		args = []interface{}{activeRunStatuses, afterCreatedAt, afterID, limit}
+	}
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummariesAfter: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindActiveRunSummariesAfter scan: %w", err)
 		}
 		out = append(out, *run)
 	}

@@ -83,15 +83,21 @@ func (q *fakeSubmitQueue) LockPendingItem(_ context.Context, itemID string) (*mo
 type fakeDeployer struct {
 	mu sync.Mutex
 
-	deployErrByAsset map[string]error  // nil entry → success
-	clusterByTarget  map[string]string // targetID → cluster (sharding tests)
-	runsByID         map[string]*models.PipelineRun
-	refreshNoUID     bool // RefreshRunFromWorkflowByName returns a uid-less run
+	deployErrByAsset  map[string]error  // nil entry → success
+	clusterByTarget   map[string]string // targetID → cluster (sharding tests)
+	runsByID          map[string]*models.PipelineRun
+	getRunErr         error
+	refreshNoUID      bool              // RefreshRunFromWorkflowByName returns a uid-less run
+	activeWFByKey     map[string]int    // "cluster/namespace" → observed active workflow count (backpressure tests)
+	nsByTarget        map[string]string // targetID → namespace (backpressure tests)
+	maxActiveByTarget map[string]int    // targetID → maxActiveWorkflows (backpressure tests)
 
 	upserts        []string
 	upsertVersions []int
+	upsertForceNew []bool
 	deploys        []string
 	deployVersions []int
+	deployOwners   []string
 	commits        []string
 	failures       []string
 	refreshes      []string
@@ -106,11 +112,34 @@ func (d *fakeDeployer) ResolveTargetClusterID(_ context.Context, targetID string
 	return "default"
 }
 
+func (d *fakeDeployer) ActiveWorkflowCount(cluster, namespace string) (int, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.activeWFByKey == nil {
+		return 0, false
+	}
+	n, ok := d.activeWFByKey[cluster+"/"+namespace]
+	return n, ok
+}
+
+func (d *fakeDeployer) ResolveTargetBackpressure(_ context.Context, targetID string) (string, int, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ns, ok := d.nsByTarget[targetID]
+	if !ok {
+		return "", 0, false
+	}
+	return ns, d.maxActiveByTarget[targetID], true
+}
+
 func (d *fakeDeployer) GetRun(_ context.Context, id string) (*models.PipelineRun, error) {
+	if d.getRunErr != nil {
+		return nil, d.getRunErr
+	}
 	if r, ok := d.runsByID[id]; ok {
 		return r, nil
 	}
-	return nil, errors.New("not found")
+	return nil, nil
 }
 
 func (d *fakeDeployer) UpsertBatchSubtaskRun(_ context.Context, in pipelineUC.BatchSubtaskRunInput) (string, string, error) {
@@ -118,7 +147,12 @@ func (d *fakeDeployer) UpsertBatchSubtaskRun(_ context.Context, in pipelineUC.Ba
 	defer d.mu.Unlock()
 	d.upserts = append(d.upserts, in.AssetID)
 	d.upsertVersions = append(d.upsertVersions, in.TemplateVersion)
-	return "run-" + in.AssetID, "wf-batch-" + in.AssetID, nil
+	d.upsertForceNew = append(d.upsertForceNew, in.ForceNewAttempt)
+	runID := strings.TrimSpace(in.RunID)
+	if runID == "" {
+		runID = "run-" + in.AssetID
+	}
+	return runID, runID, nil
 }
 
 func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string, assetIDs []string, opts ...pipelineUC.DeployOptions) (*models.PipelineDeployment, error) {
@@ -127,13 +161,18 @@ func (d *fakeDeployer) DeployByTemplateID(_ context.Context, _ string, _ string,
 	d.deploys = append(d.deploys, asset)
 	if len(opts) > 0 {
 		d.deployVersions = append(d.deployVersions, opts[0].TemplateVersion)
+		d.deployOwners = append(d.deployOwners, opts[0].Owner)
 	}
 	err := d.deployErrByAsset[asset]
 	d.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	return &models.PipelineDeployment{ID: "run-" + asset, WorkflowName: "wf-batch-" + asset}, nil
+	runID := "run-" + asset
+	if len(opts) > 0 && strings.TrimSpace(opts[0].PreallocatedRunID) != "" {
+		runID = strings.TrimSpace(opts[0].PreallocatedRunID)
+	}
+	return &models.PipelineDeployment{ID: runID, WorkflowName: runID}, nil
 }
 
 func (d *fakeDeployer) CommitBatchSubtaskDeploy(_ context.Context, runID string, _ *models.PipelineDeployment) error {
@@ -147,7 +186,11 @@ func (d *fakeDeployer) RecordBatchSubtaskFailure(_ context.Context, in pipelineU
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.failures = append(d.failures, in.AssetID)
-	return "run-" + in.AssetID, "wf-batch-" + in.AssetID, nil
+	runID := strings.TrimSpace(in.RunID)
+	if runID == "" {
+		runID = "run-" + in.AssetID
+	}
+	return runID, runID, nil
 }
 
 func (d *fakeDeployer) RefreshRunFromWorkflowByName(_ context.Context, workflowName, _ string) (*models.PipelineRun, error) {
@@ -180,6 +223,19 @@ func itemStatus(repo *pausedSyncRepo, id string) string {
 	return "<missing>"
 }
 
+// itemError returns a backfill item's persisted error_message ("" if unset).
+func itemError(repo *pausedSyncRepo, id string) string {
+	for i := range repo.items {
+		if repo.items[i].ID == id {
+			if repo.items[i].ErrorMessage == nil {
+				return ""
+			}
+			return *repo.items[i].ErrorMessage
+		}
+	}
+	return "<missing>"
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 // Happy path: a pending item is deployed and moves pending → submitted with
@@ -204,6 +260,23 @@ func TestSubmitter_SubmitsPendingItemToSubmitted(t *testing.T) {
 	}
 	if len(d.failures) != 0 {
 		t.Fatalf("failures = %v, want none", d.failures)
+	}
+}
+
+func TestSubmitter_ForwardsBatchCreatorAsDeployOwner(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1,
+		TotalCount: 1, CreatedBy: "alice@example.com",
+	}
+	uc, _, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+
+	uc.runSubmitterCycle(ctx)
+
+	if len(d.deployOwners) != 1 || d.deployOwners[0] != "alice@example.com" {
+		t.Fatalf("deploy owners = %v, want [alice@example.com]", d.deployOwners)
 	}
 }
 
@@ -356,6 +429,80 @@ func TestSubmitter_PausedJobLeavesItemsPending(t *testing.T) {
 	}
 }
 
+// Backpressure (CYB-3681): when the target namespace already holds as many
+// active workflows as it may, the submitter defers the job — items stay
+// pending and nothing is deployed, like a paused channel but driven by
+// control-plane saturation rather than an operator.
+func TestSubmitter_BackpressureDefersWhenNamespaceSaturated(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	// cluster unset → ResolveTargetClusterID returns "default" → key "default/ns-prod".
+	d.activeWFByKey = map[string]int{"default/ns-prod": 150} // at/over the 100 ceiling
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending (backpressure deferred)", got)
+	}
+	if len(d.deploys) != 0 {
+		t.Fatalf("deploys = %v, want none under backpressure", d.deploys)
+	}
+}
+
+// Below the ceiling, dispatch proceeds normally.
+func TestSubmitter_BackpressureAllowsBelowCeiling(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	d.activeWFByKey = map[string]int{"default/ns-prod": 42} // under the ceiling
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (below ceiling)", got)
+	}
+	if len(d.deploys) != 1 {
+		t.Fatalf("deploys = %v, want exactly one", d.deploys)
+	}
+}
+
+// Fail open: with no watcher observation for the namespace yet (cold start /
+// stalled watcher), dispatch proceeds rather than wedging.
+func TestSubmitter_BackpressureFailsOpenWhenCountUnknown(t *testing.T) {
+	ctx := context.Background()
+	job := &models.BackfillJob{
+		ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1,
+		FilterJSON: map[string]interface{}{"targetId": "tgt-1"},
+	}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending"},
+	})
+	d.nsByTarget = map[string]string{"tgt-1": "ns-prod"}
+	d.maxActiveByTarget = map[string]int{"tgt-1": 100}
+	// activeWFByKey empty → ActiveWorkflowCount returns (0,false) → fail open.
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted (fail open on unknown count)", got)
+	}
+}
+
 // Pilot quota: a pilot_running job only submits within the remaining quota —
 // the candidate list is capped at quota, and a fully-attempted pilot submits
 // nothing (the sync flips it to pilot_review).
@@ -414,6 +561,100 @@ func TestSubmitter_AlreadyLiveRunSkipsDeploy(t *testing.T) {
 	}
 	if len(d.deploys) != 0 {
 		t.Fatalf("deploys = %v, want none (run already live)", d.deploys)
+	}
+}
+
+// A uid-less placeholder is the current attempt, not proof that a fresh
+// attempt is needed. Reuse its run UUID so overlapping submitter instances and
+// crash recovery converge on the same Argo workflow name.
+func TestSubmitter_UIDLessPlaceholderReusesAttempt(t *testing.T) {
+	ctx := context.Background()
+	runID := "run-stale"
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending", PipelineRunID: &runID, WorkflowName: strPtr("wf-batch-asset-1")},
+	})
+	// Placeholder: the run row exists but never launched — no uid, no StartedAt,
+	// non-terminal. runAlreadySubmitted() is false for it.
+	d.runsByID[runID] = &models.PipelineRun{ID: runID, WorkflowName: "wf-batch-asset-1", Status: "Pending"}
+
+	uc.runSubmitterCycle(ctx)
+
+	if len(d.upsertForceNew) != 1 || d.upsertForceNew[0] {
+		t.Fatalf("upsertForceNew = %v, want [false] (automatic recovery reuses the attempt)", d.upsertForceNew)
+	}
+	if len(d.deploys) != 1 || d.deploys[0] != "asset-1" {
+		t.Fatalf("deploys = %v, want [asset-1] (must actually launch, not strand)", d.deploys)
+	}
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted", got)
+	}
+	if repo.items[0].PipelineRunID == nil || *repo.items[0].PipelineRunID != runID {
+		t.Fatalf("pipelineRunID = %v, want %q", repo.items[0].PipelineRunID, runID)
+	}
+	if repo.items[0].WorkflowName == nil || *repo.items[0].WorkflowName != runID {
+		t.Fatalf("workflowName = %v, want run UUID %q", repo.items[0].WorkflowName, runID)
+	}
+}
+
+func TestSubmitter_UIDLessPlaceholderAlreadyExistsRefreshesByRunUUID(t *testing.T) {
+	ctx := context.Background()
+	runID := "run-stale"
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending", PipelineRunID: &runID, WorkflowName: strPtr("wf-batch-asset-1")},
+	})
+	d.runsByID[runID] = &models.PipelineRun{ID: runID, WorkflowName: "wf-batch-asset-1", Status: "Pending"}
+	d.deployErrByAsset["asset-1"] = fmt.Errorf("submit: %w", errAlreadyExistsForTest)
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "submitted" {
+		t.Fatalf("item status = %q, want submitted", got)
+	}
+	if len(d.refreshes) != 1 || d.refreshes[0] != runID {
+		t.Fatalf("refreshes = %v, want [%s]", d.refreshes, runID)
+	}
+	if len(d.upsertForceNew) != 1 || d.upsertForceNew[0] {
+		t.Fatalf("upsertForceNew = %v, want [false]", d.upsertForceNew)
+	}
+}
+
+func TestSubmitter_TerminalRunDoesNotCreateAutomaticAttempt(t *testing.T) {
+	ctx := context.Background()
+	runID := "run-failed"
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending", PipelineRunID: &runID},
+	})
+	d.runsByID[runID] = &models.PipelineRun{ID: runID, WorkflowName: runID, Status: "Failed"}
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "failed" {
+		t.Fatalf("item status = %q, want failed", got)
+	}
+	if len(d.upserts) != 0 || len(d.deploys) != 0 {
+		t.Fatalf("upserts = %v, deploys = %v; want no automatic attempt", d.upserts, d.deploys)
+	}
+}
+
+func TestSubmitter_RunLookupFailureDoesNotRiskDuplicateDeploy(t *testing.T) {
+	ctx := context.Background()
+	runID := "run-unknown"
+	job := &models.BackfillJob{ID: "job-1", Status: "running", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 1}
+	uc, repo, _, d := newSubmitterFixture(job, []models.BackfillItem{
+		{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "pending", PipelineRunID: &runID},
+	})
+	d.getRunErr = errors.New("database unavailable")
+
+	uc.runSubmitterCycle(ctx)
+
+	if got := itemStatus(repo, "item-1"); got != "pending" {
+		t.Fatalf("item status = %q, want pending", got)
+	}
+	if len(d.upserts) != 0 || len(d.deploys) != 0 {
+		t.Fatalf("upserts = %v, deploys = %v; want no deploy while run identity is unknown", d.upserts, d.deploys)
 	}
 }
 

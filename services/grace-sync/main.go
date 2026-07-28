@@ -13,6 +13,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -90,27 +91,40 @@ func getEnv(key, def string) string {
 	return def
 }
 
-// parseGracePassword supports two formats for the GRACE_PASSWORD env var:
+// parseGracePassword supports three formats for the GRACE_PASSWORD env var:
 //  1. Plain text password
 //  2. JSON object (from GCP Secret Manager): {"AUTH_PASSWORD": "...", ...}
+//  3. JSON-ish object with unquoted keys (older GCP secret format):
+//     { AUTH_USERNAME: "grace-service-prod", AUTH_PASSWORD: "...", ... }
 //
 // GCP secrets often store credentials as JSON, so we extract AUTH_PASSWORD
 // when JSON is detected. This lets us mount the whole secret as a single
 // env var without splitting it into multiple. Do NOT commit a real password
 // into this file — even in a comment. See decisions.md for the original
 // example.
+var jsonPasswordRE = regexp.MustCompile(`"AUTH_PASSWORD"\s*:\s*"([^"]+)"|AUTH_PASSWORD:\s*"([^"]+)"`)
+
 func parseGracePassword(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
 	}
-	// Try JSON parse
+	// Try JSON parse (handles standard quoted keys: {"AUTH_PASSWORD": "..."})
 	if strings.HasPrefix(raw, "{") {
 		var creds struct {
 			AuthPassword string `json:"AUTH_PASSWORD"`
 		}
 		if err := json.Unmarshal([]byte(raw), &creds); err == nil && creds.AuthPassword != "" {
 			return creds.AuthPassword
+		}
+		// Fallback to regex for non-standard JSON (unquoted keys).
+		if m := jsonPasswordRE.FindStringSubmatch(raw); m != nil {
+			if m[1] != "" {
+				return m[1]
+			}
+			if m[2] != "" {
+				return m[2]
+			}
 		}
 	}
 	// Fallback: treat as plain password
@@ -148,6 +162,10 @@ func main() {
 
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tStart := time.Now()
+
+	// HTTP client shared across Grace API and DataBrew API calls.
+	jar, _ := cookiejar.New(nil)
+	httpClient = &http.Client{Jar: jar, Timeout: 30 * time.Second}
 
 	// ─── Resolve video IDs ───
 	var videoIDs []string
@@ -225,8 +243,8 @@ func main() {
 	}
 
 	// ─── Login & submit batch ───
-	jar, _ := cookiejar.New(nil)
-	httpClient = &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	// (httpClient already initialized above)
+
 
 	if err := databrewLogin(httpClient); err != nil {
 		log.Fatalf("DataBrew login: %v", err)
@@ -269,7 +287,11 @@ func loadConfig(path string) error {
 		cfg.Grace.Username = v
 	}
 	if v := os.Getenv("GRACE_PASSWORD"); v != "" {
-		gracePassword = v
+		// Re-parse: env var may be raw JSON (Secret Manager mounts the whole
+		// secret as one string), and the init-time parseGracePassword
+		// already extracted AUTH_PASSWORD. Re-applying raw here would put
+		// the whole JSON back into gracePassword and break Basic Auth.
+		gracePassword = parseGracePassword(v)
 	}
 	if v := os.Getenv("DATABREW_URL"); v != "" {
 		cfg.Databrew.APIURL = v
@@ -317,6 +339,9 @@ func fetchVideoSteps(start, end time.Time, stepKey string) ([]string, error) {
 		reqURL := fmt.Sprintf("%s/grace/video_steps?%s", cfg.Grace.APIURL, params.Encode())
 		req, _ := http.NewRequest("GET", reqURL, nil)
 		req.SetBasicAuth(cfg.Grace.Username, gracePassword)
+		// Cloudflare (in front of the Grace Pages site) blocks Go's default UA
+		// with 403; use a normal browser UA.
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; cyber-databrew-grace-sync)")
 
 		// Use the same 30s-timeout client as DataBrew login so a hung
 		// Grace connection can't block the Cloud Run Job indefinitely.

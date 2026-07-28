@@ -4,7 +4,9 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
@@ -87,6 +89,9 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 	if err := db.Exec(ctx, `UPDATE backfill_jobs SET template_version = 7 WHERE id = $1`, jobRun); err != nil {
 		t.Fatalf("pin template_version: %v", err)
 	}
+	if err := db.Exec(ctx, `UPDATE backfill_jobs SET created_by = 'alice@example.com' WHERE id = $1`, jobRun); err != nil {
+		t.Fatalf("set created_by: %v", err)
+	}
 
 	repo := NewBackfillRepo(client)
 
@@ -98,6 +103,9 @@ VALUES($1, $2, $1, $3, NOW() + $4::interval)`, it.id, it.job, it.status, it.age)
 	for _, j := range jobs {
 		if j.ID == jobRun && j.TemplateVersion != 7 {
 			t.Errorf("job %s template_version = %d, want 7 (CYB-3677 pin)", jobRun, j.TemplateVersion)
+		}
+		if j.ID == jobRun && j.CreatedBy != "alice@example.com" {
+			t.Errorf("job %s created_by = %q, want alice@example.com", jobRun, j.CreatedBy)
 		}
 		if j.ID == jobPilot && j.TemplateVersion != 0 {
 			t.Errorf("job %s template_version = %d, want 0 (NULL coalesced)", jobPilot, j.TemplateVersion)
@@ -248,5 +256,77 @@ func TestFreshDB_SubmitterCycleLock(t *testing.T) {
 	}
 	if !acq2b {
 		t.Fatal("session 2 must acquire after session 1 released")
+	}
+}
+
+func TestFreshDB_SubmitQueueTargetFairness(t *testing.T) {
+	if os.Getenv("INTEGRATION_DB") != "1" {
+		t.Skip("set INTEGRATION_DB=1 with Postgres env (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME)")
+	}
+
+	ctx := context.Background()
+	cfg := config.Load()
+	client, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(client.Close)
+
+	db := dbFromCtx(ctx, client.db)
+	cleanup := func() {
+		_ = db.Exec(ctx, `DELETE FROM backfill_items WHERE job_id LIKE 'cybfair-%'`)
+		_ = db.Exec(ctx, `DELETE FROM backfill_jobs WHERE id LIKE 'cybfair-%'`)
+		_ = db.Exec(ctx, `DELETE FROM pipeline_templates WHERE id = 'tpl-cybfair'`)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if err := db.Exec(ctx, `
+INSERT INTO pipeline_templates(id, name, pipeline) VALUES('tpl-cybfair', 'fairness-template', '{}')`); err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		jobID := fmt.Sprintf("cybfair-a-%02d", i)
+		if err := db.Exec(ctx, `
+INSERT INTO backfill_jobs(id, name, template_id, status, total_count, filter_json, created_at)
+VALUES($1, $1, 'tpl-cybfair', 'running', 1, '{"target_id":"target-a"}', NOW() - interval '2 hours' + ($2::int * interval '1 minute'))`, jobID, i); err != nil {
+			t.Fatalf("seed target-a job %s: %v", jobID, err)
+		}
+		if err := db.Exec(ctx, `
+INSERT INTO backfill_items(id, job_id, asset_id, status)
+VALUES($1, $2, $1, 'pending')`, "cybfair-item-"+jobID, jobID); err != nil {
+			t.Fatalf("seed target-a item %s: %v", jobID, err)
+		}
+	}
+	if err := db.Exec(ctx, `
+INSERT INTO backfill_jobs(id, name, template_id, status, total_count, filter_json, created_at)
+VALUES('cybfair-b-00', 'cybfair-b-00', 'tpl-cybfair', 'running', 1, '{"target_id":"target-b"}', NOW())`); err != nil {
+		t.Fatalf("seed target-b job: %v", err)
+	}
+	if err := db.Exec(ctx, `
+INSERT INTO backfill_items(id, job_id, asset_id, status)
+VALUES('cybfair-item-b-00', 'cybfair-b-00', 'cybfair-asset-b-00', 'pending')`); err != nil {
+		t.Fatalf("seed target-b item: %v", err)
+	}
+
+	jobs, err := NewBackfillRepo(client).FindSubmittableJobs(ctx, 50)
+	if err != nil {
+		t.Fatalf("FindSubmittableJobs: %v", err)
+	}
+	gotB := false
+	gotA := 0
+	for _, j := range jobs {
+		switch {
+		case j.ID == "cybfair-b-00":
+			gotB = true
+		case strings.HasPrefix(j.ID, "cybfair-a-"):
+			gotA++
+		}
+	}
+	if !gotB {
+		t.Fatalf("target-b job missing from fair candidate window; got %d target-a jobs out of %d candidates", gotA, len(jobs))
+	}
+	if gotA >= 50 {
+		t.Fatalf("target-a monopolized the candidate window: gotA=%d total=%d", gotA, len(jobs))
 	}
 }

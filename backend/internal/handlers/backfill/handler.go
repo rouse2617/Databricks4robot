@@ -34,6 +34,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		TemplateVersion int      `json:"templateVersion,omitempty"`
 		TargetIDLegacy  string   `json:"target_id,omitempty"`
 		PilotCount      int      `json:"pilotCount,omitempty"`
+		Priority        *int     `json:"priority,omitempty"`
 		Config          *struct {
 			Mode           string `json:"mode"`
 			ConfigID       string `json:"configId"`
@@ -53,6 +54,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		TemplateVersion: req.TemplateVersion,
 		TargetID:        firstNonEmpty(req.TargetID, req.TargetIDLegacy),
 		PilotCount:      req.PilotCount,
+		Priority:        req.Priority,
 		Owner:           middleware.GetUserEmail(c),
 		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {
 			if req.Config == nil {
@@ -85,15 +87,37 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// ListJobs handles GET /api/v1/backfill.
+// ListJobs handles GET /api/v1/backfill. Optional query param `createdBy`
+// filters to a single creator (e.g. "subscription-task:<id>" to list a
+// subscription task's dispatched batches).
 func (h *Handler) ListJobs(c *gin.Context) {
-	items, err := h.uc.ListJobs(c.Request.Context())
+	items, err := h.uc.ListJobs(c.Request.Context(), strings.TrimSpace(c.Query("createdBy")))
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
 	if items == nil {
 		items = []models.BackfillJob{}
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
+// ListItems handles GET /api/v1/backfill/:id/items — the per-asset items of a
+// batch (asset id, status, pipeline run). Read-only. An unknown id yields an
+// empty list (not 404), mirroring the other batch read endpoints.
+func (h *Handler) ListItems(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	items, err := h.uc.ListItems(c.Request.Context(), id)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.BackfillItem{}
 	}
 	c.JSON(200, gin.H{"items": items})
 }

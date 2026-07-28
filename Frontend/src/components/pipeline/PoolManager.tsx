@@ -12,6 +12,7 @@ import {
 	Divider,
 	Form,
 	Input,
+	InputNumber,
 	Modal,
 	message,
 	Select,
@@ -31,10 +32,16 @@ import {
 	listClusters,
 	listElasticQuotas,
 	listExecutionTargets,
+	listExecutionTargetsStatus,
+	type TargetRuntimeStatus,
 	type TargetScheduling,
 	type TargetToleration,
 	updateExecutionTarget,
 } from "../../api/pipelineApi";
+import {
+	canonicalPriority,
+	PRIORITY_TIER_OPTIONS,
+} from "../../lib/workflowPriority";
 import ClusterManager from "./ClusterManager";
 import { KOORD_EQ_LABEL_KEY, poolUsageSummary } from "./poolUsage";
 
@@ -72,6 +79,13 @@ interface FormValues {
 	elasticQuotaName?: string;
 	podLabels?: KVEntry[];
 	podAnnotations?: KVEntry[];
+	// CYB-3681 admission backpressure: max active (pending+running) workflows the
+	// target's namespace may hold before this pool defers dispatch. Top-level in
+	// resourceDefaults (not scheduling). Empty = compiled default.
+	maxActiveWorkflows?: number | null;
+	// Pool default Argo workflow priority (top-level in resourceDefaults, not
+	// scheduling). Normal (0) is cleared to keep the stored config minimal.
+	priority?: number | null;
 }
 
 const TOLERATION_EFFECTS = [
@@ -102,6 +116,11 @@ function kvEntriesToMap(
 export default function PoolManager() {
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [quotas, setQuotas] = useState<Record<string, QuotaInfo>>({});
+	// Live runtime status per target (active/ceiling + recent dispatch rate),
+	// keyed by target id. Refreshed on the same 60s poll as the rest of the panel.
+	const [targetStatus, setTargetStatus] = useState<
+		Record<string, TargetRuntimeStatus>
+	>({});
 	const [elasticQuotas, setElasticQuotas] = useState<ElasticQuota[]>([]);
 	const [clusters, setClusters] = useState<Cluster[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -125,16 +144,18 @@ export default function PoolManager() {
 	const fetchData = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [t, q, eq, cs] = await Promise.all([
+			const [t, q, eq, cs, st] = await Promise.all([
 				listExecutionTargets(),
 				fetch("/api/v1/resource-quotas").then((r) => r.json()),
 				listElasticQuotas().catch(() => [] as ElasticQuota[]),
 				listClusters().catch(() => [] as Cluster[]),
+				listExecutionTargetsStatus().catch(() => [] as TargetRuntimeStatus[]),
 			]);
 			setTargets(t);
 			setQuotas(q.items || {});
 			setElasticQuotas(eq);
 			setClusters(cs);
+			setTargetStatus(Object.fromEntries(st.map((s) => [s.targetId, s])));
 		} catch {
 			/* ignore */
 		}
@@ -277,6 +298,9 @@ export default function PoolManager() {
 			elasticQuotaName: eqName,
 			podLabels: kvMapToEntries(otherLabels),
 			podAnnotations: kvMapToEntries(scheduling.podAnnotations),
+			maxActiveWorkflows:
+				target.resourceDefaults?.maxActiveWorkflows ?? undefined,
+			priority: canonicalPriority(target.resourceDefaults?.priority),
 		});
 		setModalOpen(true);
 	};
@@ -350,6 +374,31 @@ export default function PoolManager() {
 		}
 		if (preservedDefaults.scheduling === undefined) {
 			delete preservedDefaults.scheduling;
+		}
+		// CYB-3681 backpressure threshold (top-level, not scheduling). Set when the
+		// operator entered a non-negative number; clear to fall back to the backend
+		// default. A blank field reverts a previously-set threshold.
+		const maxActive = values.maxActiveWorkflows;
+		if (
+			typeof maxActive === "number" &&
+			Number.isFinite(maxActive) &&
+			maxActive >= 0
+		) {
+			preservedDefaults.maxActiveWorkflows = maxActive;
+		} else {
+			delete preservedDefaults.maxActiveWorkflows;
+		}
+		// Pool default workflow priority (top-level, not scheduling). Store only a
+		// non-normal tier; normal (0) clears the key so "unset = normal (Argo 0)".
+		const priority = values.priority;
+		if (
+			typeof priority === "number" &&
+			Number.isFinite(priority) &&
+			priority !== 0
+		) {
+			preservedDefaults.priority = priority;
+		} else {
+			delete preservedDefaults.priority;
 		}
 
 		// Backend still requires the legacy `cluster` string field; look it up
@@ -562,14 +611,131 @@ export default function PoolManager() {
 			},
 		},
 		{
+			// Live dispatch picture per pool — how full its namespace is against
+			// the backpressure ceiling, and how fast it has been dispatching.
+			// Active is per-NAMESPACE (pools sharing a namespace share the number —
+			// exactly what backpressure gates on); the rate is per-target.
+			title: "运行状态",
+			key: "runtime",
+			width: 210,
+			render: (_: unknown, r: ExecutionTarget) => {
+				const s = targetStatus[r.id];
+				if (!s) return <Text type="secondary">—</Text>;
+				const ceiling = s.maxActiveWorkflows;
+				const active = s.activeWorkflows;
+				const pct =
+					ceiling > 0 ? Math.min(100, Math.round((active / ceiling) * 100)) : 0;
+				// At/over the ceiling = this pool is deferring dispatch (yielding
+				// slots to other pools in the namespace).
+				const atCeiling = ceiling > 0 && active >= ceiling;
+				const barColor = !s.activeObserved
+					? "#9ca3af"
+					: atCeiling
+						? "#ef4444"
+						: pct > 70
+							? "#f59e0b"
+							: "#22c55e";
+				const rec = s.recent;
+				return (
+					<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+						<Tooltip
+							title={
+								`命名空间 ${s.namespace}:活跃 (pending+running) ` +
+								`${s.activeObserved ? active : "未采样"} / 上限 ` +
+								`${ceiling === 0 ? "已关闭背压" : ceiling}` +
+								(atCeiling ? " — 已到上限,该池正延迟下发给其他池让路" : "") +
+								"。活跃数按命名空间统计,同命名空间的池子共享此数字。"
+							}
+						>
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<div
+									style={{
+										flex: 1,
+										height: 8,
+										background: "#e5e7eb",
+										borderRadius: 4,
+										overflow: "hidden",
+									}}
+								>
+									<div
+										style={{
+											width: `${pct}%`,
+											height: "100%",
+											background: barColor,
+											borderRadius: 4,
+											transition: "width 0.3s",
+										}}
+									/>
+								</div>
+								<Text
+									style={{
+										fontSize: 11,
+										fontFamily: "var(--font-mono)",
+										color: barColor,
+										minWidth: 64,
+									}}
+								>
+									{s.activeObserved ? active : "—"}/
+									{ceiling === 0 ? "∞" : ceiling}
+								</Text>
+							</div>
+						</Tooltip>
+						<Tooltip
+							title={
+								`最近 ${s.windowMinutes} 分钟该池下发的 run(按 execution_target 统计):` +
+								`成功 ${rec.succeeded} / 运行中 ${rec.active} / 失败 ${rec.failed}`
+							}
+						>
+							<Text type="secondary" style={{ fontSize: 11 }}>
+								近{s.windowMinutes}min 下发 {rec.total}
+								{rec.succeeded > 0 ? (
+									<Text style={{ fontSize: 11, color: "#22c55e" }}>
+										{" "}
+										✓{rec.succeeded}
+									</Text>
+								) : null}
+								{rec.active > 0 ? (
+									<Text style={{ fontSize: 11, color: "#3b82f6" }}>
+										{" "}
+										⟳{rec.active}
+									</Text>
+								) : null}
+								{rec.failed > 0 ? (
+									<Text style={{ fontSize: 11, color: "#ef4444" }}>
+										{" "}
+										✗{rec.failed}
+									</Text>
+								) : null}
+							</Text>
+						</Tooltip>
+					</div>
+				);
+			},
+		},
+		{
 			title: "调度配置",
 			key: "scheduling",
 			width: 260,
 			render: (_: unknown, r: ExecutionTarget) => {
 				const rd = r.resourceDefaults;
 				const sched = rd?.scheduling ?? {};
-				const tols = rd?.templateTolerations ?? [];
-				const sel = rd?.templateNodeSelector ?? {};
+				// Read tolerations / nodeSelector with the same alias set the backend
+				// accepts (see backend/internal/usecase/pipeline/scheduling.go): both
+				// nested under scheduling.* and top-level, multiple key names. Prior
+				// code only checked top-level rd.template* — pools that stored the
+				// data under scheduling.* (e.g. rtx-flex-start, 交付集群 pools)
+				// rendered as "—" even though the config was live (CYB-3826).
+				const tols =
+					sched.templateTolerations ??
+					sched.tolerations ??
+					rd?.templateTolerations ??
+					[];
+				const sel =
+					sched.templateNodeSelector ??
+					sched.nodeSelector ??
+					sched.nodeSelectors ??
+					rd?.templateNodeSelector ??
+					{};
 				const podLabels = sched.podLabels ?? {};
 				const schedulerName = sched.schedulerName?.trim();
 				const priorityClassName = sched.priorityClassName?.trim();
@@ -857,6 +1023,27 @@ export default function PoolManager() {
 						<Input placeholder="留空 = K8s 全局默认;例如 cyber-databrew-prod" />
 					</Form.Item>
 					<Form.Item
+						name="maxActiveWorkflows"
+						label="最大活跃 workflow(背压阈值)"
+						extra="该 namespace 活跃 workflow 达到此数时,本池子暂停下发(任务留 DB 排队),给其他池子让路。留空 = 后端默认。"
+					>
+						<InputNumber
+							min={0}
+							step={100}
+							precision={0}
+							style={{ width: "100%" }}
+							placeholder="留空 = 后端默认"
+						/>
+					</Form.Item>
+					<Form.Item
+						name="priority"
+						label="工作流优先级"
+						initialValue={0}
+						extra="集群繁忙(parallelism 满)时,高优先级的批次先下发;不中断在跑的任务,空闲时不生效。只在同一个 namespace 的池子之间比较 —— 与上方「PriorityClass」(K8s Pod 调度)不是一回事。"
+					>
+						<Select options={PRIORITY_TIER_OPTIONS} />
+					</Form.Item>
+					<Form.Item
 						label="Pod labels"
 						extra="额外的 pod 标签(EQ label 由上方资源池管理,无需在此重复)。"
 					>
@@ -999,6 +1186,7 @@ type TargetResourceDefaultsPatch = Record<string, unknown> & {
 	templateTolerations?: TargetToleration[];
 	templateNodeSelector?: Record<string, string>;
 	scheduling?: TargetScheduling;
+	maxActiveWorkflows?: number;
 };
 
 interface KeyValueListEditorProps {

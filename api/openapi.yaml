@@ -54,6 +54,10 @@ tags:
     description: Pipeline orchestration (Argo Workflows)
   - name: Runs
     description: Product execution records served through the Run Kernel boundary, including the run ledger, runtime operations, and run tree projections
+  - name: SubscriptionTasks
+    description: Pub/Sub subscription-based auto-dispatch (CYB-3778) — consume asset-ids from a GCP Pub/Sub subscription and create batch jobs on a pipeline template.
+  - name: AdminApiKeys
+    description: "Admin API-key issuance / listing / revocation (dbk_ keys for external integrators; CYB-3154). Mounted under the apikeys:manage scope."
 components:
   securitySchemes:
     DatabrewToken:
@@ -85,6 +89,52 @@ components:
       schema:
         type: string
   schemas:
+    CreateAPIKeyRequest:
+      type: object
+      required: [scopes]
+      properties:
+        name: { type: string, description: "Human label (optional)" }
+        owner: { type: string, description: "Owner identifier (optional)" }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: "Granted scopes; at least one required, entries must be non-empty. Privileged scopes ('*', 'apikeys:manage') are only accepted from the static admin token, not a JWT session (CYB-3417)."
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Optional expiry (RFC 3339). Null/omitted = never expires."
+      example:
+        name: vibecap-integration
+        owner: grace-to-databrew
+        scopes: [assets:read, queries:run]
+    APIKey:
+      type: object
+      description: "API key metadata. The secret is only returned once at creation (see APIKeyCreated) and is never serialized here."
+      properties:
+        id: { type: string }
+        keyPrefix: { type: string, description: "Non-secret identifying prefix (e.g. dbk_ab12...)." }
+        name: { type: string }
+        owner: { type: string }
+        scopes: { type: array, items: { type: string } }
+        status: { type: string, example: active }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+    APIKeyCreated:
+      type: object
+      description: "Create response — the ONLY time the plaintext key is returned. Store it immediately; only its hash is persisted."
+      properties:
+        id: { type: string }
+        key: { type: string, description: "Plaintext API key, shown exactly once." }
+        keyPrefix: { type: string }
+        name: { type: string }
+        owner: { type: string }
+        scopes: { type: array, items: { type: string } }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        note: { type: string, description: "Reminder that the key will not be shown again." }
     ErrorResponse:
       type: object
       required: [code, message, request_id]
@@ -288,6 +338,18 @@ components:
         last_delivered_to: { type: string, nullable: true }
         env: { type: string }
         task: { type: string }
+        # CYB-3715 mirror columns — populated from mcap_files on asset write
+        # (source_platform is lifted from mcap_files.metadata.source_platform).
+        # Nullable text/uuid; empty when the asset has no upstream mcap_file
+        # or the upstream row leaves the field blank.
+        camera_model: { type: string, description: "CYB-3715: mirrored from mcap_files.camera_model." }
+        grace_video_id: { type: string, description: "CYB-4011: Grace video UUID, mirrored from mcap_files.grace_video_id. Nullable / unpopulated by default." }
+        device_id: { type: string, description: "CYB-3715: mirrored from mcap_files.device_id (uuid text)." }
+        collector_id: { type: string, description: "CYB-3715: mirrored from mcap_files.collector_id (uuid text)." }
+        scene_id: { type: string, description: "CYB-3715: mirrored from mcap_files.scene_id (uuid text)." }
+        data_source: { type: string, description: "CYB-3715: mirrored from mcap_files.data_source." }
+        collection_method: { type: string, description: "CYB-3715: mirrored from mcap_files.collection_method." }
+        source_platform: { type: string, description: "CYB-3715: lifted from mcap_files.metadata.source_platform." }
         version: { type: integer, format: int64 }
         algo_results:
           type: object
@@ -835,7 +897,14 @@ components:
       type: object
       properties:
         schema_version: { type: string }
-        mode: { type: string }
+        mode: { type: string, enum: [structured, keyword, semantic, similar] }
+        q:
+          type: string
+          description: |
+            Free-text keyword for fulltext modes (keyword / semantic / similar).
+            When mode is one of those three AND q is non-empty, the server
+            synthesizes a `_fulltext ilike q` predicate on top of `where`
+            (AND-wrapped). Ignored for `mode=structured`.
         scope:
           type: object
           properties:
@@ -1245,6 +1314,7 @@ components:
         task_id: { type: string }
         device_id: { type: string }
         camera_model: { type: string }
+        grace_video_id: { type: string, description: "CYB-4011: Grace video UUID. Nullable / unpopulated by default." }
         data_source: { type: string }
         location_id: { type: string }
         scene_id: { type: string }
@@ -1293,6 +1363,7 @@ components:
         task_id: { type: string, example: "task-route-42" }
         device_id: { type: string, example: "lidar-unit-03" }
         camera_model: { type: string, example: "FLIR-BFS-U3-16S2" }
+        grace_video_id: { type: string, example: "019f9893-3456-7376-ae68-30a89227eb46", description: "CYB-4011: Grace video UUID (optional)." }
         data_source: { type: string, example: "onboard-recording" }
         location_id: { type: string, example: "loc-sf-downtown" }
         scene_id: { type: string, example: "scene-heavy-traffic" }
@@ -3229,8 +3300,10 @@ components:
         jobId: { type: string }
         assetId: { type: string }
         status: { type: string, description: "pending | running | completed | failed | cancelled" }
+        pipelineRunId: { type: string, nullable: true }
         workflowName: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true }
+        attempts: { type: integer }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
@@ -3324,6 +3397,110 @@ components:
             properties:
               itemId: { type: string }
               reason: { type: string }
+
+    # ── Subscription Tasks (CYB-3778) ───────────────────────────
+    PipelineBinding:
+      type: object
+      required: [templateId, targetId]
+      description: One (template, target) a message fans out to.
+      properties:
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true, description: 'Omit for latest' }
+        targetId: { type: string }
+    SubscriptionTask:
+      type: object
+      required: [id, name, enabled, projectId, subscriptionId, pipelineBindings, createdAt, updatedAt]
+      properties:
+        id: { type: string, description: 'Task id (sub_<uuid>)' }
+        name: { type: string }
+        enabled: { type: boolean }
+        projectId: { type: string, description: 'GCP project id for Pub/Sub' }
+        subscriptionId: { type: string, description: 'Pub/Sub subscription id' }
+        pullIntervalSeconds: { type: integer, default: 10 }
+        maxMessagesPerPull: { type: integer, default: 1000 }
+        pipelineBindings:
+          type: array
+          description: One batch is dispatched per binding for every pulled message set.
+          items: { $ref: '#/components/schemas/PipelineBinding' }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastRunStatus: { type: string, enum: [succeeded, failed, empty] }
+        lastBatchIds:
+          type: array
+          items: { type: string }
+        lastError: { type: string }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SubscriptionTaskCreateRequest:
+      type: object
+      required: [name, projectId, subscriptionId, pipelineBindings]
+      properties:
+        name: { type: string }
+        enabled: { type: boolean, default: true }
+        projectId: { type: string }
+        subscriptionId: { type: string }
+        pullIntervalSeconds: { type: integer, default: 10 }
+        maxMessagesPerPull: { type: integer, default: 1000 }
+        pipelineBindings:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PipelineBinding' }
+
+    # ── Pipeline Promotion ──────────────────────────────────────────────
+    PipelinePromotionDependency:
+      type: object
+      required: [nodeName, runtimeImage]
+      properties:
+        nodeName: { type: string, description: Node ID in the pipeline DAG }
+        componentId: { type: string }
+        releaseId: { type: string }
+        componentVersionLabel: { type: string }
+        runtimeImage: { type: string, description: Must be pinned by sha256 digest }
+
+    PipelinePromotionMappingRequirement:
+      type: object
+      required: [kind, sourceId]
+      properties:
+        kind: { type: string, enum: [config, secret, storage], description: Resource kind }
+        sourceId: { type: string, description: Dev resource identifier }
+        targetId: { type: string, description: Prod resource identifier (empty = blocker) }
+        nodeName: { type: string }
+        mountPath: { type: string }
+        required: { type: boolean, default: true }
+        resolution: { type: string, enum: [explicit, ''], description: explicit when targetId was provided }
+
+    PipelinePromotionBundle:
+      type: object
+      required: [sourceEnvironment, sourceTemplateId, sourceVersion, name, pipeline, bundleDigest]
+      properties:
+        sourceEnvironment: { type: string, enum: [dev] }
+        sourceTemplateId: { type: string }
+        sourceVersion: { type: integer }
+        name: { type: string }
+        owner: { type: string }
+        pipeline: { type: object, description: Full normalized pipeline definition }
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePromotionDependency' }
+        bundleDigest: { type: string, description: sha256:hex content digest }
+
+    PipelinePromotionPlan:
+      type: object
+      properties:
+        targetEnvironment: { type: string, enum: [prod] }
+        planDigest: { type: string }
+        bundle: { $ref: '#/components/schemas/PipelinePromotionBundle' }
+        requiredMappings:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePromotionMappingRequirement' }
+        warnings:
+          type: array
+          items: { type: string }
+        blockers:
+          type: array
+          items: { type: string }
+        ready: { type: boolean }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
@@ -3473,6 +3650,78 @@ paths:
                 properties:
                   authenticated: { type: boolean }
 
+  # ── Admin: API keys (CYB-3154 / CYB-3418) ───────────────────────────────
+  /api/v1/admin/api-keys:
+    post:
+      tags: [AdminApiKeys]
+      summary: Mint an API key
+      description: |
+        Creates a `dbk_` API key for external integrators. The plaintext key is
+        returned exactly ONCE (response `key`); only its hash is stored, so it
+        cannot be retrieved later. Requires the `apikeys:manage` scope.
+        Privileged scopes (`*`, `apikeys:manage`) are rejected with 403 unless
+        the caller used the static admin token, not a JWT session (CYB-3417).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIKeyRequest' }
+      responses:
+        '201':
+          description: Created — plaintext key returned once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIKeyCreated' }
+        '400':
+          description: Missing/empty scopes or a whitespace-only scope entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Privileged scope requested without the static admin token (CYB-3417)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [AdminApiKeys]
+      summary: List API keys
+      description: Returns all API keys. The secret hash is never serialized.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+  /api/v1/admin/api-keys/{id}:
+    delete:
+      tags: [AdminApiKeys]
+      summary: Revoke an API key
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: revoked }
+                  id: { type: string }
+        '400':
+          description: Missing id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   # ── Assets ─────────────────────────────────────────────────────────────
   /api/v1/assets:
     post:
@@ -3600,6 +3849,100 @@ paths:
               schema: { $ref: '#/components/schemas/AssetMetadataResponse' }
         '404':
           description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/assets/costs:
+    post:
+      tags: [Assets]
+      summary: Batch asset cost / GPU-min lookup over a time window
+      description: >-
+        Reverse-lookup per-asset pipeline cost and GPU/CPU time for a batch of
+        asset ids over a bounded window (FinOps attribution). start_at/end_at
+        are required (window ≤ 90 days). Unknown ids are returned in missing_ids
+        rather than erroring.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, start_at, end_at]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+                  description: Asset ids (or grace ids per id_type). Non-empty, max 5000.
+                id_type:
+                  type: string
+                  description: Optional id interpretation hint.
+                start_at: { type: string, format: date-time, description: RFC3339. Required. }
+                end_at: { type: string, format: date-time, description: RFC3339. Required, must be >= start_at. }
+                group_by:
+                  type: string
+                  enum: ["", asset, asset_algo]
+                  description: Empty defaults to "asset". "asset_algo" adds a per-algo breakdown.
+      responses:
+        '200':
+          description: Per-asset cost aggregation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        input_id: { type: string }
+                        asset_id: { type: string }
+                        grace_video_id: { type: string }
+                        total_cost_usd: { type: number }
+                        gpu_sec: { type: number }
+                        cpu_sec: { type: number }
+                        gpu_min: { type: number }
+                        cpu_min: { type: number }
+                        run_count: { type: integer, format: int64 }
+                        by_algo:
+                          type: array
+                          nullable: true
+                          description: Present only when group_by=asset_algo, else null.
+                          items:
+                            type: object
+                            properties:
+                              algo_key: { type: string }
+                              cost_usd: { type: number }
+                              gpu_sec: { type: number }
+                              cpu_sec: { type: number }
+                              run_count: { type: integer, format: int64 }
+                  missing_ids: { type: array, items: { type: string } }
+                  filtered_out_ids: { type: array, items: { type: string } }
+                  stats:
+                    type: object
+                    properties:
+                      matched_count: { type: integer }
+                      missing_count: { type: integer }
+                      filtered_out_count: { type: integer }
+                      total_cost_usd: { type: number }
+                      mean_cost_usd: { type: number }
+                      p50_cost_usd: { type: number }
+                      p90_cost_usd: { type: number }
+                      total_gpu_sec: { type: number }
+                      total_cpu_sec: { type: number }
+                      total_run_count: { type: integer, format: int64 }
+        '400':
+          description: >-
+            Invalid request. code ∈ INVALID_ARGUMENT | ID_LIST_REQUIRED |
+            ID_LIST_TOO_LARGE | INVALID_TIME_RANGE | WINDOW_TOO_LARGE | INVALID_GROUP_BY.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Internal error
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -3772,6 +4115,53 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AssetProvenanceResponse' }
+  /api/v1/assets/{id}/runs:
+    get:
+      tags: [Assets]
+      summary: List pipeline runs that processed this asset (reverse lookup)
+      description: >-
+        Reverse lookup of pipeline runs whose asset_ids include this asset
+        (GIN-indexed scan on pipeline_runs.asset_ids). The id accepts a
+        grace_video_id or the short assets.asset_id; an unknown id yields an
+        empty items list (not 404). Summary projection only.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Pipeline run summary list for the asset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+        '400':
+          description: Invalid request (empty id)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/timeline:
     get:
       tags: [Assets]
@@ -4127,7 +4517,7 @@ paths:
           description: Tag validation failed (invalid enum value, over-length value, or source contract violation)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/tags/{key}:
     delete:
       tags: [AssetTags]
@@ -4529,6 +4919,63 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Customer' }
+
+  # ── Dashboard ──────────────────────────────────────────────────────────
+  /api/v1/dashboard/duration-distribution:
+    get:
+      tags: [Dashboard]
+      summary: Asset duration distribution (10-bucket histogram + summary stats)
+      description: >-
+        Duration histogram over non-deleted assets with a non-null duration_ms.
+        `asset_type` is optional and permissive — an absent or unrecognized
+        value simply yields total_assets=0 (never 400), so a fresh install still
+        renders. Buckets are always the same 10 (CYB-4338, "前密后疏": 5min steps
+        over 1-30min, 15min steps over 30-60min), in order, even when empty.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: asset_type
+          required: false
+          schema: { type: string }
+          description: Optional asset_type filter (e.g. raw_mcap). Absent = aggregate all.
+      responses:
+        '200':
+          description: Duration distribution
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asset_type:
+                    type: string
+                    nullable: true
+                    description: Echoes the query param; null when absent.
+                  buckets:
+                    type: array
+                    description: >-
+                      Always 10 buckets in ascending order: <1m, 1-5m, 5-10m,
+                      10-15m, 15-20m, 20-25m, 25-30m, 30-45m, 45-60m, 60m+.
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string, description: 'e.g. "<1m", "15-20m", "60m+"' }
+                        lo_ms: { type: integer, format: int64 }
+                        hi_ms: { type: integer, format: int64, nullable: true, description: Null for the open-ended top bucket (60m+). }
+                        count: { type: integer, format: int64 }
+                        total_ms: { type: integer, format: int64 }
+                  total_assets: { type: integer, format: int64 }
+                  total_ms: { type: integer, format: int64 }
+                  mean_ms: { type: integer, format: int64 }
+                  min_ms: { type: integer, format: int64 }
+                  max_ms: { type: integer, format: int64 }
+                  p50_ms: { type: integer, format: int64 }
+                  p90_ms: { type: integer, format: int64 }
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Deliveries ─────────────────────────────────────────────────────────
   /api/v1/deliveries:
@@ -5025,7 +5472,7 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     post:
       tags: [Admin]
       summary: Register a managed tag definition (admin)
@@ -5044,17 +5491,17 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
           description: Tag key already exists (TAG_KEY_EXISTS)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '422':
           description: Validation failed (bad type, enum without values, missing key)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/admin/tag-registry/{key}:
     parameters:
       - in: path
@@ -5079,17 +5526,17 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Tag key not found (TAG_NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '422':
           description: Validation failed
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Admin]
       summary: Delete a managed tag definition (admin)
@@ -5107,12 +5554,12 @@ paths:
           description: Unauthorized
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Tag key not found (TAG_NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/metric-registry:
     get:
       tags: [Registry]
@@ -5549,6 +5996,52 @@ paths:
       responses:
         '204':
           description: Purged
+  /api/v1/internal/mcap-files/{id}/grace-video-id:
+    patch:
+      tags: [Internal]
+      summary: Backfill grace_video_id on an existing mcap file
+      description: >
+        CYB-4011: sets grace_video_id (Grace video UUID, resolved by
+        raw_hash_md5) on an existing mcap file and its mirrored raw_mcap asset,
+        then emits an asset_updated event so the ES document reindexes. There is
+        no general mcap update endpoint; this internal route exists to backfill
+        the Grace link onto rows created before the column existed. Idempotent.
+      security:
+        - DatabrewToken: []
+        - AdminToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: mcap_file_id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grace_video_id]
+              properties:
+                grace_video_id:
+                  type: string
+                  example: "019f9893-3456-7376-ae68-30a89227eb46"
+      responses:
+        '200':
+          description: Updated (or unchanged if already set)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McapFile' }
+        '400':
+          description: grace_video_id missing/empty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: mcap file not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/internal/assets:batch_delete:
     post:
       tags: [Internal]
@@ -6459,6 +6952,94 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineTemplate' }
 
+  # ── Pipeline Promotion ───────────────────────────────────────────────
+
+  /api/v1/pipelines/{id}/promotion-plan:
+    post:
+      tags: [Pipeline]
+      summary: Preview a dev-to-prod promotion plan
+      description: >
+        Returns a promotion plan with blockers, warnings, required resource
+        mappings, and a content-addressed plan digest. Admin role required.
+      security:
+        - DatabrewToken: []
+        - CookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Dev template ID
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target: { type: string, enum: [prod], default: prod }
+                mappings:
+                  type: array
+                  items: { $ref: '#/components/schemas/PipelinePromotionMappingRequirement' }
+      responses:
+        '200':
+          description: Promotion plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelinePromotionPlan' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: Plan has blockers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipelines/{id}/promote:
+    post:
+      tags: [Pipeline]
+      summary: Promote a dev pipeline to prod scope
+      description: >
+        Copies the dev template to the prod scope (same database). Admin role
+        required.
+      security:
+        - DatabrewToken: []
+        - CookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Dev template ID
+      responses:
+        '201':
+          description: Prod template created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineTemplate' }
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   # ── Deployment ────────────────────────────────────────────────────
   /api/v1/deploy:
     post:
@@ -6711,6 +7292,10 @@ paths:
           name: q
           schema: { type: string }
           description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: createdBy
+          schema: { type: string }
+          description: Exact-match filter on the run's owner (e.g. `subscription-task:<id>` to list a subscription task's single runs).
         - in: query
           name: pipelineNodeId
           schema: { type: string }
@@ -7460,6 +8045,10 @@ paths:
           name: q
           schema: { type: string }
           description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: createdBy
+          schema: { type: string }
+          description: Exact-match filter on the run's owner (e.g. `subscription-task:<id>` to list a subscription task's single runs).
         - in: query
           name: pipelineNodeId
           schema: { type: string }
@@ -8394,6 +8983,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8418,6 +9012,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8442,6 +9041,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8466,6 +9070,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8490,6 +9099,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8514,6 +9128,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Argo API error
           content:
@@ -8561,8 +9180,17 @@ paths:
     get:
       tags: [Backfill]
       summary: List all backfill jobs
+      description: |
+        Optional `createdBy` filters to a single creator — e.g.
+        `subscription-task:<id>` to list the batches a subscription task dispatched.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: createdBy
+          required: false
+          description: Exact-match filter on the job creator (e.g. `subscription-task:<id>`). Omitted → all jobs.
+          schema: { type: string }
       responses:
         '200':
           description: Backfill job list
@@ -8593,6 +9221,37 @@ paths:
               schema: { $ref: '#/components/schemas/BackfillJob' }
         '404':
           description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/items:
+    get:
+      tags: [Backfill]
+      summary: List a batch's per-asset items
+      description: |
+        Returns the asset-level items of a batch (asset id, status, pipeline-run
+        linkage). Backs the subscription-task history view — which assets a
+        dispatch ran. An unknown id yields an empty list, not 404.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Batch items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/BackfillItem' }
+        '400':
+          description: id is required
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -8846,3 +9505,145 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ─── Subscription Tasks (CYB-3778) ────────────────────────────
+  # Pub/Sub-driven auto-dispatch rules. External publishers push asset IDs to a
+  # GCP Pub/Sub topic; Databrew subscribes and auto-creates batch jobs on a
+  # pipeline template. Produced batches surface under /api/v1/backfill.
+  /subscription-tasks:
+    get:
+      tags: [SubscriptionTasks]
+      summary: List subscription-task rules
+      description: |
+        Returns rules ordered by name with client-side filters. Response wrapper
+        is `{items, total, page, pageSize}`.
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive substring match on name or id.
+        - in: query
+          name: enabled
+          schema: { type: string, enum: [true, false] }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, page, pageSize]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SubscriptionTask' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+    post:
+      tags: [SubscriptionTasks]
+      summary: Create a subscription-task rule
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubscriptionTaskCreateRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /subscription-tasks/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [SubscriptionTasks]
+      summary: Get one rule
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [SubscriptionTasks]
+      summary: Update a rule (definition; observation fields untouched)
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubscriptionTaskCreateRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [SubscriptionTasks]
+      summary: Delete a rule
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      responses:
+        '204':
+          description: Deleted
+  /subscription-tasks/{id}/pause:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [SubscriptionTasks]
+      summary: Pause a rule (sets enabled=false)
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }
+  /subscription-tasks/{id}/resume:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [SubscriptionTasks]
+      summary: Resume a rule (sets enabled=true)
+      security: [{ DatabrewToken: [] }, { CookieAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionTask' }

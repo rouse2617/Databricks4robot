@@ -162,7 +162,7 @@ jobs:
             --project=${{ env.PROJECT_ID }} \
             --platform=managed \
             --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }} \
+            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }},ADMIN_EMAILS=ruipeng.huang@cyberorigin.ai \
             --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest,K8S_CA_DATA=cyber-databrew-k8s-ca-cert:latest,K8S_CA_B64=cyber-databrew-k8s-ca-cert:latest,COMPONENT_RELEASE_INGEST_TOKEN=cyber-databrew-prod-component-release-ingest-token:latest,BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL=cyber-databrew-dev-backfill-feishu-webhook:latest
 
   # ─── Atlas migrations (Cloud Run Job) ───────────────────────────────────────

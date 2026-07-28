@@ -1,51 +1,53 @@
-# GCP node hourly USD list prices, us-central1, on-demand and spot.
+# GCP per-resource unit rates, us-central1. Best-effort per-Pod cost estimates.
 #
-# Used by cyber-databrew to render best-effort per-Pod cost estimates.
-# Prices sourced from GCP public list prices (May 2026). Re-check quarterly.
+# Cost model (CYB-3705): Argo resourcesDuration is "resource-quantity × seconds"
+# in a fixed base unit per resource, so
 #
-# What is NOT modeled:
-#   - GCP CUD (committed-use discount) and SUD (sustained-use discount)
-#   - Network egress, storage I/O, GCS / Filestore costs
-#   - Node scale-down idle time (~10 min after last Pod)
+#     cost = Σ_r  resourcesDuration[r] × units[r][provisioning] / 3600
 #
-# To compensate for CUD / SUD without changing per-instance prices, set
-# `calibration_factor` to (actual GCP invoice $) / (sum of list-price $)
-# from a recent month of billing. 1.00 means "use list price".
+# We price each resource by its own unit rate rather than multiplying one
+# resource's duration by a whole-instance hourly rate. This means:
+#   - cpu core-seconds are priced by $/vCPU-hour (NOT treated as wall-clock);
+#   - GPU cost is added only when a pod actually uses a GPU;
+#   - a CPU-only step never inherits GPU pricing, even cross-cluster where the
+#     node's machine type cannot be resolved.
+#
+# What is NOT modeled: network egress, storage I/O, GCS, node scale-down idle
+# time. CUD/SUD: a 2026-07 bill audit confirmed actual spend == GCP list price
+# for all Compute Engine SKUs (GPU/vCPU/RAM) — no committed- or sustained-use
+# discounts, gross_cost == net_cost — so calibration_factor stays 1.00. To fold
+# in a future discount, set it to (actual invoice $) / (sum of list-price $).
+#
+# Re-check quarterly against a real bill.
 
 region: us-central1
 calibration_factor: 1.00
 
-# Lookup key shape: prices[instance_type][accelerator_or_"none"][provisioning]
-# - instance_type   from node label  node.kubernetes.io/instance-type
-# - accelerator     from node label  cloud.google.com/gke-accelerator
-#                   ("none" when absent)
-# - provisioning    from node label  cloud.google.com/gke-provisioning
-#                   ("standard" or "spot")
-prices:
-  # GPU pool — all GPU pipeline tasks
-  g2-standard-16:
-    nvidia-l4:
-      standard: 1.20
+# units[resource_name][provisioning] = USD unit rate.
+#   - resource_name matches the Argo resourcesDuration key exactly.
+#   - provisioning is resolved from cloud.google.com/gke-provisioning
+#     ("standard" | "spot"); defaults to "standard" when unresolved.
+#   - Adding a new machine type needs NO change here — CPU work shares one
+#     blended vCPU rate (per-vCPU list prices span only ~1.6×: E2 $0.0218,
+#     T2D $0.0275, C3D $0.0296, N4 $0.0312, N2 $0.0316, C3 $0.0347, G2 $0.0250).
+#     Only a new accelerator type needs a new key.
+units:
+  # $/vCPU-hour. Blended on-demand rate across the CPU pools (c3d/t2d/n2/e2).
+  # Spot ≈ 51% of on-demand (2026-07 bill: spot node discount ~49%, uniform
+  # across components).
+  cpu:
+    standard: 0.0300
+    spot: 0.0153
 
-  # High-tier CPU pool — delivery tasks
-  c3d-standard-8-lssd:
-    none:
-      standard: 0.45
-      spot: 0.14
+  # $/GPU-hour for the NVIDIA L4 accelerator only (the g2 host vCPUs are billed
+  # via `cpu` above). GCP us-central1 list prices, verified against the bill:
+  # on-demand $0.5600, spot $0.2862 (51% of on-demand).
+  nvidia.com/gpu:
+    standard: 0.5600
+    spot: 0.2862
 
-  # Med-tier CPU pool — stats tasks (spot)
-  t2d-standard-8:
-    none:
-      standard: 0.31
-      spot: 0.09
-
-  # Low-tier (kept so lookup never misses)
-  e2-standard-4:
-    none:
-      standard: 0.13
-      spot: 0.04
-
-  # GKE system pool (never runs business Pods — kept for safety)
-  e2-standard-2:
-    none:
-      standard: 0.07
+  # $/100Mi-hour (Argo memory base unit is 100Mi). ~$0.004/GiB-hour on-demand;
+  # spot ~51%. Small relative to cpu/gpu; kept for completeness.
+  memory:
+    standard: 0.0004
+    spot: 0.0002

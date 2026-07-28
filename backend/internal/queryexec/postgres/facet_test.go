@@ -10,8 +10,8 @@ import (
 )
 
 type fakeSource struct {
-	buckets map[string][]pgrepo.AssetFacetBucket
-	errs    map[string]error
+	buckets   map[string][]pgrepo.AssetFacetBucket
+	errs      map[string]error
 	seenWhere string
 	seenArgs  []interface{}
 	sizeSeen  map[string]int

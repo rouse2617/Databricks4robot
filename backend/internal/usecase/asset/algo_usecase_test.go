@@ -33,6 +33,9 @@ type mockAssetRepo struct {
 	// descendants maps an ancestor assetID to the assets ListDescendants
 	// returns for it. Nil (the default) preserves the no-op behavior.
 	descendants map[string][]*models.Asset
+	// lookupCostsFn lets a test inject the cost aggregate response. Nil
+	// (the default) returns an empty slice. CYB-4306.
+	lookupCostsFn func(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error)
 }
 
 func newMockAssetRepo() *mockAssetRepo {
@@ -111,6 +114,121 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, assetID string) ([]*m
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }
+
+// LookupCosts is populated per-test via costFn to keep usecase tests
+// focused on the cost pipeline. CYB-4306.
+func (m *mockAssetRepo) LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error) {
+	if m.lookupCostsFn != nil {
+		return m.lookupCostsFn(ctx, assetIDs, startAt, endAt, byAlgo)
+	}
+	return nil, nil
+}
+
+// LookupDurations synthesises DurationRow projections from the in-memory
+// asset map so usecase tests for CYB-4294 can exercise LookupDurations
+// without a real DB. Matches by asset_id and grace_video_id, applies the
+// range bounds when non-zero. Not a strict fidelity match with the real
+// SQL — enough to test the mapping/stats logic in the usecase layer.
+func (m *mockAssetRepo) LookupDurations(_ context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make([]repository.DurationRow, 0)
+	seen := make(map[string]struct{}, len(m.assets))
+	for _, a := range m.assets {
+		if _, dup := seen[a.AssetID]; dup {
+			continue
+		}
+		hit := false
+		if _, ok := want[a.AssetID]; ok {
+			hit = true
+		}
+		if !hit && a.GraceVideoID != "" {
+			if _, ok := want[a.GraceVideoID]; ok {
+				hit = true
+			}
+		}
+		if !hit {
+			continue
+		}
+		if minMs > 0 && a.DurationMs < minMs {
+			continue
+		}
+		if maxMs > 0 && a.DurationMs > maxMs {
+			continue
+		}
+		seen[a.AssetID] = struct{}{}
+		out = append(out, repository.DurationRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			DurationMs:   a.DurationMs,
+		})
+	}
+	return out, nil
+}
+
+// LookupLineage synthesises LineageRow projections from the in-memory asset
+// map so usecase tests for CYB-4305 can exercise the batch endpoint without
+// a real DB. Matches by asset_id and grace_video_id; the parent/root/logical
+// pointers are populated when the Asset carries a non-empty value.
+func (m *mockAssetRepo) LookupLineage(_ context.Context, ids []string) ([]repository.LineageRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make([]repository.LineageRow, 0)
+	seen := make(map[string]struct{}, len(m.assets))
+	for _, a := range m.assets {
+		if _, dup := seen[a.AssetID]; dup {
+			continue
+		}
+		hit := false
+		if _, ok := want[a.AssetID]; ok {
+			hit = true
+		}
+		if !hit && a.GraceVideoID != "" {
+			if _, ok := want[a.GraceVideoID]; ok {
+				hit = true
+			}
+		}
+		if !hit {
+			continue
+		}
+		seen[a.AssetID] = struct{}{}
+		row := repository.LineageRow{
+			AssetID:      a.AssetID,
+			GraceVideoID: a.GraceVideoID,
+			IsCurrent:    a.IsCurrent,
+			Revision:     a.Revision,
+		}
+		if a.ParentAssetID != "" {
+			pid := a.ParentAssetID
+			row.ParentAssetID = &pid
+		}
+		if a.RootAssetID != "" {
+			rid := a.RootAssetID
+			row.RootAssetID = &rid
+		}
+		if a.LogicalAssetID != "" {
+			lid := a.LogicalAssetID
+			row.LogicalAssetID = &lid
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
 func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64,
 	_ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	// Should never be called by the new AlgoUsecase. Returning an error

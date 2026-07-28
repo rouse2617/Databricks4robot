@@ -24,11 +24,14 @@ func (missingJobRepo) IncrementItemSubmitAttempts(context.Context, string) (int,
 func (missingJobRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (missingJobRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
-func (missingJobRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (missingJobRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (missingJobRepo) FindJobByID(_ context.Context, _ string) (*models.BackfillJob, error) {
 	return nil, nil
+}
+func (missingJobRepo) TotalDurationByBatchIDs(_ context.Context, _ []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 func (missingJobRepo) UpdateJobStatus(_ context.Context, _, _ string) error        { return nil }
 func (missingJobRepo) UpdateJobPilotPhase(_ context.Context, _, _, _ string) error { return nil }
@@ -58,6 +61,7 @@ func (missingJobRepo) FindItemByJobAndAssetID(_ context.Context, _, _ string) (*
 }
 func (missingJobRepo) UpdateItemStatus(_ context.Context, _, _, _, _ string) error      { return nil }
 func (missingJobRepo) UpdateItemPipelineRun(_ context.Context, _, _, _, _ string) error { return nil }
+func (missingJobRepo) MarkItemFailedWithRun(_ context.Context, _, _, _, _ string) error { return nil }
 func (missingJobRepo) UpdateJobProgress(_ context.Context, _ string, _, _ int, _ string) error {
 	return nil
 }

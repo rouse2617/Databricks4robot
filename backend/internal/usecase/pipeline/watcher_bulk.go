@@ -4,11 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
@@ -36,7 +39,7 @@ import (
 //     too and simply read back their live phase.
 //
 // `WATCHER_MODE=legacy` restores the per-run rotating-window path (rollback
-// hatch, same convention as BATCH_DISPATCH_MODE).
+// hatch, same convention used elsewhere in this package).
 
 const (
 	watcherModeEnv    = "WATCHER_MODE"
@@ -82,6 +85,59 @@ func (uc *Usecase) forgetWorkflowApplied(runID string) {
 	delete(uc.watcherAppliedRV, runID)
 }
 
+// normalizeBackpressureCluster collapses the two "default cluster" spellings
+// onto one key. The watcher's writer resolves cluster via resolveRunClusterID
+// (fallback "cluster-default"); the submitter's reader resolves via
+// ResolveTargetClusterID (fallback "default"). Without this, a default-cluster
+// namespace would be written under "cluster-default/ns" and read under
+// "default/ns" — the observation would never be found and backpressure would
+// silently fail open for the default cluster. Real cluster ids (non-empty,
+// non-default) pass through unchanged and match on both sides.
+func normalizeBackpressureCluster(cluster string) string {
+	switch strings.TrimSpace(cluster) {
+	case "", "default", "cluster-default":
+		return "default"
+	default:
+		return strings.TrimSpace(cluster)
+	}
+}
+
+// backpressureKey is the composite (cluster, namespace) key for the active
+// workflow observation map. Namespace alone collided across clusters that
+// share a namespace name (e.g. two clusters both using "argo"): the last
+// writer won, so one cluster read the other's count and either over-dispatched
+// into a saturated controller or wedged an idle one (CYB-3681 review).
+func backpressureKey(cluster, namespace string) string {
+	return normalizeBackpressureCluster(cluster) + "/" + strings.TrimSpace(namespace)
+}
+
+// recordActiveWorkflowCount stores (and publishes as a gauge) the active
+// (completed=false) workflow count the bulk watcher observed for a
+// (cluster, namespace) this scan. ActiveWorkflowCount reads it back for
+// backfill admission backpressure (CYB-3681).
+func (uc *Usecase) recordActiveWorkflowCount(cluster, namespace string, n int) {
+	uc.activeWFMu.Lock()
+	if uc.activeWFCount == nil {
+		uc.activeWFCount = map[string]int{}
+	}
+	uc.activeWFCount[backpressureKey(cluster, namespace)] = n
+	uc.activeWFMu.Unlock()
+	metrics.DispatcherActiveWorkflows.
+		WithLabelValues(normalizeBackpressureCluster(cluster), strings.TrimSpace(namespace)).
+		Set(float64(n))
+}
+
+// ActiveWorkflowCount returns the last active (pending+running) workflow count
+// observed for a (cluster, namespace) and whether any observation exists yet.
+// The backfill submitter gates dispatch on it; a missing observation (false)
+// fails open so dispatch is never wedged by a cold start or a stalled watcher.
+func (uc *Usecase) ActiveWorkflowCount(cluster, namespace string) (int, bool) {
+	uc.activeWFMu.Lock()
+	defer uc.activeWFMu.Unlock()
+	n, ok := uc.activeWFCount[backpressureKey(cluster, namespace)]
+	return n, ok
+}
+
 // bulkSyncActiveRuns refreshes all DB-active runs from per-cluster LIST
 // snapshots. Returns the number of runs whose state was applied or probed.
 // residualLimit bounds the targeted GETs for snapshot-absent runs per cluster
@@ -103,11 +159,10 @@ func (uc *Usecase) bulkSyncActiveRuns(ctx context.Context, runs []models.Pipelin
 		wg.Add(1)
 		go func(cluster string, group []int) {
 			defer wg.Done()
-			n := uc.bulkSyncClusterRuns(ctx, runs, group, residualLimit, recalibrate)
+			n := uc.bulkSyncClusterRuns(ctx, cluster, runs, group, residualLimit, recalibrate)
 			mu.Lock()
 			synced += n
 			mu.Unlock()
-			_ = cluster
 		}(cluster, group)
 	}
 	wg.Wait()
@@ -116,7 +171,7 @@ func (uc *Usecase) bulkSyncActiveRuns(ctx context.Context, runs []models.Pipelin
 
 // bulkSyncClusterRuns handles one cluster's group: LIST once per namespace,
 // apply matches, probe absentees.
-func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.PipelineRun, group []int, residualLimit int, recalibrate bool) int {
+func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, cluster string, runs []models.PipelineRun, group []int, residualLimit int, recalibrate bool) int {
 	if len(group) == 0 {
 		return 0
 	}
@@ -139,6 +194,7 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 		namespaces[ns] = true
 	}
 	listed := map[string]*wfv1.Workflow{} // "ns/name" → workflow
+	nsActive := map[string]int{}          // namespace → active workflow count
 	listOK := true
 	for ns := range namespaces {
 		items, err := client.ListWorkflows(ctx, ns, activeWorkflowSelector)
@@ -151,6 +207,7 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 			listOK = false
 			break
 		}
+		nsActive[ns] = len(items)
 		for i := range items {
 			listed[ns+"/"+items[i].Name] = &items[i]
 		}
@@ -158,8 +215,35 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 	if !listOK {
 		return uc.legacyRefreshGroup(ctx, runs, group, residualLimit)
 	}
+	// Publish active (completed=false) workflow counts per (cluster, namespace)
+	// so the backfill submitter can backpressure dispatch against control-plane
+	// saturation (CYB-3681). The key is composite because two clusters can
+	// share a namespace name (e.g. both "argo"): keying on namespace alone let
+	// the last writer clobber the other cluster's count, so one cluster read a
+	// foreign saturation signal. The Argo controller that actually OOMs is
+	// scoped to one (cluster, namespace) pair, which is exactly this key.
+	for ns, n := range nsActive {
+		uc.recordActiveWorkflowCount(cluster, ns, n)
+	}
 
-	synced, residuals := 0, 0
+	// Snapshot-hit apply is serialized (no network — just DB writes with
+	// pooled connections; keeping it inline avoids goroutine setup for the
+	// common case). Residual GETs are the slow path (K8s round-trip + DB
+	// writes per run) — those we fan out via a bounded worker pool so a
+	// tick's residual budget is drained in parallel rather than dragged
+	// through serially. CYB-3746: the per-cluster serialization comment
+	// upstairs predates PR #470's per-cluster QPS lift; QPS=50 has ample
+	// headroom for a 20-way fanout without stampeding the client-side rate
+	// limiter, and the effect on a 600-item budget is ~20× faster (~20 min
+	// → ~1 min per scan).
+	var synced atomic.Int64 // written from both the serial snapshot-hit path
+	// and the residual worker goroutines, so it must be atomic (data race
+	// otherwise when a group interleaves snapshot hits with residual GETs).
+	residuals := 0
+	var (
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, watcherResidualConcurrency())
+	)
 	for _, i := range group {
 		run := &runs[i]
 		ns := run.ArgoNamespace
@@ -172,7 +256,7 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 				if !isActiveDeploymentStatus(run.Status) {
 					uc.forgetWorkflowApplied(run.ID)
 				}
-				synced++
+				synced.Add(1)
 			}
 			continue
 		}
@@ -182,11 +266,31 @@ func (uc *Usecase) bulkSyncClusterRuns(ctx context.Context, runs []models.Pipeli
 			continue
 		}
 		residuals++
-		uc.refreshPipelineRunStatus(ctx, run)
-		uc.forgetWorkflowApplied(run.ID)
-		synced++
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(run *models.PipelineRun) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			uc.refreshPipelineRunStatus(ctx, run)
+			uc.forgetWorkflowApplied(run.ID)
+			synced.Add(1)
+		}(run)
 	}
-	return synced
+	wg.Wait()
+	return int(synced.Load())
+}
+
+// watcherResidualConcurrency reads the bounded fanout size for residual GETs
+// (env WATCHER_RESIDUAL_CONCURRENCY, default 20). Kept small enough to stay
+// under the per-cluster client-go QPS/burst (50/100 on this deployment) even
+// with brief bursts, and large enough to drain a 600-item budget in ~1 min.
+func watcherResidualConcurrency() int {
+	if raw := strings.TrimSpace(os.Getenv("WATCHER_RESIDUAL_CONCURRENCY")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 20
 }
 
 // legacyRefreshGroup is the bounded per-run fallback used when a cluster's

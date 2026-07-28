@@ -15,6 +15,7 @@
 - [x] [backend] Add `CountStaleBackfillItems(ctx) (int, error)` to `BackfillRepository` interface
 - [x] [backend] Implement `CountStaleBackfillItems` in `BackfillRepo` (Postgres SQL)
 - [x] [backend] Wire gauge into `reconcileActiveJobs` — set at cycle start (pre-sync gap)
+- [x] [backend] Push the gauge to GCP Cloud Monitoring via `monWriter.WriteInt64Metric(ctx, "dispatcher/stale_items", n)` — the writer was wired but never called (see decisions.md 2026-07-27)
 
 ## API contract sync
 
@@ -29,13 +30,13 @@ No new/changed HTTP API — metrics only.
 
 - [x] [grafana] Add stale-items panel to `deploy/k8s/monitoring/dashboards/backend-observability.json`
 
-## Deploy verification (before commit)
+## Deploy verification (dev via CICD)
 
-- [ ] Build + push with **git SHA tag** and `cloudrun-dev-latest`
-- [ ] Deploy dev using `IMAGE=…:<sha>`
-- [ ] Check `/metrics` endpoint for `backend_dispatcher_stale_items`
-- [ ] Check Grafana dashboard for new panel
+- [x] Local `go build ./...` + `go test ./internal/usecase/backfill/...` green
+- [ ] Merge to `dev` → `deploy-dev.yml` builds + deploys backend to Cloud Run dev
+- [ ] Confirm `custom.googleapis.com/dispatcher/stale_items` receives data in GCP Cloud Monitoring (Metrics Explorer)
+- [ ] "Dispatcher Metrics (Batch / Submitter)" GCP dashboard shows the gauge (was empty before — writer never called)
 
 ## PR
 
-- [ ] PR template filled; Linear CYB-3691 linked
+- [x] PR template filled; Linear CYB-3691 linked

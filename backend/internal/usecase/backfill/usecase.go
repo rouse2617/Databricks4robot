@@ -299,6 +299,16 @@ func (uc *Usecase) reconcileActiveJobs(ctx context.Context, scanLimit int) {
 	if uc.repo != nil {
 		if n, err := uc.repo.CountStaleBackfillItems(ctx); err == nil {
 			metrics.DispatcherStaleItems.Set(float64(n))
+			// CYB-3691: also push the gauge to GCP Cloud Monitoring so the
+			// "Dispatcher Metrics" dashboard (which reads
+			// custom.googleapis.com/dispatcher/stale_items) reflects the gap.
+			// Best-effort: monWriter is nil when the writer is disabled, and
+			// write errors are logged only — never block the reconcile cycle.
+			if uc.monWriter != nil {
+				if werr := uc.monWriter.WriteInt64Metric(ctx, "dispatcher/stale_items", int64(n)); werr != nil {
+					slog.Warn("cloudmonitoring: write dispatcher/stale_items failed", "err", werr)
+				}
+			}
 		}
 	}
 	jobs, err := uc.repo.FindActiveJobs(ctx, scanLimit)
@@ -328,6 +338,10 @@ type CreateBackfillOptions struct {
 	PilotCount      int
 	ConfigSelection *pipelineUC.RuntimeConfigSelection
 	Owner           string
+	// Priority overrides the Argo workflow priority for every subtask of this
+	// batch. Nil → each subtask inherits the target pool's default. Stored in
+	// filter_json.priority; the submitter forwards it as DeployOptions.Priority.
+	Priority *int
 }
 
 type RerunRequest struct {
@@ -413,6 +427,9 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 			"mountPath":      options.ConfigSelection.MountPath,
 			"targetFilename": options.ConfigSelection.TargetFilename,
 		}
+	}
+	if options.Priority != nil {
+		filterJSON["priority"] = *options.Priority
 	}
 	if len(filterJSON) > 0 {
 		job.FilterJSON = filterJSON
@@ -653,6 +670,35 @@ func stringFromBackfillFilter(values map[string]interface{}, keys ...string) str
 	return ""
 }
 
+// intFromBackfillFilter coerces a numeric filter_json value (JSON number,
+// numeric string, or int) to an int. Used for the per-batch priority override
+// (filter_json.priority). ok=false when the key is absent or non-numeric.
+func intFromBackfillFilter(values map[string]interface{}, keys ...string) (int, bool) {
+	for _, key := range keys {
+		raw, ok := values[key]
+		if !ok {
+			continue
+		}
+		switch v := raw.(type) {
+		case float64:
+			return int(v), true
+		case int:
+			return v, true
+		case int64:
+			return int(v), true
+		case json.Number:
+			if n, err := v.Int64(); err == nil {
+				return int(n), true
+			}
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func decodeRuntimeConfigSelection(raw interface{}) *pipelineUC.RuntimeConfigSelection {
 	payload, err := json.Marshal(raw)
 	if err != nil {
@@ -723,7 +769,14 @@ func (uc *Usecase) reconcileMissingRuns(ctx context.Context, jobID string) error
 	}
 	for _, item := range items {
 		if err := uc.reconcileItemRun(ctx, job, item); err != nil {
-			return err
+			// Per-item failures must NOT abort the whole sweep: the legacy
+			// `return err` exited reconcileMissingRuns on the first
+			// duplicate-key hit, leaving every subsequent orphaned item
+			// stranded until the next cycle, and `ForceNewAttempt` only
+			// solves the first one if the loop continues. Log and keep
+			// going so each item gets an independent rebuild attempt.
+			slog.Warn("job reconciler: reconcileMissingRuns item failed (continuing)",
+				"jobID", job.ID, "itemID", item.ID, "err", err)
 		}
 	}
 	return nil
@@ -742,8 +795,7 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 			if item.WorkflowName != nil {
 				itemWorkflowName = strings.TrimSpace(*item.WorkflowName)
 			}
-			if workflowName != "" && (itemWorkflowName == "" ||
-				(strings.Contains(itemWorkflowName, "-batch-") && !strings.Contains(workflowName, "-batch-"))) {
+			if workflowName != "" && itemWorkflowName != workflowName {
 				_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, item.Status)
 			}
 			return nil
@@ -762,6 +814,7 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 		BatchJobID:      job.ID,
 		AssetID:         item.AssetID,
 		RunID:           runID,
+		ForceNewAttempt: false,
 		Status:          status,
 		Message:         message,
 		WorkflowName:    workflowName,
@@ -796,8 +849,40 @@ func backfillItemLedgerStatus(item models.BackfillItem) (status, message string)
 // ListJobs returns all backfill jobs from the database.
 // Listing must stay read-only: syncJobProgress (per-job DB + optional GetRun/Argo)
 // belongs on GetJob, ReconcileSubtaskRuns, and background runners — not on list.
-func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	return uc.repo.FindAllJobs(ctx)
+//
+// After the primary list resolves, one supplementary aggregate query populates
+// TotalDurationMs (CYB-4350) for each job. A repo error on the aggregate is
+// logged but does not fail the list — the field silently stays 0.
+func (uc *Usecase) ListJobs(ctx context.Context, createdBy string) ([]models.BackfillJob, error) {
+	jobs, err := uc.repo.FindAllJobs(ctx, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return jobs, nil
+	}
+	ids := make([]string, 0, len(jobs))
+	for i := range jobs {
+		ids = append(ids, jobs[i].ID)
+	}
+	totals, err := uc.repo.TotalDurationByBatchIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("backfill: total duration lookup failed", "err", err)
+		return jobs, nil
+	}
+	for i := range jobs {
+		if v, ok := totals[jobs[i].ID]; ok {
+			jobs[i].TotalDurationMs = v
+		}
+	}
+	return jobs, nil
+}
+
+// ListItems returns the per-asset items of one batch job (asset id, status, and
+// pipeline-run linkage). Read-only; backs the subscription-task history UI that
+// shows which assets a dispatch ran.
+func (uc *Usecase) ListItems(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
+	return uc.repo.FindItemsByJobID(ctx, jobID)
 }
 
 // GetJob returns a backfill job without loading all items.
@@ -807,7 +892,17 @@ func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
 // convergence; a read must not fan out to Argo (latency scaled with failed
 // count, measured 12.7s at failed=76).
 func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, error) {
-	return uc.repo.FindJobByID(ctx, id)
+	job, err := uc.repo.FindJobByID(ctx, id)
+	if err != nil || job == nil {
+		return job, err
+	}
+	totals, err := uc.repo.TotalDurationByBatchIDs(ctx, []string{id})
+	if err != nil {
+		slog.Warn("backfill: total duration lookup failed", "jobID", id, "err", err)
+		return job, nil
+	}
+	job.TotalDurationMs = totals[id]
+	return job, nil
 }
 
 // PauseJobOptions controls optional pause side effects.
@@ -957,28 +1052,23 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		Skipped:         []RerunSkippedItem{},
 	}
 	runnable := make([]models.BackfillItem, 0, len(items))
-	itemIDs := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.Status == "running" || item.Status == "submitted" {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: item.ID, Reason: "already_running"})
 			continue
 		}
 		runnable = append(runnable, item)
-		itemIDs = append(itemIDs, item.ID)
 	}
 	if req.DryRun {
 		return result, nil
 	}
 	retriedCount := 0
-	if err := uc.repo.PrepareItemsForRerun(ctx, itemIDs); err != nil {
-		return nil, err
-	}
 	scheduled := make([]models.BackfillItem, 0, len(runnable))
 	for i := range runnable {
-		if uc.pipelineUC == nil {
+		if uc.deployer == nil {
 			continue
 		}
-		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+		runID, workflowName, err := uc.deployer.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
 			TargetID:        targetID,
@@ -988,6 +1078,22 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 			ForceNewAttempt: true,
 		})
 		if err != nil {
+			// Leave the item untouched on failure: it keeps its original
+			// (failed/cancelled) status and error_message. Flipping items to
+			// pending before their run exists is exactly what stranded them
+			// when every upsert failed — the job stayed terminal, so the
+			// submitter (which only scans running/pilot_running jobs) never
+			// picked up the dangling pending items, and their failure reason
+			// had already been wiped.
+			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
+			continue
+		}
+		// Success: only now is it safe to re-queue this item.
+		// PrepareItemsForRerun flips status→pending and clears error_message,
+		// started_at, finished_at, and submit_attempts (fresh transient-retry
+		// budget for the human retry); UpdateItemPipelineRun then binds the new
+		// run.
+		if err := uc.repo.PrepareItemsForRerun(ctx, []string{runnable[i].ID}); err != nil {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
 			continue
 		}
@@ -1588,7 +1694,13 @@ func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *m
 	if !claimed {
 		return
 	}
-	text := formatBatchJobNotificationText(previousJob, newStatus, summary, uc.frontendBaseURL)
+	var totalDurationMs int64
+	if totals, err := uc.repo.TotalDurationByBatchIDs(ctx, []string{previousJob.ID}); err != nil {
+		slog.Warn("backfill: total duration lookup for notification failed", "jobID", previousJob.ID, "err", err)
+	} else {
+		totalDurationMs = totals[previousJob.ID]
+	}
+	text := formatBatchJobNotificationText(previousJob, newStatus, summary, totalDurationMs, uc.frontendBaseURL)
 	if err := uc.notifier.SendText(ctx, text); err != nil {
 		slog.Warn("backfill: send completion notification failed", "jobID", previousJob.ID, "err", err)
 	}
@@ -1597,7 +1709,10 @@ func (uc *Usecase) notifyJobTerminalIfNeeded(ctx context.Context, previousJob *m
 // formatBatchJobNotificationText builds the Feishu message body for a batch
 // job reaching a terminal status. Kept in this package (not the notify
 // provider package) since it is specific to what a batch job is.
-func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, frontendBaseURL string) string {
+//
+// totalDurationMs is the CYB-4350 total asset duration; when 0 the 总时长 line
+// is omitted rather than rendering "总时长：0s" or "—".
+func formatBatchJobNotificationText(job *models.BackfillJob, status string, summary repository.BackfillItemStatusSummary, totalDurationMs int64, frontendBaseURL string) string {
 	name := job.Name
 	if strings.TrimSpace(name) == "" {
 		name = job.ID
@@ -1606,6 +1721,9 @@ func formatBatchJobNotificationText(job *models.BackfillJob, status string, summ
 		"【批量任务完成】%s\n状态：%s\n总数：%d　成功：%d　失败：%d",
 		name, status, job.TotalCount, summary.Completed, summary.Failed,
 	)
+	if totalDurationMs > 0 {
+		text += fmt.Sprintf("\n总时长：%s", formatBatchDurationMs(totalDurationMs))
+	}
 	if job.CreatedBy != "" {
 		text += fmt.Sprintf("\n创建人：%s", job.CreatedBy)
 	}
@@ -1616,6 +1734,33 @@ func formatBatchJobNotificationText(job *models.BackfillJob, status string, summ
 		text += fmt.Sprintf("\n链接：%s/pipeline/batch/%s", strings.TrimRight(frontendBaseURL, "/"), job.ID)
 	}
 	return text
+}
+
+// formatBatchDurationMs renders a positive millisecond duration for human
+// notification text. Callers must gate on ms > 0 — for zero this returns "".
+//
+//	>= 1h  → "Xh Ym"  (seconds dropped at hour scale)
+//	>= 1m  → "Ym Ns"
+//	>= 1s  → "Ns"
+//	< 1s   → "<1s"
+func formatBatchDurationMs(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	if ms >= 3600_000 {
+		h := ms / 3600_000
+		m := (ms % 3600_000) / 60_000
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if ms >= 60_000 {
+		m := ms / 60_000
+		s := (ms % 60_000) / 1000
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	if ms >= 1000 {
+		return fmt.Sprintf("%ds", ms/1000)
+	}
+	return "<1s"
 }
 
 // fetchBatchRunsByIDMap retrieves runs for a batch job in a single query

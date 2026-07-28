@@ -25,6 +25,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	runtimeadapter "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter"
@@ -43,6 +44,7 @@ var (
 	ErrInvalidArgument         = errors.New("invalid argument")
 	ErrExecutionTargetNotFound = errors.New("execution target not found")
 	ErrWorkflowUnavailable     = errors.New("workflow service unavailable: argo server not configured")
+	ErrVersionConflict         = errors.New("pipeline version conflict")
 	// ErrWorkflowSubmitIncomplete means the runtime accepted the submit call but
 	// no Argo UID ever materialized (e.g. a client rate-limited "phantom
 	// success"): the workflow CR isn't actually live. It is a RETRYABLE submit
@@ -77,6 +79,28 @@ type Usecase struct {
 	// In-memory by design — restart means one full re-apply (recalibration).
 	watcherRVMu      sync.Mutex
 	watcherAppliedRV map[string]string
+	// activeWFCount is the last active (pending+running) workflow count the
+	// bulk-pull watcher observed per (cluster, namespace) (CYB-3681
+	// backpressure). The backfill submitter reads it via ActiveWorkflowCount
+	// as an admission signal — stop minting new workflows when the control
+	// plane is already saturated. Keyed by backpressureKey (cluster+namespace)
+	// so two clusters sharing a namespace name (e.g. "argo") no longer
+	// overwrite each other's counts. In-memory; unknown until the first scan
+	// (backpressure fails open, i.e. dispatch proceeds, when unknown).
+	activeWFMu    sync.Mutex
+	activeWFCount map[string]int
+	// watcherLoadCursor paginates loadRunsForWatcherSync's active-run fetch
+	// across scans so a total active set larger than watcherActiveRunLoadCap
+	// still gets covered eventually (CYB-3746). The cursor is
+	// (createdAt, id) DESC: each scan resumes strictly older than the last
+	// row returned; wraps back to newest when the page returns short. The
+	// recent-N union in loadRunsForWatcherSync still guarantees a fresh
+	// batch is refreshed every tick, so pagination only affects the older
+	// rotating tail — no live-batch starvation. In-memory (restart resets
+	// to newest, same eventual-coverage semantic as watcherAppliedRV).
+	watcherLoadCursorMu        sync.Mutex
+	watcherLoadCursorCreatedAt time.Time
+	watcherLoadCursorID        string
 	// targetClusterCache memoizes execution_target_id → cluster_id so the
 	// watcher / status-refresh paths can resolve a run's cluster without an
 	// ExecutionTarget object populated on the run (ListSummaries doesn't load
@@ -130,17 +154,6 @@ type Usecase struct {
 	// pricing (CYB-3073); nil falls back to the default GPU-pool rate.
 	nodeResolver nodeInstanceResolver
 
-	// batchCancels holds cancel funcs for in-flight batch submission
-	// goroutines so StopBatchRuns can halt further run creation. Legacy
-	// dispatch mode only — in submitter mode cancellation is DB-state driven
-	// (job status 'cancelled' is never selected by the submitter).
-	batchCancelMu sync.Mutex
-	batchCancels  map[string]context.CancelFunc
-
-	// batchDispatchLegacy selects the pre-CYB-3677 in-memory dispatch
-	// goroutine instead of the durable backfill submitter. Rollback-only;
-	// removed one release after G4 (see CYB-3677).
-	batchDispatchLegacy bool
 	// batchSubmitKick pokes the backfill submitter after a batch lands so
 	// dispatch starts immediately instead of on the next 15s tick. Nil is
 	// fine — the ticker picks the job up regardless (durability never
@@ -149,14 +162,6 @@ type Usecase struct {
 
 	watcherLedgerMu     sync.RWMutex
 	watcherLedgerHealth models.LedgerHealth
-}
-
-// SetBatchDispatchMode selects the batch dispatch path (CYB-3677).
-// "legacy" restores the in-memory goroutine; anything else (default
-// "submitter") persists the job as 'running' and lets the durable backfill
-// submitter own submission.
-func (uc *Usecase) SetBatchDispatchMode(mode string) {
-	uc.batchDispatchLegacy = strings.EqualFold(strings.TrimSpace(mode), "legacy")
 }
 
 // SetBatchSubmitKicker wires the backfill submitter's kick so newly created
@@ -175,6 +180,15 @@ type DeployOptions struct {
 	PreallocatedRunID  string
 	AllowUnknownAssets bool
 	ConfigSelection    *RuntimeConfigSelection
+	// Priority overrides the Argo workflow priority (wf.Spec.Priority) for this
+	// dispatch. Nil → inherit the target pool's default
+	// (executionTargetWorkflowPriority). Set by a per-batch override chosen at
+	// dispatch time.
+	Priority *int32
+	// InstanceID routes this dispatch's workflow to the Argo controller with the
+	// matching instanceID (per-target; multiple controllers share one namespace).
+	// Empty → inherit the target pool's instanceId.
+	InstanceID string
 }
 
 type RuntimeConfigSelection struct {
@@ -365,6 +379,24 @@ func (uc *Usecase) ResolveTargetClusterID(ctx context.Context, targetID string) 
 		return "default"
 	}
 	return strings.TrimSpace(target.ClusterID)
+}
+
+// ResolveTargetBackpressure returns the namespace a target dispatches into and
+// the max active (pending+running) workflows that namespace may hold before the
+// backfill submitter defers dispatch (CYB-3681). ok=false when the target is
+// unresolvable (backpressure then fails open). maxActive=0 disables it for the
+// target. The threshold is data-driven from resource_defaults (online-tunable
+// via the pool manager), so no redeploy is needed to retune it.
+func (uc *Usecase) ResolveTargetBackpressure(ctx context.Context, targetID string) (namespace string, maxActive int, ok bool) {
+	target, err := uc.resolveExecutionTarget(ctx, targetID)
+	if err != nil || target == nil {
+		return "", 0, false
+	}
+	ns := strings.TrimSpace(target.Namespace)
+	if ns == "" {
+		ns = uc.namespace
+	}
+	return ns, executionTargetMaxActiveWorkflows(target), true
 }
 
 // ListBatchDLQ returns a batch's dead-lettered items (status=failed) with
@@ -1260,6 +1292,49 @@ func (uc *Usecase) ListExecutionTargets(ctx context.Context) ([]models.Execution
 	return targets, nil
 }
 
+// ExecutionTargetsStatus returns each target's live runtime picture for the
+// pool manager: how full its namespace is against the backpressure ceiling and
+// how fast it has been dispatching recently. ActiveWorkflows is per-NAMESPACE
+// (the last count the bulk watcher observed — targets sharing a namespace
+// report the same number, which is exactly what backfill backpressure gates
+// on); the recent dispatch breakdown is per-target. A missing watcher
+// observation surfaces as ActiveObserved=false so the UI shows "—" rather than
+// a misleading 0. Read-only: no k8s calls, one window-bounded DB aggregate.
+func (uc *Usecase) ExecutionTargetsStatus(ctx context.Context) ([]models.TargetRuntimeStatus, error) {
+	targets, err := uc.ListExecutionTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	const window = 15 * time.Minute
+	var recent map[string]models.TargetDispatchStats
+	if uc.runRepo != nil {
+		recent, err = uc.runRepo.RecentDispatchStatsByTarget(ctx, window)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out := make([]models.TargetRuntimeStatus, 0, len(targets))
+	for i := range targets {
+		t := &targets[i]
+		ns := strings.TrimSpace(t.Namespace)
+		if ns == "" {
+			ns = uc.namespace
+		}
+		cluster := uc.ResolveTargetClusterID(ctx, t.ID)
+		active, observed := uc.ActiveWorkflowCount(cluster, ns)
+		out = append(out, models.TargetRuntimeStatus{
+			TargetID:           t.ID,
+			Namespace:          ns,
+			ActiveWorkflows:    active,
+			ActiveObserved:     observed,
+			MaxActiveWorkflows: executionTargetMaxActiveWorkflows(t),
+			WindowMinutes:      int(window / time.Minute),
+			Recent:             recent[t.ID],
+		})
+	}
+	return out, nil
+}
+
 func (uc *Usecase) CreateExecutionTarget(ctx context.Context, t *models.ExecutionTarget) error {
 	return uc.targetRepo.Save(ctx, t)
 }
@@ -1311,39 +1386,11 @@ func (uc *Usecase) StopBatchRuns(ctx context.Context, batchJobID, owner string) 
 		}
 		stopped++
 	}
-	// Halt the background submission goroutine so it stops creating new runs
-	// for any items that have not been submitted yet.
-	uc.cancelBatch(batchJobID)
+	// Individual StopRun calls above already halt in-flight work; the
+	// submitter never selects a 'cancelled' job so no further items will be
+	// dispatched.
 	_ = uc.backfillRepo.UpdateJobStatus(ctx, batchJobID, "cancelled")
 	return stopped, failed, nil
-}
-
-func (uc *Usecase) registerBatchCancel(jobID string, cancel context.CancelFunc) {
-	uc.batchCancelMu.Lock()
-	if uc.batchCancels == nil {
-		uc.batchCancels = make(map[string]context.CancelFunc)
-	}
-	uc.batchCancels[jobID] = cancel
-	uc.batchCancelMu.Unlock()
-}
-
-func (uc *Usecase) unregisterBatchCancel(jobID string) {
-	uc.batchCancelMu.Lock()
-	delete(uc.batchCancels, jobID)
-	uc.batchCancelMu.Unlock()
-}
-
-// cancelBatch cancels the in-flight submission goroutine for a batch job.
-// Returns false when no submission is currently tracked (already finished).
-func (uc *Usecase) cancelBatch(jobID string) bool {
-	uc.batchCancelMu.Lock()
-	cancel := uc.batchCancels[jobID]
-	uc.batchCancelMu.Unlock()
-	if cancel == nil {
-		return false
-	}
-	cancel()
-	return true
 }
 
 func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
@@ -2364,7 +2411,15 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	// derivation too. Conservative: only SUCCEEDED is derived — any non-succeeded
 	// business pod yields false, so failure/retry paths are untouched.
 	if isActiveDeploymentStatus(status) {
-		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok {
+		// CYB-3707: only finalize off the business pods when the node set is
+		// complete. An in-flight argo-server /retry deletes the failed step's
+		// node from wf.Status.Nodes so the controller can re-create it; during
+		// that window the remaining pods can all be "succeeded" and
+		// allBusinessPodsSucceeded would spuriously report done — promoting a
+		// still-failed / mid-retry run to Succeeded and locking further retries.
+		// Require the step-pod count to match the pipeline's step count first.
+		if businessFinishedAt, ok := allBusinessPodsSucceeded(wf); ok &&
+			(run.NodeCount <= 0 || businessStepPodCount(wf) >= run.NodeCount) {
 			status = string(wfv1.WorkflowSucceeded)
 			message = ""
 			if businessFinishedAt != nil {
@@ -2595,6 +2650,26 @@ func allBusinessPodsSucceeded(wf *wfv1.Workflow) (*time.Time, bool) {
 	return latestFinishedAt, sawBusinessPod
 }
 
+// businessStepPodCount returns how many real step pods (excluding the injected
+// databrew-exit-notify hook) exist in the workflow, regardless of phase. Used
+// by applyWorkflowToRun to detect a retry that has deleted a failed step's node
+// from wf.Status.Nodes (CYB-3707): a count below the pipeline's step count means
+// the node set is incomplete, so allBusinessPodsSucceeded must not be trusted to
+// finalize the run as Succeeded.
+func businessStepPodCount(wf *wfv1.Workflow) int {
+	if wf == nil {
+		return 0
+	}
+	count := 0
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod || node.TemplateName == transpiler.ExitNotifyTemplateName {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {
 	if uc.runRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
 		return
@@ -2778,7 +2853,7 @@ func workflowUnavailableMessage(run *models.PipelineRun) string {
 	if run == nil {
 		return messageWorkflowUnavailable
 	}
-	if strings.TrimSpace(run.ArgoWorkflowUID) == "" && isBatchSubtaskPlaceholderWorkflowName(run.WorkflowName) {
+	if isPendingBatchWorkflowCreation(run) {
 		return messageWorkflowAwaitingDeploy
 	}
 	return messageWorkflowUnavailable
@@ -3062,6 +3137,41 @@ func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *mode
 	}
 	uc.persistRunObservation(ctx, run)
 	return true
+}
+
+// recoverStuckSucceededRun corrects a run that a prior revival race (CYB-3707)
+// left persisted as Succeeded while its durable asset-node ledger still shows a
+// failed/errored leaf. Bounded to the single-run detail read path. The resulting
+// Succeeded→Failed correction is terminal→terminal and is permitted by
+// persistRunObservation (only →active regressions are guarded). A run whose
+// ledger agrees it succeeded (or cannot be inferred) is left untouched.
+func (uc *Usecase) recoverStuckSucceededRun(ctx context.Context, run *models.PipelineRun) {
+	if run == nil || uc.assetNodeRepo == nil || !isSucceededRunStatus(run.Status) {
+		return
+	}
+	result, err := uc.assetNodeRepo.ListByRunID(ctx, run.ID, models.PipelineRunAssetNodeListOptions{Limit: 500})
+	if err != nil || result == nil || len(result.Items) == 0 {
+		return
+	}
+	status, message, ok := inferTerminalRunFromAssetNodes(result.Items)
+	if !ok || !isTerminalFailureRunStatus(status) {
+		return
+	}
+	slog.Warn("recoverStuckSucceededRun correcting mislabeled succeeded run",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"oldStatus", run.Status,
+		"newStatus", status,
+	)
+	run.Status = status
+	if trimmed := strings.TrimSpace(message); trimmed != "" {
+		run.Message = trimmed
+	}
+	if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		now := uc.nowUTC()
+		run.FinishedAt = &now
+	}
+	uc.persistRunObservation(ctx, run)
 }
 
 func inferRunStatusFromAssetNodes(nodes []models.PipelineRunAssetNode) (string, bool) {
@@ -3470,10 +3580,35 @@ func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.Pipelin
 	//
 	// The CYB-3491 concern (unbounded 39s scan) stays addressed: both halves
 	// are status-indexed and hard-capped.
-	active, err := uc.runRepo.FindActiveRunSummaries(ctx, watcherActiveRunLoadCap)
+	// Load the active-run rotating page from the current cursor. CYB-3746:
+	// a single-page cap of watcherActiveRunLoadCap is smaller than the total
+	// active set under multi-batch load (3 × 9999-item batches ≈ 30k active),
+	// so paging AFTER the last-seen (createdAt, id) is how the loader covers
+	// everything eventually instead of pinning the newest window forever.
+	uc.watcherLoadCursorMu.Lock()
+	cursorCreatedAt := uc.watcherLoadCursorCreatedAt
+	cursorID := uc.watcherLoadCursorID
+	uc.watcherLoadCursorMu.Unlock()
+	active, err := uc.runRepo.FindActiveRunSummariesAfter(ctx, cursorCreatedAt, cursorID, watcherActiveRunLoadCap)
 	if err != nil {
 		return nil, err
 	}
+	// Advance cursor on a full page; wrap to newest when the page returns
+	// short (either the tail was reached, or the active set shrank below the
+	// cursor). The wrap is what makes rotation cyclic instead of one-way.
+	uc.watcherLoadCursorMu.Lock()
+	if len(active) == watcherActiveRunLoadCap && len(active) > 0 {
+		last := active[len(active)-1]
+		uc.watcherLoadCursorCreatedAt = last.CreatedAt
+		uc.watcherLoadCursorID = last.ID
+	} else {
+		uc.watcherLoadCursorCreatedAt = time.Time{}
+		uc.watcherLoadCursorID = ""
+	}
+	uc.watcherLoadCursorMu.Unlock()
+	// Recent-500 union is unchanged: it always includes the freshest activity
+	// (any status), so a just-created run in an in-flight batch is refreshed
+	// every tick even while the rotating page is elsewhere.
 	recent, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{PageSize: 500})
 	if err != nil {
 		return nil, err
@@ -3706,6 +3841,44 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 	return t, nil
 }
 
+// UpdateTemplate appends a normalized template version. Existing rows are
+// immutable snapshots; baseVersion prevents an editor from overwriting a newer
+// version that appeared after it loaded.
+func (uc *Usecase) UpdateTemplate(
+	ctx context.Context,
+	templateID string,
+	pipeline map[string]interface{},
+	baseVersion int,
+	owner string,
+	isAdmin bool,
+) (*models.PipelineTemplate, error) {
+	current, err := uc.templateRepo.FindByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("find template: %w", err)
+	}
+	if current == nil {
+		return nil, ErrTemplateNotFound
+	}
+	if current.Scope == "prod" && !isAdmin {
+		return nil, ErrProdLocked
+	}
+	if current.Scope != "prod" && !isAdmin && owner != "" && current.Owner != "" && current.Owner != owner {
+		return nil, ErrTemplateNotOwned
+	}
+
+	latest, conflict, err := uc.templateRepo.GetLatestVersionWithConflictCheck(ctx, templateID, baseVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check version conflict: %w", err)
+	}
+	if latest == nil {
+		return nil, ErrTemplateNotFound
+	}
+	if conflict {
+		return latest, ErrVersionConflict
+	}
+	return uc.SaveTemplate(ctx, current.Name, pipeline, current.Scope, owner)
+}
+
 // ListVersions returns all versions of a pipeline template. The identifier is
 // normally a template id; name fallback preserves compatibility with older
 // callers that used the route param as a template name.
@@ -3721,13 +3894,25 @@ func (uc *Usecase) ListVersions(ctx context.Context, templateIDOrName string) ([
 
 // SetActiveVersion pins a pipeline's default run version. When version is 0,
 // the pin is cleared (latest = active).
-func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string, version int) error {
+func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string, version int, isAdmin ...bool) error {
 	t, err := uc.templateRepo.FindByID(ctx, templateIDOrName)
 	if err != nil {
 		return fmt.Errorf("find template: %w", err)
 	}
 	if t == nil {
 		return ErrTemplateNotFound
+	}
+	if t.Scope == "prod" && (len(isAdmin) == 0 || !isAdmin[0]) {
+		return ErrProdLocked
+	}
+	if version > 0 {
+		selected, findErr := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, version)
+		if findErr != nil {
+			return fmt.Errorf("find active template version: %w", findErr)
+		}
+		if selected == nil || selected.Scope != t.Scope {
+			return ErrTemplateNotFound
+		}
 	}
 	return uc.templateRepo.SetActiveVersion(ctx, t.Name, version)
 }
@@ -4076,6 +4261,7 @@ func (uc *Usecase) Deploy(
 		ServiceAccount:       target.ServiceAccount,
 		TemplateNodeSelector: executionTargetTemplateNodeSelector(target),
 		TemplateTolerations:  executionTargetTemplateTolerations(target),
+		GpuStepNodeSelector:  executionTargetGpuStepNodeSelector(target),
 		TTLSecondsAfter:      uc.argoWorkflowTTLSecondsAfter(),
 		WorkflowParams:       wfParams,
 		GlobalEnv:            globalEnv,
@@ -4099,11 +4285,31 @@ func (uc *Usecase) Deploy(
 	wfOpts.PodAnnotations = executionTargetPodAnnotations(target)
 	wfOpts.PodPriorityClassName = executionTargetPriorityClassName(target)
 	wfOpts.SchedulerName = executionTargetSchedulerName(target)
+	// Workflow-level labels (CRD ObjectMeta.Labels, not pod-level). Source of
+	// truth is the execution target's `labels` JSONB — typically populated
+	// with the sharded argo-controller selector
+	// (workflows.argoproj.io/controller-instanceid=vpp-cpu) so each
+	// controller only claims workflows routed to its pool. Required for
+	// sharded-controller routing to work; without this, every workflow lands
+	// on the default controller and the sharded ones stay empty.
+	wfOpts.WorkflowLabels = workflowLabelsFromTarget(target)
+	// Argo workflow priority: pool default, overridden by a per-dispatch choice
+	// (CYB task priority). Only meaningful under controller parallelism
+	// saturation; never preempts running workflows.
+	wfOpts.Priority = executionTargetWorkflowPriority(target)
+	if len(opts) > 0 && opts[0].Priority != nil {
+		wfOpts.Priority = opts[0].Priority
+	}
+	// Argo controller instanceID: pool default, overridden per-dispatch. Routes
+	// the workflow to the matching per-namespace controller.
+	wfOpts.InstanceID = executionTargetInstanceID(target)
+	if len(opts) > 0 && opts[0].InstanceID != "" {
+		wfOpts.InstanceID = opts[0].InstanceID
+	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
-
 	// sigsyaml (sigs.k8s.io/yaml) round-trips through encoding/json first, so it
 	// correctly calls resource.Quantity's MarshalJSON (producing e.g. "500m")
 	// instead of yaml.v3's default reflection, which only sees Quantity's
@@ -4214,12 +4420,35 @@ func (uc *Usecase) Deploy(
 	// best-effort GetWorkflow above was rate-limited (or the CR isn't readable
 	// yet). CRITICAL: the CR was almost certainly really created (CRD
 	// CreateWorkflow only returns nil on a k8s 201), so we must NOT delete it —
-	// that would tear down a live workflow. But persisting the run now would
-	// leave a uid-less Pending row the batch submitter can never advance
-	// (invariant ②), silently stranding the item. Return a RETRYABLE error so
-	// the caller leaves the item pending and re-submits next cycle; the
-	// deterministic workflow name makes that submit AlreadyExists → uid backfill.
+	// that would tear down a live workflow.
+	//
+	// Bounded retry (CYB-3491 follow-up): most rate-limit "phantom success"
+	// windows clear within a few hundred ms. Try a small handful of GetWorkflow
+	// reads before giving up so the single-request Deploy path — which uses a
+	// fresh UUID per call and cannot self-heal via AlreadyExists — has a real
+	// chance to obtain the uid on the same call the client already made. Batch
+	// path still self-heals on the next submitter cycle if the retry also
+	// fails, so this is strictly additive.
+	if strings.TrimSpace(wfUID) == "" && client != nil {
+		if detail, phase, ok := waitForWorkflowUID(ctx, client, wfName, targetNamespace); ok {
+			wfDetail = detail
+			wfUID = string(detail.UID)
+			if phase != "" {
+				status = string(phase)
+			}
+		}
+	}
+	// Post-retry: still no uid. Persisting the run now would leave a uid-less
+	// Pending row the batch submitter can never advance (invariant ②),
+	// silently stranding the item. Return a RETRYABLE error so the caller
+	// leaves the item pending and re-submits next cycle; the deterministic
+	// workflow name makes that submit AlreadyExists → uid backfill.
 	if strings.TrimSpace(wfUID) == "" {
+		path := "single"
+		if len(opts) > 0 && (strings.TrimSpace(opts[0].BatchJobID) != "" || strings.TrimSpace(opts[0].PreallocatedRunID) != "") {
+			path = "batch"
+		}
+		metrics.PipelineDeploySubmitIncompleteTotal.WithLabelValues(path).Inc()
 		return nil, fmt.Errorf("%w: workflow %q", ErrWorkflowSubmitIncomplete, wfName)
 	}
 
@@ -4335,6 +4564,30 @@ func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, client argo.Workfl
 	return nil, ErrWorkflowUnavailable
 }
 
+// waitForWorkflowUID retries GetWorkflow a few times to obtain the server-
+// assigned UID after a successful CreateWorkflow. Handles the "phantom
+// success" window where CRD Create returned 201 but the immediate follow-up
+// read was client-side rate-limited or hit an apiserver blip. Bounded so a
+// truly missing CR still surfaces as ErrWorkflowSubmitIncomplete quickly.
+// Total budget ~800ms (4 attempts × 200ms) — well inside typical HTTP client
+// timeouts and safe on the submitter's per-item deadline.
+func waitForWorkflowUID(ctx context.Context, client argo.WorkflowClient, name, namespace string) (*wfv1.Workflow, wfv1.WorkflowPhase, bool) {
+	const attempts = 4
+	const delay = 200 * time.Millisecond
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, "", false
+		case <-time.After(delay):
+		}
+		detail, err := client.GetWorkflow(ctx, name, namespace)
+		if err == nil && detail != nil && detail.UID != "" {
+			return detail, detail.Status.Phase, true
+		}
+	}
+	return nil, "", false
+}
+
 // targetClusterID returns a short label of the target's cluster for logging.
 // Empty target or empty ClusterID → "cluster-default".
 func targetClusterID(t *models.ExecutionTarget) string {
@@ -4391,16 +4644,18 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	deployOpts := DeployOptions{TemplateID: templateID, TemplateVersion: t.Version}
+	// Spread caller opts so any DeployOptions field added later flows through
+	// without a code change here. The two fields this function resolves
+	// (template id/version) are then overridden — those overrides MUST stay
+	// after the spread. The old field-by-field copy silently dropped Priority
+	// (#553) and InstanceID (#554) when the batch submitter first started
+	// setting them; the spread eliminates that class of bug.
+	var deployOpts DeployOptions
 	if len(opts) > 0 {
-		deployOpts.TargetID = opts[0].TargetID
-		deployOpts.Owner = opts[0].Owner
-		deployOpts.BatchJobID = opts[0].BatchJobID
-		deployOpts.DryRun = opts[0].DryRun
-		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
-		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
-		deployOpts.ConfigSelection = opts[0].ConfigSelection
+		deployOpts = opts[0]
 	}
+	deployOpts.TemplateID = templateID
+	deployOpts.TemplateVersion = t.Version
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
 
@@ -4799,6 +5054,10 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	uc.refreshPipelineRunStatusLive(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run, nodeProjectLive)
+	// CYB-3707: un-stick a run left mislabeled Succeeded by the prior revival
+	// race when its durable ledger shows a failed leaf, so the retry control
+	// returns and the failed step can be re-run.
+	uc.recoverStuckSucceededRun(ctx, run)
 	uc.enrichRun(ctx, run, true)
 	if run.Status != initialStatus || run.Message != initialMessage {
 		slog.Warn("GetRun status changed",
@@ -5312,7 +5571,16 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string, filters ...mo
 			Summary:   runstate.AggregateChildRuns(nil),
 		}, nil
 	}
-	if uc.runRelationRepo != nil {
+	// CYB-3822b: durable relations path does its own pagination via
+	// FindByID per relation and cannot cheaply apply filter.Status without a
+	// join. When the caller asks for a status subset (batch-export
+	// "仅成功 / 仅失败"), skip straight to listBatchRunChildren which forwards
+	// filter.Status all the way to WHERE status=? in pipeline_repo. This
+	// keeps the fast path for the unfiltered detail view and the fast path
+	// for the filtered batch-export in one branch each, without a repo-level
+	// join rewrite for the durable case.
+	skipDurableForStatusFilter := strings.TrimSpace(filter.Status) != ""
+	if uc.runRelationRepo != nil && !skipDurableForStatusFilter {
 		if result, err := uc.listDurableRunChildren(ctx, run.ID, filter); err != nil {
 			return nil, err
 		} else if result.Total > 0 || len(result.Relations) > 0 {
@@ -5431,10 +5699,15 @@ func normalizeRunChildrenFilter(filters ...models.PipelineRunListFilter) models.
 }
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string, filter models.PipelineRunListFilter) (*models.RunChildList, error) {
+	// CYB-3822: forward filter.Status so batch-export "仅成功 / 仅失败" filters
+	// at the repo (WHERE status=...) instead of the frontend having to fetch
+	// every child then discard 95%. Repo already knows how to compare against
+	// batchItemRunStatusExpr (Argo TitleCase) — see pipeline_repo.go:1025.
 	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
 		BatchJobID: batchJobID,
 		Page:       filter.Page,
 		PageSize:   filter.PageSize,
+		Status:     filter.Status,
 	})
 	if err != nil {
 		return nil, err
@@ -5875,7 +6148,7 @@ func (uc *Usecase) runtimeRefForRun(run *models.PipelineRun) runtimeadapter.Runt
 // (CYB-3486 PR 4d.5). runtimeAdapter still wins when set — used by tests.
 
 func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		_, err := uc.runtimeAdapter.Retry(ctx, uc.runtimeRefForRun(run), runtimeadapter.RetryOptions{})
 		return err
 	}
@@ -5890,7 +6163,7 @@ func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun)
 }
 
 func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Stop(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -5904,7 +6177,7 @@ func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) 
 }
 
 func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Suspend(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -5918,7 +6191,7 @@ func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRu
 }
 
 func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Resume(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -5932,7 +6205,7 @@ func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun
 }
 
 func (uc *Usecase) terminateRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
-	if uc.runtimeAdapter != nil {
+	if uc.argoFactory == nil && uc.runtimeAdapter != nil {
 		return uc.runtimeAdapter.Terminate(ctx, uc.runtimeRefForRun(run))
 	}
 	client, err := uc.resolveArgoClientForRun(ctx, run)
@@ -6539,6 +6812,50 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 	}
 
 	return asset, nil
+}
+
+// ── Asset → Runs Reverse Lookup (CYB-4297) ────────────────────────
+
+// ListRunsByAsset returns the pipeline runs whose asset_ids include the given
+// asset — the reverse of "given a run, what assets did it use". Input `id`
+// accepts both grace_video_id (uuid form, matches pipeline_runs.asset_ids
+// directly) and the short assets.asset_id (resolved to grace_video_id via
+// assetRepo first). Empty grace on the short-id path returns no runs (asset
+// exists but has never been dispatched — a legitimate empty result, not an
+// error).
+//
+// The heavy lifting is delegated to ListRunSummaries so callers get the same
+// pagination / status filter / batch filter / node hydration behavior as the
+// /pipeline-runs list handler.
+func (uc *Usecase) ListRunsByAsset(ctx context.Context, id string, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, 0, fmt.Errorf("%w: asset id is required", ErrInvalidArgument)
+	}
+	graceID := id
+	// grace_video_id is a 36-char UUID with hyphens; the short asset_id is
+	// base62 ~8 chars, no hyphens. The heuristic keeps callers from paying
+	// for an extra assetRepo round-trip when they already have a grace id.
+	if uc.assetRepo != nil && !looksLikeGraceVideoID(id) {
+		a, err := uc.assetRepo.Get(ctx, id)
+		if err == nil && a != nil && strings.TrimSpace(a.GraceVideoID) != "" {
+			graceID = a.GraceVideoID
+		}
+	}
+	filter.AssetID = graceID
+	return uc.ListRunSummaries(ctx, filter)
+}
+
+// looksLikeGraceVideoID is a cheap shape check: uuid canonical form is
+// 8-4-4-4-12 hyphen-separated hex (36 chars total). We don't need strict
+// RFC 4122 validation — anything of that shape is definitely NOT a short
+// assets.asset_id (which is base62 without hyphens), so we skip the extra DB
+// hop.
+func looksLikeGraceVideoID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
 }
 
 // ── Lineage Query (F4.5) ──────────────────────────────────────────

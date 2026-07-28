@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 func TestBuildSearchBody_NestedTagsAndDurationBetween(t *testing.T) {
@@ -377,5 +379,37 @@ func TestBuildFilterClause_TagSingularFieldUsesTagsFlat(t *testing.T) {
 				t.Errorf("expected %q in clause, got: %s", tt.wantKey, s)
 			}
 		})
+	}
+}
+
+// TestBuildSearchModeQuery_IncludesSharedFulltextFields pins CYB-4011: the
+// keyword/top-search query must match every field in
+// queryir.FulltextExtraFields (grace_video_id, device_id, …) via a match clause
+// with operator=and (whole-id match, no partial/fuzzy). Iterating the source
+// list keeps the test honest as fields are added.
+func TestBuildSearchModeQuery_IncludesSharedFulltextFields(t *testing.T) {
+	q := buildSearchModeQuery("keyword", "019f9ede-0256-7a4c-a5b3-3b26fe82e554")
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatalf("marshal query: %v", err)
+	}
+	s := string(raw)
+	// Baseline core fields still present.
+	if !strings.Contains(s, `"asset_id"`) {
+		t.Fatalf("core asset_id clause missing: %s", s)
+	}
+	// Every shared field appears as a match clause with operator=and.
+	for _, f := range queryir.FulltextExtraFields {
+		wantField := `"match":{"` + f + `":`
+		if !strings.Contains(s, wantField) {
+			t.Fatalf("expected match clause for %q, got: %s", f, s)
+		}
+	}
+	if !strings.Contains(s, `"operator":"and"`) {
+		t.Fatalf("expected operator=and for id fields, got: %s", s)
+	}
+	// Empty query must not panic and must degrade to a valid bool query.
+	if _, err := json.Marshal(buildSearchModeQuery("keyword", "")); err != nil {
+		t.Fatalf("empty query marshal: %v", err)
 	}
 }

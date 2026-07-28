@@ -24,6 +24,7 @@ import (
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
+	subtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/subtask"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
@@ -102,7 +103,8 @@ type coreHandlers struct {
 	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
-		storage           *storageH.Handler
+	subscriptionTask  *subtaskH.Handler
+	storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
 	// CYB-3384: assetRepo is retained so setupOptional can hand a facet
 	// source to the query handler after the sync-health cache is ready.

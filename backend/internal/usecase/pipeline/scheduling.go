@@ -3,12 +3,101 @@ package pipeline
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
+
+// backpressureDefaultMaxActive is the fallback active-workflow ceiling used when
+// a target's resource_defaults does not set maxActiveWorkflows (CYB-3681). Sized
+// well under an Argo controller's memory ceiling (~66KB/workflow → a 4Gi
+// controller holds ~36k) to leave etcd LIST headroom. Env overrides the global
+// default; per-target resource_defaults is the primary, online-tunable knob.
+var backpressureDefaultMaxActive = func() int {
+	if v := os.Getenv("BACKFILL_BACKPRESSURE_DEFAULT_MAX_ACTIVE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 20000
+}()
+
+// executionTargetMaxActiveWorkflows reads the per-namespace active-workflow
+// ceiling from a target's resource_defaults (online-tunable via the pool
+// manager). Absent → compiled default. An explicit 0 disables backpressure for
+// the target.
+func executionTargetMaxActiveWorkflows(target *models.ExecutionTarget) int {
+	if raw, ok := mapValue(target.ResourceDefaults, "maxActiveWorkflows", "max_active_workflows"); ok {
+		if n, ok := intValue(raw); ok && n >= 0 {
+			return n
+		}
+	}
+	return backpressureDefaultMaxActive
+}
+
+// executionTargetWorkflowPriority reads the pool's default Argo workflow
+// priority (wf.Spec.Priority) from resource_defaults.priority (online-tunable
+// via the pool manager). Higher is admitted first when the controller's
+// parallelism queue is saturated; it does not preempt running workflows and is
+// only comparable among pools sharing one controller/namespace queue. Absent →
+// nil (Argo default 0). Distinct from priorityClassName
+// (executionTargetPriorityClassName), which is K8s pod scheduling priority.
+func executionTargetWorkflowPriority(target *models.ExecutionTarget) *int32 {
+	if target == nil {
+		return nil
+	}
+	if raw, ok := mapValue(target.ResourceDefaults, "priority", "workflowPriority"); ok {
+		if n, ok := intValue(raw); ok {
+			p := int32(n)
+			return &p
+		}
+	}
+	return nil
+}
+
+// executionTargetInstanceID reads the pool's Argo controller-instanceid from
+// resource_defaults.instanceId (alias instance_id). The transpiler stamps it as
+// the workflow-level label workflows.argoproj.io/controller-instanceid so the
+// matching per-namespace controller (each with its own parallelism) picks it up.
+// Empty = unset (handled by the default no-instanceid controller).
+func executionTargetInstanceID(target *models.ExecutionTarget) string {
+	if target == nil {
+		return ""
+	}
+	if raw, ok := mapValue(target.ResourceDefaults, "instanceId", "instance_id"); ok {
+		return stringValue(raw)
+	}
+	return ""
+}
+
+// intValue coerces a JSON-decoded value (number as float64, or a numeric
+// string) to an int.
+func intValue(raw interface{}) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case int32:
+		return int(v), true
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return int(n), true
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
 
 func executionTargetTemplateNodeSelector(target *models.ExecutionTarget) map[string]string {
 	out := map[string]string{}
@@ -17,6 +106,32 @@ func executionTargetTemplateNodeSelector(target *models.ExecutionTarget) map[str
 	}
 	for _, source := range executionTargetSchedulingMaps(target) {
 		raw, ok := mapValue(source, "templateNodeSelector", "nodeSelector", "nodeSelectors")
+		if !ok {
+			continue
+		}
+		for key, value := range stringMapValue(raw) {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// executionTargetGpuStepNodeSelector reads a GPU-step-only nodeSelector from
+// the target's scheduling config (resource_defaults key "gpuStepNodeSelector"
+// or "gpuNodeSelector"). The transpiler merges these labels onto GPU steps
+// only (guarded by requiresGPU), so a pool can pin its GPU workload to a
+// dedicated GPU node pool without disturbing sibling CPU steps in the same
+// pipeline. Empty = no-op = old behavior.
+func executionTargetGpuStepNodeSelector(target *models.ExecutionTarget) map[string]string {
+	out := map[string]string{}
+	for key, value := range stringMapValue(jsonMapEnv("PIPELINE_GPU_STEP_NODE_SELECTOR_JSON")) {
+		out[key] = value
+	}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		raw, ok := mapValue(source, "gpuStepNodeSelector", "gpuNodeSelector")
 		if !ok {
 			continue
 		}
@@ -117,6 +232,44 @@ func executionTargetPodAnnotations(target *models.ExecutionTarget) map[string]st
 	out := map[string]string{}
 	for _, source := range executionTargetSchedulingMaps(target) {
 		if raw, ok := mapValue(source, "podAnnotations"); ok {
+			for k, v := range stringMapValue(raw) {
+				out[k] = v
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// workflowLabelsFromTarget builds the workflow-level labels (Workflow CRD
+// ObjectMeta.Labels, not pod-level) for a run. Two sources:
+//
+//  1. The execution target's top-level `labels` JSONB. This is where
+//     sharded argo-controllers route via
+//     workflows.argoproj.io/controller-instanceid — the controller's
+//     --selector flag reads it at the workflow level (pod labels are too
+//     granular and arrive after the workflow is already routed).
+//
+//  2. The scheduling config's workflowLabels map, for pool operators who
+//     want to route via the same data path as PodLabels.
+//
+// Either source may be empty. Returns nil for an empty result so the
+// transpiler leaves ObjectMeta.Labels unset (preserving whatever it
+// already has).
+func workflowLabelsFromTarget(target *models.ExecutionTarget) map[string]string {
+	if target == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range target.Labels {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out[k] = s
+		}
+	}
+	for _, source := range executionTargetSchedulingMaps(target) {
+		if raw, ok := mapValue(source, "workflowLabels"); ok {
 			for k, v := range stringMapValue(raw) {
 				out[k] = v
 			}

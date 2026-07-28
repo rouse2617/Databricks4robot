@@ -27,6 +27,8 @@ interface UsePipelineDeployOptions {
 	pipelineName: string;
 	selectedAssetIds: string[];
 	selectedTargetId: string;
+	// Per-dispatch Argo priority override; undefined = inherit the pool default.
+	priorityOverride?: number;
 	dispatch: Dispatch<DesignerAction>;
 	closeDeployDialog: () => void;
 	messageApi: MessageApi;
@@ -41,6 +43,7 @@ export function usePipelineDeploy({
 	pipelineName,
 	selectedAssetIds,
 	selectedTargetId,
+	priorityOverride,
 	dispatch,
 	closeDeployDialog,
 	messageApi,
@@ -123,6 +126,7 @@ export function usePipelineDeploy({
 			const result = await deployPipelineForAssets(saved.id, assetIds, {
 				targetId: selectedTargetId,
 				batchName: `${name}-${Date.now()}`,
+				priority: priorityOverride,
 			});
 			if (result.mode === "batch") {
 				messageApi.success(
@@ -161,6 +165,7 @@ export function usePipelineDeploy({
 		pipelineName,
 		selectedAssetIds,
 		selectedTargetId,
+		priorityOverride,
 		dispatch,
 		closeDeployDialog,
 		messageApi,

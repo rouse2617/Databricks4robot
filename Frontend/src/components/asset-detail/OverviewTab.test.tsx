@@ -60,4 +60,31 @@ describe("OverviewTab", () => {
 		render(<OverviewTab asset={mockAsset} />);
 		expect(screen.getByText("standard")).toBeTruthy();
 	});
+
+	// CYB-4011: Grace video id row on the asset overview (copyable value, no link).
+	it("renders grace_video_id value when present", () => {
+		render(
+			<OverviewTab
+				asset={{
+					...mockAsset,
+					grace_video_id: "019f9893-3456-7376-ae68-30a89227eb46",
+				}}
+			/>,
+		);
+		expect(
+			screen.getByText("019f9893-3456-7376-ae68-30a89227eb46"),
+		).toBeTruthy();
+		// No Grace jump link (removed per product decision).
+		const graceLink = screen
+			.queryAllByRole("link")
+			.find((a) =>
+				(a.getAttribute("href") || "").includes("grace.cyberorigin.ai"),
+			);
+		expect(graceLink).toBeUndefined();
+	});
+
+	it("shows placeholder when grace_video_id is absent", () => {
+		render(<OverviewTab asset={mockAsset} />);
+		expect(screen.getByText("未关联")).toBeTruthy();
+	});
 });

@@ -56,6 +56,18 @@ type subtaskDeployer interface {
 	// ResolveTargetClusterID maps a target to its cluster ("" → "default"),
 	// the sharding key for per-cluster dispatch channels (CYB-3678).
 	ResolveTargetClusterID(ctx context.Context, targetID string) string
+	// ResolveTargetBackpressure returns the namespace a target dispatches into
+	// and that namespace's max active-workflow ceiling (CYB-3681 admission
+	// control). ok=false when the target is unresolvable (fails open);
+	// maxActive=0 disables backpressure for the target.
+	ResolveTargetBackpressure(ctx context.Context, targetID string) (namespace string, maxActive int, ok bool)
+	// ActiveWorkflowCount returns the last active (pending+running) workflow
+	// count the watcher observed for a (cluster, namespace), and whether an
+	// observation exists. Keyed by cluster too because two clusters can share
+	// a namespace name; namespace alone crossed their counts (CYB-3681 review).
+	// Backpressure fails open (dispatch proceeds) when unknown, so a cold start
+	// or a stalled watcher never wedges dispatch.
+	ActiveWorkflowCount(cluster, namespace string) (int, bool)
 }
 
 // SetSubmitQueue wires the submitter's persistence surface. In production
@@ -180,9 +192,13 @@ func (uc *Usecase) runSubmitterCycle(ctx context.Context) {
 
 // submitJobBatch submits up to one batch of pending items for a job under
 // the cluster governor's bounds (token bucket rate + AIMD concurrency) and
-// returns the attempt count plus per-item outcomes for the channel breaker.
-// Pilot jobs only submit within the remaining pilot quota.
-func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, gov *clusterGovernor) (int, []submitOutcome) {
+// returns the attempt count, the EFFECTIVE per-cycle limit it used, and
+// per-item outcomes for the channel breaker. Pilot jobs only submit within the
+// remaining pilot quota. The caller compares attempts against the returned
+// limit (not the compiled default) to decide whether the batch filled — the
+// per-cluster submit_batch override (CYB-3679) makes those two differ
+// (CYB-4026 D3).
+func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, gov *clusterGovernor) (int, int, []submitOutcome) {
 	limit := perJobSubmitBatch
 	if gov != nil {
 		if sb := gov.submitBatchLimit(); sb > 0 {
@@ -193,12 +209,12 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		pending, err := uc.repo.CountItemsByStatus(ctx, job.ID, "pending")
 		if err != nil {
 			slog.Warn("submitter: count pending failed", "jobID", job.ID, "err", err)
-			return 0, nil
+			return 0, limit, nil
 		}
 		attempted := job.TotalCount - pending
 		quota := job.PilotCount - attempted
 		if quota <= 0 {
-			return 0, nil
+			return 0, limit, nil
 		}
 		if quota < limit {
 			limit = quota
@@ -207,10 +223,10 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 	ids, err := uc.submitQueue.ListSubmittableItemIDs(ctx, job.ID, limit)
 	if err != nil {
 		slog.Warn("submitter: list candidates failed", "jobID", job.ID, "err", err)
-		return 0, nil
+		return 0, limit, nil
 	}
 	if len(ids) == 0 {
-		return 0, nil
+		return 0, limit, nil
 	}
 	// Version pinning (CYB-3677 P0): the template_version column is
 	// authoritative — when set, the submitter must NEVER fall back to the
@@ -243,7 +259,16 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		// consumption, not API-server acceptance.
 		if gov != nil {
 			if err := gov.limiter.Wait(ctx); err != nil {
-				break // ctx cancelled — leave the rest pending
+				// CYB-4026 D4: only a real context cancellation should stop the
+				// cycle and leave the rest pending. burstForRate now guarantees
+				// burst>=1 so a single-event Wait can no longer fail on
+				// "exceeds limiter's burst 0"; if some other limiter error ever
+				// surfaces, log it and stop this cycle (next tick retries) rather
+				// than mislabelling it as a cancellation.
+				if ctx.Err() == nil {
+					slog.Warn("submitter limiter.Wait failed (non-cancel)", "jobID", job.ID, "err", err)
+				}
+				break
 			}
 		}
 		attempts++
@@ -262,7 +287,7 @@ func (uc *Usecase) submitJobBatch(ctx context.Context, job *models.BackfillJob, 
 		}(i, id)
 	}
 	wg.Wait()
-	return attempts, outcomes[:attempts]
+	return attempts, limit, outcomes[:attempts]
 }
 
 // submitOneCandidate re-checks and submits a single pending item.
@@ -299,10 +324,9 @@ func (uc *Usecase) submitOneCandidate(ctx context.Context, job *models.BackfillJ
 	return out
 }
 
-// submitItem performs the actual submission for a row-locked pending
-// item. Every DB write here rides the caller's transaction. Terminal
-// decisions (submitted / failed) COMMIT; only infra errors return non-nil
-// (→ rollback → still pending).
+// submitItem performs the actual submission for a pending item. Individual
+// writes are idempotent; the Argo create is intentionally not wrapped in a
+// database transaction.
 func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item models.BackfillItem, templateVersion int) (submitOutcome, error) {
 	runID := ""
 	if item.PipelineRunID != nil {
@@ -317,19 +341,40 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 	// Idempotency guard: the run may already be live in Argo (uid persisted)
 	// while the item is still pending — e.g. a crash between the run commit
 	// and the item update. Mark submitted, done.
+	//
+	needsUpsert := runID == ""
 	if runID != "" {
-		if existing, getErr := uc.deployer.GetRun(ctx, runID); getErr == nil && runAlreadySubmitted(existing) {
-			wf := strings.TrimSpace(existing.WorkflowName)
-			if wf == "" {
-				wf = workflowName
+		existing, getErr := uc.deployer.GetRun(ctx, runID)
+		if getErr != nil {
+			return outcomeTransient, getErr
+		}
+		if existing != nil {
+			if runAlreadySubmitted(existing) {
+				wf := strings.TrimSpace(existing.WorkflowName)
+				if wf == "" {
+					wf = workflowName
+				}
+				return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
 			}
-			return outcomeOK, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, wf, "submitted")
+			if isTerminalRunStatus(existing.Status) {
+				return outcomeOK, uc.repo.UpdateItemPipelineRun(
+					ctx,
+					item.ID,
+					runID,
+					firstNonEmptyString(existing.WorkflowName, workflowName, runID),
+					backfillItemStatusFromTerminalRun(existing.Status),
+				)
+			}
+			needsUpsert = workflowName != runID
+		} else {
+			needsUpsert = true
 		}
 	}
 
-	// Ensure the run ledger row exists (deterministic, job-scoped workflow
-	// name is minted here).
-	if runID == "" {
+	// Automatic submission and recovery always reuse the current attempt.
+	// Upsert normalizes legacy uid-less business names to the run UUID, which
+	// is also the name Deploy submits to Argo.
+	if needsUpsert {
 		var initErr error
 		runID, workflowName, initErr = uc.deployer.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      job.TemplateID,
@@ -337,7 +382,9 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			TargetID:        targetID,
 			BatchJobID:      job.ID,
 			AssetID:         item.AssetID,
+			RunID:           runID,
 			Status:          "Pending",
+			ForceNewAttempt: false,
 		})
 		if initErr != nil {
 			return outcomeTransient, initErr // infra: retry next cycle
@@ -346,6 +393,7 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			return outcomeTransient, err
 		}
 	}
+	workflowName = runID
 
 	deployOpts := pipelineUC.DeployOptions{
 		BatchJobID:         job.ID,
@@ -361,6 +409,10 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			if selection := decodeRuntimeConfigSelection(configRaw); selection != nil {
 				deployOpts.ConfigSelection = selection
 			}
+		}
+		if p, ok := intFromBackfillFilter(job.FilterJSON, "priority"); ok {
+			pv := int32(p)
+			deployOpts.Priority = &pv
 		}
 	}
 
@@ -424,8 +476,11 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			// human retry via the DLQ API resets the counter.
 			metrics.DispatcherDLQTotal.WithLabelValues("max_submit_attempts").Inc()
 			errMsg := fmt.Sprintf("max submit attempts (%d) exceeded: %v", maxSubmitAttempts, err)
+			// CYB-4026 D5: keep the run binding AND the failure reason. The old
+			// runID!="" path wrote via UpdateItemPipelineRun which has no
+			// error_message column, silently dropping the cause.
 			if runID != "" {
-				return outcomePermanent, uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "failed")
+				return outcomePermanent, uc.repo.MarkItemFailedWithRun(ctx, item.ID, runID, workflowName, errMsg)
 			}
 			return outcomePermanent, uc.repo.UpdateItemStatus(ctx, item.ID, "failed", workflowName, errMsg)
 		}
@@ -458,6 +513,24 @@ func (uc *Usecase) submitItem(ctx context.Context, job *models.BackfillJob, item
 			"jobID", job.ID, "assetID", item.AssetID, "runID", runID, "err", bindErr)
 	}
 	return outcomeOK, nil
+}
+
+func backfillItemStatusFromTerminalRun(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success":
+		return "completed"
+	default:
+		return "failed"
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // isWorkflowAlreadyExists reports whether err (possibly wrapped) is Argo's

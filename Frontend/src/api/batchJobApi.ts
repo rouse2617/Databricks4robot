@@ -25,6 +25,10 @@ export interface BatchJob {
 	// queue/pause waiting, and as a completion-time fallback when finishedAt is unset.
 	runStartedAt?: string;
 	runFinishedAt?: string;
+	// CYB-4350: sum of assets.duration_ms across every child run's asset_ids,
+	// excluding soft-deleted assets. Optional in the type because old server
+	// responses omit it; a missing value is treated as 0 at render sites.
+	totalDurationMs?: number;
 }
 
 export interface CreateBatchJobRequest {
@@ -35,6 +39,9 @@ export interface CreateBatchJobRequest {
 	templateVersion?: number;
 	pilotCount?: number;
 	configSelection?: DeployConfigSelection;
+	// Per-dispatch Argo priority override. Omit to inherit the target pool's
+	// default; -100/0/100 = low/normal/high.
+	priority?: number;
 }
 
 export interface BatchNodeSummary {
@@ -113,10 +120,22 @@ export interface RerunBatchJobResult {
 	skipped: Array<{ itemId: string; reason: string }>;
 }
 
-export function listBatchJobs(): Promise<BatchJob[]> {
-	return request<{ items: BatchJob[] }>("GET", "/backfill").then(
-		(r) => r.items,
-	);
+export interface ListBatchJobsParams {
+	createdBy?: string;
+	status?: string;
+	q?: string;
+}
+
+export function listBatchJobs(
+	params?: ListBatchJobsParams,
+): Promise<BatchJob[]> {
+	const search = new URLSearchParams();
+	if (params?.createdBy) search.set("createdBy", params.createdBy);
+	if (params?.status) search.set("status", params.status);
+	if (params?.q) search.set("q", params.q);
+	const qs = search.toString();
+	const path = qs ? `/backfill?${qs}` : "/backfill";
+	return request<{ items: BatchJob[] }>("GET", path).then((r) => r.items);
 }
 
 export function getBatchJob(id: string): Promise<BatchJob> {
@@ -245,6 +264,56 @@ export function batchJobProgressStatus(
 	if (job.status === "failed") return "exception";
 	if (job.status === "paused") return "normal";
 	return "active";
+}
+
+export type BatchJobDisplayStatus =
+	| "running"
+	| "paused"
+	| "completed"
+	| "partial_failure"
+	| "failed";
+
+/** Minimal item-count shape the batch status is derived from. */
+export interface BatchStatusCounts {
+	completedCount: number;
+	failedCount: number;
+	totalCount: number;
+	/** Backend lifecycle status, used only for paused / in-flight fallback. */
+	status?: string;
+}
+
+/**
+ * Canonical batch-job display status, derived from item counts rather than the
+ * raw backend `status` field. CYB-4012: the backend rollup can report
+ * "completed" for a 0-success / all-failed batch, so the list (which trusted
+ * the raw status) rendered a green "已完成" for a fully-failed batch — hiding
+ * silent failures — while the detail page, which derives from counts, showed
+ * "失败". The mapping was also non-monotonic (near-identical ratios read as
+ * opposite states). Both views now share this one count-based function.
+ *
+ * Monotonic in failure rate — once every item is processed:
+ *   failed == 0            -> completed        (fully clean)
+ *   0 < failed < total     -> partial_failure  (mixed: some worked)
+ *   completed == 0         -> failed           (nothing worked)
+ * so a higher failure rate can never read as more successful, and only a
+ * fully-clean batch is ever "completed".
+ */
+export function deriveBatchJobStatus(
+	job: BatchStatusCounts,
+): BatchJobDisplayStatus {
+	if (job.status === "paused") return "paused";
+	const processed = job.completedCount + job.failedCount;
+	// All items processed (matches the detail page's allFinished check).
+	if (processed >= job.totalCount) {
+		if (job.failedCount === 0) return "completed";
+		if (job.completedCount === 0) return "failed";
+		return "partial_failure";
+	}
+	// Not fully processed: honor an explicit terminal failure from the backend;
+	// otherwise it is still in flight. Never surface "completed" before every
+	// item is processed — that premature-complete is the CYB-4012 mask.
+	if (job.status === "failed") return "failed";
+	return "running";
 }
 
 export interface BackfillItemAttempt {

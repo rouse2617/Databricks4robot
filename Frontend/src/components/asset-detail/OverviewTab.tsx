@@ -69,6 +69,18 @@ export default function OverviewTab({ asset }: Props) {
 						<code className="text-xs">—</code>
 					)}
 				</Descriptions.Item>
+				{/* CYB-4011: Grace video id — copyable value, else 未关联. */}
+				<Descriptions.Item label="Grace Video ID">
+					{asset.grace_video_id ? (
+						<Text code copyable className="text-xs">
+							{asset.grace_video_id}
+						</Text>
+					) : (
+						<Text type="secondary" className="text-xs">
+							未关联
+						</Text>
+					)}
+				</Descriptions.Item>
 				<Descriptions.Item label="起始时间 (ns)">
 					{asset.start_timestamp_ns}
 				</Descriptions.Item>

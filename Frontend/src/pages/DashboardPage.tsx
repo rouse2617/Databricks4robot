@@ -35,19 +35,12 @@ import type { FailureClusterItem } from "../api/lakehouse";
 import {
 	type LakehouseAssetGrowthResponse,
 	type LakehouseEventDailyResponse,
-	type LakehouseEventTypeShareResponse,
 	type LakehouseOverviewResponse,
 	lakehouseApi,
 } from "../api/lakehouse";
-import {
-	type Cluster,
-	type ElasticQuota,
-	listClusters,
-	listElasticQuotas,
-} from "../api/pipelineApi";
 import { LazyECharts } from "../components/analytics/LazyECharts";
 import PageLoading from "../components/common/PageLoading";
-import { ElasticQuotaPanel } from "../components/pipeline/PoolManager";
+import DurationDistributionCard from "../components/dashboard/DurationDistributionCard";
 import { extractApiErrorMessage } from "../lib/apiError";
 import { getAppVersionLabel } from "../lib/appVersion";
 
@@ -271,19 +264,10 @@ interface DailyEventPoint {
 	count: number;
 }
 
-interface EventTypeShareRow {
-	key: string;
-	eventType: string;
-	count: number;
-	ratio: number;
-	last30Count: number;
-}
-
 interface EndpointErrors {
 	overview?: string;
 	growth?: string;
 	daily?: string;
-	share?: string;
 	tables?: string;
 	quality?: string;
 	training?: string;
@@ -451,40 +435,6 @@ function normalizeDailyByType(
 		.filter((it) => it.date);
 }
 
-function normalizeShare(
-	raw: LakehouseEventTypeShareResponse,
-	daily: DailyEventPoint[],
-): { rows: EventTypeShareRow[]; date: string | null } {
-	const r = asRecord(raw) ?? {};
-	const items = asRecordArray(r.items);
-	const last30ByType = new Map<string, number>();
-	for (const d of daily) {
-		last30ByType.set(
-			d.eventType,
-			(last30ByType.get(d.eventType) ?? 0) + d.count,
-		);
-	}
-	const rows = items
-		.map((it, idx) => {
-			const eventType =
-				typeof it.event_type === "string" ? it.event_type : `idx-${idx}`;
-			const count = toFiniteNumber(it.asset_count) ?? 0;
-			let ratio = toFiniteNumber(it.ratio) ?? 0;
-			if (ratio > 1 && ratio <= 100) ratio /= 100;
-			return {
-				key: eventType,
-				eventType,
-				count,
-				ratio: Math.max(0, Math.min(1, ratio)),
-				last30Count: last30ByType.get(eventType) ?? 0,
-			};
-		})
-		.filter((row) => row.count > 0)
-		.sort((a, b) => b.count - a.count);
-	const date = typeof r.date === "string" ? r.date : null;
-	return { rows, date };
-}
-
 function freshnessTag(latestDate: string | null, lagHours: number | null) {
 	if (!latestDate) return { color: "default", label: "无数据" };
 	const hours = lagHours ?? 0;
@@ -572,16 +522,26 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 			type: "category",
 			boundaryGap: true,
 			data: labels,
-			axisLine: { lineStyle: { color: "#e2e8f0" } },
-			axisLabel: { fontSize: 11, rotate: labels.length > 24 ? 32 : 0 },
+			// CYB-4323: lift axis line + date labels out of the faint-gray zone
+			// (#e2e8f0 → slate-300 line, labels to slate-600) for readability.
+			axisLine: { lineStyle: { color: "#cbd5e1" } },
+			axisLabel: {
+				fontSize: 11,
+				color: "#475569",
+				rotate: labels.length > 24 ? 32 : 0,
+			},
 		},
 		yAxis: [
 			{
 				type: "value",
+				// CYB-4323: tint left axis (新增) blue + right axis (累计) green so
+				// each scale maps to its series (bar/line) at a glance.
 				name: "新增",
+				nameTextStyle: { color: "#2563eb" },
 				splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
 				axisLabel: {
 					fontSize: 11,
+					color: "#2563eb",
 					formatter: (value: number) => {
 						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
@@ -592,9 +552,11 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 			{
 				type: "value",
 				name: "累计",
+				nameTextStyle: { color: "#16a34a" },
 				splitLine: { show: false },
 				axisLabel: {
 					fontSize: 11,
+					color: "#16a34a",
 					formatter: (value: number) => {
 						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
@@ -639,97 +601,6 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 				data: points.map((p) => p.cumulative),
 			},
 		],
-	};
-}
-
-function buildStackedOption(daily: DailyEventPoint[]) {
-	const dates = Array.from(new Set(daily.map((d) => d.date))).sort();
-	const types = Array.from(new Set(daily.map((d) => d.eventType)));
-	const byType: Record<string, Record<string, number>> = {};
-	for (const t of types) byType[t] = {};
-	for (const d of daily) byType[d.eventType][d.date] = d.count;
-	const palette = [
-		"#3b82f6",
-		"#22c55e",
-		"#f59e0b",
-		"#ef4444",
-		"#8b5cf6",
-		"#06b6d4",
-	];
-	const labels = dates.map((d) => dayjs(d).format("MM-DD"));
-	return {
-		color: palette,
-		textStyle: { color: "#64748b", fontSize: 11 },
-		tooltip: chartTooltip,
-		legend: {
-			data: types,
-			top: 6,
-			type: "scroll",
-			// CYB-3305: reserve horizontal room for the "1/2" scroll paging arrows
-			// so long event-type names (e.g. "pipeline_processing") don't clash
-			// with the pager controls.
-			padding: [0, 44, 0, 44],
-			textStyle: { fontSize: 12, color: "#64748b" },
-		},
-		grid: { left: 64, right: 12, top: 48, bottom: 68 },
-		toolbox: {
-			right: 8,
-			top: 4,
-			feature: {
-				dataZoom: {
-					yAxisIndex: false,
-					title: { zoom: "框选缩放", back: "还原" },
-				},
-				restore: { title: "还原" },
-				saveAsImage: { name: "事件分布", title: "导出图片" },
-			},
-			iconStyle: { borderColor: "#94a3b8" },
-		},
-		dataZoom: [
-			{
-				type: "slider",
-				xAxisIndex: 0,
-				height: 22,
-				bottom: 6,
-				borderColor: "#e2e8f0",
-				fillerColor: "rgba(59, 130, 246, 0.15)",
-				handleStyle: { color: "#3b82f6" },
-				textStyle: { color: "#64748b", fontSize: 10 },
-			},
-			{
-				type: "inside",
-				xAxisIndex: 0,
-				zoomOnMouseWheel: true,
-				moveOnMouseMove: true,
-			},
-		],
-		xAxis: {
-			type: "category",
-			data: labels,
-			axisLine: { lineStyle: { color: "#e2e8f0" } },
-			axisLabel: { fontSize: 11, rotate: labels.length > 24 ? 32 : 0 },
-		},
-		yAxis: {
-			type: "value",
-			splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
-			axisLabel: {
-				fontSize: 11,
-				formatter: (value: number) => {
-					if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-					if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
-					return value.toString();
-				},
-			},
-		},
-		series: types.map((t, i) => ({
-			name: t,
-			type: "bar",
-			stack: "events",
-			barMaxWidth: 40,
-			emphasis: { focus: "series" as const },
-			data: dates.map((d) => byType[t][d] ?? 0),
-			itemStyle: { color: palette[i % palette.length] },
-		})),
 	};
 }
 
@@ -802,8 +673,6 @@ export default function DashboardPage() {
 	});
 	const [growth, setGrowth] = useState<AssetGrowthPoint[]>([]);
 	const [daily, setDaily] = useState<DailyEventPoint[]>([]);
-	const [shareRows, setShareRows] = useState<EventTypeShareRow[]>([]);
-	const [shareDate, setShareDate] = useState<string | null>(null);
 	const [tableCountRows, setTableCountRows] = useState<LakeTableCountRow[]>([]);
 	const [qualityRows, setQualityRows] = useState<QualityDistRow[]>([]);
 	const [trainingRows, setTrainingRows] = useState<Record<string, unknown>[]>(
@@ -833,41 +702,6 @@ export default function DashboardPage() {
 		customer: null,
 	});
 	const [errors, setErrors] = useState<EndpointErrors>({});
-	// CYB-3577: resource-pool (ElasticQuota) usage, surfaced on the overview so
-	// everyone can read cluster headroom at a glance without opening 资源池管理.
-	const [poolClusters, setPoolClusters] = useState<Cluster[]>([]);
-	const [poolQuotas, setPoolQuotas] = useState<ElasticQuota[]>([]);
-	const [poolQuotaLoading, setPoolQuotaLoading] = useState(true);
-
-	// CYB-3577: load resource-pool usage once on mount. Independent of the
-	// window-range data effect below so a quota API hiccup never blocks the KPIs.
-	useEffect(() => {
-		let cancelled = false;
-		(async () => {
-			try {
-				const [clusterList, quotaList] = await Promise.all([
-					listClusters(),
-					listElasticQuotas(),
-				]);
-				if (cancelled) return;
-				setPoolClusters(clusterList);
-				setPoolQuotas(quotaList);
-			} catch {
-				// Panel degrades to an empty state on its own; the overview must
-				// still render its business KPIs regardless of the pool API.
-				if (!cancelled) {
-					setPoolClusters([]);
-					setPoolQuotas([]);
-				}
-			} finally {
-				if (!cancelled) setPoolQuotaLoading(false);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, []);
-
 	useEffect(() => {
 		let cancelled = false;
 		const load = async () => {
@@ -882,8 +716,7 @@ export default function DashboardPage() {
 				// explicit "尚未物化" placeholder. quality / customer-replay are
 				// re-enabled in this build — both run directly against PG.
 				const SILVER_GOLD_NOTE = "Silver/Gold 表尚未物化，详见路线图 P1。";
-				const defaultShareDate = dayjs().format("YYYY-MM-DD");
-				const [ov, gr, dl, tbl, qual, cust, fc, sh] = await Promise.allSettled([
+				const [ov, gr, dl, tbl, qual, cust, fc] = await Promise.allSettled([
 					lakehouseApi.overview(),
 					lakehouseApi.assetGrowth(windowDays),
 					lakehouseApi.eventDaily(windowDays),
@@ -891,7 +724,6 @@ export default function DashboardPage() {
 					lakehouseApi.qualityDistribution(`${windowDays}d`),
 					lakehouseApi.customerReplay(),
 					lakehouseApi.failureClusters(windowDays),
-					lakehouseApi.eventTypeShare(defaultShareDate),
 				]);
 
 				let m: DashboardMetrics = {
@@ -958,30 +790,10 @@ export default function DashboardPage() {
 						"失败模式分布加载失败",
 					);
 
-				let selectedDate: string | null =
-					dailyPoints.length > 0
-						? dailyPoints[dailyPoints.length - 1].date
-						: m.goldLatestDate;
-				if (!selectedDate) selectedDate = dayjs().format("YYYY-MM-DD");
-
-				let normalized: { rows: EventTypeShareRow[]; date: string | null } = {
-					rows: [],
-					date: selectedDate,
-				};
-				if (sh.status === "fulfilled")
-					normalized = normalizeShare(sh.value, dailyPoints);
-				else
-					errs.share = extractApiErrorMessage(
-						sh.reason,
-						"事件类型分布加载失败",
-					);
-
 				if (cancelled) return;
 				setMetrics(m);
 				setGrowth(growthPoints);
 				setDaily(dailyPoints);
-				setShareRows(normalized.rows);
-				setShareDate(normalized.date ?? selectedDate);
 				setTableCountRows(tableRows);
 				setQualityRows(qRows);
 				setTrainingRows(trainR);
@@ -1040,63 +852,6 @@ export default function DashboardPage() {
 	}, [metrics.todayNew, metrics.yesterdayNew]);
 
 	const freshness = freshnessTag(metrics.goldLatestDate, metrics.dataLagHours);
-
-	const shareColumns: ColumnsType<EventTypeShareRow> = useMemo(
-		() => [
-			{
-				title: "事件类型",
-				dataIndex: "eventType",
-				key: "eventType",
-				render: (v: string) => <Tag>{v}</Tag>,
-			},
-			{
-				title: "当日数量",
-				dataIndex: "count",
-				key: "count",
-				align: "right",
-				width: 120,
-				render: (v: number) => v.toLocaleString(),
-			},
-			{
-				title: "当日占比",
-				key: "ratio",
-				width: 220,
-				render: (_: unknown, row) => (
-					<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-						<div
-							style={{
-								flex: 1,
-								height: 6,
-								borderRadius: 99,
-								background: "#F1F5F9",
-								overflow: "hidden",
-							}}
-						>
-							<div
-								style={{
-									width: `${(row.ratio * 100).toFixed(1)}%`,
-									height: "100%",
-									background: "var(--color-primary)",
-								}}
-							/>
-						</div>
-						<Text type="secondary" style={{ fontSize: 12, minWidth: 48 }}>
-							{(row.ratio * 100).toFixed(1)}%
-						</Text>
-					</div>
-				),
-			},
-			{
-				title: `近 ${windowDays} 天累计`,
-				dataIndex: "last30Count",
-				key: "last30Count",
-				align: "right",
-				width: 140,
-				render: (v: number) => v.toLocaleString(),
-			},
-		],
-		[windowDays],
-	);
 
 	const tableCountColumns: ColumnsType<LakeTableCountRow> = useMemo(
 		() => [
@@ -1319,7 +1074,6 @@ export default function DashboardPage() {
 	const failing = Object.entries(errors).filter(([, m]) => !!m);
 
 	const growthOption = useMemo(() => buildGrowthOption(growth), [growth]);
-	const stackedOption = useMemo(() => buildStackedOption(daily), [daily]);
 	const failureClusterOption = useMemo(
 		() => ({
 			tooltip: {
@@ -1542,18 +1296,8 @@ export default function DashboardPage() {
 					</Col>
 				</Row>
 
-				{/* CYB-3577: resource-pool (ElasticQuota) usage, front-and-center on
-				    the overview so every user can read cluster headroom at a glance. */}
-				<div style={{ marginBottom: 16 }}>
-					<ElasticQuotaPanel
-						initialQuotas={poolQuotas}
-						clusters={poolClusters}
-						loading={poolQuotaLoading}
-					/>
-				</div>
-
 				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-					<Col xs={24} lg={12} style={{ display: "flex" }}>
+					<Col xs={24} style={{ display: "flex" }}>
 						<Card
 							variant="borderless"
 							title={`资产增长（${windowDays} 天）`}
@@ -1574,53 +1318,14 @@ export default function DashboardPage() {
 							)}
 						</Card>
 					</Col>
-					<Col xs={24} lg={12} style={{ display: "flex" }}>
-						<Card
-							variant="borderless"
-							title={`事件分布（${windowDays} 天）`}
-							size="small"
-							style={cardElevated}
-							styles={{
-								header: cardHeaderBar,
-								body: { padding: 16 },
-							}}
-						>
-							{daily.length > 0 ? (
-								<LazyECharts
-									option={stackedOption}
-									style={{ height: 340, width: "100%" }}
-								/>
-							) : (
-								<TableEmptyState summary="所选时间范围内暂无按日事件分布" />
-							)}
-						</Card>
-					</Col>
 				</Row>
 
+				{/* CYB-4303: 数据时长分布 replaces the retired 事件分布 + 最新日事件
+				    类型分布 cards. Full-width so the 5-bucket histogram + stats row
+				    read comfortably at desktop widths. */}
 				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
 					<Col xs={24} style={{ display: "flex" }}>
-						<Card
-							variant="borderless"
-							title={`最新日事件类型分布${shareDate ? ` · ${shareDate}` : ""}`}
-							size="small"
-							style={cardElevated}
-							styles={{
-								header: cardHeaderBar,
-								body: { padding: 16 },
-							}}
-						>
-							{shareRows.length > 0 ? (
-								<Table
-									rowKey="key"
-									columns={shareColumns}
-									dataSource={shareRows}
-									size="small"
-									pagination={false}
-								/>
-							) : (
-								<TableEmptyState summary="暂无最新日事件类型占比数据" />
-							)}
-						</Card>
+						<DurationDistributionCard />
 					</Col>
 				</Row>
 

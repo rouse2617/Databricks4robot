@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,8 +55,8 @@ func TestUpsertBatchSubtaskRunReusesExistingRunForBatchAsset(t *testing.T) {
 	if runID != existingID {
 		t.Fatalf("runID = %q, want existing %q", runID, existingID)
 	}
-	if workflowName != "3-batch-job-1-23324" {
-		t.Fatalf("workflowName = %q, want job-scoped 3-batch-job-1-23324", workflowName)
+	if workflowName != existingID {
+		t.Fatalf("workflowName = %q, want run UUID %q", workflowName, existingID)
 	}
 	if saved := runRepo.byID[existingID]; saved == nil || saved.Status != "Pending" {
 		t.Fatalf("saved status = %q, want Pending", saved.Status)
@@ -91,7 +92,7 @@ func TestUpsertBatchSubtaskRunForceNewAttemptCreatesFreshRun(t *testing.T) {
 	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
 	uc.SetRunRepositories(nil, runRepo, nil)
 
-	runID, _, err := uc.UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
+	runID, workflowName, err := uc.UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
 		TemplateID:      templateID,
 		TemplateVersion: 1,
 		BatchJobID:      batchJobID,
@@ -105,11 +106,69 @@ func TestUpsertBatchSubtaskRunForceNewAttemptCreatesFreshRun(t *testing.T) {
 	if runID == existingID {
 		t.Fatalf("runID = existing %q, want new run id", existingID)
 	}
+	if workflowName != runID {
+		t.Fatalf("workflowName = %q, want new run UUID %q", workflowName, runID)
+	}
 	if runRepo.byID[existingID].Status != "Error" {
 		t.Fatalf("existing run status changed to %q", runRepo.byID[existingID].Status)
 	}
 	if saved := runRepo.byID[runID]; saved == nil || saved.Status != "Pending" {
 		t.Fatalf("new run status = %v, want Pending", saved)
+	}
+}
+
+func TestUpsertBatchSubtaskRunDerivesStableInitialRunIdentity(t *testing.T) {
+	t.Parallel()
+
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {ID: "tmpl-1", Name: "3", Version: 1, NodeCount: 3, Scope: "dev"},
+		},
+	}
+	newUsecase := func() *Usecase {
+		uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+		uc.SetRunRepositories(nil, &mockRunRepo{}, nil)
+		return uc
+	}
+
+	type result struct {
+		runID        string
+		workflowName string
+		err          error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var workers sync.WaitGroup
+	for worker := 0; worker < 2; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			runID, workflowName, err := newUsecase().UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
+				TemplateID: "tmpl-1",
+				BatchJobID: "job-1",
+				AssetID:    "asset-1",
+				Status:     "Pending",
+			})
+			results <- result{runID: runID, workflowName: workflowName, err: err}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	var got []result
+	for current := range results {
+		if current.err != nil {
+			t.Fatalf("UpsertBatchSubtaskRun() error = %v", current.err)
+		}
+		got = append(got, current)
+	}
+	if got[0].runID != got[1].runID {
+		t.Fatalf("concurrent initial run IDs differ: %q != %q", got[0].runID, got[1].runID)
+	}
+	if got[0].workflowName != got[0].runID || got[1].workflowName != got[1].runID {
+		t.Fatalf("workflow names = %q, %q; want their run UUIDs", got[0].workflowName, got[1].workflowName)
 	}
 }
 

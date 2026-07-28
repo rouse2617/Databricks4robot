@@ -40,13 +40,52 @@ func TestExecutionTargetPriorityClassName(t *testing.T) {
 	}
 }
 
+func TestExecutionTargetWorkflowPriority(t *testing.T) {
+	// Pool default priority lives top-level in resource_defaults (like
+	// maxActiveWorkflows), not under scheduling. JSON numbers decode to float64.
+	tg := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"priority": float64(-100)}}
+	if got := executionTargetWorkflowPriority(tg); got == nil || *got != -100 {
+		t.Errorf("want -100, got %v", got)
+	}
+	// Numeric string is also accepted.
+	tg2 := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"priority": "100"}}
+	if got := executionTargetWorkflowPriority(tg2); got == nil || *got != 100 {
+		t.Errorf("want 100 from string, got %v", got)
+	}
+	// Absent → nil so Transpile leaves the field unset (Argo default 0 = normal).
+	if got := executionTargetWorkflowPriority(&models.ExecutionTarget{ResourceDefaults: map[string]interface{}{}}); got != nil {
+		t.Errorf("absent priority should yield nil, got %v", *got)
+	}
+	if got := executionTargetWorkflowPriority(nil); got != nil {
+		t.Errorf("nil target should yield nil, got %v", *got)
+	}
+}
+
+func TestExecutionTargetInstanceID(t *testing.T) {
+	tg := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"instanceId": "vpp-gpu"}}
+	if got := executionTargetInstanceID(tg); got != "vpp-gpu" {
+		t.Errorf("want vpp-gpu, got %q", got)
+	}
+	// snake_case alias
+	tg2 := &models.ExecutionTarget{ResourceDefaults: map[string]interface{}{"instance_id": "vpp-cpu"}}
+	if got := executionTargetInstanceID(tg2); got != "vpp-cpu" {
+		t.Errorf("want vpp-cpu from alias, got %q", got)
+	}
+	if got := executionTargetInstanceID(&models.ExecutionTarget{ResourceDefaults: map[string]interface{}{}}); got != "" {
+		t.Errorf("absent instanceId should yield empty, got %q", got)
+	}
+	if got := executionTargetInstanceID(nil); got != "" {
+		t.Errorf("nil target should yield empty, got %q", got)
+	}
+}
+
 func TestExecutionTargetPodLabels(t *testing.T) {
 	// The pool config supplies BOTH the label key and value (here a Koordinator
 	// EQ label) — the backend does not hardcode the koord label key.
 	tg := targetWithScheduling(map[string]interface{}{
 		"podLabels": map[string]interface{}{
 			"quota.scheduling.koordinator.sh/name": "cyberorigin-delivery-low",
-			"team": "vision",
+			"team":                                 "vision",
 		},
 	})
 	got := executionTargetPodLabels(tg)
@@ -79,7 +118,7 @@ func TestMergePoolPodLabels(t *testing.T) {
 	tg := targetWithScheduling(map[string]interface{}{
 		"podLabels": map[string]interface{}{
 			"quota.scheduling.koordinator.sh/name": "eq-low",
-			"shared": "pool", // pool wins on conflict
+			"shared":                               "pool", // pool wins on conflict
 		},
 	})
 	got := mergePoolPodLabels(base, tg)

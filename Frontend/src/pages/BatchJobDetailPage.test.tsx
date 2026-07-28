@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
@@ -335,5 +342,45 @@ describe("BatchJobDetailPage", () => {
 		expect(screen.getByText("存在阻塞")).toBeInTheDocument();
 		expect(screen.getByText("子运行 1")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "asset-1" })).toBeInTheDocument();
+	});
+
+	it("stops in-flight workflows when 全部停止 is chosen", async () => {
+		renderBatchJobDetail();
+		expect(await screen.findByText("Batch 1")).toBeInTheDocument();
+
+		// antd 会给两个中文字的按钮自动插空格（"停止" → "停 止"），用正则匹配。
+		fireEvent.click(screen.getByRole("button", { name: /停\s*止/ }));
+		expect(await screen.findByText("停止批次")).toBeInTheDocument();
+
+		// 第二个 radio = 「全部停止」(stopRunning=true)。
+		const radios = screen.getAllByRole("radio");
+		expect(radios).toHaveLength(2);
+		fireEvent.click(radios[1]);
+
+		fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
+
+		await waitFor(() =>
+			expect(mockPauseBatchJob).toHaveBeenCalledWith("batch-1", {
+				stopRunning: true,
+			}),
+		);
+		expect(mockMessage.success).toHaveBeenCalled();
+	});
+
+	it("defaults to 停止下发 (soft stop) without touching in-flight workflows", async () => {
+		renderBatchJobDetail();
+		expect(await screen.findByText("Batch 1")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /停\s*止/ }));
+		expect(await screen.findByText("停止批次")).toBeInTheDocument();
+
+		// 不改选择，直接确认 → 默认软停（stopRunning=false）。
+		fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
+
+		await waitFor(() =>
+			expect(mockPauseBatchJob).toHaveBeenCalledWith("batch-1", {
+				stopRunning: false,
+			}),
+		);
 	});
 });

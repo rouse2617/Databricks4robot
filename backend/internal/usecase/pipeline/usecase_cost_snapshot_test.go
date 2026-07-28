@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunCostSnapshotMissing(t *testing.T) {
-	pricing := &PricingConfig{Prices: map[string]any{}}
+	pricing := &PricingConfig{Units: map[string]map[string]float64{}}
 	uc := &Usecase{pricing: pricing}
 
 	if !uc.runCostSnapshotMissing(&models.PipelineRun{}) {

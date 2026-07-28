@@ -50,10 +50,32 @@ ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
 VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
 
-# Enable GMP (Google Managed Prometheus) scraping on Cloud Run.
-# When true, GCP automatically scrapes /metrics and ingests into Cloud Monitoring.
-# Cost: ~$0.04/month for the ~20 dispatcher metrics on dev.
-PROMETHEUS_SCRAPE="${PROMETHEUS_SCRAPE:-true}"
+# GMP (Google Managed Prometheus) collection on Cloud Run — CYB-4146.
+#
+# There is NO "GCP automatically scrapes /metrics" on Cloud Run. The old
+# `run.googleapis.com/prometheus_scrape` annotation is a GKE PodMonitoring
+# concept; Cloud Run silently drops it and nothing gets scraped. The supported
+# pull-based path is a multi-container `run-gmp-sidecar` collector that scrapes
+# the app container's localhost:8080/metrics and pushes to GMP.
+#
+# Gated OFF by default because this script is shared: dev CI + local deploy turn
+# it ON, but preview (deploy/preview/cloudbuild.yaml, CPU=1) must stay single
+# container. OFF = byte-for-byte the previous single-container behavior.
+ENABLE_GMP_SIDECAR="${ENABLE_GMP_SIDECAR:-false}"
+# Per-container split when the sidecar is ON. gcloud enforces the CPU limit
+# PER CONTAINER, not on the sum: each container's --cpu must itself be one of
+# {<=1, 1, 2, 4, 6, 8} (a 3 is rejected: "Must be equal to one of [.08-1], 1.0,
+# 2.0, 4.0, 6.0, 8.0"). app=2 + collector=2 is the only flat-cost split that is
+# both per-container legal AND lands on a supported instance total of 4 — same
+# billing as today's single CPU=4 container. The collector only needs ~0.1 vCPU,
+# but the total can't be 3, so it takes 2 to reach a legal total of 4. Override
+# both at deploy time (e.g. APP_CPU=4 COLLECTOR_CPU=2 → total 6) if app needs
+# more headroom back. (CYB-4146; 3+1 rejected on the first dev deploy.)
+APP_CPU="${APP_CPU:-2}"
+APP_MEMORY="${APP_MEMORY:-3584Mi}"
+COLLECTOR_CPU="${COLLECTOR_CPU:-2}"
+COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-512Mi}"
+COLLECTOR_IMAGE="${COLLECTOR_IMAGE:-us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.2.0}"
 
 # Optional overrides for Cloud Run reachability.
 DB_HOST_OVERRIDE="${DB_HOST_OVERRIDE:-172.27.160.7}"
@@ -64,10 +86,13 @@ DB_PASSWORD_SECRET="${DB_PASSWORD_SECRET:-cyber-databrew-dev-postgres-password}"
 DB_PASSWORD_SECRET_VERSION="${DB_PASSWORD_SECRET_VERSION:-latest}"
 DB_NAME_OVERRIDE="${DB_NAME_OVERRIDE:-cyber_databrew_dev}"
 DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
-# Argo Workflows server lives in the dev K8s cluster, not on Cloud Run.
-# The Cloud Run service cyber-databrew-pipeline-ui-dev is a separate UI proxy
-# (SSO/OIDC) and rejects K8s SA tokens with "unexpected signing method: RS256".
-ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-http://10.2.1.211:2746}"
+# Argo workflow submission on the dev cluster now runs in CRD mode: the backend
+# creates Workflow CRs directly via the in-cluster K8s API (crdWorkflowClient),
+# which preserves ObjectMeta.Labels — notably the controller-instanceid routing
+# label that argo-server used to strip. Leave ARGO_SERVER_URL unset so the
+# default-cluster env fallback (factory.go configForCluster) resolves to CRD
+# mode; set ARGO_SERVER_URL_OVERRIDE only to fall back to argo-server.
+ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-}"
 # Completed Argo workflow CR retention (secondsAfterCompletion). Default 30 days.
 ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-2592000}"
 # Argo run status push webhook (CYB-3058). ENABLED: the container curl exit hook
@@ -509,20 +534,19 @@ with open(dst, "w", encoding="utf-8") as f:
 PY
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run (${REGION}, ${PROJECT_ID})"
+# Service-level flags shared by both single- and multi-container paths.
+# Per-container flags (--image/--port/--cpu/--memory/--env-vars-file/--set-secrets)
+# are appended per-branch below: at top level for a single container, or scoped
+# under --container app/collector when the GMP sidecar is enabled (CYB-4146).
 deploy_args=(
   run deploy "${SERVICE_NAME}"
   --quiet
   --project "${PROJECT_ID}"
   --region "${REGION}"
   --platform managed
-  --image "${IMAGE}"
-  --port 8080
   --min-instances "${MIN_INSTANCES}"
   --max-instances "${MAX_INSTANCES}"
-  --cpu "${CPU}"
-  --memory "${MEMORY}"
   --timeout "${TIMEOUT}"
-  --env-vars-file "${ENV_VARS_FILE}"
 )
 if [[ "${CPU_THROTTLING}" == "true" ]]; then
   deploy_args+=(--cpu-throttling)
@@ -534,12 +558,17 @@ if [[ "${CPU_BOOST}" == "true" ]]; then
 else
   deploy_args+=(--no-cpu-boost)
 fi
+# Secret bindings are per-container. Build them once here, then append at the
+# correct scope below: top level (single container) or right after
+# --container app (GMP sidecar path). Binding to app keeps them off the
+# collector, which is zero-config and needs no secrets. (CYB-4146)
+container_secret_args=()
 if [[ ${#secret_mappings[@]} -gt 0 ]]; then
   secret_arg="$(IFS=,; echo "${secret_mappings[*]}")"
-  deploy_args+=(--set-secrets "${secret_arg}")
+  container_secret_args+=(--set-secrets "${secret_arg}")
 fi
 if [[ "${remove_es_password_secret}" == "true" && ${#secret_mappings[@]} -eq 0 ]]; then
-  deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
+  container_secret_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
 fi
 
 # CYB-3486d1c: when set, the new revision is created idle. Traffic must be
@@ -561,8 +590,46 @@ if [[ -n "${VPC_CONNECTOR}" ]]; then
   deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
 fi
 
-if [[ "${PROMETHEUS_SCRAPE}" == "true" ]]; then
-  deploy_args+=(--update-annotations "run.googleapis.com/prometheus_scrape=true,run.googleapis.com/prometheus_port=8080")
+# Per-container flags. Two shapes:
+#   OFF (default, incl. preview): single container at top level — byte-for-byte
+#     the pre-CYB-4146 behavior.
+#   ON  (dev CI + local deploy):  app container (ingress, port 8080) + run-gmp
+#     collector sidecar scraping app's localhost:8080/metrics into GMP.
+# CPU/memory split so the instance TOTAL stays at CPU/MEMORY (4 / 4Gi) — no cost
+# delta. app is the only container with --port, making it the ingress container.
+if [[ "${ENABLE_GMP_SIDECAR}" == "true" ]]; then
+  deploy_args+=(
+    --container app
+    --image "${IMAGE}"
+    --port 8080
+    --cpu "${APP_CPU}"
+    --memory "${APP_MEMORY}"
+    --env-vars-file "${ENV_VARS_FILE}"
+  )
+  # Guard the expansion: bash 3.2 (macOS /bin/bash) errors on "${arr[@]}" for an
+  # empty array under `set -u`. container_secret_args is empty when ES has no
+  # auth and no other secret is bound.
+  if [[ ${#container_secret_args[@]} -gt 0 ]]; then
+    deploy_args+=("${container_secret_args[@]}")
+  fi
+  deploy_args+=(
+    --container collector
+    --image "${COLLECTOR_IMAGE}"
+    --cpu "${COLLECTOR_CPU}"
+    --memory "${COLLECTOR_MEMORY}"
+    --depends-on app
+  )
+else
+  deploy_args+=(
+    --image "${IMAGE}"
+    --port 8080
+    --cpu "${CPU}"
+    --memory "${MEMORY}"
+    --env-vars-file "${ENV_VARS_FILE}"
+  )
+  if [[ ${#container_secret_args[@]} -gt 0 ]]; then
+    deploy_args+=("${container_secret_args[@]}")
+  fi
 fi
 
 gcloud "${deploy_args[@]}"

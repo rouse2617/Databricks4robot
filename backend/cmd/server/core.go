@@ -21,6 +21,7 @@ import (
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage" // NEW
+	subtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/subtask"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics/cloudmonitoring"
@@ -28,6 +29,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/notify/feishu"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/subtask"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -72,6 +75,12 @@ func setupCore(inf *infra) *coreHandlers {
 	))
 	assetUsecase.SetUsageStatsRepo(usageStatsRepo)          // CYB-1095/1096: usage stats
 	assetUsecase.SetActionLabelRegistry(inf.actionLabelReg) // CYB-3268: action label vocabulary
+	// CYB-4305: depth="all" branch of POST /assets/lineage-batch — reads the
+	// upstream/downstream/relation projection from ES via `_mget`. inf.es may
+	// be nil in local unit envs; the usecase degrades to empty slices then.
+	if inf.es != nil {
+		assetUsecase.SetLineageBatchRepo(searchindex.NewLineageBatchReader(inf.es))
+	}
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)
@@ -83,6 +92,9 @@ func setupCore(inf *infra) *coreHandlers {
 	mcapHandler.SetTxRunner(pg)
 	mcapHandler.SetEventRepo(assetEventRepo)
 	mcapHandler.SetAssetRepo(assetRepo)
+	// CYB-3797: enable auto-extract of vibecap_tasks / source_platform /
+	// location.address into task / source / city tags on every mcap POST.
+	mcapHandler.SetAssetTagRepo(assetTagRepo)
 	if inf.mcapBytesSource != nil {
 		mcapHandler.SetBytesSource(inf.mcapBytesSource)
 	}
@@ -238,11 +250,6 @@ func setupCore(inf *infra) *coreHandlers {
 	// re-read every cycle, so a PUT bites within one tick.
 	backfillUC.SetDispatcherConfigRepo(postgres.NewDispatcherConfigRepo(pg))
 	backfillUC.StartSubmitter()
-	// CYB-3677: the legacy batch entry now persists jobs for the submitter
-	// (durable dispatch) instead of a one-shot in-memory goroutine. The kick
-	// starts the first cycle immediately; BATCH_DISPATCH_MODE=legacy is the
-	// one-release rollback switch.
-	puc.SetBatchDispatchMode(inf.cfg.BatchDispatchMode)
 	puc.SetBatchSubmitKicker(backfillUC.KickSubmitter)
 	// Reconcile backstop (CYB-3078): finalize + notify batch jobs whose children
 	// finished, without depending on the exit hook or a user opening the page.
@@ -288,6 +295,42 @@ func setupCore(inf *infra) *coreHandlers {
 		storageHandler = storageH.NewHandler(inf.gcsClient)
 	}
 
+	// ── Subscription tasks (CYB-3778): Pub/Sub consumer auto-dispatch. ──
+	subTaskRepo := postgres.NewSubscriptionTaskRepo(pg)
+	subTaskHandler := subtaskH.New(subTaskRepo)
+	subTaskUC := subtask.New(
+		subTaskRepo,
+		subtask.NewPubSubClient(),
+		subtask.BatchCreatorFn(func(ctx context.Context, tmpl, name string, ids []string, target string, ver int, owner string) (string, error) {
+			job, err := puc.CreateBatchJob(ctx, tmpl, name, ids, target, ver, owner)
+			if err != nil {
+				return "", err
+			}
+			if job == nil {
+				return "", nil
+			}
+			return job.ID, nil
+		}),
+		subtask.RunCreatorFn(func(ctx context.Context, tmpl, name, assetID, target string, ver int, owner string) (string, error) {
+			run, err := puc.CreateRunByTemplateID(ctx, tmpl, name, []string{assetID}, pipelineUC.DeployOptions{
+				TargetID:        target,
+				Owner:           owner,
+				TemplateVersion: ver,
+			})
+			if err != nil {
+				return "", err
+			}
+			if run == nil {
+				return "", nil
+			}
+			return run.ID, nil
+		}),
+		subtask.NewFeishuNotifierFromEnv(),
+		subtask.Options{},
+	)
+	subTaskUC.StartLoop(context.Background())
+	slog.Info("subscription-task scheduler started (cyb-3778)")
+
 	return &coreHandlers{
 		asset:             assetHandler,
 		algo:              algoHandler,
@@ -302,6 +345,7 @@ func setupCore(inf *infra) *coreHandlers {
 		pipelineConfig:    pipelineConfigHandler,
 		pipelineComponent: pipelineComponentHandler,
 		backfill:          backfillHandler,
+		subscriptionTask:  subTaskHandler,
 		query:             queryHandler,
 		workflow:          workflowHandler,
 		storage:           storageHandler,

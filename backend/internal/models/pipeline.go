@@ -67,8 +67,8 @@ type ExecutionTarget struct {
 	// Cluster is the legacy free-text field kept for backward compatibility.
 	// Prefer ClusterID + join to clusters(name) going forward; this field will
 	// be removed once all callers migrate.
-	Cluster   string `json:"cluster"`
-	Namespace string `json:"namespace"`
+	Cluster              string                 `json:"cluster"`
+	Namespace            string                 `json:"namespace"`
 	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
 	ArgoServerURL        string                 `json:"argoServerUrl,omitempty"`
 	ArgoAuthSecretRef    string                 `json:"argoAuthSecretRef,omitempty"`
@@ -88,31 +88,61 @@ type ExecutionTarget struct {
 	// CYB-3486 pool: kept in the JSONB (not dedicated columns) so new pool
 	// attributes don't need a schema migration, and the backend injects them
 	// verbatim without hardcoding any koord / ElasticQuota / scheduler names.
-	CreatedAt            time.Time              `json:"createdAt,omitempty"`
-	UpdatedAt            time.Time              `json:"updatedAt,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+// TargetDispatchStats is the trailing-window run breakdown for one execution
+// target, bucketed by outcome. It backs the "近15min 速率" figure in the pool
+// manager runtime view. Counts are per-target (grouped on execution_target_id),
+// unlike TargetRuntimeStatus.ActiveWorkflows which is per-namespace.
+type TargetDispatchStats struct {
+	Total     int `json:"total"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Active    int `json:"active"`
+}
+
+// TargetRuntimeStatus is one execution target's live picture for the pool
+// manager: how full its namespace is against the backpressure ceiling, and how
+// fast it has been dispatching recently. ActiveWorkflows is per-NAMESPACE — two
+// targets sharing a namespace report the same number, which is exactly what the
+// backfill submitter gates dispatch on. Recent is per-target.
+type TargetRuntimeStatus struct {
+	TargetID  string `json:"targetId"`
+	Namespace string `json:"namespace"`
+	// ActiveWorkflows is the last active (pending+running) workflow count the
+	// bulk watcher observed for Namespace; ActiveObserved is false when no
+	// observation exists yet (cold start / stalled watcher) so the UI can show
+	// "—" instead of a misleading 0.
+	ActiveWorkflows    int                 `json:"activeWorkflows"`
+	ActiveObserved     bool                `json:"activeObserved"`
+	MaxActiveWorkflows int                 `json:"maxActiveWorkflows"`
+	WindowMinutes      int                 `json:"windowMinutes"`
+	Recent             TargetDispatchStats `json:"recent"`
 }
 
 // PipelineRun is the first-class execution record for a pipeline run. Legacy
 // deployment endpoints can still project this data as PipelineDeployment.
 type PipelineRun struct {
-	ID                 string                   `json:"id"`
-	TemplateID         *string                  `json:"templateId,omitempty"`
-	TemplateName       string                   `json:"templateName,omitempty"`
-	PipelineName       string                   `json:"pipelineName"`
-	TemplateVersion    *int                     `json:"templateVersion,omitempty"`
-	WorkflowName       string                   `json:"workflowName"`
-	ExecutionTargetID  string                   `json:"executionTargetId"`
-	TargetSnapshot     map[string]interface{}   `json:"targetSnapshot,omitempty"`
-	Status             string                   `json:"status"`
-	NodeCount          int                      `json:"nodeCount"`
-	AssetIDs           []string                 `json:"assetIds,omitempty"`
-	AssetCount         int                      `json:"assetCount"`
-	NoAssetRun         bool                     `json:"noAssetRun"`
-	Manifest           *string                  `json:"manifest,omitempty"`
-	PipelineJSON       map[string]interface{}   `json:"pipelineJSON,omitempty"`
-	ArgoNamespace      string                   `json:"argoNamespace"`
-	ArgoWorkflowUID    string                   `json:"argoWorkflowUid,omitempty"`
-	Message            string                   `json:"message,omitempty"`
+	ID                string                 `json:"id"`
+	TemplateID        *string                `json:"templateId,omitempty"`
+	TemplateName      string                 `json:"templateName,omitempty"`
+	PipelineName      string                 `json:"pipelineName"`
+	TemplateVersion   *int                   `json:"templateVersion,omitempty"`
+	WorkflowName      string                 `json:"workflowName"`
+	ExecutionTargetID string                 `json:"executionTargetId"`
+	TargetSnapshot    map[string]interface{} `json:"targetSnapshot,omitempty"`
+	Status            string                 `json:"status"`
+	NodeCount         int                    `json:"nodeCount"`
+	AssetIDs          []string               `json:"assetIds,omitempty"`
+	AssetCount        int                    `json:"assetCount"`
+	NoAssetRun        bool                   `json:"noAssetRun"`
+	Manifest          *string                `json:"manifest,omitempty"`
+	PipelineJSON      map[string]interface{} `json:"pipelineJSON,omitempty"`
+	ArgoNamespace     string                 `json:"argoNamespace"`
+	ArgoWorkflowUID   string                 `json:"argoWorkflowUid,omitempty"`
+	Message           string                 `json:"message,omitempty"`
 	// Progress mirrors Argo's workflow-level status.progress ("done/total"
 	// steps, e.g. "37/100"). CYB-3490: this is the continuous, near-realtime
 	// projection for batch list views; per-node rows are only archived at
@@ -468,9 +498,18 @@ type PipelineRunListFilter struct {
 	Query               string
 	PipelineNodeID      string
 	NodeStatus          string
-	Page                int
-	PageSize            int
-	RefreshActive       bool
+	// CreatedBy filters to runs whose owner equals this exact string (e.g.
+	// "subscription-task:<id>" to list a subscription task's single runs).
+	CreatedBy string
+	// AssetID filters runs whose asset_ids array contains this id. Match is
+	// exact against pipeline_runs.asset_ids elements — those elements are the
+	// grace_video_id form (业务 id),so callers with a short assets.asset_id
+	// must resolve it to grace_video_id first (Usecase.ListRunsByAsset does
+	// this). CYB-4297.
+	AssetID       string
+	Page          int
+	PageSize      int
+	RefreshActive bool
 	// SummaryOnly drops per-run nodes (and other heavy fields) for lightweight
 	// list views. When false the default list keeps nodes so callers can show
 	// per-run estimated cost.

@@ -1112,6 +1112,196 @@ func (h *Handler) BatchGet(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items})
 }
 
+// LookupDurations resolves duration_ms for a batch of asset ids and/or
+// grace_video_ids in one round trip and computes summary stats server-side.
+// Handles up to 5000 ids per request; larger sets must be split client-side.
+// See openspec/changes/CYB-4294-asset-durations for the full contract.
+//
+// @Summary      Batch lookup asset durations
+// @Description  Look up duration_ms for a mixed batch of asset_id + grace_video_id inputs
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetDurationsRequest true "Duration lookup request"
+// @Success      200 {object} models.AssetDurationsResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/durations [post]
+func (h *Handler) LookupDurations(c *gin.Context) {
+	var req models.AssetDurationsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	if req.MinDurationMs < 0 || req.MaxDurationMs < 0 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidDurationRange, "min_duration_ms and max_duration_ms must be non-negative", nil)
+		return
+	}
+	if req.MinDurationMs > 0 && req.MaxDurationMs > 0 && req.MinDurationMs > req.MaxDurationMs {
+		httpresp.BadRequest(c, httpresp.CodeInvalidDurationRange, "min_duration_ms must be <= max_duration_ms", nil)
+		return
+	}
+	resp, err := h.uc.LookupDurations(c.Request.Context(), req)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// LookupCosts aggregates cost / GPU-seconds / CPU-seconds / run_count per
+// asset over a bounded time window. Same 5000-id cap as LookupDurations;
+// the window is required (no server default) and capped at 90 days. See
+// openspec/changes/CYB-4306-costs for the full contract.
+//
+// @Summary      Batch lookup asset costs
+// @Description  Aggregate cost / gpu / cpu / run_count per asset over a bounded finished_at window
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetCostsRequest true "Cost lookup request"
+// @Success      200 {object} models.AssetCostsResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/costs [post]
+func (h *Handler) LookupCosts(c *gin.Context) {
+	var req models.AssetCostsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	if req.StartAt.IsZero() || req.EndAt.IsZero() {
+		httpresp.BadRequest(c, httpresp.CodeInvalidTimeRange, "start_at and end_at are required", nil)
+		return
+	}
+	if req.EndAt.Before(req.StartAt) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidTimeRange, "end_at must be >= start_at", nil)
+		return
+	}
+	if req.EndAt.Sub(req.StartAt) > assetUC.LookupCostsMaxWindow {
+		httpresp.BadRequest(c, httpresp.CodeWindowTooLarge,
+			"time window exceeds maximum of 90 days",
+			map[string]any{"max_days": 90})
+		return
+	}
+	switch req.GroupBy {
+	case "", assetUC.LookupCostsGroupByAsset, assetUC.LookupCostsGroupByAssetAlgo:
+		// ok
+	default:
+		httpresp.BadRequest(c, httpresp.CodeInvalidGroupBy,
+			`group_by must be "asset" or "asset_algo"`,
+			map[string]any{"got": req.GroupBy})
+		return
+	}
+	resp, err := h.uc.LookupCosts(c.Request.Context(), req)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// LookupLineage resolves direct-hop parent/root/logical + version state for
+// a batch of asset_id / grace_video_id inputs. depth="all" additionally
+// pulls the pre-computed upstream/downstream/relation projections from ES
+// (cyb-3268) in one `_mget`. Same 5000-id cap as LookupDurations / LookupCosts.
+// See openspec/changes/CYB-4305-lineage for the full contract.
+//
+// @Summary      Batch lookup asset lineage
+// @Description  Resolve parent/root/logical + optional full upstream/downstream projection per asset
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetLineageBatchRequest true "Lineage lookup request"
+// @Success      200 {object} models.AssetLineageBatchResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/lineage-batch [post]
+func (h *Handler) LookupLineage(c *gin.Context) {
+	var req models.AssetLineageBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	wantAll, ok := normalizeLineageDepth(req.Depth)
+	if !ok {
+		httpresp.BadRequest(c, httpresp.CodeInvalidLineageDepth,
+			`depth must be 1, "1", or "all"`,
+			map[string]any{"got": req.Depth})
+		return
+	}
+	resp, err := h.uc.LookupLineage(c.Request.Context(), req, wantAll)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// normalizeLineageDepth accepts JSON `1` (number), `"1"` (string), or
+// `"all"` (string), plus the omitted/nil case (defaults to depth=1). Returns
+// (wantAll bool, ok bool); ok=false → 400.
+func normalizeLineageDepth(v any) (wantAll bool, ok bool) {
+	if v == nil {
+		return false, true
+	}
+	switch d := v.(type) {
+	case float64:
+		if d == 1 {
+			return false, true
+		}
+	case int:
+		if d == 1 {
+			return false, true
+		}
+	case int64:
+		if d == 1 {
+			return false, true
+		}
+	case string:
+		switch strings.TrimSpace(d) {
+		case "", "1":
+			return false, true
+		case "all":
+			return true, true
+		}
+	}
+	return false, false
+}
+
 // PromoteRevision creates a new revision of an asset (B-route promote).
 // @Summary      Promote asset revision
 // @Description  Create a new revision of an asset within a logical asset family

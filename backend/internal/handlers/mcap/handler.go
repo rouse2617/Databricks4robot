@@ -19,12 +19,13 @@ import (
 )
 
 type Handler struct {
-	repo      repository.McapFileRepository
-	tx        repository.TxRunner
-	eventRepo repository.AssetEventRepository
-	assetRepo repository.AssetRepository // CYB-1217: 1:1 raw_mcap asset creation
-	bytesSrc  BytesSource
-	nowFn     func() time.Time
+	repo         repository.McapFileRepository
+	tx           repository.TxRunner
+	eventRepo    repository.AssetEventRepository
+	assetRepo    repository.AssetRepository    // CYB-1217: 1:1 raw_mcap asset creation
+	assetTagRepo repository.AssetTagRepository // CYB-3797: auto-extract metadata → tag on ingest
+	bytesSrc     BytesSource
+	nowFn        func() time.Time
 }
 
 func New(repo repository.McapFileRepository) *Handler {
@@ -49,6 +50,16 @@ func (h *Handler) SetEventRepo(eventRepo repository.AssetEventRepository) {
 // placeholder raw_mcap asset in the same transaction (CYB-1217: 1:1).
 func (h *Handler) SetAssetRepo(assetRepo repository.AssetRepository) {
 	h.assetRepo = assetRepo
+}
+
+// SetAssetTagRepo wires the asset-tag repository so CreateFile can extract
+// known metadata fields (vibecap_tasks / source_platform / location.address)
+// into `task` / `source` / `city` tag rows in the same transaction as the
+// mcap and raw_mcap-asset writes (CYB-3797). Unset ⇒ the extract step is
+// silently skipped, preserving old behavior for callers that haven't wired
+// the repo.
+func (h *Handler) SetAssetTagRepo(assetTagRepo repository.AssetTagRepository) {
+	h.assetTagRepo = assetTagRepo
 }
 
 // SetBytesSource wires a byte source for GET /mcap-files/:id/bytes.
@@ -92,6 +103,17 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 		// extension). The asset will be updated later via POST /api/v1/assets.
 		if h.assetRepo != nil {
 			now := h.nowFn()
+			// CYB-3715: mirror the 7 mcap-file producer-identity fields
+			// onto the raw_mcap asset so /queries/run can filter/facet
+			// them without joining to mcap_files or asset_tags. source_platform
+			// is lifted from metadata.source_platform (CYB-3714 keeps it on
+			// tags.source too — both paths coexist).
+			var srcPlatform string
+			if f.Metadata != nil {
+				if v, ok := f.Metadata["source_platform"].(string); ok {
+					srcPlatform = v
+				}
+			}
 			placeholder := &models.Asset{
 				AssetID:          f.McapFileID,
 				McapFileID:       f.McapFileID,
@@ -107,12 +129,34 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 				ProjectID:        f.ProjectID,
 				Metadata:         map[string]interface{}{},
 				Files:            map[string]string{},
+				CameraModel:      f.CameraModel,
+				GraceVideoID:     f.GraceVideoID, // CYB-4011: mirror onto raw_mcap asset
+				DeviceID:         f.DeviceID,
+				CollectorID:      f.CollectorID,
+				SceneID:          f.SceneID,
+				DataSource:       f.DataSource,
+				CollectionMethod: f.CollectionMethod,
+				SourcePlatform:   srcPlatform,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 				Version:          1,
 			}
 			if err := h.assetRepo.InsertNew(txCtx, placeholder); err != nil {
 				return err
+			}
+			// CYB-3797: auto-extract known metadata fields (vibecap_tasks /
+			// source_platform / location.address) into task / source / city
+			// tags so newly uploaded mcap arrive already tagged, eliminating
+			// the "backfill chases moving target" pattern of CYB-3714.
+			// Unknown metadata keys are ignored; shape mismatches skip the
+			// individual tag with a WARN log but do not abort the mcap
+			// create. Only runs when assetTagRepo is wired.
+			if h.assetTagRepo != nil {
+				for _, tag := range extractMetadataTags(placeholder.AssetID, f.TenantID, f.ProjectID, f.Metadata) {
+					if err := h.assetTagRepo.Upsert(txCtx, tag); err != nil {
+						return err
+					}
+				}
 			}
 			// CYB-3297 Phase D: emit an asset-scoped event so the ES subscriber
 			// indexes the placeholder raw_mcap immediately. The mcap_file_created
@@ -193,6 +237,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 		TaskID           string                 `json:"task_id"`
 		DeviceID         string                 `json:"device_id"`
 		CameraModel      string                 `json:"camera_model"`
+		GraceVideoID     string                 `json:"grace_video_id"` // CYB-4011
 		DataSource       string                 `json:"data_source"`
 		LocationID       string                 `json:"location_id"`
 		SceneID          string                 `json:"scene_id"`
@@ -239,6 +284,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 		TaskID:           req.TaskID,
 		DeviceID:         req.DeviceID,
 		CameraModel:      req.CameraModel,
+		GraceVideoID:     req.GraceVideoID, // CYB-4011
 		DataSource:       req.DataSource,
 		LocationID:       req.LocationID,
 		SceneID:          req.SceneID,
@@ -404,6 +450,98 @@ func (h *Handler) GetFile(c *gin.Context) {
 	}
 	if f == nil {
 		httpresp.NotFound(c, "MCAP_FILE_NOT_FOUND", "mcap file not found")
+		return
+	}
+	c.JSON(http.StatusOK, f)
+}
+
+// BackfillGraceVideoID updates grace_video_id on an existing mcap file and its
+// mirrored raw_mcap asset. CYB-4011: there is no general mcap update endpoint,
+// so this internal route exists to backfill the Grace video link (resolved by
+// raw_hash_md5) onto rows created before the column existed. It updates the
+// source of truth (mcap_files) and the flattened mirror (assets) in one
+// transaction, then emits an asset_updated event so the ES document reindexes
+// and grace_video_id becomes filterable.
+//
+// PATCH /api/v1/internal/mcap-files/:id/grace-video-id  { "grace_video_id": "<uuid>" }
+func (h *Handler) BackfillGraceVideoID(c *gin.Context) {
+	mcapFileID := c.Param("id")
+	var req struct {
+		GraceVideoID string `json:"grace_video_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.GraceVideoID = strings.TrimSpace(req.GraceVideoID)
+	if req.GraceVideoID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "grace_video_id is required", nil)
+		return
+	}
+
+	ctx := c.Request.Context()
+	f, err := h.repo.Get(ctx, mcapFileID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if f == nil {
+		httpresp.NotFound(c, "MCAP_FILE_NOT_FOUND", "mcap file not found")
+		return
+	}
+	if f.GraceVideoID == req.GraceVideoID {
+		// Idempotent: nothing to change.
+		c.JSON(http.StatusOK, f)
+		return
+	}
+
+	err = h.withTx(ctx, func(txCtx context.Context) error {
+		// 1) source of truth: mcap_files (Set is an upsert; round-trips all
+		// columns read by Get, so only grace_video_id changes).
+		f.GraceVideoID = req.GraceVideoID
+		if err := h.repo.Set(txCtx, f); err != nil {
+			return err
+		}
+		// 2) mirror onto the raw_mcap asset (asset_id == mcap_file_id) if it
+		// still exists (non-deleted). Skip silently when absent.
+		if h.assetRepo != nil {
+			a, gerr := h.assetRepo.Get(txCtx, mcapFileID)
+			if gerr != nil {
+				return gerr
+			}
+			if a != nil && a.GraceVideoID != req.GraceVideoID {
+				a.GraceVideoID = req.GraceVideoID
+				if serr := h.assetRepo.Set(txCtx, a); serr != nil {
+					return serr
+				}
+				// 3) emit asset_updated so the ES subscriber rebuilds the doc
+				// (any asset-scoped event with asset_id triggers a full Build).
+				if h.eventRepo != nil {
+					body, _ := json.Marshal(map[string]any{
+						"asset_id":       a.AssetID,
+						"grace_video_id": req.GraceVideoID,
+					})
+					if aerr := h.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+						EventType:            "asset_updated",
+						AggregateType:        "asset",
+						PayloadSchemaVersion: "v1",
+						AssetID:              a.AssetID,
+						McapFileID:           a.McapFileID,
+						TenantID:             a.TenantID,
+						ProjectID:            a.ProjectID,
+						EventSource:          "backend",
+						RequestID:            c.GetHeader("X-Request-ID"),
+						EventPayload:         body,
+					}); aerr != nil {
+						return aerr
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, f)

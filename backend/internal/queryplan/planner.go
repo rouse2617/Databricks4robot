@@ -36,11 +36,21 @@ func ParseFacetEngine(s string) FacetEngine {
 // (CYB-3384 first pass) can compute counts. Fields outside this set are
 // dropped when the planner routes facets to PG so the response stays partial
 // but honest instead of quietly wrong.
+//
+// CYB-3715 added the 4 low-cardinality mirror columns (camera_model /
+// data_source / collection_method / source_platform). The 3 uuid columns
+// (device_id / collector_id / scene_id) are intentionally excluded — they
+// have too many distinct values to render as UI chip buckets. They remain
+// filter-only via the structured where clause.
 var PGSupportedFacetFields = map[string]bool{
-	"asset_type":      true,
-	"lifecycle_state": true,
-	"owner":           true,
-	"env":             true,
+	"asset_type":        true,
+	"lifecycle_state":   true,
+	"owner":             true,
+	"env":               true,
+	"camera_model":      true,
+	"data_source":       true,
+	"collection_method": true,
+	"source_platform":   true,
 }
 
 // GapProvider is the minimal interface the planner uses to read the last

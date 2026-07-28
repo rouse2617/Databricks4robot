@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -416,6 +417,9 @@ func (m *mockPipelineConfigRepo) FindVersion(_ context.Context, configID string,
 
 type mockRunRelationRepo struct {
 	relations []models.RunRelation
+	// CYB-3822b: call counter so tests can assert the durable path was
+	// skipped when a status filter is supplied.
+	listByParentCalls int
 }
 
 func (m *mockRunRelationRepo) Upsert(_ context.Context, relation *models.RunRelation) error {
@@ -436,6 +440,7 @@ func (m *mockRunRelationRepo) Upsert(_ context.Context, relation *models.RunRela
 }
 
 func (m *mockRunRelationRepo) ListByParentRunID(_ context.Context, parentRunID string) ([]models.RunRelation, error) {
+	m.listByParentCalls++
 	out := []models.RunRelation{}
 	for _, relation := range m.relations {
 		if relation.ParentRunID == parentRunID {
@@ -1197,6 +1202,90 @@ func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
 	}
 	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") {
 		t.Fatalf("expected forwarded runtime config env in manifest, got %s", manifest)
+	}
+}
+
+// TestDeployByTemplateID_ForwardsPriority is a regression guard: DeployByTemplateID
+// copies DeployOptions field-by-field, so it must forward the per-dispatch
+// Priority override to the inner Deploy. Missing it silently drops priority for
+// every batch dispatch (the submitter's path), leaving wf.Spec.priority unset.
+func TestDeployByTemplateID_ForwardsPriority(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "prio-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	uc.templateRepo = &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe},
+		},
+		byName: map[string][]models.PipelineTemplate{
+			"tmpl": {{ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe}},
+		},
+	}
+
+	p := int32(100)
+	dep, err := uc.DeployByTemplateID(ctx, "tmpl-1", "", nil, DeployOptions{DryRun: true, Priority: &p})
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if !strings.Contains(*dep.Manifest, "priority: 100") {
+		t.Fatalf("expected forwarded priority: 100 in manifest, got:\n%s", *dep.Manifest)
+	}
+}
+
+// TestDeployByTemplateID_ForwardsInstanceID guards that DeployByTemplateID
+// forwards the InstanceID override to the inner Deploy (the field-by-field copy
+// that dropped Priority in #553 must not drop this too).
+func TestDeployByTemplateID_ForwardsInstanceID(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "iid-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	uc.templateRepo = &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe},
+		},
+		byName: map[string][]models.PipelineTemplate{
+			"tmpl": {{ID: "tmpl-1", Name: "tmpl", Version: 1, Pipeline: pipe}},
+		},
+	}
+
+	dep, err := uc.DeployByTemplateID(ctx, "tmpl-1", "", nil, DeployOptions{DryRun: true, InstanceID: "vpp-gpu"})
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if !strings.Contains(*dep.Manifest, "workflows.argoproj.io/controller-instanceid") {
+		t.Fatalf("expected forwarded controller-instanceid label in manifest, got:\n%s", *dep.Manifest)
 	}
 }
 
@@ -2030,16 +2119,96 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 
 // ── CYB-1537 — PR #77 review follow-up: runRepo primary lookup ─────────────
 
+func TestExecutionTargetsStatus(t *testing.T) {
+	targets := map[string]*models.ExecutionTarget{
+		// Explicit ceiling; marked default so ensureDefaultExecutionTarget
+		// doesn't inject an extra target into the result.
+		"t-explicit": {
+			ID:               "t-explicit",
+			Namespace:        "ns-a",
+			IsDefault:        true,
+			ResourceDefaults: map[string]interface{}{"maxActiveWorkflows": float64(200)},
+		},
+		// No ceiling -> compiled default; ns-b is never observed -> "—".
+		"t-default": {ID: "t-default", Namespace: "ns-b"},
+		// Shares ns-a with t-explicit -> same per-namespace active count.
+		"t-shared": {ID: "t-shared", Namespace: "ns-a"},
+	}
+	runRepo := &mockRunRepo{recentByTarget: map[string]models.TargetDispatchStats{
+		"t-explicit": {Total: 50, Succeeded: 40, Failed: 2, Active: 8},
+		"t-shared":   {Total: 10, Succeeded: 10},
+	}}
+	uc := &Usecase{
+		targetRepo: &mockTargetRepo{byID: targets},
+		runRepo:    runRepo,
+		namespace:  "fallback-ns",
+	}
+	// Keyed by (cluster, namespace): these targets have no ClusterID, so the
+	// reader resolves cluster "default" → key "default/ns-a". ns-b unobserved.
+	uc.activeWFCount = map[string]int{"default/ns-a": 147}
+
+	got, err := uc.ExecutionTargetsStatus(context.Background())
+	if err != nil {
+		t.Fatalf("ExecutionTargetsStatus: %v", err)
+	}
+	byID := make(map[string]models.TargetRuntimeStatus, len(got))
+	for _, s := range got {
+		byID[s.TargetID] = s
+	}
+	if len(byID) != 3 {
+		t.Fatalf("want 3 targets, got %d (%+v)", len(byID), got)
+	}
+
+	// Ceiling: explicit resource_defaults vs compiled default.
+	if c := byID["t-explicit"].MaxActiveWorkflows; c != 200 {
+		t.Errorf("t-explicit ceiling = %d, want 200", c)
+	}
+	if c := byID["t-default"].MaxActiveWorkflows; c != backpressureDefaultMaxActive {
+		t.Errorf("t-default ceiling = %d, want compiled default %d", c, backpressureDefaultMaxActive)
+	}
+
+	// Active is per-NAMESPACE: ns-a observed at 147 for BOTH ns-a targets.
+	for _, id := range []string{"t-explicit", "t-shared"} {
+		s := byID[id]
+		if !s.ActiveObserved || s.ActiveWorkflows != 147 {
+			t.Errorf("%s active = (%d, observed=%v), want (147, true)", id, s.ActiveWorkflows, s.ActiveObserved)
+		}
+	}
+	// ns-b never observed -> observed=false so the UI shows "—", not 0.
+	if s := byID["t-default"]; s.ActiveObserved || s.ActiveWorkflows != 0 {
+		t.Errorf("t-default active = (%d, observed=%v), want (0, false)", s.ActiveWorkflows, s.ActiveObserved)
+	}
+
+	// Recent dispatch is per-TARGET (not shared across the namespace).
+	if s := byID["t-explicit"].Recent; s.Total != 50 || s.Succeeded != 40 || s.Failed != 2 || s.Active != 8 {
+		t.Errorf("t-explicit recent = %+v, want {Total:50 Succeeded:40 Failed:2 Active:8}", s)
+	}
+	if s := byID["t-shared"].Recent; s.Total != 10 || s.Succeeded != 10 {
+		t.Errorf("t-shared recent = %+v, want Total=10 Succeeded=10", s)
+	}
+	if s := byID["t-default"].Recent; s.Total != 0 {
+		t.Errorf("t-default recent = %+v, want zero", s)
+	}
+
+	if w := byID["t-explicit"].WindowMinutes; w != 15 {
+		t.Errorf("window = %d, want 15", w)
+	}
+}
+
 type mockRunRepo struct {
-	byID         map[string]*models.PipelineRun
-	summaryByID  map[string]*models.PipelineRun
-	byWf         map[string]*models.PipelineRun
-	findAllErr   error
-	findAllCalls int
-	listFilters  []models.PipelineRunListFilter
+	mu             sync.Mutex
+	byID           map[string]*models.PipelineRun
+	summaryByID    map[string]*models.PipelineRun
+	byWf           map[string]*models.PipelineRun
+	findAllErr     error
+	findAllCalls   int
+	listFilters    []models.PipelineRunListFilter
+	recentByTarget map[string]models.TargetDispatchStats
 }
 
 func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byID == nil {
 		m.byID = map[string]*models.PipelineRun{}
 	}
@@ -2051,6 +2220,8 @@ func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
 	return nil
 }
 func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.findAllCalls++
 	if m.findAllErr != nil {
 		return nil, m.findAllErr
@@ -2064,6 +2235,10 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
+func (m *mockRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return m.recentByTarget, nil
+}
+
 func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models.PipelineRun, error) {
 	items, err := m.FindAll(context.Background())
 	if err != nil {
@@ -2078,8 +2253,45 @@ func (m *mockRunRepo) FindActiveRunSummaries(_ context.Context, _ int) ([]models
 	return active, nil
 }
 
+func (m *mockRunRepo) FindActiveRunSummariesAfter(_ context.Context, afterCreatedAt time.Time, afterID string, limit int) ([]models.PipelineRun, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	// Reproduce the postgres implementation's newest-first (created_at, id) DESC
+	// ordering + cursor semantics in memory so unit tests exercise the same
+	// contract the paginated loader relies on.
+	active := make([]models.PipelineRun, 0, len(items))
+	for _, it := range items {
+		if !isActiveDeploymentStatus(it.Status) {
+			continue
+		}
+		if afterID != "" {
+			if it.CreatedAt.After(afterCreatedAt) {
+				continue
+			}
+			if it.CreatedAt.Equal(afterCreatedAt) && it.ID >= afterID {
+				continue
+			}
+		}
+		active = append(active, it)
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if !active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].CreatedAt.After(active[j].CreatedAt)
+		}
+		return active[i].ID > active[j].ID
+	})
+	if limit > 0 && len(active) > limit {
+		active = active[:limit]
+	}
+	return active, nil
+}
+
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	m.mu.Lock()
 	m.listFilters = append(m.listFilters, filter)
+	m.mu.Unlock()
 	items, err := m.FindAll(context.Background())
 	if err != nil {
 		return nil, 0, err
@@ -2110,12 +2322,16 @@ func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRun
 	return filtered, len(filtered), nil
 }
 func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byID == nil {
 		return nil, nil
 	}
 	return m.byID[id], nil
 }
 func (m *mockRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.summaryByID != nil {
 		return m.summaryByID[id], nil
 	}
@@ -2125,12 +2341,16 @@ func (m *mockRunRepo) FindSummaryByID(_ context.Context, id string) (*models.Pip
 	return m.byID[id], nil
 }
 func (m *mockRunRepo) FindByWorkflowName(_ context.Context, name string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.byWf == nil {
 		return nil, nil
 	}
 	return m.byWf[name], nil
 }
 func (m *mockRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) (*models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, r := range m.byID {
 		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
 			for _, id := range r.AssetIDs {
@@ -2143,6 +2363,8 @@ func (m *mockRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJobID, as
 	return nil, nil
 }
 func (m *mockRunRepo) FindAllByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) ([]models.PipelineRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []models.PipelineRun
 	for _, r := range m.byID {
 		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
@@ -2156,6 +2378,8 @@ func (m *mockRunRepo) FindAllByBatchJobAndAssetID(_ context.Context, batchJobID,
 	return out, nil
 }
 func (m *mockRunRepo) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		delete(m.byID, id)
 		delete(m.byWf, r.WorkflowName)
@@ -2166,6 +2390,8 @@ func (m *mockRunRepo) DeleteByTemplateID(_ context.Context, _ string) error {
 	return nil
 }
 func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		r.Status = status
 		r.FinishedAt = finishedAt
@@ -2174,6 +2400,8 @@ func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishe
 }
 
 func (m *mockRunRepo) UpdateLedgerState(_ context.Context, id, ledgerState string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.byID[id]; ok {
 		r.LedgerState = ledgerState
 	}
@@ -2292,6 +2520,97 @@ func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
 	// CYB-3490: children listing is a pure read — no refresh requested.
 	if len(runRepo.listFilters) != 1 || runRepo.listFilters[0].RefreshActive {
 		t.Fatalf("ListRunChildren batch filter = %+v, want a single pure (no-refresh) listing", runRepo.listFilters)
+	}
+}
+
+// CYB-3822b: when filter.Status is present, ListRunChildren must skip the
+// durable-relations path and go straight to listBatchRunChildren so the
+// status filter reaches the repo (WHERE status=?). Otherwise the durable
+// path returns a full page of items whose statuses are NOT filtered, and
+// the frontend paginates through the entire relation table.
+func TestListRunChildrenSkipsDurablePathWhenStatusFilterSet(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "parent-with-relations-and-status"
+	childID := "child-succeeded"
+	childBatchID := parentID
+	relationRepo := &mockRunRelationRepo{
+		relations: []models.RunRelation{
+			{ParentRunID: parentID, ChildRunID: childID, RelationType: "batch_child"},
+		},
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {ID: parentID, Status: "Running"},
+			childID: {
+				ID:         childID,
+				Status:     "Succeeded",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunFactRepositories(relationRepo, nil)
+
+	if _, err := uc.ListRunChildren(context.Background(), parentID, models.PipelineRunListFilter{
+		Status: "Succeeded",
+	}); err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	// Durable path would have hit relationRepo.ListByParentRunID. When we
+	// skip it correctly, that repo has zero list-by-parent calls.
+	if got := relationRepo.listByParentCalls; got != 0 {
+		t.Fatalf("expected 0 ListByParentRunID calls when status filter set, got %d", got)
+	}
+	// And listBatchRunChildren must have forwarded the filter to ListSummaries.
+	if len(runRepo.listFilters) == 0 {
+		t.Fatalf("expected ListSummaries to be called")
+	}
+	if got := runRepo.listFilters[0].Status; got != "Succeeded" {
+		t.Fatalf("ListSummaries filter.Status = %q, want %q", got, "Succeeded")
+	}
+}
+
+// CYB-3822: batch export selects "仅成功 / 仅失败" and passes an Argo TitleCase
+// status through the handler → filter.Status. Verify the usecase forwards it
+// to ListSummaries so the WHERE clause runs server-side instead of the caller
+// fetching every child and discarding non-matching rows client-side.
+func TestListRunChildrenForwardsStatusToListSummaries(t *testing.T) {
+	t.Parallel()
+
+	const batchID = "legacy-batch-status"
+	childBatchID := batchID
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"child-failed": {
+				ID:         "child-failed",
+				Status:     "Failed",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+
+	if _, err := uc.ListRunChildren(context.Background(), batchID, models.PipelineRunListFilter{
+		Status: "Failed",
+	}); err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if len(runRepo.listFilters) != 1 {
+		t.Fatalf("expected 1 ListSummaries call, got %d", len(runRepo.listFilters))
+	}
+	if got := runRepo.listFilters[0].Status; got != "Failed" {
+		t.Fatalf("ListSummaries filter.Status = %q, want %q", got, "Failed")
+	}
+	if got := runRepo.listFilters[0].BatchJobID; got != batchID {
+		t.Fatalf("ListSummaries filter.BatchJobID = %q, want %q", got, batchID)
 	}
 }
 
@@ -5643,4 +5962,16 @@ func TestReconcileMisclassifiedRunFromArgo_DoesNotReviveResourceRejectedRun(t *t
 	if runRepo.byID["run-1"].Message != resourceRejectionMessage {
 		t.Fatalf("failure message must be preserved, got %q", runRepo.byID["run-1"].Message)
 	}
+}
+
+func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (m *mockAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
+}
+
+func (m *mockAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
 }

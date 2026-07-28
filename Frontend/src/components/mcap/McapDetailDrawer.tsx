@@ -240,6 +240,16 @@ export default function McapDetailDrawer({
 								{mcapFile.raw_hash_md5 || "—"}
 							</Text>
 						</Descriptions.Item>
+						{/* CYB-4011: Grace video id — copyable value, else 未关联. */}
+						<Descriptions.Item label="Grace Video ID" span={2}>
+							{mcapFile.grace_video_id ? (
+								<Text copyable className="font-mono text-xs">
+									{mcapFile.grace_video_id}
+								</Text>
+							) : (
+								<Text type="secondary">未关联</Text>
+							)}
+						</Descriptions.Item>
 						<Descriptions.Item label="状态">
 							<Tag
 								color={

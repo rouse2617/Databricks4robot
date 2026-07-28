@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"errors"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -8,6 +10,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
 // GetStats handles GET /api/v1/pipelines/stats
@@ -67,34 +70,42 @@ func (h *Handler) UpdatePipeline(c *gin.Context) {
 		return
 	}
 
-	// Check version conflict
-	_, conflict, err := h.uc.CheckPipelineVersionConflict(c.Request.Context(), pipelineID, req.BaseVersion)
+	role, _ := c.Get(middleware.CtxKeyRole)
+	isAdmin, _ := role.(string)
+	updated, err := h.uc.UpdateTemplate(
+		c.Request.Context(),
+		pipelineID,
+		req.Pipeline,
+		req.BaseVersion,
+		middleware.GetUserEmail(c),
+		isAdmin == "admin" || middleware.GetUserEmail(c) == "sdk",
+	)
 	if err != nil {
-		httpresp.Internal(c, "failed to check version: "+err.Error())
+		switch {
+		case errors.Is(err, pipelineUC.ErrVersionConflict):
+			c.JSON(http.StatusConflict, gin.H{
+				"error":          "version_conflict",
+				"message":        "Pipeline has been modified by another user",
+				"currentVersion": updated.Version,
+				"requestedBase":  req.BaseVersion,
+			})
+		case errors.Is(err, pipelineUC.ErrTemplateNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline not found")
+		case errors.Is(err, pipelineUC.ErrProdLocked), errors.Is(err, pipelineUC.ErrTemplateNotOwned):
+			httpresp.Error(c, http.StatusForbidden, httpresp.CodeInvalidArgument, err.Error(), nil)
+		case errors.Is(err, pipelineUC.ErrInvalidArgument):
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		default:
+			httpresp.Internal(c, "failed to update pipeline: "+err.Error())
+		}
 		return
 	}
-
-	if conflict {
-		latest, _, _ := h.uc.CheckPipelineVersionConflict(c.Request.Context(), pipelineID, 0)
-		c.JSON(409, gin.H{
-			"error":           "version_conflict",
-			"message":         "Pipeline has been modified by another user",
-			"currentVersion":  latest.Version,
-			"requestedBase":   req.BaseVersion,
-		})
-		return
-	}
-
-	// Save the update (simplified - would normally call full update logic)
-	c.JSON(200, gin.H{
-		"version":   req.BaseVersion + 1,
-		"updatedAt": time.Now().Format(time.RFC3339),
-	})
+	c.JSON(http.StatusCreated, updated)
 }
 
 // PipelineStatsResponse is the response body for GetStats
 type PipelineStatsResponse struct {
-	UserStats      *models.PipelineUserStats `json:"userStats"`
+	UserStats       *models.PipelineUserStats        `json:"userStats"`
 	Recommendations []*models.PipelineRecommendation `json:"recommendations"`
-	FetchedAt      time.Time                 `json:"fetchedAt"`
+	FetchedAt       time.Time                        `json:"fetchedAt"`
 }

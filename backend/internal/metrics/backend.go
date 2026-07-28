@@ -329,6 +329,20 @@ var (
 		},
 		[]string{"cluster"},
 	)
+	DispatcherActiveWorkflows = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_active_workflows",
+			Help: "Active (pending+running) workflows the bulk watcher observed per (cluster, namespace) — the backpressure input signal (CYB-3681)",
+		},
+		[]string{"cluster", "namespace"},
+	)
+	DispatcherBackpressureActive = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "backend_dispatcher_backpressure_active",
+			Help: "1 when a (cluster, namespace)'s dispatch is deferred by control-plane backpressure (active workflows at/over the target's threshold) (CYB-3681)",
+		},
+		[]string{"cluster", "namespace"},
+	)
 	DispatcherChannelBreakerTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "backend_dispatcher_channel_breaker_total",
@@ -349,6 +363,20 @@ var (
 			Name: "backend_dispatcher_template_fallback_total",
 			Help: "Batch submissions that fell back to the active template version (pin missing)",
 		},
+	)
+
+	// PipelineDeploySubmitIncompleteTotal counts Deploy calls that returned
+	// ErrWorkflowSubmitIncomplete after the bounded post-submit UID retry
+	// (usecase.waitForWorkflowUID). Path label distinguishes batch (submitter
+	// self-heals via AlreadyExists) from single (client must retry). A steady
+	// non-zero on path="single" indicates orphan-workflow risk from
+	// per-request UUID names.
+	PipelineDeploySubmitIncompleteTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "backend_pipeline_deploy_submit_incomplete_total",
+			Help: "Deploy calls where the runtime accepted the submit but no Argo UID materialized within the bounded retry window",
+		},
+		[]string{"path"},
 	)
 
 	// DispatcherStaleItems gauges the watcher→reconciler gap: how many

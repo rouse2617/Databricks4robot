@@ -3,10 +3,51 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
+
+// DurationRow is a lightweight three-column projection used by the batch
+// duration-lookup endpoint (CYB-4294). Duplicated in the postgres package
+// so the concrete repo can return the same value type; kept here as the
+// repository-facing contract.
+type DurationRow struct {
+	AssetID      string
+	GraceVideoID string
+	DurationMs   int64
+}
+
+// AssetCostRow is one aggregated cost/GPU/CPU row per (asset_id[, algo_key])
+// returned by AssetRepository.LookupCosts. AlgoKey is empty when the caller
+// aggregates over asset only (byAlgo=false); populated with the Argo
+// pipeline_run_nodes.template_name otherwise. Used by the batch cost-lookup
+// endpoint (CYB-4306).
+type AssetCostRow struct {
+	AssetID      string
+	AlgoKey      string
+	TotalCostUSD float64
+	GPUSec       float64
+	CPUSec       float64
+	RunCount     int64
+}
+
+// LineageRow is one asset's identity + lineage columns projected by
+// AssetRepository.LookupLineage — used by the batch lineage endpoint
+// (CYB-4305) to answer both "resolve this input_id" and "give me its parent /
+// root / version state" in a single index scan against `assets`. Pointer
+// fields carry NULL through: NULL parent means "no known parent", which
+// combined with a NULL root is what the endpoint reports as `orphan_count`.
+type LineageRow struct {
+	AssetID        string
+	GraceVideoID   string
+	ParentAssetID  *string
+	RootAssetID    *string
+	LogicalAssetID *string
+	IsCurrent      bool
+	Revision       int64
+}
 
 // ErrDuplicateAssetID is returned when inserting an asset whose asset_id already exists.
 var ErrDuplicateAssetID = errors.New("duplicate asset id")
@@ -51,4 +92,39 @@ type AssetRepository interface {
 	// asset_relations parent→child edges (recursive CTE). Used by the tag
 	// propagator (CYB-1068) to apply tags to the full descendant tree.
 	ListDescendants(ctx context.Context, assetID string) ([]*models.Asset, error)
+
+	// LookupDurations returns duration_ms for non-deleted assets whose
+	// asset_id OR grace_video_id matches any element of ids. Optional
+	// [minMs, maxMs] bounds filter the resulting rows in-SQL (0 disables the
+	// bound). Empty ids returns (nil, nil) without a round-trip. Used by the
+	// batch duration-lookup endpoint (CYB-4294).
+	LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]DurationRow, error)
+
+	// LookupCosts aggregates leaf-pod costs / GPU-sec / CPU-sec / run_count
+	// per asset_id (and optionally per algo_key = template_name) over the
+	// [startAt, endAt] window on pipeline_runs.finished_at. assetIDs must
+	// already be resolved (this is the second query in the two-step batch
+	// cost pipeline; the caller resolves grace_video_id → asset_id first).
+	// Uses the same leaf-pod predicate as the existing single-run cost path
+	// (pipeline_repo.go:767) to avoid double-counting rollup nodes.
+	// CYB-4306.
+	LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]AssetCostRow, error)
+
+	// LookupLineage returns identity + lineage columns for non-deleted assets
+	// whose asset_id OR grace_video_id matches any element of ids. Single-
+	// query resolver — the returned rows carry both the identity columns
+	// (asset_id/grace_video_id) and the direct-hop lineage columns
+	// (parent/root/logical/is_current/revision) so the batch lineage endpoint
+	// doesn't need a separate resolve step. CYB-4305.
+	LookupLineage(ctx context.Context, ids []string) ([]LineageRow, error)
+}
+
+// AssetLineageBatchRepository is the ES-side surface used by the depth="all"
+// path of the batch lineage endpoint (CYB-4305). Returns the projection that
+// searchindex/builder.go writes onto every asset doc (upstream_ids /
+// downstream_ids / relation_types). Missing docs map to zero-value
+// AssetLineageProjection (all three fields nil). Split into its own interface
+// so the asset usecase can stay ignorant of ES transport.
+type AssetLineageBatchRepository interface {
+	LineageDocsByAssetID(ctx context.Context, assetIDs []string) (map[string]AssetLineageProjection, error)
 }

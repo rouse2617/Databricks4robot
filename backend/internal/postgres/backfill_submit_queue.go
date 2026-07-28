@@ -93,24 +93,46 @@ func (r *BackfillRepo) FindSubmittableJobs(ctx context.Context, limit int) ([]mo
 	if limit <= 0 {
 		limit = 50
 	}
+	perTargetLimit := limit / 4
+	if perTargetLimit < 1 {
+		perTargetLimit = 1
+	}
 	// template_version is selected so the submitter honours the version pinned
 	// at batch creation instead of silently falling back to the template's
 	// current active version (CYB-3677 P0: same-batch version consistency).
 	const q = `
+	WITH candidates AS (
+	  SELECT
+	    bj.id, bj.template_id, bj.name, bj.status,
+	    bj.completed_count, bj.failed_count, bj.total_count,
+	    bj.pilot_phase, bj.pilot_count, COALESCE(bj.template_version, 0) AS template_version,
+	    bj.filter_json, bj.created_at, bj.updated_at,
+	    COALESCE(bj.created_by, '') AS created_by,
+	    row_number() OVER (
+	      PARTITION BY COALESCE(
+	        NULLIF(bj.filter_json->>'targetId', ''),
+	        NULLIF(bj.filter_json->>'target_id', ''),
+	        ''
+	      )
+	      ORDER BY bj.created_at ASC
+	    ) AS target_rank
+	  FROM backfill_jobs bj
+	  WHERE bj.status IN ('running', 'pilot_running')
+	    AND EXISTS (
+	      SELECT 1 FROM backfill_items bi
+	      WHERE bi.job_id = bj.id AND bi.status = 'pending'
+	    )
+	)
 	SELECT bj.id, bj.template_id, bj.name, bj.status,
 	  bj.completed_count, bj.failed_count, bj.total_count,
-	  bj.pilot_phase, bj.pilot_count, COALESCE(bj.template_version, 0),
-	  bj.filter_json, bj.created_at, bj.updated_at
-	FROM backfill_jobs bj
-	WHERE bj.status IN ('running', 'pilot_running')
-	  AND EXISTS (
-	    SELECT 1 FROM backfill_items bi
-	    WHERE bi.job_id = bj.id AND bi.status = 'pending'
-	  )
+	  bj.pilot_phase, bj.pilot_count, bj.template_version,
+	  bj.filter_json, bj.created_at, bj.updated_at, bj.created_by
+	FROM candidates bj
+	WHERE bj.target_rank <= $2
 	ORDER BY bj.created_at ASC
 	LIMIT $1`
 	db := dbFromCtx(ctx, r.c.db)
-	rows, err := db.Query(ctx, q, limit)
+	rows, err := db.Query(ctx, q, limit, perTargetLimit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres BackfillRepo.FindSubmittableJobs: %w", err)
 	}
@@ -122,7 +144,7 @@ func (r *BackfillRepo) FindSubmittableJobs(ctx context.Context, limit int) ([]mo
 			&j.ID, &j.TemplateID, &j.Name, &j.Status,
 			&j.CompletedCount, &j.FailedCount, &j.TotalCount,
 			&j.PilotPhase, &j.PilotCount, &j.TemplateVersion,
-			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
+			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt, &j.CreatedBy,
 		); err != nil {
 			return nil, fmt.Errorf("postgres BackfillRepo.FindSubmittableJobs scan: %w", err)
 		}

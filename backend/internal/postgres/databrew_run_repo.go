@@ -270,8 +270,8 @@ func (r *RAGBuildRunRepo) FindByRunID(ctx context.Context, runID string) (*model
 FROM rag_build_runs WHERE run_id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	var (
-		row        models.RAGBuildRun
-		snapshot   []byte
+		row      models.RAGBuildRun
+		snapshot []byte
 	)
 	err := db.QueryRow(ctx, q, runID).Scan(
 		&row.RunID, &row.KnowledgeBaseID, &snapshot, &row.EmbeddingModel, &row.VectorIndexName, &row.ReleaseVersion,

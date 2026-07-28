@@ -26,8 +26,11 @@ func (m *mockBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) 
 func (m *mockBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (m *mockBackfillRepo) SaveJob(_ context.Context, _ *models.BackfillJob) error { return nil }
-func (m *mockBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (m *mockBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (m *mockBackfillRepo) TotalDurationByBatchIDs(_ context.Context, batchIDs []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 func (m *mockBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	if id == "missing" {
@@ -133,6 +136,24 @@ func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipeline
 				m.items[i].WorkflowName = &workflowName
 			} else {
 				m.items[i].WorkflowName = nil
+			}
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	for i := range m.items {
+		if m.items[i].ID == id {
+			m.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				m.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				m.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				m.items[i].ErrorMessage = &em
 			}
 		}
 	}
@@ -316,6 +337,56 @@ func TestStringFromBackfillFilterAcceptsTargetAliases(t *testing.T) {
 	}
 	if got := stringFromBackfillFilter(values, "targetId", "target_id"); got != "video-proc-dev" {
 		t.Fatalf("expected target alias to resolve, got %q", got)
+	}
+}
+
+func TestIntFromBackfillFilter(t *testing.T) {
+	// JSON numbers decode to float64.
+	if n, ok := intFromBackfillFilter(map[string]interface{}{"priority": float64(-100)}, "priority"); !ok || n != -100 {
+		t.Fatalf("float64: got (%d,%v), want (-100,true)", n, ok)
+	}
+	// Numeric string is accepted too.
+	if n, ok := intFromBackfillFilter(map[string]interface{}{"priority": "100"}, "priority"); !ok || n != 100 {
+		t.Fatalf("string: got (%d,%v), want (100,true)", n, ok)
+	}
+	// Absent key → ok=false (caller inherits the pool default).
+	if _, ok := intFromBackfillFilter(map[string]interface{}{}, "priority"); ok {
+		t.Fatal("absent key should yield ok=false")
+	}
+	// Non-numeric → ok=false.
+	if _, ok := intFromBackfillFilter(map[string]interface{}{"priority": "abc"}, "priority"); ok {
+		t.Fatal("non-numeric should yield ok=false")
+	}
+}
+
+func TestCreateBackfill_PersistsPriorityOverrideInFilterJSON(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	p := 100
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{"asset-1"}, CreateBackfillOptions{
+		TargetID: "video-proc-prod",
+		Priority: &p,
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	got, ok := intFromBackfillFilter(job.FilterJSON, "priority")
+	if !ok || got != 100 {
+		t.Fatalf("priority in filter_json = (%d,%v), want (100,true)", got, ok)
+	}
+}
+
+func TestCreateBackfill_OmitsPriorityWhenNil(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{"asset-1"}, CreateBackfillOptions{
+		TargetID: "video-proc-prod",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	if _, ok := intFromBackfillFilter(job.FilterJSON, "priority"); ok {
+		t.Fatal("nil priority override must not write filter_json.priority (should inherit pool default)")
 	}
 }
 
@@ -684,10 +755,13 @@ type trackingBackfillRepo struct {
 	runsWithNodeRows   int
 }
 
+func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) {
+	return 0, nil
+}
 
-func (r *trackingBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) (int, error) { return 0, nil }
-
-func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
+func (r *trackingBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) {
+	return 0, nil
+}
 
 func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJob) error {
 	r.mu.Lock()
@@ -696,8 +770,11 @@ func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJo
 	r.job = &copyJob
 	return nil
 }
-func (r *trackingBackfillRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, error) {
+func (r *trackingBackfillRepo) FindAllJobs(_ context.Context, _ string) ([]models.BackfillJob, error) {
 	return nil, nil
+}
+func (r *trackingBackfillRepo) TotalDurationByBatchIDs(_ context.Context, batchIDs []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 func (r *trackingBackfillRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	r.mu.Lock()
@@ -792,6 +869,26 @@ func (r *trackingBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipe
 			}
 			if workflowName != "" {
 				r.items[i].WorkflowName = &workflowName
+			}
+		}
+	}
+	return nil
+}
+func (r *trackingBackfillRepo) MarkItemFailedWithRun(_ context.Context, id, pipelineRunID, workflowName, errorMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.items {
+		if r.items[i].ID == id {
+			r.items[i].Status = "failed"
+			if pipelineRunID != "" {
+				r.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				r.items[i].WorkflowName = &workflowName
+			}
+			if errorMsg != "" {
+				em := errorMsg
+				r.items[i].ErrorMessage = &em
 			}
 		}
 	}
@@ -1026,3 +1123,96 @@ func TestPauseJob_StopRunning_DefersStopsToBackground(t *testing.T) {
 // CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery
 // stopgap) is deleted; dispatch is owned by the submitter (see submitter.go
 // and submitter_test.go).
+
+// ── CYB-TBD: Rerun transaction boundary (review P1-5) ────────────────────────
+
+// partialUpsertDeployer fails UpsertBatchSubtaskRun for the named assets and
+// succeeds for the rest, exercising rerun's mixed success/failure path.
+type partialUpsertDeployer struct {
+	*fakeDeployer
+	failAssets map[string]bool
+}
+
+func (d *partialUpsertDeployer) UpsertBatchSubtaskRun(ctx context.Context, in pipelineUC.BatchSubtaskRunInput) (string, string, error) {
+	if d.failAssets[in.AssetID] {
+		return "", "", errors.New("upsert failed for " + in.AssetID)
+	}
+	return d.fakeDeployer.UpsertBatchSubtaskRun(ctx, in)
+}
+
+// When every rerun re-submit fails, Rerun must not leave the job terminal while
+// its items dangle pending: each matched item keeps its failed status and
+// error_message, and the job is not moved to running (review P1-5).
+func TestRerun_AllUpsertsFail_NoDanglingPending(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{ID: "job-1", Status: "failed", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 2},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "failed", ErrorMessage: strPtr("boom-1")},
+			{ID: "item-2", JobID: "job-1", AssetID: "asset-2", Status: "failed", ErrorMessage: strPtr("boom-2")},
+		},
+	}
+	uc := New(repo, nil)
+	uc.deployer = &upsertFailingDeployer{fakeDeployer: &fakeDeployer{}}
+
+	result, err := uc.Rerun(context.Background(), "job-1", RerunRequest{Scope: "failed"})
+	if err != nil {
+		t.Fatalf("Rerun: %v", err)
+	}
+	if result.RetriedCount != 0 {
+		t.Fatalf("RetriedCount = %d, want 0", result.RetriedCount)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("Status = %q, want failed", result.Status)
+	}
+	if repo.job.Status != "failed" {
+		t.Fatalf("job status = %q, want failed (must not go running with no scheduled item)", repo.job.Status)
+	}
+	for i := range repo.items {
+		it := repo.items[i]
+		if it.Status != "failed" {
+			t.Fatalf("item %s status = %q, want failed (must not dangle pending)", it.ID, it.Status)
+		}
+		if it.ErrorMessage == nil {
+			t.Fatalf("item %s error_message wiped; original failure reason must be preserved", it.ID)
+		}
+	}
+}
+
+// On partial success only the successfully re-submitted item is re-queued
+// (pending + bound to a run) and the job moves to running; the failed item is
+// left untouched with its reason intact.
+func TestRerun_PartialSuccess_OnlyScheduledItemsRequeued(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{ID: "job-1", Status: "failed", TemplateID: "tpl-1", TemplateVersion: 1, TotalCount: 2},
+		items: []models.BackfillItem{
+			{ID: "item-1", JobID: "job-1", AssetID: "asset-1", Status: "failed", ErrorMessage: strPtr("boom-1")},
+			{ID: "item-2", JobID: "job-1", AssetID: "asset-2", Status: "failed", ErrorMessage: strPtr("boom-2")},
+		},
+	}
+	uc := New(repo, nil)
+	uc.deployer = &partialUpsertDeployer{fakeDeployer: &fakeDeployer{}, failAssets: map[string]bool{"asset-2": true}}
+
+	result, err := uc.Rerun(context.Background(), "job-1", RerunRequest{Scope: "failed"})
+	if err != nil {
+		t.Fatalf("Rerun: %v", err)
+	}
+	if result.RetriedCount != 1 {
+		t.Fatalf("RetriedCount = %d, want 1", result.RetriedCount)
+	}
+	if result.Status != "partial_success" {
+		t.Fatalf("Status = %q, want partial_success", result.Status)
+	}
+	if repo.job.Status != "running" {
+		t.Fatalf("job status = %q, want running", repo.job.Status)
+	}
+	byID := map[string]models.BackfillItem{}
+	for _, it := range repo.items {
+		byID[it.ID] = it
+	}
+	if got := byID["item-1"]; got.Status != "pending" || got.PipelineRunID == nil {
+		t.Fatalf("item-1 = {status:%q run:%v}, want pending + bound run", got.Status, got.PipelineRunID)
+	}
+	if got := byID["item-2"]; got.Status != "failed" || got.ErrorMessage == nil {
+		t.Fatalf("item-2 = {status:%q errNil:%v}, want untouched failed with reason", got.Status, got.ErrorMessage == nil)
+	}
+}

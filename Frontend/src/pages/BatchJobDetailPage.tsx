@@ -1,8 +1,8 @@
 import {
 	ArrowLeftOutlined,
 	DownloadOutlined,
-	PauseCircleOutlined,
 	PlayCircleOutlined,
+	PoweroffOutlined,
 	RedoOutlined,
 	ReloadOutlined,
 	WarningOutlined,
@@ -31,11 +31,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	type BatchJob,
+	type BatchJobDisplayStatus,
 	type BatchNodeFailureItem,
 	type BatchNodeSummary,
 	type BatchNodeSummaryNode,
 	batchJobProgress,
 	continueFullBatchJob,
+	deriveBatchJobStatus,
 	getBatchJob,
 	getBatchNodeSummary,
 	listBatchNodeFailures,
@@ -44,8 +46,9 @@ import {
 	resumeBatchJob,
 } from "../api/batchJobApi";
 import {
+	type ExecutionTarget,
+	listExecutionTargets,
 	listPipelineVersions,
-	type PipelineRun,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
 import {
@@ -57,15 +60,27 @@ import {
 import type { WorkflowSummary } from "../api/workflowApi";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
+	type BatchExportStatusFilter,
+	copyAssetIdsToClipboard,
+	exportAssetIdsCsv,
+	extractAssetIds,
+	statusFilterPredicate,
+} from "../lib/batchJobs";
+import { humanizeDlqReason } from "../lib/dispatcher";
+import {
 	goBackFromBatchJobDetail,
 	workflowDetailLocationState,
 } from "../lib/pipelineNavigation";
-import { humanizeDlqReason } from "../lib/dispatcher";
 import {
 	formatBatchJobStatus,
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
 } from "../lib/statusLabels";
+import {
+	batchTargetId,
+	effectivePriorityFromFilter,
+	priorityBadge,
+} from "../lib/workflowPriority";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
@@ -280,38 +295,20 @@ export function batchJobPollIntervalMs(status?: string | null): number | null {
 function computeActualBatchStatus(
 	job: BatchJob,
 	nodeSummary: BatchNodeSummary | null,
-): "running" | "paused" | "completed" | "failed" {
-	// 如果没有节点概览数据，信任后端状态
+): BatchJobDisplayStatus {
+	// 没有节点概览数据时，信任后端生命周期状态。
 	if (!nodeSummary) {
-		return job.status as "running" | "paused" | "completed" | "failed";
+		return job.status as BatchJobDisplayStatus;
 	}
-
+	// CYB-4012: 用与列表页相同的、基于计数的派生函数计算状态，两个视图不再分叉。
+	// 子任务级暂停优先（有子任务暂停即视为批次暂停）。
 	const { subtasks } = nodeSummary;
-	const totalProcessed = subtasks.completed + subtasks.failed;
-	const allFinished = totalProcessed >= subtasks.total;
-
-	// 如果被明确暂停，返回暂停状态
-	if (subtasks.paused) {
-		return "paused";
-	}
-
-	// 如果所有任务都已完成或失败
-	if (allFinished) {
-		// 如果有失败的任务，状态为失败
-		if (subtasks.failed > 0) {
-			return "failed";
-		}
-		// 全部成功
-		return "completed";
-	}
-
-	// 如果有运行中或等待中的任务
-	if (subtasks.running > 0 || subtasks.pending > 0) {
-		return "running";
-	}
-
-	// 默认返回后端状态
-	return job.status as "running" | "paused" | "completed" | "failed";
+	return deriveBatchJobStatus({
+		completedCount: subtasks.completed,
+		failedCount: subtasks.failed,
+		totalCount: subtasks.total,
+		status: subtasks.paused ? "paused" : job.status,
+	});
 }
 
 function nodeStatusForDrawerFilter(
@@ -356,67 +353,8 @@ function exportFailuresCsv(
 	URL.revokeObjectURL(url);
 }
 
-// 入参是 run 树的子 run 行(PipelineRun),不是 RunChildSummary(那是聚合统计,
-// 之前的注解写反导致 tsc 恒红)。后端 run JSON 只有 assetIds,没有 labels 字段
-// (models.PipelineRun 无 Labels),原先的 labels.asset_id 回退是永不可达的死分支。
-function extractAssetIds(runs: PipelineRun[]): string[] {
-	const ids = new Set<string>();
-	for (const item of runs) {
-		if (item.assetIds && item.assetIds.length > 0) {
-			for (const id of item.assetIds) {
-				const trimmed = id?.trim();
-				if (trimmed) ids.add(trimmed);
-			}
-		}
-	}
-	return Array.from(ids);
-}
-
-function exportAssetIdsCsv(assetIds: string[], batchId: string): void {
-	const header = "assetId\n";
-	// CSV 中双引号需要转义为两个双引号
-	const rows = assetIds.map((id) => `"${id.replace(/"/g, '""')}"`).join("\n");
-	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
-	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = `batch-${batchId.slice(0, 8)}-asset-ids.csv`;
-	// Firefox 要求 anchor 必须先添加到 DOM 才能点击
-	document.body.appendChild(anchor);
-	anchor.click();
-	document.body.removeChild(anchor);
-	URL.revokeObjectURL(url);
-}
-
-async function copyAssetIdsToClipboard(assetIds: string[]): Promise<boolean> {
-	const text = assetIds.join("\n");
-
-	// 方法1: 使用现代 Clipboard API
-	if (navigator.clipboard && navigator.clipboard.writeText) {
-		try {
-			await navigator.clipboard.writeText(text);
-			return true;
-		} catch {
-			// 降级到方法2
-		}
-	}
-
-	// 方法2: 使用传统 execCommand（兼容性更好）
-	try {
-		const textarea = document.createElement("textarea");
-		textarea.value = text;
-		textarea.style.position = "fixed";
-		textarea.style.left = "-999999px";
-		textarea.setAttribute("readonly", ""); // 移动设备避免弹出键盘
-		document.body.appendChild(textarea);
-		textarea.select();
-		const success = document.execCommand("copy");
-		document.body.removeChild(textarea);
-		return success;
-	} catch {
-		return false;
-	}
-}
+// CYB-3800: extractAssetIds / exportAssetIdsCsv / copyAssetIdsToClipboard are
+// now shared with the batch-list multi-select export flow — see lib/batchJobs.
 
 export function formatRerunFeedback(result: {
 	status: string;
@@ -524,6 +462,7 @@ export default function BatchJobDetailPage() {
 	const templateVersionsRef = useRef<PipelineTemplate[]>([]);
 	const [job, setJob] = useState<BatchJob | null>(null);
 	const [templateName, setTemplateName] = useState("");
+	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nodeSummary, setNodeSummary] = useState<BatchNodeSummary | null>(null);
@@ -646,6 +585,14 @@ export default function BatchJobDetailPage() {
 		void refresh({ useCache: true });
 	}, [refresh]);
 
+	// Execution targets resolve the batch's pool-default priority for the badge
+	// (the per-batch override, if any, lives in filter_json).
+	useEffect(() => {
+		listExecutionTargets()
+			.then(setTargets)
+			.catch(() => {});
+	}, []);
+
 	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
 	// CYB-3486: pause polling while the tab is hidden (resumes + refreshes on
@@ -685,20 +632,22 @@ export default function BatchJobDetailPage() {
 			});
 			if (pauseStopRunning && (result.stoppedCount ?? 0) > 0) {
 				message.success(
-					`批次已暂停，已停止 ${result.stoppedCount} 条运行中的子任务`,
+					`已停止批次，正在停止 ${result.stoppedCount} 条运行中的子任务`,
 				);
 			} else if (pauseStopRunning && (result.stopFailedCount ?? 0) > 0) {
 				message.warning(
-					`批次已暂停，但有 ${result.stopFailedCount} 条子任务停止失败`,
+					`已停止批次，但有 ${result.stopFailedCount} 条子任务停止失败`,
 				);
+			} else if (pauseStopRunning) {
+				message.success("已停止批次（无运行中的子任务）");
 			} else {
-				message.success("批次已暂停");
+				message.success("已停止下发（运行中的子任务继续执行）");
 			}
 			setPauseModalOpen(false);
 			setPauseStopRunning(false);
 			await refresh({ force: true });
 		} catch (err) {
-			message.error(`暂停失败：${String(err)}`);
+			message.error(`停止失败：${String(err)}`);
 		} finally {
 			setActionLoading(null);
 		}
@@ -844,7 +793,9 @@ export default function BatchJobDetailPage() {
 	const actualStatus = job ? computeActualBatchStatus(job, nodeSummary) : null;
 	// 批次已到终态时，缺失的节点进度不会再产生，应展示终态空状态而非"仍在同步中"。
 	const batchTerminal =
-		actualStatus === "completed" || actualStatus === "failed";
+		actualStatus === "completed" ||
+		actualStatus === "failed" ||
+		actualStatus === "partial_failure";
 	// CYB-3491: while node data is still syncing (runsWithNodeRows < runsTotal),
 	// the 运行中/排队 split is an estimate the backend derives from subtask
 	// status, not authoritative per-node phase — so those two cells are marked
@@ -908,11 +859,12 @@ export default function BatchJobDetailPage() {
 					<Space wrap>
 						{actualStatus === "running" ? (
 							<Button
-								icon={<PauseCircleOutlined />}
+								danger
+								icon={<PoweroffOutlined />}
 								loading={actionLoading === "pause"}
 								onClick={() => setPauseModalOpen(true)}
 							>
-								暂停
+								停止
 							</Button>
 						) : null}
 						{actualStatus === "paused" ? (
@@ -966,20 +918,42 @@ export default function BatchJobDetailPage() {
 						</Dropdown>
 						<Dropdown
 							menu={{
+								// CYB-3821: mirror the list page's copy/csv × all/成功/失败
+								// sub-menu so single-batch export gets the same status filter.
 								items: [
 									{
 										key: "copy",
 										label: "复制到剪贴板",
 										disabled: !runTree || runTree.items.length === 0,
+										children: [
+											{ key: "copy:all", label: "全部" },
+											{ key: "copy:succeeded", label: "仅成功" },
+											{ key: "copy:failed", label: "仅失败" },
+										],
 									},
 									{
 										key: "csv",
 										label: "导出 CSV",
 										disabled: !runTree || runTree.items.length === 0,
+										children: [
+											{ key: "csv:all", label: "全部" },
+											{ key: "csv:succeeded", label: "仅成功" },
+											{ key: "csv:failed", label: "仅失败" },
+										],
 									},
 								],
 								onClick: async ({ key }) => {
 									if (!runTree) return;
+									const [action, filterKey] = key.split(":") as [
+										"copy" | "csv",
+										BatchExportStatusFilter,
+									];
+									const filterLabel =
+										filterKey === "succeeded"
+											? "成功"
+											: filterKey === "failed"
+												? "失败"
+												: "全部";
 									// CYB-3491: runTree 是分页的(pageSize=20 见 line 236),之前
 									// 直接用 runTree.items 会让 58 条批次只导出 20 条 —— 用户
 									// 每次都要人肉再来一次。导出前分页扫全 —— 后端
@@ -1011,23 +985,37 @@ export default function BatchJobDetailPage() {
 										}
 										hide();
 									}
-									const assetIds = extractAssetIds(items);
+									const assetIds = extractAssetIds(
+										items,
+										statusFilterPredicate(filterKey),
+									);
 									if (assetIds.length === 0) {
-										message.info("没有可导出的资产 ID");
+										message.info(
+											filterKey === "all"
+												? "没有可导出的资产 ID"
+												: `没有${filterLabel}状态的子任务`,
+										);
 										return;
 									}
-									if (key === "copy") {
+									if (action === "copy") {
 										const success = await copyAssetIdsToClipboard(assetIds);
 										if (success) {
 											message.success(
-												`已复制 ${assetIds.length} 个资产 ID 到剪贴板`,
+												`已复制 ${assetIds.length} 个${filterLabel}资产 ID 到剪贴板`,
 											);
 										} else {
 											message.error("复制失败，请重试");
 										}
-									} else if (key === "csv") {
-										exportAssetIdsCsv(assetIds, job.id);
-										message.success(`已导出 ${assetIds.length} 个资产 ID`);
+									} else if (action === "csv") {
+										const filterSuffix =
+											filterKey === "all" ? "" : `-${filterKey}`;
+										exportAssetIdsCsv(
+											assetIds,
+											`batch-${job.id.slice(0, 8)}${filterSuffix}`,
+										);
+										message.success(
+											`已导出 ${assetIds.length} 个${filterLabel}资产 ID`,
+										);
 									}
 								},
 							}}
@@ -1095,6 +1083,20 @@ export default function BatchJobDetailPage() {
 									) : null}
 								</>
 							),
+						},
+						{
+							label: "优先级",
+							children: (() => {
+								const tid = batchTargetId(job.filterJson);
+								const poolDefault = tid
+									? targets.find((t) => t.id === tid)?.resourceDefaults
+											?.priority
+									: undefined;
+								const badge = priorityBadge(
+									effectivePriorityFromFilter(job.filterJson, poolDefault),
+								);
+								return <Tag color={badge.color}>{badge.label}</Tag>;
+							})(),
 						},
 						{
 							label: "子任务数",
@@ -1554,15 +1556,16 @@ export default function BatchJobDetailPage() {
 			</Modal>
 
 			<Modal
-				title="暂停批次"
+				title="停止批次"
 				open={pauseModalOpen}
 				onCancel={() => {
 					setPauseModalOpen(false);
 					setPauseStopRunning(false);
 				}}
 				onOk={() => void submitPause()}
-				okText="确认暂停"
+				okText="确认停止"
 				cancelText="取消"
+				okButtonProps={{ danger: true }}
 				confirmLoading={actionLoading === "pause"}
 				destroyOnHidden
 			>
@@ -1572,12 +1575,19 @@ export default function BatchJobDetailPage() {
 					style={{ display: "flex", flexDirection: "column", gap: 12 }}
 				>
 					<Radio value={false}>
-						仅暂停调度（不再启动新的子任务，运行中的继续执行）
+						停止下发（不再下发新子任务，运行中的继续跑完，可恢复）
 					</Radio>
 					<Radio value={true}>
-						暂停并停止运行中的子任务（向 Argo 发送停止信号）
+						全部停止（连运行中的子任务一起停，可恢复重投）
 					</Radio>
 				</Radio.Group>
+				<Text
+					type="secondary"
+					style={{ display: "block", marginTop: 12, fontSize: 12 }}
+				>
+					两种都可稍后点「继续」恢复。「全部停止」对运行中的子任务发送 Argo
+					优雅停止信号（非删除），恢复时这些子任务从头重新下发。
+				</Text>
 			</Modal>
 		</div>
 	);

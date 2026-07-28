@@ -35,6 +35,7 @@ var mcapFilterColumns = map[string]bool{
 	"vendor_id":      true,
 	"device_id":      true,
 	"camera_model":   true,
+	"grace_video_id": true,
 	"scene_id":       true,
 	"location_id":    true,
 	"environment_id": true,
@@ -83,6 +84,18 @@ var exactFieldSpecs = map[string]fieldSpec{
 	"delete_after_days":  {Canonical: "delete_after_days", StorageField: "metadata.delete_after_days", IsJSONB: true},
 	"total_size_bytes":   {Canonical: "total_size_bytes", StorageField: "metadata.total_size_bytes", IsJSONB: true},
 	"last_accessed_at":   {Canonical: "last_accessed_at", StorageField: "metadata.last_accessed_at", IsJSONB: true},
+	// CYB-3715 flatten columns — mirrored from mcap_files onto assets in
+	// migration 20260722100000. Direct assets.<col> is the fast path;
+	// mcap.<col> remains available for callers who still address them via
+	// the mcap subquery syntax.
+	"camera_model":      {Canonical: "camera_model", StorageField: "camera_model", IsJSONB: false},
+	"grace_video_id":    {Canonical: "grace_video_id", StorageField: "grace_video_id", IsJSONB: false}, // CYB-4011: filter-only, not faceted
+	"device_id":         {Canonical: "device_id", StorageField: "device_id", IsJSONB: false},
+	"collector_id":      {Canonical: "collector_id", StorageField: "collector_id", IsJSONB: false},
+	"scene_id":          {Canonical: "scene_id", StorageField: "scene_id", IsJSONB: false},
+	"data_source":       {Canonical: "data_source", StorageField: "data_source", IsJSONB: false},
+	"collection_method": {Canonical: "collection_method", StorageField: "collection_method", IsJSONB: false},
+	"source_platform":   {Canonical: "source_platform", StorageField: "source_platform", IsJSONB: false},
 	// Tag inner pseudo-fields used by advanced filters.
 	"tags.key":         {Canonical: "tags.key", StorageField: "asset_tags.__key", IsJSONB: false},
 	"tags.value":       {Canonical: "tags.value", StorageField: "asset_tags.__value", IsJSONB: false},

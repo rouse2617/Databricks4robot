@@ -29,9 +29,9 @@ func (s *stubAPIKeyRepo) Create(_ context.Context, k *models.APIKey) error {
 func (s *stubAPIKeyRepo) FindByPrefix(context.Context, string) (*models.APIKey, error) {
 	return nil, nil
 }
-func (s *stubAPIKeyRepo) List(context.Context) ([]models.APIKey, error)  { return nil, nil }
-func (s *stubAPIKeyRepo) Revoke(context.Context, string) error           { return nil }
-func (s *stubAPIKeyRepo) TouchLastUsed(context.Context, string) error    { return nil }
+func (s *stubAPIKeyRepo) List(context.Context) ([]models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) Revoke(context.Context, string) error          { return nil }
+func (s *stubAPIKeyRepo) TouchLastUsed(context.Context, string) error   { return nil }
 
 // setupCreateRouter mounts POST /api-keys with a middleware that stamps a
 // Principal on the gin context, mimicking what auth middleware would do in

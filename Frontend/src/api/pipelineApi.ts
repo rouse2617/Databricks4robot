@@ -219,11 +219,17 @@ export interface TargetScheduling {
 	podLabels?: Record<string, string>;
 	// Pod annotations merged onto every workflow pod.
 	podAnnotations?: Record<string, string>;
-	// nodeSelector / tolerations are ALSO read from here by the backend, but the
-	// PoolManager edits those via the top-level templateNodeSelector /
-	// templateTolerations fields, so they are not managed through this sub-object.
+	// nodeSelector / tolerations are ALSO read from here by the backend
+	// (scheduling.go accepts nodeSelector, nodeSelectors, templateNodeSelector,
+	// tolerations, templateTolerations as aliases at both top-level and nested).
+	// PoolManager edits via top-level templateNodeSelector / templateTolerations,
+	// but the display renderer reads from both locations to stay in sync with
+	// the backend's alias-aware resolution.
 	nodeSelector?: Record<string, string>;
+	nodeSelectors?: Record<string, string>;
+	templateNodeSelector?: Record<string, string>;
 	tolerations?: TargetToleration[];
+	templateTolerations?: TargetToleration[];
 }
 
 export interface TargetResourceDefaults {
@@ -232,6 +238,15 @@ export interface TargetResourceDefaults {
 	templateNodeSelector?: Record<string, string>;
 	// Pool scheduling directives (scheduler, priorityclass, pod labels/annotations).
 	scheduling?: TargetScheduling;
+	// CYB-3681 admission backpressure: max active (pending+running) workflows the
+	// target's namespace may hold before this pool defers dispatch. Empty =
+	// compiled backend default.
+	maxActiveWorkflows?: number;
+	// Default Argo workflow priority (wf.Spec.Priority) for batches dispatched to
+	// this pool. Higher is admitted first when the parallelism queue is
+	// saturated; only comparable among pools sharing one namespace. Absent =
+	// normal (0). A per-dispatch override can raise/lower it per batch.
+	priority?: number;
 	// Other fields (terminal config, etc.) are preserved verbatim on PUT.
 	[key: string]: unknown;
 }
@@ -261,6 +276,31 @@ export interface ExecutionTarget {
 	labels?: Record<string, string>;
 	createdAt?: string;
 	updatedAt?: string;
+}
+
+// TargetDispatchStats is one pool's trailing-window run breakdown by outcome,
+// backing the "近15min 速率" figure in the pool manager. Counts are per-target.
+export interface TargetDispatchStats {
+	total: number;
+	succeeded: number;
+	failed: number;
+	active: number;
+}
+
+// TargetRuntimeStatus is one pool's live picture: how full its namespace is
+// against the backpressure ceiling, and how fast it has been dispatching. Note
+// activeWorkflows is per-NAMESPACE — pools sharing a namespace report the same
+// number (that is what backpressure gates on) — while `recent` is per-target.
+// activeObserved is false when the watcher has no observation yet, so the UI
+// shows "—" rather than a misleading 0.
+export interface TargetRuntimeStatus {
+	targetId: string;
+	namespace: string;
+	activeWorkflows: number;
+	activeObserved: boolean;
+	maxActiveWorkflows: number;
+	windowMinutes: number;
+	recent: TargetDispatchStats;
 }
 
 export interface RuntimeSecretMountResource {
@@ -441,7 +481,59 @@ export function savePipeline(
 }
 
 export function deletePipeline(id: string): Promise<void> {
-	return request<void>("DELETE", `/pipelines/${id}`);
+	return request<void>("DELETE", `/pipelines/${encodeURIComponent(id)}`);
+}
+
+// ── Pipeline Promotion ─────────────────────────────────────────────────
+
+export interface PipelinePromotionDependency {
+	nodeName: string;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
+	runtimeImage: string;
+}
+
+export interface PipelinePromotionMappingRequirement {
+	kind: "config" | "secret" | "storage";
+	sourceId: string;
+	targetId?: string;
+	nodeName?: string;
+	mountPath?: string;
+	required: boolean;
+	resolution?: "explicit" | "";
+}
+
+export interface PipelinePromotionBundle {
+	sourceEnvironment: string;
+	sourceTemplateId: string;
+	sourceVersion: number;
+	name: string;
+	owner?: string;
+	pipeline: Pipeline;
+	dependencies: PipelinePromotionDependency[];
+	bundleDigest: string;
+}
+
+export interface PipelinePromotionPlan {
+	targetEnvironment: string;
+	planDigest: string;
+	bundle: PipelinePromotionBundle;
+	requiredMappings: PipelinePromotionMappingRequirement[];
+	warnings: string[];
+	blockers: string[];
+	ready: boolean;
+}
+
+export function getPromotionPlan(
+	id: string,
+	mappings?: PipelinePromotionMappingRequirement[],
+): Promise<PipelinePromotionPlan> {
+	return request<PipelinePromotionPlan>(
+		"POST",
+		`/pipelines/${id}/promotion-plan`,
+		{ mappings },
+	);
 }
 
 export function promotePipeline(id: string): Promise<PipelineTemplate> {
@@ -509,6 +601,31 @@ export function getPipelineRun(id: string): Promise<PipelineRun> {
 
 export function deletePipelineRun(id: string): Promise<void> {
 	return request<void>("DELETE", `/pipeline-runs/${encodeURIComponent(id)}`);
+}
+
+// CYB-4297: reverse lookup "asset → pipeline runs" — powers AssetDetailPage
+// runs tab. `assetId` accepts either grace_video_id (matches
+// pipeline_runs.asset_ids directly) or the short assets.asset_id (backend
+// resolves via assetRepo). Server always returns summary shape.
+export function listPipelineRunsByAsset(
+	assetId: string,
+	options?: {
+		status?: string;
+		batchJobId?: string;
+		page?: number;
+		pageSize?: number;
+	},
+): Promise<PipelineRunListResponse> {
+	const search = new URLSearchParams();
+	if (options?.status) search.set("status", options.status);
+	if (options?.batchJobId) search.set("batchJobId", options.batchJobId);
+	if (options?.page) search.set("page", String(options.page));
+	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
+	const suffix = search.toString() ? `?${search.toString()}` : "";
+	return request<PipelineRunListResponse>(
+		"GET",
+		`/assets/${encodeURIComponent(assetId)}/runs${suffix}`,
+	);
 }
 
 export function listPipelineRuns(options?: {
@@ -612,6 +729,15 @@ export function listExecutionTargets(): Promise<ExecutionTarget[]> {
 		"GET",
 		"/execution-targets",
 	).then((r) => r.items);
+}
+
+// listExecutionTargetsStatus fetches each pool's live active/ceiling + recent
+// dispatch rate for the pool manager runtime view. Read-only on the backend.
+export function listExecutionTargetsStatus(): Promise<TargetRuntimeStatus[]> {
+	return request<{ items: TargetRuntimeStatus[] }>(
+		"GET",
+		"/execution-targets/status",
+	).then((r) => r.items ?? []);
 }
 
 export function createExecutionTarget(
@@ -753,10 +879,10 @@ export function updatePipelineWithVersion(
 	pipeline: Pipeline,
 	baseVersion: number,
 	note?: string,
-): Promise<{ version: number; updatedAt: string }> {
-	return request<{ version: number; updatedAt: string }>(
-		"PUT",
-		`/pipelines/${id}`,
-		{ pipeline, baseVersion, note },
-	);
+): Promise<PipelineTemplate> {
+	return request<PipelineTemplate>("PUT", `/pipelines/${id}`, {
+		pipeline,
+		baseVersion,
+		note,
+	});
 }

@@ -61,6 +61,8 @@ const menuItems = [
 
 function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/dashboard")) return "/dashboard";
+	// CYB-4294b: /assets/durations is now a tab within /assets, not its own
+	// sidebar entry — the assets group covers both.
 	if (pathname.startsWith("/assets")) return "/assets";
 	if (pathname.startsWith("/metrics")) return "/metrics";
 	if (pathname.startsWith("/deliveries")) return "/deliveries";

@@ -23,6 +23,7 @@ import (
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
+	dashboardH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/dashboard"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryRuleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
@@ -35,6 +36,7 @@ import (
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
+	subtaskH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/subtask"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
@@ -60,6 +62,7 @@ func RegisterAll(
 	algoHandler *assetH.AlgoHandler,
 	auditHandler *auditH.Handler,
 	lakehouseHandler *lakehouseH.Handler,
+	dashboardHandler *dashboardH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
 	adminHandler *adminH.Handler,
@@ -77,6 +80,7 @@ func RegisterAll(
 	apiKeyHandler *apikeyH.Handler,
 	tagRegistryHandler *adminH.TagRegistryHandler,
 	clusterHandler *adminH.ClusterHandler,
+	subscriptionTaskHandler *subtaskH.Handler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
@@ -255,13 +259,39 @@ func RegisterAll(
 		assets.GET("/:id/events", assetHandler.ListEvents)
 		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
+		// CYB-4297: "打开资产,看它跑过哪些流水线" reverse lookup —
+		// pipeline_runs.asset_ids GIN-indexed reverse scan. Same summary
+		// shape as GET /pipeline-runs; :id accepts grace_video_id or the
+		// short assets.asset_id (usecase resolves via assetRepo).
+		assets.GET("/:id/runs", pipelineHandler.ListRunsByAsset)
+		// CYB-4263: provenance handler is implemented + unit-tested but was
+		// never mounted (dead since #59). Wire it onto the already-mounted
+		// asset handler.
+		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", middleware.RequireScope("assets:write"), assetHandler.UpsertTag)
 		assets.DELETE("/:id/tags/:key", middleware.RequireScope("assets:write"), assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 
+		// CYB-4294: batch asset-duration lookup — one round trip, mixed
+		// asset_id / grace_video_id inputs, server-side stats + histogram
+		// buckets. Same `assets:read` scope group as GET /assets/:id.
+		assets.POST("/durations", assetHandler.LookupDurations)
+		// CYB-4306: batch asset-cost lookup — same shell as /durations plus
+		// a required time window and optional group_by=asset_algo axis.
+		assets.POST("/costs", assetHandler.LookupCosts)
+		// CYB-4305: batch asset-lineage lookup — resolve parent/root/logical
+		// and (depth="all") the ES lineage projection in one round trip.
+		assets.POST("/lineage-batch", assetHandler.LookupLineage)
+
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
+		// CYB-4263: read-only asset-type JSON schema (handler implemented +
+		// unit-tested, previously unmounted).
+		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
+		// CYB-4265: logical-asset ratings history (handler implemented +
+		// unit-tested, previously unmounted — same forgotten wiring as CYB-4263).
+		api.GET("/logical-assets/:id/ratings-history", assetHandler.HandleRatingsHistory)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
@@ -326,6 +356,9 @@ func RegisterAll(
 
 		if auditHandler != nil {
 			api.GET("/audit/search", auditHandler.HandleAuditSearch)
+			// CYB-4263: lineage-search handler implemented + unit-tested but
+			// previously unmounted.
+			api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
 		}
 
 		if lakehouseHandler != nil {
@@ -341,6 +374,13 @@ func RegisterAll(
 			api.GET("/lakehouse/event-type-share", lakehouseHandler.EventTypeShare)
 			api.GET("/lakehouse/quality-distribution", lakehouseHandler.QualityDistribution)
 			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
+		}
+
+		// CYB-4303: dashboard aggregations. Mounted under the same authed
+		// api group as the lakehouse endpoints (the dashboard has no
+		// separate scope of its own).
+		if dashboardHandler != nil {
+			api.GET("/dashboard/duration-distribution", dashboardHandler.DurationDistribution)
 		}
 
 		if adminRoutesEnabled && adminHandler != nil {
@@ -385,6 +425,13 @@ func RegisterAll(
 			internal := api.Group("/internal", adminAuth)
 			internal.DELETE("/assets/:id", purgeHandler.DeleteAssetHard)
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
+		}
+
+		// CYB-4011: internal backfill of grace_video_id onto an existing mcap
+		// file (+ mirrored asset). No general mcap update endpoint exists.
+		if adminRoutesEnabled {
+			internalMcap := api.Group("/internal", adminAuth)
+			internalMcap.PATCH("/mcap-files/:id/grace-video-id", mcapHandler.BackfillGraceVideoID)
 		}
 
 		// API key management (issue/list/revoke keys for SDK/API callers).
@@ -444,11 +491,13 @@ func RegisterAll(
 		api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
 		api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
 		api.PATCH("/pipelines/:id/active-version", pipelineHandler.SetActiveVersion)
-		api.POST("/pipelines/:id/promote", pipelineHandler.Promote)
+		api.POST("/pipelines/:id/promotion-plan", pipelineHandler.PromotionPlan)
+		api.POST("/pipelines/:id/promote", pipelineHandler.PromoteToProd)
 		api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
+		api.GET("/execution-targets/status", pipelineHandler.ExecutionTargetsStatus)
 		api.POST("/execution-targets", pipelineHandler.CreateExecutionTarget)
 		api.PUT("/execution-targets/:id", pipelineHandler.UpdateExecutionTarget)
 		api.DELETE("/execution-targets/:id", pipelineHandler.DeleteExecutionTarget)
@@ -562,6 +611,7 @@ func RegisterAll(
 			api.GET("/backfill/:id/node-summary", backfillHandler.GetNodeSummary)
 			api.GET("/backfill/:id/node-failures", backfillHandler.ListNodeFailures)
 			api.GET("/backfill/:id/attempts", backfillHandler.GetItemAttempts)
+			api.GET("/backfill/:id/items", backfillHandler.ListItems)
 			// dispatcher online tuning (CYB-3679)
 			api.GET("/dispatcher/clusters", backfillHandler.GetDispatcherStatus)
 			api.PUT("/dispatcher/clusters/:cluster", backfillHandler.PutDispatcherConfig)
@@ -572,6 +622,18 @@ func RegisterAll(
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
 			api.POST("/backfill/results", backfillHandler.UploadResult)
+		}
+
+		// Subscription tasks (CYB-3778): Pub/Sub consumer auto-dispatch.
+		if subscriptionTaskHandler != nil {
+			st := api.Group("/subscription-tasks")
+			st.GET("", subscriptionTaskHandler.List)
+			st.POST("", subscriptionTaskHandler.Create)
+			st.GET("/:id", subscriptionTaskHandler.Get)
+			st.PUT("/:id", subscriptionTaskHandler.Update)
+			st.DELETE("/:id", subscriptionTaskHandler.Delete)
+			st.POST("/:id/pause", subscriptionTaskHandler.Pause)
+			st.POST("/:id/resume", subscriptionTaskHandler.Resume)
 		}
 
 		// Storage (GCS signed URL proxy + source resolver)

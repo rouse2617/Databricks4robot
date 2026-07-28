@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -75,11 +76,14 @@ func (s *stubBackfillRepo) IncrementItemSubmitAttempts(context.Context, string) 
 func (s *stubBackfillRepo) ResetFailedItems(context.Context, string) (int64, error) { return 0, nil }
 
 func (s *stubBackfillRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
-func (s *stubBackfillRepo) FindAllJobs(context.Context) ([]models.BackfillJob, error) {
+func (s *stubBackfillRepo) FindAllJobs(context.Context, string) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 func (s *stubBackfillRepo) FindJobByID(context.Context, string) (*models.BackfillJob, error) {
 	return nil, nil
+}
+func (s *stubBackfillRepo) TotalDurationByBatchIDs(context.Context, []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 func (s *stubBackfillRepo) UpdateJobStatus(context.Context, string, string) error { return nil }
 func (s *stubBackfillRepo) UpdateJobPilotPhase(context.Context, string, string, string) error {
@@ -141,6 +145,9 @@ func (s *stubBackfillRepo) AdvanceItemAndCountAtomic(ctx context.Context, itemID
 	return s.UpdateItemStatus(ctx, itemID, newStatus, workflowName, errMsg)
 }
 func (s *stubBackfillRepo) UpdateItemPipelineRun(context.Context, string, string, string, string) error {
+	return nil
+}
+func (s *stubBackfillRepo) MarkItemFailedWithRun(context.Context, string, string, string, string) error {
 	return nil
 }
 func (s *stubBackfillRepo) UpdateJobProgress(context.Context, string, int, int, string) error {
@@ -273,4 +280,16 @@ func TestResolveCompletionStatus_AwaitingResult(t *testing.T) {
 	if status != "awaiting_result" {
 		t.Fatalf("status = %q", status)
 	}
+}
+
+func (s *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
+func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
+	return nil, nil
+}
+
+func (s *stubAssetRepo) LookupLineage(context.Context, []string) ([]repository.LineageRow, error) {
+	return nil, nil
 }

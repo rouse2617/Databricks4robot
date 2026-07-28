@@ -32,6 +32,7 @@ type mockWorkflowClient struct {
 	logsFn         func(ctx context.Context, workflowName, nodeId, namespace string, opts argo.WorkflowLogOptions) (argo.WorkflowLogResult, error)
 	streamFn       func(ctx context.Context, workflowName, podName, namespace string, opts argo.WorkflowLogOptions) (io.ReadCloser, error)
 	operation      string
+	opErr          error
 	namespace      string
 	resubmitResult *wfv1.Workflow
 	lastLogNodeID  string
@@ -80,7 +81,14 @@ func (m *mockRunRepo) Save(_ context.Context, run *models.PipelineRun) error {
 	return nil
 }
 func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) RecentDispatchStatsByTarget(context.Context, time.Duration) (map[string]models.TargetDispatchStats, error) {
+	return nil, nil
+}
+
 func (m *mockRunRepo) FindActiveRunSummaries(context.Context, int) ([]models.PipelineRun, error) {
+	return nil, nil
+}
+func (m *mockRunRepo) FindActiveRunSummariesAfter(context.Context, time.Time, string, int) ([]models.PipelineRun, error) {
 	return nil, nil
 }
 
@@ -128,6 +136,9 @@ func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (
 }
 func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
 	m.operation = "delete"
+	if m.opErr != nil {
+		return m.opErr
+	}
 	return nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, namespace string) error {
@@ -148,6 +159,9 @@ func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, namespace st
 func (m *mockWorkflowClient) ResubmitWorkflowWithResult(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
 	m.operation = "resubmit"
 	m.namespace = namespace
+	if m.opErr != nil {
+		return nil, m.opErr
+	}
 	if m.resubmitResult != nil {
 		return m.resubmitResult, nil
 	}
@@ -156,16 +170,25 @@ func (m *mockWorkflowClient) ResubmitWorkflowWithResult(_ context.Context, name,
 func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, namespace string) error {
 	m.operation = "suspend"
 	m.namespace = namespace
+	if m.opErr != nil {
+		return m.opErr
+	}
 	return nil
 }
 func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, namespace string) error {
 	m.operation = "resume"
 	m.namespace = namespace
+	if m.opErr != nil {
+		return m.opErr
+	}
 	return nil
 }
 func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, namespace string) error {
 	m.operation = "terminate"
 	m.namespace = namespace
+	if m.opErr != nil {
+		return m.opErr
+	}
 	return nil
 }
 func (m *mockWorkflowClient) ListWorkflows(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error) {
@@ -1373,6 +1396,50 @@ func TestWorkflowOperations(t *testing.T) {
 			}
 			if resp["message"] != "ok" {
 				t.Fatalf("expected ok message, got %q", resp["message"])
+			}
+		})
+	}
+}
+
+// TestWorkflowOperationsMissingWorkflowReturn404 (CYB-4280) locks the fix that
+// control ops on a missing workflow return 404 WORKFLOW_NOT_FOUND — the same as
+// retry — instead of 500. retry gets not-found from the GetWorkflow precheck
+// (getFn); the sibling ops get it from the client method itself (opErr), which
+// mirrors the real crd client wrapping argo.ErrNotFound via translateK8sErr.
+func TestWorkflowOperationsMissingWorkflowReturn404(t *testing.T) {
+	notFound := fmt.Errorf("%w: workflows.argoproj.io \"__missing__\" not found", argo.ErrNotFound)
+	tests := []struct {
+		op     string
+		method string
+		path   string
+	}{
+		{"retry", http.MethodPost, "/workflows/__missing__/retry"},
+		{"resubmit", http.MethodPost, "/workflows/__missing__/resubmit"},
+		{"suspend", http.MethodPost, "/workflows/__missing__/suspend"},
+		{"resume", http.MethodPost, "/workflows/__missing__/resume"},
+		{"terminate", http.MethodPost, "/workflows/__missing__/terminate"},
+		{"delete", http.MethodDelete, "/workflows/__missing__"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.op, func(t *testing.T) {
+			client := &mockWorkflowClient{
+				getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+					return nil, notFound
+				},
+				opErr: notFound,
+			}
+			h := New(client, "fallback")
+			r := setupRouter(h)
+
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("%s: expected 404, got %d: %s", tt.op, w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "WORKFLOW_NOT_FOUND") {
+				t.Fatalf("%s: expected WORKFLOW_NOT_FOUND in body, got %s", tt.op, w.Body.String())
 			}
 		})
 	}

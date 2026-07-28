@@ -110,6 +110,11 @@ func (c *Client) ListWorkflows(ctx context.Context, namespace string, labelSelec
 	if labelSelector != "" {
 		query.Set("listOptions.labelSelector", labelSelector)
 	}
+	// Serve from the apiserver watch cache, not a quorum etcd read: callers
+	// (bulk-pull watcher, read-only UI list) tolerate a slightly stale snapshot,
+	// and the cache read does not contend with heavy workflow write churn
+	// (CYB-3681). Mirrors the CRD client's ResourceVersion "0".
+	query.Set("listOptions.resourceVersion", "0")
 
 	var list wfv1.WorkflowList
 	if err := c.do(ctx, http.MethodGet, workflowPath(namespace), query, nil, &list); err != nil {

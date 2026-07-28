@@ -36,12 +36,20 @@ type Volume struct {
 
 // Options controls how the pipeline is transpiled.
 type Options struct {
-	Name                  string
-	Namespace             string
-	ServiceAccount        string
-	ImagePullSecrets      []string
-	TemplateNodeSelector  map[string]string
-	TemplateTolerations   []corev1.Toleration
+	Name                 string
+	Namespace            string
+	ServiceAccount       string
+	ImagePullSecrets     []string
+	TemplateNodeSelector map[string]string
+	TemplateTolerations  []corev1.Toleration
+	// GpuStepNodeSelector is merged onto template.NodeSelector only for steps
+	// whose resources request nvidia.com/gpu (see applySchedulingHints — same
+	// requiresGPU gate as the built-in GKE accelerator hint). This lets a pool
+	// pin only its GPU steps to a specific node pool (e.g. a dedicated dev GPU
+	// pool) without disturbing sibling CPU steps in the same pipeline, which
+	// would otherwise inherit a GPU-only pool label from the target's
+	// TemplateNodeSelector and get stuck by the pool's GPU taint. Nil = no-op.
+	GpuStepNodeSelector   map[string]string
 	TTLSecondsAfter       int32
 	RetryStrategy         *RetryStrategy
 	ActiveDeadlineSeconds int64
@@ -71,6 +79,15 @@ type Options struct {
 	// this field; Transpile does not validate or mutate it. Nil/empty is a no-op.
 	PodLabels map[string]string
 
+	// WorkflowLabels are applied verbatim to the Workflow CRD's
+	// ObjectMeta.Labels (NOT Spec.PodMetadata, which PodLabels populates).
+	// Use for argo-controller routing selectors that read at the workflow
+	// level (e.g. workflows.argoproj.io/controller-instanceid for sharded
+	// controllers) — without this, a sharded controller can't claim its
+	// workflows. Callers own sanitizing values to valid label syntax;
+	// Transpile does not validate or mutate. Nil/empty is a no-op.
+	WorkflowLabels map[string]string
+
 	// PodAnnotations are applied verbatim to every pod (via Spec.PodMetadata),
 	// for pool scheduling annotations. Nil/empty is a no-op.
 	PodAnnotations map[string]string
@@ -78,6 +95,22 @@ type Options struct {
 	// PodPriorityClassName sets the K8s PriorityClass applied to every pod in
 	// the workflow (CYB-3486 pool). Empty = unset, K8s global default.
 	PodPriorityClassName string
+
+	// Priority sets the Argo workflow-level priority (wf.Spec.Priority). When
+	// the controller's parallelism limit is saturated, higher-priority Pending
+	// workflows are admitted to Running first (ties broken by creation time). It
+	// does NOT preempt already-running workflows and is a no-op when there is
+	// spare capacity. Distinct from PodPriorityClassName, which is K8s pod
+	// scheduling priority. Nil = unset (Argo default 0). Values are only
+	// comparable among workflows sharing one controller/namespace queue.
+	Priority *int32
+
+	// InstanceID sets the workflow-level label
+	// "workflows.argoproj.io/controller-instanceid", routing the workflow to the
+	// Argo controller configured with the matching instanceID. Empty = unset (the
+	// default controller, which handles unlabeled workflows). Lets multiple
+	// controllers — each with its own parallelism — coexist in one namespace.
+	InstanceID string
 
 	// SchedulerName sets the K8s scheduler for every pod (CYB-3486 pool).
 	// Empty = unset → cluster default scheduler (scheduler-agnostic pool).
@@ -232,8 +265,34 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 		}
 		wf.Spec.PodMetadata = md
 	}
+	if len(opts.WorkflowLabels) > 0 {
+		if wf.ObjectMeta.Labels == nil {
+			wf.ObjectMeta.Labels = map[string]string{}
+		}
+		for k, v := range opts.WorkflowLabels {
+			// Don't let callers clobber argo's own managed labels.
+			if strings.HasPrefix(k, "workflows.argoproj.io/") {
+				// allow only controller-instanceid — that's the only
+				// workflow-level selector users legitimately set; the rest
+				// are controller-managed.
+				if k != "workflows.argoproj.io/controller-instanceid" {
+					continue
+				}
+			}
+			wf.ObjectMeta.Labels[k] = v
+		}
+	}
 	if opts.PodPriorityClassName != "" {
 		wf.Spec.PodPriorityClassName = opts.PodPriorityClassName
+	}
+	if opts.Priority != nil {
+		wf.Spec.Priority = opts.Priority
+	}
+	if opts.InstanceID != "" {
+		if wf.ObjectMeta.Labels == nil {
+			wf.ObjectMeta.Labels = map[string]string{}
+		}
+		wf.ObjectMeta.Labels["workflows.argoproj.io/controller-instanceid"] = opts.InstanceID
 	}
 	if opts.SchedulerName != "" {
 		wf.Spec.SchedulerName = opts.SchedulerName
@@ -541,7 +600,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 
 	tmpl.Container.Resources = buildK8sResources(node.Component.Resources)
 	applyTemplateSchedulingDefaults(&tmpl, opts)
-	applySchedulingHints(&tmpl, node.Component.Resources)
+	applySchedulingHints(&tmpl, node.Component.Resources, opts)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -782,7 +841,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 
 	tmpl.Script.Resources = buildK8sResources(node.Component.Resources)
 	applyTemplateSchedulingDefaults(&tmpl, opts)
-	applySchedulingHints(&tmpl, node.Component.Resources)
+	applySchedulingHints(&tmpl, node.Component.Resources, opts)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -881,16 +940,42 @@ func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 	limits := corev1.ResourceList{}
 	requests := corev1.ResourceList{}
 
-	if res.CPU != "" {
-		if q, err := resource.ParseQuantity(res.CPU); err == nil {
-			limits[corev1.ResourceCPU] = q
+	// CPU/Memory: request defaults to the simple value, limit likewise;
+	// *Request/*Limit override their side, enabling Burstable (request < limit).
+	// Setting only CPU/Memory keeps request==limit (Guaranteed), unchanged from
+	// before. ValidatePipeline guarantees request <= limit before we get here.
+	cpuReq, cpuLim := res.CPURequest, res.CPULimit
+	if cpuReq == "" {
+		cpuReq = res.CPU
+	}
+	if cpuLim == "" {
+		cpuLim = res.CPU
+	}
+	if cpuReq != "" {
+		if q, err := resource.ParseQuantity(cpuReq); err == nil {
 			requests[corev1.ResourceCPU] = q
 		}
 	}
-	if res.Memory != "" {
-		if q, err := resource.ParseQuantity(res.Memory); err == nil {
-			limits[corev1.ResourceMemory] = q
+	if cpuLim != "" {
+		if q, err := resource.ParseQuantity(cpuLim); err == nil {
+			limits[corev1.ResourceCPU] = q
+		}
+	}
+	memReq, memLim := res.MemoryRequest, res.MemoryLimit
+	if memReq == "" {
+		memReq = res.Memory
+	}
+	if memLim == "" {
+		memLim = res.Memory
+	}
+	if memReq != "" {
+		if q, err := resource.ParseQuantity(memReq); err == nil {
 			requests[corev1.ResourceMemory] = q
+		}
+	}
+	if memLim != "" {
+		if q, err := resource.ParseQuantity(memLim); err == nil {
+			limits[corev1.ResourceMemory] = q
 		}
 	}
 	if res.Disk != "" {
@@ -910,7 +995,7 @@ func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{Limits: limits, Requests: requests}
 }
 
-func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
+func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements, opts *Options) {
 	if tmpl == nil || !requiresGPU(res) {
 		return
 	}
@@ -919,6 +1004,18 @@ func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
 	}
 	if isL4ComputeTier(res.ComputeTier) {
 		tmpl.NodeSelector["cloud.google.com/gke-accelerator"] = "nvidia-l4"
+	}
+	// Merge target-level GPU-only nodeSelector (e.g. pin to a specific GPU node
+	// pool). Same GPU-only gate as the L4 hint above, so CPU siblings in the
+	// same pipeline are untouched — that's the whole reason this field is
+	// separate from Options.TemplateNodeSelector.
+	if opts != nil {
+		for key, value := range opts.GpuStepNodeSelector {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+				continue
+			}
+			tmpl.NodeSelector[key] = value
+		}
 	}
 	appendTemplateToleration(tmpl, corev1.Toleration{
 		Key:      "nvidia.com/gpu",
