@@ -604,6 +604,37 @@ curl "$BASE/api/v1/assets/{id}/runs?pageSize=5" \
 
 错误：`400` + `INVALID_ARGUMENT`（空 id）。
 
+### 1.7.2 批量成本 / GPU 时长反查（CYB-4306）
+
+`POST /api/v1/assets/costs`
+
+一批 asset_id + 时间窗,反查每个在窗口内烧了多少 GPU-min / $（FinOps 归因 + "贵/便宜 asset"排序）。`start_at`/`end_at` 必填(否则会扫全表),窗口 ≤ 90 天。未知 id 进 `missing_ids`,不报错。
+
+请求体:`ids`(string[],非空,≤5000)、`id_type`(可选)、`start_at`/`end_at`(RFC3339 必填,end≥start)、`group_by`(`""`|`asset`|`asset_algo`,空默认 `asset`;`asset_algo` 额外给每算法拆分)。
+
+```bash
+curl -sS -X POST "$BASE/api/v1/assets/costs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"ids":["p4t2m03a"],"start_at":"2026-07-01T00:00:00Z","end_at":"2026-07-28T00:00:00Z","group_by":"asset"}'
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {"input_id":"p4t2m03a","asset_id":"p4t2m03a","total_cost_usd":0.0034,
+     "gpu_sec":120,"cpu_sec":300,"gpu_min":2,"cpu_min":5,"run_count":3,"by_algo":null}
+  ],
+  "missing_ids": [],
+  "filtered_out_ids": [],
+  "stats": {"matched_count":1,"missing_count":0,"filtered_out_count":0,
+    "total_cost_usd":0.0034,"mean_cost_usd":0.0034,"p50_cost_usd":0.0034,"p90_cost_usd":0.0034,
+    "total_gpu_sec":120,"total_cpu_sec":300,"total_run_count":3}
+}
+```
+
+错误码(`400`):`INVALID_ARGUMENT`(请求体非法)、`ID_LIST_REQUIRED`(ids 空)、`ID_LIST_TOO_LARGE`(>5000)、`INVALID_TIME_RANGE`(缺 start/end 或 end<start)、`WINDOW_TOO_LARGE`(窗口>90 天)、`INVALID_GROUP_BY`;`500` `INTERNAL`。
+
 ### 1.8 查询 logical asset 评分历史（CYB-1100）
 
 `GET /api/v1/logical-assets/{logical_asset_id}/ratings-history`

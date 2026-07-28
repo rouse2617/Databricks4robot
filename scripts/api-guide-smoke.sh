@@ -577,6 +577,8 @@ if [[ -n "$AID" ]]; then
 	get "asset by id" "/api/v1/assets/${AID}"
 	get "asset provenance" "/api/v1/assets/${AID}/provenance"
 	get "asset runs reverse lookup (cyb-4297)" "/api/v1/assets/${AID}/runs?pageSize=5"
+	expect_code_post "asset costs batch (cyb-4306)" "/api/v1/assets/costs" "{\"ids\":[\"${AID}\"],\"start_at\":\"2026-07-01T00:00:00Z\",\"end_at\":\"2026-07-28T00:00:00Z\",\"group_by\":\"asset\"}" "200" >/dev/null
+	expect_code_post "asset costs empty ids -> 400" "/api/v1/assets/costs" "{\"ids\":[],\"start_at\":\"2026-07-01T00:00:00Z\",\"end_at\":\"2026-07-28T00:00:00Z\"}" "400" >/dev/null
 	raw=$(curl -sS -N --max-time 3 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/assets/${AID}/events/stream" 2>/dev/null || true)
 	RESP_CODE=$(echo "$raw" | tail -n1)
 	RESP_BODY=$(echo "$raw" | sed '$d')

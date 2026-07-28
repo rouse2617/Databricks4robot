@@ -3853,6 +3853,100 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 
+  /api/v1/assets/costs:
+    post:
+      tags: [Assets]
+      summary: Batch asset cost / GPU-min lookup over a time window
+      description: >-
+        Reverse-lookup per-asset pipeline cost and GPU/CPU time for a batch of
+        asset ids over a bounded window (FinOps attribution). start_at/end_at
+        are required (window ≤ 90 days). Unknown ids are returned in missing_ids
+        rather than erroring.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, start_at, end_at]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+                  description: Asset ids (or grace ids per id_type). Non-empty, max 5000.
+                id_type:
+                  type: string
+                  description: Optional id interpretation hint.
+                start_at: { type: string, format: date-time, description: RFC3339. Required. }
+                end_at: { type: string, format: date-time, description: RFC3339. Required, must be >= start_at. }
+                group_by:
+                  type: string
+                  enum: ["", asset, asset_algo]
+                  description: Empty defaults to "asset". "asset_algo" adds a per-algo breakdown.
+      responses:
+        '200':
+          description: Per-asset cost aggregation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        input_id: { type: string }
+                        asset_id: { type: string }
+                        grace_video_id: { type: string }
+                        total_cost_usd: { type: number }
+                        gpu_sec: { type: number }
+                        cpu_sec: { type: number }
+                        gpu_min: { type: number }
+                        cpu_min: { type: number }
+                        run_count: { type: integer, format: int64 }
+                        by_algo:
+                          type: array
+                          nullable: true
+                          description: Present only when group_by=asset_algo, else null.
+                          items:
+                            type: object
+                            properties:
+                              algo_key: { type: string }
+                              cost_usd: { type: number }
+                              gpu_sec: { type: number }
+                              cpu_sec: { type: number }
+                              run_count: { type: integer, format: int64 }
+                  missing_ids: { type: array, items: { type: string } }
+                  filtered_out_ids: { type: array, items: { type: string } }
+                  stats:
+                    type: object
+                    properties:
+                      matched_count: { type: integer }
+                      missing_count: { type: integer }
+                      filtered_out_count: { type: integer }
+                      total_cost_usd: { type: number }
+                      mean_cost_usd: { type: number }
+                      p50_cost_usd: { type: number }
+                      p90_cost_usd: { type: number }
+                      total_gpu_sec: { type: number }
+                      total_cpu_sec: { type: number }
+                      total_run_count: { type: integer, format: int64 }
+        '400':
+          description: >-
+            Invalid request. code ∈ INVALID_ARGUMENT | ID_LIST_REQUIRED |
+            ID_LIST_TOO_LARGE | INVALID_TIME_RANGE | WINDOW_TOO_LARGE | INVALID_GROUP_BY.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/assets:batch_get:
     post:
       tags: [Assets]
