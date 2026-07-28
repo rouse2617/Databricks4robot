@@ -33,7 +33,7 @@ import type {
 	DurationLookupItem,
 } from "../api/assets";
 
-const { Title, Text, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const MAX_IDS = 5000;
@@ -265,9 +265,10 @@ export default function AssetDurationLookup() {
 		parsed.duplicates > 0 ? ` (${parsed.duplicates} duplicates ignored)` : ""
 	}${parsed.ids.length > MAX_IDS ? ` — 超过上限 ${MAX_IDS}` : ""}`;
 
+	// CYB-4294b: heading dropped — the AssetsWorkbench tab strip already
+	// labels this view ("时长批量查询"), a second H3 was redundant.
 	return (
-		<div>
-			<Title level={3}>资产时长批量查询</Title>
+		<div style={{ padding: "0 24px 24px" }}>
 			<Paragraph type="secondary">
 				粘贴 asset_id 或 grace_video_id（混合支持），一次最多 {MAX_IDS.toLocaleString()}{" "}
 				个。可选按时长区间过滤,服务端返回匹配项、缺失项、时长统计和分布直方图。

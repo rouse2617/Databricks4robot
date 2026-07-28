@@ -1,6 +1,5 @@
 import {
 	ApartmentOutlined,
-	ClockCircleOutlined,
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
@@ -40,12 +39,6 @@ const menuItems = [
 	{ key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
 	{ type: "divider" as const },
 	{ key: "/assets", icon: <DatabaseOutlined />, label: "资产管理" },
-	{
-		// CYB-4294: batch duration lookup — sub-entry under 资产管理.
-		key: "/assets/durations",
-		icon: <ClockCircleOutlined />,
-		label: "时长批量查询",
-	},
 	{ key: "/mcap-files", icon: <FileOutlined />, label: "MCAP 文件" },
 	{ type: "divider" as const },
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
@@ -68,9 +61,8 @@ const menuItems = [
 
 function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/dashboard")) return "/dashboard";
-	// CYB-4294: /assets/durations must resolve BEFORE the generic /assets match
-	// so the sidebar highlights the duration-lookup entry on that page.
-	if (pathname.startsWith("/assets/durations")) return "/assets/durations";
+	// CYB-4294b: /assets/durations is now a tab within /assets, not its own
+	// sidebar entry — the assets group covers both.
 	if (pathname.startsWith("/assets")) return "/assets";
 	if (pathname.startsWith("/metrics")) return "/metrics";
 	if (pathname.startsWith("/deliveries")) return "/deliveries";
