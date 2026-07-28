@@ -1049,10 +1049,15 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		argPos++
 	}
 	// CYB-4297: reverse lookup — "runs that used this asset". asset_ids is a
-	// TEXT[] holding grace_video_id per input asset; `= ANY(asset_ids)` hits
-	// the GIN index (idx_pipeline_runs_asset_ids_gin).
+	// TEXT[] holding grace_video_id per input asset. Postgres GIN on array
+	// columns is only picked up by the containment operator @> (or &&); the
+	// scalar `X = ANY(col)` form is left to a parallel Seq Scan even when a
+	// GIN index exists on that column — measured on dev: 291ms + 117k
+	// buffer hits vs 0.7ms + 19 hits after switching to @>. Feed a single-
+	// element array literal so we stay pure SQL (no []string round-trip in
+	// pgx).
 	if assetID := strings.TrimSpace(filter.AssetID); assetID != "" {
-		conds = append(conds, fmt.Sprintf("$%d = ANY(pr.asset_ids)", argPos))
+		conds = append(conds, fmt.Sprintf("pr.asset_ids @> ARRAY[$%d]::text[]", argPos))
 		args = append(args, assetID)
 		argPos++
 	}
