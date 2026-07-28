@@ -245,6 +245,10 @@ func TestCreate_DuplicateRunIDReturnsConflict(t *testing.T) {
 	}
 }
 
+func (m *memAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
 func (m *memAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }

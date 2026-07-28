@@ -277,6 +277,9 @@ func RegisterAll(
 		// asset_id / grace_video_id inputs, server-side stats + histogram
 		// buckets. Same `assets:read` scope group as GET /assets/:id.
 		assets.POST("/durations", assetHandler.LookupDurations)
+		// CYB-4306: batch asset-cost lookup — same shell as /durations plus
+		// a required time window and optional group_by=asset_algo axis.
+		assets.POST("/costs", assetHandler.LookupCosts)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)

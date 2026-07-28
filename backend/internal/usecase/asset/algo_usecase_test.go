@@ -33,6 +33,9 @@ type mockAssetRepo struct {
 	// descendants maps an ancestor assetID to the assets ListDescendants
 	// returns for it. Nil (the default) preserves the no-op behavior.
 	descendants map[string][]*models.Asset
+	// lookupCostsFn lets a test inject the cost aggregate response. Nil
+	// (the default) returns an empty slice. CYB-4306.
+	lookupCostsFn func(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error)
 }
 
 func newMockAssetRepo() *mockAssetRepo {
@@ -110,6 +113,15 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, assetID string) ([]*m
 }
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
+}
+
+// LookupCosts is populated per-test via costFn to keep usecase tests
+// focused on the cost pipeline. CYB-4306.
+func (m *mockAssetRepo) LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error) {
+	if m.lookupCostsFn != nil {
+		return m.lookupCostsFn(ctx, assetIDs, startAt, endAt, byAlgo)
+	}
+	return nil, nil
 }
 
 // LookupDurations synthesises DurationRow projections from the in-memory

@@ -1160,6 +1160,69 @@ func (h *Handler) LookupDurations(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// LookupCosts aggregates cost / GPU-seconds / CPU-seconds / run_count per
+// asset over a bounded time window. Same 5000-id cap as LookupDurations;
+// the window is required (no server default) and capped at 90 days. See
+// openspec/changes/CYB-4306-costs for the full contract.
+//
+// @Summary      Batch lookup asset costs
+// @Description  Aggregate cost / gpu / cpu / run_count per asset over a bounded finished_at window
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body models.AssetCostsRequest true "Cost lookup request"
+// @Success      200 {object} models.AssetCostsResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/costs [post]
+func (h *Handler) LookupCosts(c *gin.Context) {
+	var req models.AssetCostsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeIdListRequired, "ids must not be empty", nil)
+		return
+	}
+	if len(req.IDs) > assetUC.LookupDurationsMaxIDs {
+		httpresp.BadRequest(c, httpresp.CodeIdListTooLarge,
+			fmt.Sprintf("ids exceeds maximum of %d", assetUC.LookupDurationsMaxIDs),
+			map[string]any{"limit": assetUC.LookupDurationsMaxIDs, "count": len(req.IDs)})
+		return
+	}
+	if req.StartAt.IsZero() || req.EndAt.IsZero() {
+		httpresp.BadRequest(c, httpresp.CodeInvalidTimeRange, "start_at and end_at are required", nil)
+		return
+	}
+	if req.EndAt.Before(req.StartAt) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidTimeRange, "end_at must be >= start_at", nil)
+		return
+	}
+	if req.EndAt.Sub(req.StartAt) > assetUC.LookupCostsMaxWindow {
+		httpresp.BadRequest(c, httpresp.CodeWindowTooLarge,
+			"time window exceeds maximum of 90 days",
+			map[string]any{"max_days": 90})
+		return
+	}
+	switch req.GroupBy {
+	case "", assetUC.LookupCostsGroupByAsset, assetUC.LookupCostsGroupByAssetAlgo:
+		// ok
+	default:
+		httpresp.BadRequest(c, httpresp.CodeInvalidGroupBy,
+			`group_by must be "asset" or "asset_algo"`,
+			map[string]any{"got": req.GroupBy})
+		return
+	}
+	resp, err := h.uc.LookupCosts(c.Request.Context(), req)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // PromoteRevision creates a new revision of an asset (B-route promote).
 // @Summary      Promote asset revision
 // @Description  Create a new revision of an asset within a logical asset family

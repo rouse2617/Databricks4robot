@@ -44,4 +44,9 @@ const (
 	CodeIdListRequired      = "ID_LIST_REQUIRED"
 	CodeIdListTooLarge      = "ID_LIST_TOO_LARGE"
 	CodeInvalidDurationRange = "INVALID_DURATION_RANGE"
+
+	// CYB-4306: batch cost lookup — POST /api/v1/assets/costs.
+	CodeInvalidTimeRange = "INVALID_TIME_RANGE"
+	CodeWindowTooLarge   = "WINDOW_TOO_LARGE"
+	CodeInvalidGroupBy   = "INVALID_GROUP_BY"
 )

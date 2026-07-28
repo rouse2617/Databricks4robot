@@ -34,6 +34,9 @@ type mockAssetRepo struct {
 	listByMcapFileFn  func(ctx context.Context, mcapFileID string) ([]*models.Asset, error)
 	writeSegIndexFn   func(ctx context.Context, a *models.Asset) error
 	listWithFiltersFn func(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error)
+	// CYB-4306: cost-lookup mock. Nil (default) returns empty rows so tests
+	// that don't set it exercise the missing/filtered_out paths.
+	lookupCostsFn func(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error)
 }
 
 type fakeAssetSQLQuerier struct {
@@ -249,6 +252,15 @@ type lookupDurationsCall struct {
 }
 
 var _mockLookupCalls []lookupDurationsCall // shared per-test via TestMain reset; simple, tests reset before use
+
+// LookupCosts injects the cost aggregate for the LookupCosts handler tests.
+// CYB-4306.
+func (m *mockAssetRepo) LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]repository.AssetCostRow, error) {
+	if m.lookupCostsFn != nil {
+		return m.lookupCostsFn(ctx, assetIDs, startAt, endAt, byAlgo)
+	}
+	return nil, nil
+}
 
 func (m *mockAssetRepo) LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]repository.DurationRow, error) {
 	_mockLookupCalls = append(_mockLookupCalls, lookupDurationsCall{ids: ids, minMs: minMs, maxMs: maxMs})
@@ -1995,5 +2007,146 @@ func TestLookupDurationsHandler(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_DURATION_RANGE") {
 		t.Fatalf("negative bound: expected 400 INVALID_DURATION_RANGE, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// CYB-4306: POST /assets/costs — happy path plus every 400 branch.
+func TestLookupCostsHandler(t *testing.T) {
+	repo := &mockAssetRepo{
+		getFn: func(_ context.Context, id string) (*models.Asset, error) {
+			switch id {
+			case "aaaaaaaa":
+				return &models.Asset{AssetID: "aaaaaaaa"}, nil
+			}
+			return nil, nil
+		},
+		lookupCostsFn: func(_ context.Context, assetIDs []string, _, _ time.Time, _ bool) ([]repository.AssetCostRow, error) {
+			out := []repository.AssetCostRow{}
+			for _, a := range assetIDs {
+				if a == "aaaaaaaa" {
+					out = append(out, repository.AssetCostRow{
+						AssetID: "aaaaaaaa", TotalCostUSD: 1.25, GPUSec: 60, CPUSec: 30, RunCount: 2,
+					})
+				}
+			}
+			return out, nil
+		},
+	}
+	h := New(assetUC.New(repo), &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodPost, "/assets/costs", h.LookupCosts)
+
+	start := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	end := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+
+	// Happy path: one known id + one missing.
+	body := map[string]any{
+		"ids":      []string{"aaaaaaaa", "zzzzzzzz"},
+		"start_at": start,
+		"end_at":   end,
+	}
+	w := doReq(t, r, http.MethodPost, "/assets/costs", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, _ := got["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d: %+v", len(items), got)
+	}
+	missing, _ := got["missing_ids"].([]any)
+	if len(missing) != 1 || missing[0].(string) != "zzzzzzzz" {
+		t.Fatalf("expected missing=[zzzzzzzz], got %+v", missing)
+	}
+	stats, _ := got["stats"].(map[string]any)
+	if int(stats["matched_count"].(float64)) != 1 {
+		t.Fatalf("expected matched_count=1, got %+v", stats)
+	}
+
+	// Empty ids → 400 IdListRequired.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{},
+		"start_at": start,
+		"end_at":   end,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ID_LIST_REQUIRED") {
+		t.Fatalf("empty ids: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Over-cap → 400 IdListTooLarge.
+	big := make([]string, 5001)
+	for i := range big {
+		big[i] = fmt.Sprintf("id%08d", i)
+	}
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      big,
+		"start_at": start,
+		"end_at":   end,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ID_LIST_TOO_LARGE") {
+		t.Fatalf("over-cap: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Missing start_at → 400 InvalidTimeRange.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":    []string{"aaaaaaaa"},
+		"end_at": end,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_TIME_RANGE") {
+		t.Fatalf("missing start_at: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Missing end_at → 400 InvalidTimeRange.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{"aaaaaaaa"},
+		"start_at": start,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_TIME_RANGE") {
+		t.Fatalf("missing end_at: got %d %s", w.Code, w.Body.String())
+	}
+
+	// end < start → 400 InvalidTimeRange.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{"aaaaaaaa"},
+		"start_at": end,
+		"end_at":   start,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_TIME_RANGE") {
+		t.Fatalf("end<start: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Window > 90 days → 400 WindowTooLarge.
+	longEnd := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Add(91 * 24 * time.Hour).Format(time.RFC3339)
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{"aaaaaaaa"},
+		"start_at": start,
+		"end_at":   longEnd,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "WINDOW_TOO_LARGE") {
+		t.Fatalf("window>90d: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Bad group_by → 400 InvalidGroupBy.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{"aaaaaaaa"},
+		"start_at": start,
+		"end_at":   end,
+		"group_by": "bogus",
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "INVALID_GROUP_BY") {
+		t.Fatalf("bad group_by: got %d %s", w.Code, w.Body.String())
+	}
+
+	// Valid "asset_algo" is accepted (200) even with no items — sanity check.
+	w = doReq(t, r, http.MethodPost, "/assets/costs", map[string]any{
+		"ids":      []string{"aaaaaaaa"},
+		"start_at": start,
+		"end_at":   end,
+		"group_by": "asset_algo",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("asset_algo: got %d %s", w.Code, w.Body.String())
 	}
 }

@@ -295,6 +295,10 @@ resources:
 
 var _ repository.AssetRepository = (*stubAssetRepo)(nil)
 
+func (r *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
 func (r *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }

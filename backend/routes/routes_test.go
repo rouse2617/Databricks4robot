@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -480,6 +481,10 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	if !strings.Contains(cookie, "Secure") {
 		t.Fatalf("expected Secure cookie in production, got %q", cookie)
 	}
+}
+
+func (r *routeAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
 }
 
 func (r *routeAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {

@@ -2296,6 +2296,10 @@ func TestCreateRunByTemplate_EmptyBody_OK(t *testing.T) {
 	}
 }
 
+func (m *mockAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
+}
+
 func (m *mockAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {
 	return nil, nil
 }

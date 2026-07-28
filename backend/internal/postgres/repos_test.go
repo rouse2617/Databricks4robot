@@ -2669,6 +2669,112 @@ func TestAssetRepoLookupDurations(t *testing.T) {
 	}
 }
 
+// CYB-4306: LookupCosts must expand pr.asset_ids via CROSS JOIN LATERAL,
+// use the exact leaf-pod predicate from pipeline_repo.go:767, coerce
+// missing gpu/cpu keys in resources_duration to 0, and pass ids/start/end
+// as $1/$2/$3. Empty ids short-circuits without a query.
+func TestAssetRepoLookupCosts(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty input must not touch the DB.
+	dbEmpty := &fakeDB{}
+	repoEmpty := &AssetRepo{c: &Client{db: dbEmpty}}
+	start := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	rows, err := repoEmpty.LookupCosts(ctx, nil, start, end, false)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty ids: got rows=%v err=%v, want empty/nil", rows, err)
+	}
+	if len(dbEmpty.querySQLs) != 0 {
+		t.Fatalf("empty ids should not query the DB, got %d queries", len(dbEmpty.querySQLs))
+	}
+
+	// Two rows for group_by=asset: one asset with cost + gpu + cpu, one with
+	// only cpu (gpu_sec should still parse as 0 from the JSONB read).
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "", 1.25, 120.0, 60.0, int64(3)},
+			{"bbbbbbbb", "", 0.05, 0.0, 20.0, int64(1)},
+		}},
+	}
+	repo := &AssetRepo{c: &Client{db: db}}
+	ids := []string{"aaaaaaaa", "bbbbbbbb"}
+	rows, err = repo.LookupCosts(ctx, ids, start, end, false)
+	if err != nil {
+		t.Fatalf("LookupCosts err: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].AssetID != "aaaaaaaa" || rows[0].TotalCostUSD != 1.25 || rows[0].GPUSec != 120 || rows[0].CPUSec != 60 || rows[0].RunCount != 3 {
+		t.Fatalf("row[0] = %#v", rows[0])
+	}
+	if rows[1].AssetID != "bbbbbbbb" || rows[1].TotalCostUSD != 0.05 || rows[1].GPUSec != 0 || rows[1].CPUSec != 20 || rows[1].RunCount != 1 {
+		t.Fatalf("row[1] = %#v", rows[1])
+	}
+
+	// SQL must expand asset_ids, use the leaf-pod predicate, filter by
+	// finished_at BETWEEN, and coerce missing gpu/cpu keys to 0.
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid",
+		"WHERE aid = ANY($1)",
+		"pr.finished_at BETWEEN $2 AND $3",
+		"(n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))",
+		"n.estimated_cost_usd IS NOT NULL",
+		"resources_duration->>'nvidia.com/gpu'",
+		"resources_duration->>'cpu'",
+		"COUNT(DISTINCT pr.id)",
+		"GROUP BY aid",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("SQL missing %q:\n%s", want, q)
+		}
+	}
+	// asset mode must NOT group by algo_key.
+	if strings.Contains(q, "GROUP BY aid, COALESCE(n.template_name, '')") {
+		t.Fatalf("asset mode should not group by template_name:\n%s", q)
+	}
+	if len(db.queryArgs) != 1 || len(db.queryArgs[0]) != 3 {
+		t.Fatalf("expected 3 bind args (ids,start,end), got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[0][0].([]string); !ok || len(got) != 2 {
+		t.Fatalf("expected []string ids arg, got %#v", db.queryArgs[0][0])
+	}
+	if got := db.queryArgs[0][1]; got != start {
+		t.Fatalf("start arg = %#v, want %v", got, start)
+	}
+	if got := db.queryArgs[0][2]; got != end {
+		t.Fatalf("end arg = %#v, want %v", got, end)
+	}
+
+	// byAlgo=true must switch the GROUP BY to include template_name and
+	// SELECT it as algo_key.
+	dbA := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			{"aaaaaaaa", "extract-frames", 0.75, 60.0, 30.0, int64(2)},
+			{"aaaaaaaa", "encode-video", 0.50, 60.0, 30.0, int64(1)},
+		}},
+	}
+	repoA := &AssetRepo{c: &Client{db: dbA}}
+	rowsA, err := repoA.LookupCosts(ctx, []string{"aaaaaaaa"}, start, end, true)
+	if err != nil {
+		t.Fatalf("byAlgo LookupCosts err: %v", err)
+	}
+	if len(rowsA) != 2 {
+		t.Fatalf("expected 2 by-algo rows, got %d: %#v", len(rowsA), rowsA)
+	}
+	if rowsA[0].AlgoKey != "extract-frames" || rowsA[1].AlgoKey != "encode-video" {
+		t.Fatalf("algo keys = %v/%v", rowsA[0].AlgoKey, rowsA[1].AlgoKey)
+	}
+	if len(dbA.querySQLs) != 1 || !strings.Contains(dbA.querySQLs[0], "GROUP BY aid, COALESCE(n.template_name, '')") {
+		t.Fatalf("byAlgo query must group by algo:\n%s", dbA.querySQLs[0])
+	}
+}
+
 // CYB-4303: DurationDistribution must
 //   - always ship all 5 buckets in DurationBucketOrder even when the SQL
 //     returns fewer (missing rows are padded with count=0/total_ms=0);

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -16,6 +17,20 @@ type DurationRow struct {
 	AssetID      string
 	GraceVideoID string
 	DurationMs   int64
+}
+
+// AssetCostRow is one aggregated cost/GPU/CPU row per (asset_id[, algo_key])
+// returned by AssetRepository.LookupCosts. AlgoKey is empty when the caller
+// aggregates over asset only (byAlgo=false); populated with the Argo
+// pipeline_run_nodes.template_name otherwise. Used by the batch cost-lookup
+// endpoint (CYB-4306).
+type AssetCostRow struct {
+	AssetID      string
+	AlgoKey      string
+	TotalCostUSD float64
+	GPUSec       float64
+	CPUSec       float64
+	RunCount     int64
 }
 
 // ErrDuplicateAssetID is returned when inserting an asset whose asset_id already exists.
@@ -68,4 +83,14 @@ type AssetRepository interface {
 	// bound). Empty ids returns (nil, nil) without a round-trip. Used by the
 	// batch duration-lookup endpoint (CYB-4294).
 	LookupDurations(ctx context.Context, ids []string, minMs, maxMs int64) ([]DurationRow, error)
+
+	// LookupCosts aggregates leaf-pod costs / GPU-sec / CPU-sec / run_count
+	// per asset_id (and optionally per algo_key = template_name) over the
+	// [startAt, endAt] window on pipeline_runs.finished_at. assetIDs must
+	// already be resolved (this is the second query in the two-step batch
+	// cost pipeline; the caller resolves grace_video_id → asset_id first).
+	// Uses the same leaf-pod predicate as the existing single-run cost path
+	// (pipeline_repo.go:767) to avoid double-counting rollup nodes.
+	// CYB-4306.
+	LookupCosts(ctx context.Context, assetIDs []string, startAt, endAt time.Time, byAlgo bool) ([]AssetCostRow, error)
 }

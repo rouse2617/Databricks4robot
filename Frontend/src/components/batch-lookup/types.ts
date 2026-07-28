@@ -68,15 +68,21 @@ export interface BatchLookupPreset<
 		// and used to disable the Submit button.
 		validate?: (filters: Filters) => string | null;
 	};
-	// AntD Table columns for the results row.
-	columns: ColumnsType<Item>;
+	// AntD Table columns for the results row. Presets whose column set
+	// depends on filters (e.g. costs' group_by=asset_algo adds an algo_key
+	// column) can pass a function; the shell resolves it against the
+	// current filters on every render.
+	columns: ColumnsType<Item> | ((filters: Filters) => ColumnsType<Item>);
 	// Preset-specific stat cards rendered after the always-present three.
 	extraStats?: (res: BatchLookupResponse<Item>) => StatEntry[];
 	// Optional histogram rendered above the results Table.
 	histogram?: (items: Item[]) => BucketRow[];
-	// CSV export config. filename receives the matched (items.length) count.
+	// CSV export config. filename receives the matched (items.length) count
+	// plus the filters that were used to fetch — presets whose filename
+	// wants to include the query window (e.g. costs) read those directly;
+	// simpler presets ignore the second arg.
 	csv: {
-		filename: (matchedCount: number) => string;
+		filename: (matchedCount: number, filters?: Filters) => string;
 		header: string[];
 		row: (item: Item) => (string | number)[];
 	};

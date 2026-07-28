@@ -127,11 +127,15 @@ function HistogramBars({
 }
 
 // Build the CSV blob and trigger a download. Preset-agnostic — pulls the
-// filename / header / row shape from `preset.csv`.
-export function downloadCsv<Item extends { input_id: string }>(
+// filename / header / row shape from `preset.csv`. `filters` (optional) is
+// forwarded to preset.csv.filename so a preset can embed the query window
+// in the filename (see costs preset). Callers with no filter context can
+// omit the arg.
+export function downloadCsv<Item extends { input_id: string }, Filters = unknown>(
 	items: Item[],
 	matchedCount: number,
-	csv: BatchLookupPreset<Item>["csv"],
+	csv: BatchLookupPreset<Item, Filters>["csv"],
+	filters?: Filters,
 ): void {
 	const header = `${csv.header.join(",")}\n`;
 	const rows = items
@@ -146,7 +150,7 @@ export function downloadCsv<Item extends { input_id: string }>(
 	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement("a");
 	anchor.href = url;
-	anchor.download = csv.filename(matchedCount);
+	anchor.download = csv.filename(matchedCount, filters);
 	document.body.appendChild(anchor);
 	anchor.click();
 	document.body.removeChild(anchor);
@@ -186,6 +190,17 @@ export default function BatchAssetLookup<
 	const extraStats = useMemo(
 		() => (result && preset.extraStats ? preset.extraStats(result) : []),
 		[result, preset.extraStats],
+	);
+
+	// preset.columns may be either a static array or a filter-driven callback
+	// (see costs preset: asset_algo mode adds an algo_key column). Resolve
+	// once per render so the Table receives a stable ColumnsType.
+	const columns = useMemo(
+		() =>
+			typeof preset.columns === "function"
+				? preset.columns(filters)
+				: preset.columns,
+		[preset.columns, filters],
 	);
 
 	async function handleSubmit() {
@@ -336,7 +351,12 @@ export default function BatchAssetLookup<
 							<Button
 								icon={<DownloadOutlined />}
 								onClick={() =>
-									downloadCsv(result.items, result.items.length, preset.csv)
+									downloadCsv(
+										result.items,
+										result.items.length,
+										preset.csv,
+										filters,
+									)
 								}
 								disabled={result.items.length === 0}
 								data-testid="export-csv-button"
@@ -347,7 +367,7 @@ export default function BatchAssetLookup<
 					>
 						<Table<Item>
 							dataSource={result.items}
-							columns={preset.columns}
+							columns={columns}
 							rowKey={(r) => r.input_id}
 							size="small"
 							pagination={{ pageSize: 20, showSizeChanger: true }}

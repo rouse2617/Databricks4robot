@@ -96,6 +96,59 @@ export interface AssetDurationsResponse {
 	stats: DurationStats;
 }
 
+// ─── CYB-4306: batch cost lookup ────────────────────────────────────────────
+
+export type AssetCostGroupBy = "asset" | "asset_algo";
+
+export interface AssetCostsRequest {
+	ids: string[];
+	id_type?: AssetDurationIdType;
+	start_at: string; // RFC3339
+	end_at: string; // RFC3339
+	group_by?: AssetCostGroupBy;
+}
+
+export interface AssetCostByAlgo {
+	algo_key: string;
+	cost_usd: number;
+	gpu_sec: number;
+	cpu_sec: number;
+	run_count: number;
+}
+
+export interface AssetCostItem {
+	input_id: string;
+	asset_id: string;
+	grace_video_id?: string;
+	total_cost_usd: number;
+	gpu_sec: number;
+	cpu_sec: number;
+	gpu_min: number;
+	cpu_min: number;
+	run_count: number;
+	by_algo: AssetCostByAlgo[] | null;
+}
+
+export interface AssetCostStats {
+	matched_count: number;
+	missing_count: number;
+	filtered_out_count: number;
+	total_cost_usd: number;
+	mean_cost_usd: number;
+	p50_cost_usd: number;
+	p90_cost_usd: number;
+	total_gpu_sec: number;
+	total_cpu_sec: number;
+	total_run_count: number;
+}
+
+export interface AssetCostsResponse {
+	items: AssetCostItem[];
+	missing_ids: string[];
+	filtered_out_ids: string[];
+	stats: AssetCostStats;
+}
+
 export interface AssetMetadataResponse {
 	asset_id: string;
 	segment_locator: string;
@@ -347,6 +400,15 @@ export const assetsApi = {
 	lookupDurations: (req: AssetDurationsRequest) =>
 		apiClient
 			.post<AssetDurationsResponse>("/assets/durations", req)
+			.then((r) => r.data),
+
+	// CYB-4306: batch cost lookup. Server resolves ids via the same OR-on-
+	// both-columns index scan, then aggregates leaf-pod costs over the
+	// [start_at, end_at] window (required, ≤90 days). Set group_by to
+	// "asset_algo" for a per-algo breakdown.
+	lookupCosts: (req: AssetCostsRequest) =>
+		apiClient
+			.post<AssetCostsResponse>("/assets/costs", req)
 			.then((r) => r.data),
 
 	getPreviewManifest: (id: string) =>

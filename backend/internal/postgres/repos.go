@@ -402,6 +402,86 @@ GROUP BY 1`
 	return &out, nil
 }
 
+// LookupCosts aggregates leaf-pod cost / GPU-seconds / CPU-seconds / run_count
+// per (asset_id[, template_name]) over the finished_at window. assetIDs must
+// already be resolved to short asset_ids by the caller; grace_video_id inputs
+// are resolved in the upstream LookupDurations query.
+//
+// CYB-4306. The leaf-pod predicate matches pipeline_repo.go:767 exactly —
+// diverging would produce inconsistent totals across the batch endpoint and
+// the single-run cost aggregate.
+//
+// Extraction of gpu_sec/cpu_sec from the resources_duration JSONB uses
+// COALESCE(...->>...,0) so a node missing the key contributes zero (not NULL).
+func (r *AssetRepo) LookupCosts(
+	ctx context.Context,
+	assetIDs []string,
+	startAt, endAt time.Time,
+	byAlgo bool,
+) ([]repository.AssetCostRow, error) {
+	if len(assetIDs) == 0 {
+		return nil, nil
+	}
+	// CYB-3073: sum leaf pods only; aggregate nodes (DAG/Steps) carry a
+	// rollup resourcesDuration and would double-count the total. Same
+	// predicate as pipeline_repo.go:767.
+	const leafPodPredicate = `(n.type = 'Pod' OR (n.type = '' AND n.pod_name <> ''))`
+	var q string
+	if byAlgo {
+		q = `
+SELECT
+  aid AS asset_id,
+  COALESCE(n.template_name, '') AS algo_key,
+  COALESCE(SUM(n.estimated_cost_usd), 0)::DOUBLE PRECISION AS total_cost_usd,
+  COALESCE(SUM(CAST(n.resources_duration->>'nvidia.com/gpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS gpu_sec,
+  COALESCE(SUM(CAST(n.resources_duration->>'cpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS cpu_sec,
+  COUNT(DISTINCT pr.id)::BIGINT AS run_count
+FROM pipeline_runs pr
+JOIN pipeline_run_nodes n ON n.run_id = pr.id
+CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+WHERE aid = ANY($1)
+  AND pr.finished_at BETWEEN $2 AND $3
+  AND ` + leafPodPredicate + `
+  AND n.estimated_cost_usd IS NOT NULL
+GROUP BY aid, COALESCE(n.template_name, '')`
+	} else {
+		q = `
+SELECT
+  aid AS asset_id,
+  '' AS algo_key,
+  COALESCE(SUM(n.estimated_cost_usd), 0)::DOUBLE PRECISION AS total_cost_usd,
+  COALESCE(SUM(CAST(n.resources_duration->>'nvidia.com/gpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS gpu_sec,
+  COALESCE(SUM(CAST(n.resources_duration->>'cpu' AS DOUBLE PRECISION)), 0)::DOUBLE PRECISION AS cpu_sec,
+  COUNT(DISTINCT pr.id)::BIGINT AS run_count
+FROM pipeline_runs pr
+JOIN pipeline_run_nodes n ON n.run_id = pr.id
+CROSS JOIN LATERAL unnest(pr.asset_ids) AS aid
+WHERE aid = ANY($1)
+  AND pr.finished_at BETWEEN $2 AND $3
+  AND ` + leafPodPredicate + `
+  AND n.estimated_cost_usd IS NOT NULL
+GROUP BY aid`
+	}
+	rows, err := dbFromCtx(ctx, r.c.db).Query(ctx, q, assetIDs, startAt, endAt)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupCosts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]repository.AssetCostRow, 0, len(assetIDs))
+	for rows.Next() {
+		var row repository.AssetCostRow
+		if err := rows.Scan(&row.AssetID, &row.AlgoKey, &row.TotalCostUSD, &row.GPUSec, &row.CPUSec, &row.RunCount); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.LookupCosts scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.LookupCosts rows: %w", err)
+	}
+	return out, nil
+}
+
 // LookupDurations returns one repository.DurationRow per non-deleted asset
 // whose asset_id OR grace_video_id matches any element of ids. When minMs or
 // maxMs are >0 they further constrain rows by duration_ms; a zero bound is

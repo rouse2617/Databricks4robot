@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -125,6 +126,10 @@ func TestNormalizeAssetIDs_DedupesAndTrims(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
 		t.Fatalf("normalized ids=%v", got)
 	}
+}
+
+func (s *stubAssetRepo) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
 }
 
 func (s *stubAssetRepo) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {

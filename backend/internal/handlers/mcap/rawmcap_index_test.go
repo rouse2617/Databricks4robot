@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -84,6 +85,10 @@ func TestCreateFile_EmitsAssetCreatedEventForRawMcap(t *testing.T) {
 	if assetEvt.AggregateType != "asset" {
 		t.Errorf("asset_created AggregateType = %q, want asset", assetEvt.AggregateType)
 	}
+}
+
+func (rawMcapAssetRepoStub) LookupCosts(context.Context, []string, time.Time, time.Time, bool) ([]repository.AssetCostRow, error) {
+	return nil, nil
 }
 
 func (rawMcapAssetRepoStub) LookupDurations(context.Context, []string, int64, int64) ([]repository.DurationRow, error) {

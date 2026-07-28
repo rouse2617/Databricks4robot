@@ -973,6 +973,254 @@ func percentileLinear(sorted []int64, p float64) int64 {
 	return int64(interp)
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CYB-4306: batch asset cost / gpu-min lookup.
+// ─────────────────────────────────────────────────────────────────────────
+
+// LookupCostsMaxWindow is the widest [start_at, end_at] window the batch
+// cost endpoint accepts. Wider scans against pipeline_run_nodes on dev take
+// multi-second time and are unattributed — the FinOps use case is week/month
+// grain anyway (see decisions.md).
+const LookupCostsMaxWindow = 90 * 24 * time.Hour
+
+// LookupCostsGroupByAsset / LookupCostsGroupByAssetAlgo are the accepted
+// values for AssetCostsRequest.GroupBy. Empty defaults to
+// LookupCostsGroupByAsset.
+const (
+	LookupCostsGroupByAsset     = "asset"
+	LookupCostsGroupByAssetAlgo = "asset_algo"
+)
+
+// LookupCosts aggregates leaf-pod cost / GPU-seconds / CPU-seconds / run_count
+// per asset over a [start_at, end_at] window on pipeline_runs.finished_at.
+// Two-step server pipeline:
+//
+//  1. Resolve request ids (asset_id and/or grace_video_id) to their
+//     underlying asset row via the existing LookupDurations query. Any
+//     input that doesn't resolve goes into missing_ids.
+//  2. Aggregate cost/gpu/cpu/run_count over pipeline_run_nodes joined to
+//     pipeline_runs, expanding pr.asset_ids with CROSS JOIN LATERAL so
+//     multi-asset runs contribute to every asset in the array (matches
+//     the existing pipeline_repo.go:767 convention — see decisions.md).
+//
+// A resolved asset with no rows in the window goes into filtered_out_ids;
+// stats are computed over items only.
+//
+// The caller is responsible for validation (empty ids, oversize batch,
+// invalid window, unknown group_by); this usecase assumes the request is
+// well-formed.
+func (u *Usecase) LookupCosts(ctx context.Context, req models.AssetCostsRequest) (*models.AssetCostsResponse, error) {
+	// Dedup ids preserving input order; empty entries drop.
+	seen := make(map[string]struct{}, len(req.IDs))
+	dedup := make([]string, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		dedup = append(dedup, id)
+	}
+
+	// Step 1: resolve ids → known assets via the existing duration-lookup
+	// query (asset_id OR grace_video_id → row). We only need the identity
+	// columns; the duration is discarded.
+	var resolveRows []repository.DurationRow
+	if len(dedup) > 0 {
+		var err error
+		resolveRows, err = u.repo.LookupDurations(ctx, dedup, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build reverse map: input id → resolved row. A row is indexed by
+	// both its asset_id and grace_video_id when both exist so callers can
+	// address either.
+	byInput := make(map[string]*repository.DurationRow, len(resolveRows)*2)
+	for i := range resolveRows {
+		row := &resolveRows[i]
+		if row.AssetID != "" {
+			byInput[row.AssetID] = row
+		}
+		if row.GraceVideoID != "" {
+			byInput[row.GraceVideoID] = row
+		}
+	}
+
+	// Walk request ids in input order to partition into
+	// resolved-assets vs missing.
+	type resolvedInput struct {
+		inputID string
+		row     *repository.DurationRow
+	}
+	resolvedByAsset := make(map[string]*resolvedInput, len(resolveRows))
+	orderedResolved := make([]*resolvedInput, 0, len(resolveRows))
+	missing := make([]string, 0)
+	for _, in := range dedup {
+		row, ok := byInput[in]
+		if !ok {
+			missing = append(missing, in)
+			continue
+		}
+		// Collapse an input that addresses an already-resolved asset (the
+		// caller sent both the asset_id and its grace_video_id for the same
+		// row).
+		if _, dup := resolvedByAsset[row.AssetID]; dup {
+			continue
+		}
+		e := &resolvedInput{inputID: in, row: row}
+		resolvedByAsset[row.AssetID] = e
+		orderedResolved = append(orderedResolved, e)
+	}
+
+	// Step 2: cost aggregate over the resolved asset ids.
+	byAlgo := req.GroupBy == LookupCostsGroupByAssetAlgo
+	var costRows []repository.AssetCostRow
+	if len(resolvedByAsset) > 0 {
+		assetIDs := make([]string, 0, len(resolvedByAsset))
+		for aid := range resolvedByAsset {
+			assetIDs = append(assetIDs, aid)
+		}
+		var err error
+		costRows, err = u.repo.LookupCosts(ctx, assetIDs, req.StartAt, req.EndAt, byAlgo)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Fold cost rows into per-asset aggregates. In asset_algo mode a single
+	// asset appears once per template_name; we keep the algo breakdown on
+	// item.ByAlgo and roll totals into the item fields so callers can sort
+	// by total_cost_usd without a second pass.
+	type aggregate struct {
+		total    float64
+		gpuSec   float64
+		cpuSec   float64
+		runCount int64
+		byAlgo   []models.AssetCostByAlgo
+	}
+	perAsset := make(map[string]*aggregate, len(costRows))
+	for _, r := range costRows {
+		agg, ok := perAsset[r.AssetID]
+		if !ok {
+			agg = &aggregate{}
+			perAsset[r.AssetID] = agg
+		}
+		agg.total += r.TotalCostUSD
+		agg.gpuSec += r.GPUSec
+		agg.cpuSec += r.CPUSec
+		agg.runCount += r.RunCount
+		if byAlgo {
+			agg.byAlgo = append(agg.byAlgo, models.AssetCostByAlgo{
+				AlgoKey:  r.AlgoKey,
+				CostUSD:  r.TotalCostUSD,
+				GPUSec:   r.GPUSec,
+				CPUSec:   r.CPUSec,
+				RunCount: r.RunCount,
+			})
+		}
+	}
+
+	// Emit items in resolved input order; assets without aggregate rows
+	// bucket into filtered_out (existed but no runs in the window).
+	items := make([]models.AssetCostItem, 0, len(orderedResolved))
+	filteredOut := make([]string, 0)
+	for _, r := range orderedResolved {
+		agg, hasRows := perAsset[r.row.AssetID]
+		if !hasRows {
+			filteredOut = append(filteredOut, r.inputID)
+			continue
+		}
+		item := models.AssetCostItem{
+			InputID:      r.inputID,
+			AssetID:      r.row.AssetID,
+			GraceVideoID: r.row.GraceVideoID,
+			TotalCostUSD: agg.total,
+			GPUSec:       agg.gpuSec,
+			CPUSec:       agg.cpuSec,
+			GPUMin:       agg.gpuSec / 60.0,
+			CPUMin:       agg.cpuSec / 60.0,
+			RunCount:     agg.runCount,
+			ByAlgo:       nil,
+		}
+		if byAlgo {
+			// Sort by cost desc so the UI can display the "expensive step"
+			// first without a client-side sort.
+			sort.SliceStable(agg.byAlgo, func(i, j int) bool {
+				return agg.byAlgo[i].CostUSD > agg.byAlgo[j].CostUSD
+			})
+			bucket := agg.byAlgo
+			item.ByAlgo = &bucket
+		}
+		items = append(items, item)
+	}
+
+	stats := computeCostStats(items, len(missing), len(filteredOut))
+	return &models.AssetCostsResponse{
+		Items:          items,
+		MissingIDs:     missing,
+		FilteredOutIDs: filteredOut,
+		Stats:          stats,
+	}, nil
+}
+
+// computeCostStats reduces a slice of cost items to summary statistics.
+// Percentiles use linear interpolation on sorted-asc total_cost_usd (matches
+// numpy.percentile default). Zero items → zero stats except the counter
+// fields so the response never carries null/NaN.
+func computeCostStats(items []models.AssetCostItem, missingCount, filteredOutCount int) models.AssetCostStats {
+	stats := models.AssetCostStats{
+		MatchedCount:     len(items),
+		MissingCount:     missingCount,
+		FilteredOutCount: filteredOutCount,
+	}
+	if len(items) == 0 {
+		return stats
+	}
+	sorted := make([]float64, len(items))
+	for i, it := range items {
+		sorted[i] = it.TotalCostUSD
+		stats.TotalCostUSD += it.TotalCostUSD
+		stats.TotalGPUSec += it.GPUSec
+		stats.TotalCPUSec += it.CPUSec
+		stats.TotalRunCount += it.RunCount
+	}
+	sort.Float64s(sorted)
+	stats.MeanCostUSD = stats.TotalCostUSD / float64(len(sorted))
+	stats.P50CostUSD = percentileLinearFloat(sorted, 0.50)
+	stats.P90CostUSD = percentileLinearFloat(sorted, 0.90)
+	return stats
+}
+
+// percentileLinearFloat is the float64 analogue of percentileLinear used by
+// the duration endpoint. Same linear interpolation on a sorted-asc slice.
+func percentileLinearFloat(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	rank := p * float64(len(sorted)-1)
+	lo := int(rank)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := rank - float64(lo)
+	return sorted[lo] + frac*(sorted[hi]-sorted[lo])
+}
+
 // BatchGet returns multiple assets by their IDs, skipping not-found ones.
 func (u *Usecase) BatchGet(ctx context.Context, assetIDs []string) ([]*models.Asset, error) {
 	items := make([]*models.Asset, 0, len(assetIDs))
