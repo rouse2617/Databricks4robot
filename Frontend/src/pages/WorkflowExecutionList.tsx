@@ -1278,14 +1278,32 @@ export function WorkflowExecutionList({
 					const displayId = toAssetStyleId(runId ?? name);
 					const copyId = runId ?? name;
 					const templateName = record.templateName?.trim();
+					// CYB-4334: when a run has neither workflowName nor
+					// pipelineName, `name` falls back to the raw run UUID —
+					// unreadable and duplicated by the ID line below. Show a
+					// human-readable primary label instead (template name, or a
+					// placeholder), and suppress the separate 模板 line so the
+					// template name is not repeated.
+					const nameIsRawId =
+						!!name && (name === runId || name === executionKey);
+					const primaryLabel = nameIsRawId
+						? templateName || "未命名运行"
+						: name;
+					const showTemplateLine = !!templateName && !nameIsRawId;
 					return (
 						<div style={{ minWidth: 0 }}>
 							<Typography.Text
 								strong
-								copyable={{ text: name }}
-								ellipsis={{ tooltip: name }}
+								copyable={{ text: nameIsRawId ? copyId : name }}
+								ellipsis={{
+									tooltip: nameIsRawId
+										? templateName
+											? `模板：${templateName}`
+											: "未命名运行（无 workflow / pipeline 名）"
+										: name,
+								}}
 							>
-								{name}
+								{primaryLabel}
 							</Typography.Text>
 							<Typography.Text
 								type="secondary"
@@ -1295,7 +1313,7 @@ export function WorkflowExecutionList({
 							>
 								ID: {displayId}
 							</Typography.Text>
-							{templateName ? (
+							{showTemplateLine ? (
 								<Typography.Text
 									type="secondary"
 									style={{ display: "block", fontSize: 12 }}

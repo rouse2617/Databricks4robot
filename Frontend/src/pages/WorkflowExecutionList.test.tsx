@@ -311,6 +311,64 @@ describe("WorkflowExecutionList", () => {
 		expect(mockListWorkflows).not.toHaveBeenCalled();
 	});
 
+	// CYB-4334: a run with neither workflowName nor pipelineName must not show
+	// the raw run UUID as its primary label (that both is unreadable and
+	// duplicates the ID line). It should fall back to the template name.
+	it("shows template name (not the raw UUID) when a run has no workflow/pipeline name", async () => {
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "e47b50ca-2b31-433f-a472-e3370e409418",
+					templateName: "nameless-template",
+					status: "Succeeded",
+					nodeCount: 1,
+					totalEstimatedCost: 0.02,
+					createdAt: "2026-06-04T01:00:00Z",
+					finishedAt: "2026-06-04T01:05:48Z",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		// Primary label falls back to the template name, and the raw UUID is
+		// never rendered as standalone text anywhere in the row.
+		await waitFor(() => {
+			expect(screen.getByText("nameless-template")).toBeInTheDocument();
+		});
+		expect(
+			screen.queryByText("e47b50ca-2b31-433f-a472-e3370e409418"),
+		).not.toBeInTheDocument();
+		// The ID line still shows the asset-style short id.
+		expect(screen.getByText("ID: e47b50ca")).toBeInTheDocument();
+	});
+
+	it("shows a placeholder label when a run has neither name nor template", async () => {
+		mockListRuns.mockResolvedValue({
+			items: [
+				{
+					id: "f573e4cb-dff7-4485-adf9-39f16af0e009",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-04T02:00:00Z",
+					finishedAt: "2026-06-04T02:17:32Z",
+				},
+			],
+			total: 1,
+		});
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("未命名运行")).toBeInTheDocument();
+		});
+		expect(
+			screen.queryByText("f573e4cb-dff7-4485-adf9-39f16af0e009"),
+		).not.toBeInTheDocument();
+		expect(screen.getByText("ID: f573e4cb")).toBeInTheDocument();
+	});
+
 	it("sorts execution metric columns", async () => {
 		mockListRuns.mockResolvedValue({
 			items: [
