@@ -201,6 +201,29 @@ curl "$BASE/api/v1/lakehouse/report" \
 
 注意：上述 Lakehouse 接口在 1.0 阶段未上线；2.0 起 BigQuery 负责查询 BigLake-managed Iceberg 表，入湖由 Cloud Run Job + PyIceberg 完成。
 
+Dashboard 数据时长分布（CYB-4303）：
+
+```bash
+# 5 桶时长直方图 + 汇总统计（total_assets/total_ms/mean/min/max/p50/p90）
+# asset_type 可选(如 raw_mcap)；缺省=全类聚合。宽容:无法识别的值只返回 total_assets=0,不报 400
+curl "$BASE/api/v1/dashboard/duration-distribution?asset_type=raw_mcap" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `200`（`buckets` 恒为 5 个、按序返回，空数据时 `count=0/total_ms=0`；顶桶 `60min+` 的 `hi_ms=null`；无数据时统计字段为 0 而非 null/NaN）：
+```json
+{
+  "asset_type": "raw_mcap",
+  "buckets": [
+    {"label": "<1min", "lo_ms": 0, "hi_ms": 60000, "count": 12, "total_ms": 250000},
+    {"label": "60min+", "lo_ms": 3600000, "hi_ms": null, "count": 3, "total_ms": 15000000}
+  ],
+  "total_assets": 126, "total_ms": 119350000,
+  "mean_ms": 947222, "min_ms": 500, "max_ms": 6500000,
+  "p50_ms": 850000, "p90_ms": 2900000
+}
+```
+
 ## 1. 资产查询工作台 / 资产管理 (Assets)
 
 > **`asset_id`（资产主键）**：固定 **8 位** ASCII **字母与数字**（`[0-9A-Za-z]{8}`），与 `mcap_file_id`（同为 8 位字母数字 ID）无关。创建资产时通常由服务端随机分配；也可在请求体中传入自定义 `asset_id`（须符合格式且未被占用，冲突返回 `409`、`DUPLICATE_ASSET_ID`）。凡路径中的 `{asset_id}` 均指该字段。

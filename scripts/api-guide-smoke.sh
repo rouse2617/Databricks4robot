@@ -295,6 +295,7 @@ expect_code_post "pipeline save duplicate fan-in -> 400" "/api/v1/pipelines" '{"
 
 echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
+get "dashboard duration-distribution (cyb-4303)" "/api/v1/dashboard/duration-distribution"
 get "lakehouse/status" "/api/v1/lakehouse/status"
 get "lakehouse/tables" "/api/v1/lakehouse/tables"
 if [[ "$RESP_CODE" == "200" ]]; then

@@ -4826,6 +4826,60 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Customer' }
 
+  # ── Dashboard ──────────────────────────────────────────────────────────
+  /api/v1/dashboard/duration-distribution:
+    get:
+      tags: [Dashboard]
+      summary: Asset duration distribution (5-bucket histogram + summary stats)
+      description: >-
+        Duration histogram over non-deleted assets with a non-null duration_ms.
+        `asset_type` is optional and permissive — an absent or unrecognized
+        value simply yields total_assets=0 (never 400), so a fresh install still
+        renders. Buckets are always the same 5, in order, even when empty.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: asset_type
+          required: false
+          schema: { type: string }
+          description: Optional asset_type filter (e.g. raw_mcap). Absent = aggregate all.
+      responses:
+        '200':
+          description: Duration distribution
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asset_type:
+                    type: string
+                    nullable: true
+                    description: Echoes the query param; null when absent.
+                  buckets:
+                    type: array
+                    description: Always 5 buckets in ascending order.
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string, description: 'e.g. "<1min", "60min+"' }
+                        lo_ms: { type: integer, format: int64 }
+                        hi_ms: { type: integer, format: int64, nullable: true, description: Null for the open-ended top bucket (60min+). }
+                        count: { type: integer, format: int64 }
+                        total_ms: { type: integer, format: int64 }
+                  total_assets: { type: integer, format: int64 }
+                  total_ms: { type: integer, format: int64 }
+                  mean_ms: { type: integer, format: int64 }
+                  min_ms: { type: integer, format: int64 }
+                  max_ms: { type: integer, format: int64 }
+                  p50_ms: { type: integer, format: int64 }
+                  p90_ms: { type: integer, format: int64 }
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   # ── Deliveries ─────────────────────────────────────────────────────────
   /api/v1/deliveries:
     post:
