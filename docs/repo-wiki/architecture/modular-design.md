@@ -80,13 +80,21 @@ contract declared in `repository/` and implemented in `postgres/`.
   middleware. It receives already-constructed handlers as parameters.
 - `internal/handlers/<domain>/handler.go` — per-domain HTTP handlers. Shared helpers
   (`RequirePathAssetID`, `ParsePageParams`) live directly in the `handlers` package.
+  Current domains (25 packages): `action`, `admin`, `algorun`, `apikey`, `asset`,
+  `audit`, `backfill`, `customer`, `dashboard`, `delivery`, `deliveryrule`, `eval`,
+  `lakehouse`, `mcap`, `pipeline`, `pipeline_component`, `pipeline_config`, `query`,
+  `registry`, `runs`, `search`, `storage`, `subtask`, `workflow` (plus shared
+  `asset_id.go` / `pagination.go`).
 - `internal/usecase/<domain>/usecase.go` — per-domain business logic.
 - `internal/repository/*.go` — interface declarations (`AssetRepository`, `TxRunner`,
-  `AssetEventRepository`, …). No SQL.
-- `internal/postgres/*.go` — concrete implementations (`AssetRepo`, `DeliveryRepo`, …)
+  `AssetEventRepository`, `APIKeyRepository`, `ClusterRepository`,
+  `TagRegistryRepository`, `AssetRelationWriter`, …). No SQL.
+- `internal/postgres/*.go` — concrete implementations (`AssetRepo`, `DeliveryRepo`,
+  `APIKeyRepo`, `ClusterRepo`, `BackfillSubmitQueue`, `DispatcherConfigRepo`, …)
   plus the `Client` that owns the connection pool and `WithTx`.
-- `internal/middleware/` — Gin middleware: `auth.go`, `request_id.go`, `metrics.go`,
-  `ratelimit.go`, `circuitbreaker.go`, `request_guard.go`, `logger.go`.
+- `internal/middleware/` — Gin middleware: `auth.go` (identity resolution),
+  `authz.go` (principal/scopes context, `CtxKeyPrincipal`), `request_id.go`,
+  `metrics.go`, `ratelimit.go`, `circuitbreaker.go`, `request_guard.go`, `logger.go`.
 
 ```mermaid
 graph TB
@@ -476,6 +484,9 @@ when the breaker is open. Admin routes use a separate `AdminTokenAuth` group.
 `JWTAuth` resolves identity from one of three sources — the `X-Databrew-Token` header
 (legacy SDK static token), an `Authorization: Bearer <jwt>`, or the `databrew_session`
 cookie — and sets `user_email` / `user_role` in the gin context for downstream handlers.
+`authz.go` (added CYB-3417) sits after `JWTAuth` and populates `CtxKeyPrincipal` (a
+`*Principal` struct with identity + scopes) and `CtxKeyScopes` in the context, letting
+handlers enforce fine-grained permission checks without duplicating identity resolution.
 
 ```mermaid
 flowchart TD
@@ -625,6 +636,10 @@ package, and the business logic is testable against interface fakes.
 | `AssetRepository` | `Get`, `GetAll`, `InsertNew`, `Set`, `SoftDelete`, `ListWithFilters`, `ListDescendants` | [asset_repository.go#L26-L52](file://backend/internal/repository/asset_repository.go#L26-L52) |
 | `AssetEventRepository` | `Append`, `ListPending`, `ListByAsset`, `MarkPublished` | [common.go#L165-L199](file://backend/internal/repository/common.go#L165-L199) |
 | `AssetAlgoLatestRepository` | `Upsert`, `GetByAlgo`, `ListByAsset` | [common.go#L117-L121](file://backend/internal/repository/common.go#L117-L121) |
+| `APIKeyRepository` | `Create`, `FindByPrefix`, `List`, `Revoke` | [api_key_repository.go](file://backend/internal/repository/api_key_repository.go) |
+| `ClusterRepository` | `Create`, `Get`, `List`, `Update`, `Delete` | [cluster_repository.go](file://backend/internal/repository/cluster_repository.go) |
+| `TagRegistryRepository` | `Count`, `Seed`, `Load`, `Create`, `Update`, `Delete` | [tag_registry_repository.go](file://backend/internal/repository/tag_registry_repository.go) |
+| `AssetRelationWriter` | `InsertRelation`, `InsertRelationWithMetadata` | [asset_relation_writer.go](file://backend/internal/repository/asset_relation_writer.go) |
 
 ### Appendix C — Constructor / setter wiring (asset domain)
 

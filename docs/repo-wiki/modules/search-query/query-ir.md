@@ -297,10 +297,21 @@ enumerated here. The compiler's `DebugPlan` records the chosen engine and mode o
 each step; the bridge always emits a single `{Engine: "postgres", Mode: "filter"}`
 step today.
 
+`IsFulltextMode` (CYB-3713) returns `true` for `"keyword"`, `"semantic"`, and
+`"similar"`. When `IsFulltextMode` is true **and** the request carries a non-empty
+`Q`, `Normalize` injects a synthetic `{Field: "_fulltext", Op: "ilike", Value: Q}`
+predicate into the `where` tree (ANDed with any existing filter). This lets the
+top-search-box drive fulltext recall without the caller having to construct
+explicit `_fulltext` predicates. `FulltextExtraFields` (`fulltext_fields.go`) is
+the single source of truth for which flattened asset columns both the ES and PG
+fulltext paths should match — adding a new field there propagates to both engines
+without touching the individual builders.
+
 **Section sources**
 - [backend/internal/queryir/types.go](file://backend/internal/queryir/types.go#L3-L14)
 - [backend/internal/queryir/compile.go](file://backend/internal/queryir/compile.go#L208-L208)
 - [backend/internal/queryir/compile.go](file://backend/internal/queryir/compile.go#L61-L63)
+- [backend/internal/queryir/fulltext_fields.go](file://backend/internal/queryir/fulltext_fields.go)
 
 #### Normalization
 

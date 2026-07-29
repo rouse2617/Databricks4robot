@@ -141,8 +141,9 @@ The architecture is anchored by a small number of grouping structs declared in
   saved-query, idempotency).
 - **`coreHandlers`** groups every HTTP handler that forms the main API surface
   (asset, algo, mcap, delivery, customer, delivery-rule, algo-run, eval,
-  action, query, workflow, pipeline, pipeline-component, backfill) plus the
-  shared `assetUC.Usecase`.
+  action, query, workflow, pipeline, pipeline-component, pipeline-config,
+  backfill, subtask, runs, apikey, dashboard, registry, search, storage,
+  lakehouse, audit) plus the shared `assetUC.Usecase`.
 - **`optional`** holds components that are not required for the core API:
   the admin and purge handlers, the outbox cancel function, the search-sync
   helper closures, and the config hot-reload watcher.
@@ -168,7 +169,7 @@ concrete `postgres` package is an implementation detail injected at boot.
 graph TB
   subgraph L4["Layer 4 — HTTP (routes + Gin)"]
     ROUTES["routes.RegisterAll"]
-    MW["RequestID / HTTPMetrics / RequestGuard / StructuredLogger / JWTAuth"]
+    MW["RequestID / HTTPMetrics / RequestGuard / StructuredLogger / Authenticate / authz"]
   end
   subgraph L3["Layer 3 — Handlers"]
     AH["asset.Handler"]
@@ -338,13 +339,13 @@ The diagram below traces `POST /api/v1/assets` from the client through every
 layer to PostgreSQL and back. The middleware stack is applied in
 `routes.RegisterAll` (`RequestID`, `HTTPMetrics`, `RequestGuard(2048)`,
 `StructuredLogger`, optional rate limiting), and the `/api/v1` group is guarded
-by `middleware.JWTAuth` plus an optional circuit breaker.
+by `middleware.Authenticate` (replaces `JWTAuth`; now accepts API-key tokens in addition to the static token and JWT/cookie) plus an optional circuit breaker. A dedicated Argo-webhook route group uses `middleware.ArgoWebhookAuth`.
 
 ```mermaid
 sequenceDiagram
   participant C as "Client (SPA / SDK)"
   participant G as "Gin Engine"
-  participant MW as "Middleware (RequestID,HTTPMetrics,RequestGuard,StructuredLogger,JWTAuth)"
+  participant MW as "Middleware (RequestID,HTTPMetrics,RequestGuard,StructuredLogger,Authenticate,authz)"
   participant H as "asset.Handler.Create"
   participant U as "asset.Usecase.Create"
   participant TX as "postgres.Client.WithTx"
@@ -353,7 +354,7 @@ sequenceDiagram
 
   C->>G: POST /api/v1/assets
   G->>MW: run middleware chain
-  MW->>MW: JWTAuth validates token/cookie
+  MW->>MW: Authenticate validates token/API-key/cookie
   MW->>H: dispatch to handler
   H->>H: ShouldBindJSON + ValidateStruct
   H->>U: Create(ctx, CreateInput)

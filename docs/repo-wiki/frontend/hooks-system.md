@@ -491,6 +491,20 @@ graph LR
 - [Frontend/src/hooks/usePipelineComponents.ts](file://Frontend/src/hooks/usePipelineComponents.ts#L52-L58)
 - [Frontend/src/pages/useWorkflowDetail.ts](file://Frontend/src/pages/useWorkflowDetail.ts#L177-L190)
 
+### Other Utility Hooks (added post-wiki-genesis)
+
+- **`useMcapWorker`** — parses MCAP index + list channels via a Web Worker,
+  returning `ChannelInfo` (id, topic, schema, message encoding) for the MCAP
+  preview player.
+- **`usePipelineStats`** — lazy-fetches stats from `dashboardApi` with
+  window options (`"7d"` / `"30d"` / `"60d"` / `"90d"`), configurable refetch
+  interval, and enable/disable flag.
+- **`useVersionCheck`** — polls `/version` on a configurable interval to detect
+  release updates (component version vs. deployed backend version).
+- **`useVisibleInterval`** — runs a callback on `delayMs` only while the tab is
+  visible (`document.visibilityState`), pausing on blur and firing once on
+  resume to avoid stale data (CYB-3486).
+
 ## Conclusion
 
 The hooks system cleanly separates session, data, URL, keyboard, and background

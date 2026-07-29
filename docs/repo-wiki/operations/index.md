@@ -81,10 +81,13 @@ with its own scripts and config templates:
   (Prometheus + Grafana), `lakehouse-gcs/` and `lakehouse-minio/`, `jobs/`
   (backfill / smoke Jobs), and `overlays/dev/`. Shell helpers `apply-base.sh`,
   `apply-dev-stack.sh`, and `diagnose.sh` wrap the `kubectl apply -k` calls.
-- **`deploy/cloudrun/`** — incremental GKE → Cloud Run migration scripts
-  (`backend-dev.sh`, `frontend-dev.sh`, `mcap-preview-dev.sh`), Cloud Build
-  configs, the frontend nginx wrapper, and `bronze-incremental/` (a Cloud Run
-  **Job** for Postgres → Iceberg Bronze ingestion).
+- **`deploy/cloudrun/`** — incremental GKE → Cloud Run migration scripts.
+  `backend-dev.sh` and `frontend-dev.sh` deploy dev to Cloud Run. `backend-prod.sh`
+  (CYB-4427) wraps `backend-dev.sh`, exporting prod overrides (empty Argo
+  `ARGO_SERVER_URL` to trigger CRD mode, prod ES ILB IP, prod GSA, prod DB), so
+  both environments share one deploy path. All use Cloud Build for image
+  pre-staging. `bronze-incremental/` is a Cloud Run **Job** for Postgres →
+  Iceberg Bronze ingestion.
 - **`deploy/iac/terraform/`** — Layer A infrastructure: the `service-identity`
   stack (GSA + IAM + Workload Identity) plus org-aligned lint/secret-scan config.
 - **`.tekton/`** — Pipelines-as-Code definitions read by the PAC controller on

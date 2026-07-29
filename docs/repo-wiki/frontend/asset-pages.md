@@ -286,6 +286,8 @@ sequenceDiagram
 | deliveries | `DeliveryHistoryTab` | `listDeliveries` |
 | lineage | `LineageTab` | lineage fetch by `assetId` |
 | files | `FilesTab` | `asset.files` |
+| runs | `RunsTab` (CYB-4297) | `listPipelineRunsByAsset` — reverse lookup: pipeline runs that used this asset |
+| provenance | `VersionProvenanceTab` | `AssetProvenance` (revision history, version history entries, `LogicalAssetId`, `RunIdLink`) |
 
 ```mermaid
 sequenceDiagram

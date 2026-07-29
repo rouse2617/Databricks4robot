@@ -150,7 +150,7 @@ Key files:
 
 ## Core Components
 
-### The five registry types
+### The six registry types
 
 Each registry follows the same shape: a struct embedding a `sync.RWMutex`, one
 or more maps holding the parsed definitions, and the `path` of the YAML file it
@@ -212,6 +212,15 @@ sorted slices for the API.
 `assets`) to a map of field name → `QueryFieldDefinition`. Each definition lists
 the engines that may `filter`, `sort`, and `facet` on that field;
 `SupportedEngines()` deduplicates and sorts the union.
+
+`GCPPricingRegistry` (CYB-3705, `gcp_pricing.yaml`) stores per-resource unit
+rates for `us-central1`. It powers the cost model in the batch job and run-detail
+views: Argo `resourcesDuration` (resource-quantity × seconds) is multiplied by
+the appropriate unit rate per resource type (CPU vCPU-hour, RAM GiB-hour, GPU
+device-hour) and divided by 3600. A `calibration_factor` field adjusts for
+committed-use discounts — currently `1.00` as a 2026-07 bill audit confirmed list
+price == invoice price (no CUD/SUD on the account). This registry is load-only
+(no HTTP endpoint); its values are consumed by the cost-computation usecase.
 
 **Section sources**
 - [backend/internal/config/tag_registry.go](file://backend/internal/config/tag_registry.go#L11-L44)

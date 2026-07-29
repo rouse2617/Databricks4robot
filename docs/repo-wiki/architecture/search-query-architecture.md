@@ -345,6 +345,13 @@ and computes two flags:
 - `UseESFacets = useElasticsearch && len(normalized.Facets) > 0`
   ([planner.go#L33](file://backend/internal/queryplan/planner.go#L33-L33)).
 
+`SyncHealthCache` (CYB-3384, `queryplan/sync_health.go`) maintains a
+background-refreshed snapshot of the PG↔ES asset gap. When the gap exceeds a
+threshold the planner routes facet aggregations to PG rather than ES, keeping
+facet counts accurate when the two stores are out of sync. Reads are lock-free
+via `atomic.Int64`; the cache refreshes at a coarse cadence (default 30s) so
+per-request planning stays cheap.
+
 The plan's `Steps` (the `debug_plan` payload) start as
 `[{postgres, filter}]`; when recall is on they become
 `[{elasticsearch, recall}, {postgres, refine}]`; and when facets are on an
@@ -777,11 +784,26 @@ Source: [query_ir.go#L163-L174](file://backend/internal/elasticsearch/query_ir.g
 
 | Mode | Recall behavior |
 | --- | --- |
-| (default) | `bool.should` over `asset_id`/`asset_type` terms and `notes`/`owner.text`/`reviewer.text` matches |
+| (default / structured) | `bool.should` over `asset_id`/`asset_type` terms and `notes`/`owner.text`/`reviewer.text` matches |
+| `keyword` (CYB-3713) | `Normalize` injects a synthetic `_fulltext ilike` predicate so the free-text search box drives PG or ES fulltext even without an explicit `_fulltext` filter in the request |
 | `semantic` | same `should` query with `fuzziness: AUTO` |
 | `similar` | `more_like_this` over `notes`, `owner.text`, `reviewer.text`, `asset_id`, `asset_type` against `_id` |
 
+**`queryir.FulltextExtraFields`** (`fulltext_fields.go`, CYB-4011) is the single
+source of truth for which flattened asset columns are matched in fulltext mode.
+Both the ES builder (`elasticsearch.buildSearchModeQuery`) and the PG fallback
+(`queryexec/postgres.buildFulltextClause`) iterate this slice — add a new field
+here, not in both builders independently.
+
+**`searchindex.lineageBatch`** (`lineage_batch.go`) exposes a batch ES `_mget`
+path for the lineage depth="all" endpoint. It chunks at 5 000 IDs per request to
+stay under ES `max_terms_count`, projecting only `lineage_upstream_ids` /
+`lineage_parent_ids` / `asset_id` to minimise response payload.
+
 Source: [client.go#L349-L392](file://backend/internal/elasticsearch/client.go#L349-L392),
-[planner.go#L53-L58](file://backend/internal/queryplan/planner.go#L53-L58).
+[planner.go#L53-L58](file://backend/internal/queryplan/planner.go#L53-L58),
+[fulltext_fields.go](file://backend/internal/queryir/fulltext_fields.go),
+[sync_health.go](file://backend/internal/queryplan/sync_health.go),
+[lineage_batch.go](file://backend/internal/searchindex/lineage_batch.go).
 </content>
 </invoke>

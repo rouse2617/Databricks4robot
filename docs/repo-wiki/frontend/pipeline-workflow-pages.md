@@ -425,6 +425,33 @@ graph LR
 - [Frontend/src/components/pipeline/WorkflowNodeDetailPanel.tsx](file://Frontend/src/components/pipeline/WorkflowNodeDetailPanel.tsx#L132-L351)
 - [Frontend/src/components/pipeline/WorkflowYamlViewer.tsx](file://Frontend/src/components/pipeline/WorkflowYamlViewer.tsx#L20-L154)
 
+### Resource Pool & Cluster Management (added post-wiki-genesis)
+
+`PoolManager` (CYB-3379) is a drawer / modal that lets operators edit resource-pool
+scheduling configuration: node selectors, tolerations, GPU tiers, and pool weights.
+It reads pool metadata from the backend config and writes changes via the dispatcher
+config API. `PoolUsageBar` shows a proportional success/failed/pending bar per pool
+based on live `poolUsage.ts` aggregations.
+
+`ClusterManager` provides an admin UI for the multi-cluster feature (CYB-3425): list,
+add, edit, and delete K8s cluster connection records (name, API endpoint, KubeConfig
+secret). Changes hit the `/admin/clusters` endpoint and refresh the runtime client
+factory.
+
+`SubscriptionTasksPanel` (embedded in `PipelinePage`) provides CRUD for subscription
+tasks — standing queries that auto-dispatch a pipeline whenever new matching assets
+arrive. It uses `subscriptionTaskApi` for list/create/update/delete/run-now.
+
+`BatchProgressCell` renders a segmented success/failed/pending progress bar for batch
+jobs in the batch-jobs list view, replacing the previous single-color approach.
+
+**Section sources**
+- [Frontend/src/components/pipeline/PoolManager.tsx](file://Frontend/src/components/pipeline/PoolManager.tsx)
+- [Frontend/src/components/pipeline/PoolUsageBar.tsx](file://Frontend/src/components/pipeline/PoolUsageBar.tsx)
+- [Frontend/src/components/pipeline/ClusterManager.tsx](file://Frontend/src/components/pipeline/ClusterManager.tsx)
+- [Frontend/src/components/pipeline/SubscriptionTasksPanel.tsx](file://Frontend/src/components/pipeline/SubscriptionTasksPanel.tsx)
+- [Frontend/src/components/pipeline/BatchProgressCell.tsx](file://Frontend/src/components/pipeline/BatchProgressCell.tsx)
+
 ## Dependency Analysis
 
 ```mermaid

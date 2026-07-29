@@ -479,6 +479,34 @@ returning PG↔ES consistency counts. The `ReindexJobStatus` union and
 **Section sources**
 - [Frontend/src/api/admin.ts](file://Frontend/src/api/admin.ts#L59-L99)
 
+### Batch, Dispatcher, Subscription & Run Modules (added post-wiki-genesis)
+
+- **`batchJobApi.ts`** — `batchJobsApi` lists/gets batch jobs (`BatchJob`),
+  provides `listBatchJobItems`, and polls job progress. Covers
+  `/backfill/batch-jobs/*` endpoints.
+- **`dispatcher.ts`** — `dispatcherApi` reads and writes `DispatcherConfig`
+  (concurrency, rate limits, pool weights) via `/backfill/dispatcher-config`.
+- **`subscriptionTaskApi.ts`** — CRUD for subscription tasks (`SubscriptionTask`,
+  `PipelineBinding`) under `/subscription-tasks`. Includes `runNow` to trigger
+  an immediate dispatch.
+- **`runApi.ts`** — `runApi` lists/gets pipeline runs and their steps
+  (`/runs`, `/runs/{id}`, `/runs/{id}/steps`).
+- **`dashboard.ts`** — `dashboardApi` fetches duration-distribution buckets
+  (`DurationBucket[]`) and asset stats for the Operations Dashboard.
+- **`deployPipelineRun.ts`** — free functions for deploying a pipeline run:
+  `deployPipelineRunDraft` and `confirmPipelineRun`, used by the deploy-wizard flow.
+- **`apiKeys.ts`** — `apiKeyApi` provides `list`, `create`, and `revoke` over
+  `/api-keys` for user-managed API keys (`ApiKey`).
+
+**Section sources**
+- [Frontend/src/api/batchJobApi.ts](file://Frontend/src/api/batchJobApi.ts)
+- [Frontend/src/api/dispatcher.ts](file://Frontend/src/api/dispatcher.ts)
+- [Frontend/src/api/subscriptionTaskApi.ts](file://Frontend/src/api/subscriptionTaskApi.ts)
+- [Frontend/src/api/runApi.ts](file://Frontend/src/api/runApi.ts)
+- [Frontend/src/api/dashboard.ts](file://Frontend/src/api/dashboard.ts)
+- [Frontend/src/api/deployPipelineRun.ts](file://Frontend/src/api/deployPipelineRun.ts)
+- [Frontend/src/api/apiKeys.ts](file://Frontend/src/api/apiKeys.ts)
+
 ### Pipeline & Workflow Modules
 
 `pipelineApi.ts`, `pipelineComponentApi.ts`, and `workflowApi.ts` differ from

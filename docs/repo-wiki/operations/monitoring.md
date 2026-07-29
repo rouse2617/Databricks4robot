@@ -197,9 +197,12 @@ chain (after `RequestID`, before `RequestGuard`/logging).
 
 `deploy/k8s/monitoring` is a Kustomize package that deploys Prometheus, a
 community Elasticsearch exporter, and Grafana with provisioned datasource,
-dashboard provider and six dashboard JSON files, plus GKE gateway policies
-(disable IAP and define LB health checks) and a `ReferenceGrant` letting
-the developer gateway route to the Grafana/Prometheus Services.
+dashboard provider and six dashboard JSON files (`backend-observability.json`
+added CYB-4146, plus `elasticsearch-cluster`, `lakehouse-observability`,
+`local-observability`, `outbox-observability`, `search-observability`), plus
+GKE gateway policies (disable IAP and define LB health checks) and a
+`ReferenceGrant` letting the developer gateway route to the Grafana/Prometheus
+Services.
 
 **Section sources**
 - [deploy/k8s/monitoring/kustomization.yaml](file://deploy/k8s/monitoring/kustomization.yaml#L1-L25)
