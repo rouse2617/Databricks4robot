@@ -104,6 +104,17 @@ func (h *Handler) Get(c *gin.Context) {
 		}
 		return
 	}
+
+	// Best-effort mcap enrichment: populate mcap_gcs_path and mcap_size_bytes
+	// so the asset detail page can show file size and GCS location without a
+	// second round-trip to the mcap-files endpoint.
+	if h.mcapRepo != nil && a.McapFileID != "" {
+		if mf, mErr := h.mcapRepo.Get(c.Request.Context(), a.McapFileID); mErr == nil && mf != nil {
+			a.McapGCSPath = mf.GCSPath
+			a.McapSizeBytes = mf.SizeBytes
+		}
+	}
+
 	c.JSON(200, a)
 }
 

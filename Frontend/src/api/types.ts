@@ -25,6 +25,10 @@ export interface Asset {
 	mcap_file_id: string;
 	/** CYB-4011: Grace video UUID, mirrored from mcap_files.grace_video_id. Nullable / unpopulated by default. */
 	grace_video_id?: string;
+	/** Runtime-enriched from mcap_files row (best-effort, omitempty). */
+	mcap_gcs_path?: string;
+	/** Runtime-enriched from mcap_files row (best-effort, omitempty). File size in bytes. */
+	mcap_size_bytes?: number;
 	start_timestamp_ns: number;
 	end_timestamp_ns: number;
 	duration_sec?: number;
@@ -102,6 +106,10 @@ export interface McapFile {
 	segment_count?: number;
 	/** CYB-4011: Grace video UUID. Nullable / unpopulated by default. */
 	grace_video_id?: string;
+	/** Runtime-enriched from mcap_files row (best-effort, omitempty). */
+	mcap_gcs_path?: string;
+	/** Runtime-enriched from mcap_files row (best-effort, omitempty). File size in bytes. */
+	mcap_size_bytes?: number;
 	owner: string;
 	process_state?: Record<string, string>;
 	created_at: string;

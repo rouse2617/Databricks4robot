@@ -13,6 +13,14 @@ import { formatDateTime } from "../../lib/dateTime";
 
 const { Text } = Typography;
 
+function formatMcapSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 * 1024 * 1024)
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 interface Props {
 	asset: Asset;
 }
@@ -90,6 +98,11 @@ export default function OverviewTab({ asset }: Props) {
 				<Descriptions.Item label="时长">
 					{formatDurationSeconds(asset, 3)}
 				</Descriptions.Item>
+				<Descriptions.Item label="MCAP 大小">
+					{asset.mcap_size_bytes != null && asset.mcap_size_bytes > 0
+						? formatMcapSize(asset.mcap_size_bytes)
+						: "—"}
+				</Descriptions.Item>
 				<Descriptions.Item label="资产类型">
 					{getAssetType(asset) || "—"}
 				</Descriptions.Item>
@@ -117,6 +130,21 @@ export default function OverviewTab({ asset }: Props) {
 					<code className="text-xs">
 						{asset.logical_asset_id ?? asset.asset_id}
 					</code>
+				</Descriptions.Item>
+				<Descriptions.Item label="MCAP GCS 路径">
+					{asset.mcap_gcs_path ? (
+						<Text
+							code
+							copyable
+							ellipsis={{ tooltip: asset.mcap_gcs_path }}
+							className="text-xs"
+							style={{ maxWidth: "100%" }}
+						>
+							{asset.mcap_gcs_path}
+						</Text>
+					) : (
+						<code className="text-xs">—</code>
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="资产版本 (revision)">
 					{asset.revision ?? "—"}

@@ -122,6 +122,12 @@ type Asset struct {
 	// Nullable / unpopulated by default (interface reserved; no backfill yet).
 	GraceVideoID string `json:"grace_video_id,omitempty"`
 
+	// Runtime-populated (not stored on assets table) — set by the Get handler
+	// after a best-effort lookup of the corresponding mcap_files row. Omitted
+	// when the asset has no mcap_file_id or the mcap_files row is absent.
+	McapGCSPath   string `json:"mcap_gcs_path,omitempty"`
+	McapSizeBytes int64  `json:"mcap_size_bytes,omitempty"`
+
 	// Multi-version identity (CYB-1013). Legacy rows may have empty/zero values.
 	LogicalAssetID string `json:"logical_asset_id,omitempty"`
 	Revision       int64  `json:"revision,omitempty"`
