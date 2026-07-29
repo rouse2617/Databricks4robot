@@ -46,6 +46,10 @@ TIMEOUT="${TIMEOUT:-60}"
 CPU_THROTTLING="${CPU_THROTTLING:-false}"
 CPU_BOOST="${CPU_BOOST:-true}"
 ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
+# Runtime service account. Empty → gcloud keeps the service's existing SA (dev
+# relies on this). Set explicitly (e.g. backend-prod.sh) to pin the identity
+# that the K8s/Argo CRD client authenticates as.
+SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
 
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
 VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
@@ -103,7 +107,7 @@ ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS
 # (workflow, present in cyber-databrew-dev, video-proc-dev, video-proc-prod).
 # Kill switch: set ARGO_RUN_WEBHOOK_URL_OVERRIDE="" to instantly disable the hook.
 ARGO_RUN_WEBHOOK_URL_OVERRIDE="${ARGO_RUN_WEBHOOK_URL_OVERRIDE:-https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/pipeline-runs/webhook}"
-ARGO_RUN_WEBHOOK_TOKEN_SECRET="${ARGO_RUN_WEBHOOK_TOKEN_SECRET:-cyber-databrew-dev-argo-run-webhook-token}"
+ARGO_RUN_WEBHOOK_TOKEN_SECRET="${ARGO_RUN_WEBHOOK_TOKEN_SECRET-cyber-databrew-dev-argo-run-webhook-token}"
 ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION="${ARGO_RUN_WEBHOOK_TOKEN_SECRET_VERSION:-latest}"
 # Batch job completion Feishu notification (CYB-3071). The webhook is a credential,
 # so it is injected from Secret Manager (like ARGO_RUN_WEBHOOK_TOKEN) rather than a
@@ -123,22 +127,22 @@ PIPELINE_RUN_WATCHER_INTERVAL_SEC_OVERRIDE="${PIPELINE_RUN_WATCHER_INTERVAL_SEC_
 # Grace video-duration sync (CYB-3072). URL + username are non-sensitive env; the
 # password is the whole grace-api-dev Secret Manager JSON mounted as GRACE_PASSWORD
 # (the backend extracts AUTH_PASSWORD). Empty GRACE_API_URL disables the sync loop.
-GRACE_API_URL_OVERRIDE="${GRACE_API_URL_OVERRIDE:-https://dev.cyber-grace.pages.dev/api}"
-GRACE_USERNAME_OVERRIDE="${GRACE_USERNAME_OVERRIDE:-grace-service-dev}"
-GRACE_PASSWORD_SECRET="${GRACE_PASSWORD_SECRET:-grace-api-dev}"
+GRACE_API_URL_OVERRIDE="${GRACE_API_URL_OVERRIDE-https://dev.cyber-grace.pages.dev/api}"
+GRACE_USERNAME_OVERRIDE="${GRACE_USERNAME_OVERRIDE-grace-service-dev}"
+GRACE_PASSWORD_SECRET="${GRACE_PASSWORD_SECRET-grace-api-dev}"
 GRACE_PASSWORD_SECRET_VERSION="${GRACE_PASSWORD_SECRET_VERSION:-latest}"
 # Conservative dev execution ceilings. These are backend deploy-time guards for
 # user-defined pipeline component resources; execution targets may override via quota_policy.
-PIPELINE_RESOURCE_MAX_CPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE:-8}"
-PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE="${PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE:-28Gi}"
-PIPELINE_RESOURCE_MAX_DISK_OVERRIDE="${PIPELINE_RESOURCE_MAX_DISK_OVERRIDE:-250Gi}"
-PIPELINE_RESOURCE_MAX_GPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_GPU_OVERRIDE:-1}"
+PIPELINE_RESOURCE_MAX_CPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_CPU_OVERRIDE-8}"
+PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE="${PIPELINE_RESOURCE_MAX_MEMORY_OVERRIDE-28Gi}"
+PIPELINE_RESOURCE_MAX_DISK_OVERRIDE="${PIPELINE_RESOURCE_MAX_DISK_OVERRIDE-250Gi}"
+PIPELINE_RESOURCE_MAX_GPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_GPU_OVERRIDE-1}"
 PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE="${PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE:-1h}"
 K8S_API_ENDPOINT_OVERRIDE="${K8S_API_ENDPOINT_OVERRIDE:-https://34.59.48.233}"
 K8S_AUDIENCE_OVERRIDE="${K8S_AUDIENCE_OVERRIDE:-}"
 K8S_USE_METADATA_TOKEN_OVERRIDE="${K8S_USE_METADATA_TOKEN_OVERRIDE:-}"
 K8S_INSECURE_SKIP_VERIFY_OVERRIDE="${K8S_INSECURE_SKIP_VERIFY_OVERRIDE:-}"
-K8S_BEARER_TOKEN_SECRET="${K8S_BEARER_TOKEN_SECRET:-cyber-databrew-dev-k8s-bearer-token}"
+K8S_BEARER_TOKEN_SECRET="${K8S_BEARER_TOKEN_SECRET-cyber-databrew-dev-k8s-bearer-token}"
 K8S_BEARER_TOKEN_SECRET_VERSION="${K8S_BEARER_TOKEN_SECRET_VERSION:-latest}"
 K8S_CA_DATA_SECRET="${K8S_CA_DATA_SECRET:-cyber-databrew-dev-k8s-ca-data}"
 K8S_CA_DATA_SECRET_VERSION="${K8S_CA_DATA_SECRET_VERSION:-latest}"
@@ -181,6 +185,20 @@ CLOUDRUN_OUTBOX_RELAY_PARALLEL_KEYS="${CLOUDRUN_OUTBOX_RELAY_PARALLEL_KEYS:-8}"
 CLOUDRUN_OUTBOX_INTERNAL_SUBSCRIBER_WORKERS="${CLOUDRUN_OUTBOX_INTERNAL_SUBSCRIBER_WORKERS:-16}"
 # Relay ClaimPendingSafe limit per flush (backend default 200).
 CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE="${CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE:-500}"
+
+# Generic passthrough hooks so an environment-specific wrapper (e.g.
+# backend-prod.sh) can add settings this script does not model as named
+# overrides, without editing the shared logic. Both default empty → dev
+# behavior is byte-for-byte unchanged.
+#   EXTRA_ENV_VARS       comma-separated KEY=VALUE upserted into the deploy env
+#                        (VALUE may not contain a comma; use a named override
+#                        or ENV_FILE for those).
+#   EXTRA_SECRET_MAPPINGS comma-separated KEY=SECRET:VERSION appended to
+#                        --set-secrets (for secret-backed env vars this script
+#                        has no dedicated *_SECRET override for, e.g. prod's
+#                        DATABREW_TOKEN / COMPONENT_RELEASE_INGEST_TOKEN).
+EXTRA_ENV_VARS="${EXTRA_ENV_VARS:-}"
+EXTRA_SECRET_MAPPINGS="${EXTRA_SECRET_MAPPINGS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -497,6 +515,17 @@ fi
 [[ -n "${PIPELINE_RUNTIME_SECRET_TARGET_IDS_OVERRIDE}" ]] && upsert_env "PIPELINE_RUNTIME_SECRET_TARGET_IDS" "${PIPELINE_RUNTIME_SECRET_TARGET_IDS_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RUNTIME_STORAGE_EMPTYDIR_TARGET_IDS_OVERRIDE}" ]] && upsert_env "PIPELINE_RUNTIME_STORAGE_EMPTYDIR_TARGET_IDS" "${PIPELINE_RUNTIME_STORAGE_EMPTYDIR_TARGET_IDS_OVERRIDE}" "${ENV_KV_FILE}"
 
+# Generic env passthrough (EXTRA_ENV_VARS="K1=V1,K2=V2"). Applied before the
+# Cloud Run env fix so a wrapper can set env keys this script has no named
+# override for (e.g. prod GCS_DERIVED_BUCKET). Empty → no-op (dev unchanged).
+if [[ -n "${EXTRA_ENV_VARS}" ]]; then
+  IFS=',' read -ra _extra_kv <<< "${EXTRA_ENV_VARS}"
+  for _kv in "${_extra_kv[@]}"; do
+    [[ -z "${_kv}" || "${_kv}" != *"="* ]] && continue
+    upsert_env "${_kv%%=*}" "${_kv#*=}" "${ENV_KV_FILE}"
+  done
+fi
+
 apply_cloudrun_env_fix "${ENV_KV_FILE}"
 
 effective_db_host="$(awk -F= '$1=="DB_HOST"{print $2}' "${ENV_KV_FILE}" | tail -n 1 || true)"
@@ -512,6 +541,20 @@ if [[ "${effective_db_host}" == "postgres" ]]; then
       echo "WARNING: Could not detect PostgreSQL pod IP automatically."
     fi
   fi
+fi
+
+# Generic secret passthrough (EXTRA_SECRET_MAPPINGS="K1=SECRET1:VER,K2=SECRET2:VER").
+# For secret-backed env vars this script has no dedicated *_SECRET override for
+# (e.g. prod DATABREW_TOKEN / COMPONENT_RELEASE_INGEST_TOKEN). Done BEFORE the
+# env-vars JSON is generated so the plain key is dropped and the var is bound as
+# a secret only. Empty → no-op (dev unchanged).
+if [[ -n "${EXTRA_SECRET_MAPPINGS}" ]]; then
+  IFS=',' read -ra _extra_secrets <<< "${EXTRA_SECRET_MAPPINGS}"
+  for _sm in "${_extra_secrets[@]}"; do
+    [[ -z "${_sm}" || "${_sm}" != *"="* ]] && continue
+    remove_env "${_sm%%=*}" "${ENV_KV_FILE}"
+    secret_mappings+=("${_sm}")
+  done
 fi
 
 preserve_all_cloudrun_env_vars "${ENV_KV_FILE}"
@@ -590,6 +633,10 @@ if [[ -n "${VPC_CONNECTOR}" ]]; then
   deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
 fi
 
+if [[ -n "${SERVICE_ACCOUNT}" ]]; then
+  deploy_args+=(--service-account "${SERVICE_ACCOUNT}")
+fi
+
 # Per-container flags. Two shapes:
 #   OFF (default, incl. preview): single container at top level — byte-for-byte
 #     the pre-CYB-4146 behavior.
@@ -630,6 +677,22 @@ else
   if [[ ${#container_secret_args[@]} -gt 0 ]]; then
     deploy_args+=("${container_secret_args[@]}")
   fi
+fi
+
+# DRY_RUN=true renders the resolved env + gcloud args and exits WITHOUT
+# deploying. Lets a wrapper (e.g. backend-prod.sh) be previewed and diffed
+# against the live service before a real prod deploy. (Read-only: the env
+# resolution above still queries the current service via `describe`.)
+if [[ "${DRY_RUN:-false}" == "true" ]]; then
+  echo "=== DRY_RUN: resolved env-vars-file (${SERVICE_NAME}) ==="
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1]));
+[print(f"  {k}={v}") for k,v in sorted(d.items())]' "${ENV_VARS_FILE}"
+  echo "=== DRY_RUN: secret bindings ==="
+  printf '  %s\n' "${secret_mappings[@]:-<none>}"
+  echo "=== DRY_RUN: gcloud args ==="
+  printf '  %s\n' "${deploy_args[@]}"
+  echo "=== DRY_RUN: not deploying. ==="
+  exit 0
 fi
 
 gcloud "${deploy_args[@]}"

@@ -1,0 +1,26 @@
+# Internal TCP load balancer so Cloud Run (Serverless VPC Access to cyber-vpc)
+# can reach prod Elasticsearch on :9200. Mirror of
+# deploy/k8s/dev-deps/elasticsearch-internal-lb.yaml.
+# The ILB IP (10.2.0.33) is what backend-prod.sh sets as ELASTICSEARCH_URL.
+# The ClusterIP Service "elasticsearch" (headless) remains for in-cluster callers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-ilb
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: elasticsearch
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  # Omit loadBalancerSourceRanges so GCP health checks (35.191.0.0/16, 130.211.0.0/22) succeed.
+  # ILB is still only reachable inside the VPC (not the public internet).
+  selector:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+      protocol: TCP

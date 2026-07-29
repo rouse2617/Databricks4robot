@@ -1,0 +1,11 @@
+# Prod in-cluster dependencies (Elasticsearch only — prod Postgres is CloudSQL,
+# not in-cluster, so no postgres.yaml here unlike dev-deps).
+#
+# Apply:  kubectl apply -k deploy/k8s/prod-deps/
+# Lands everything in cyber-databrew-prod via the namespace field below.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cyber-databrew-prod
+resources:
+  - elasticsearch.yaml
+  - elasticsearch-internal-lb.yaml

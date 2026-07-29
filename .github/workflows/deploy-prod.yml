@@ -128,42 +128,31 @@ jobs:
           echo "    pushed: ${{ env.IMAGE }}"
           ENDSSH
 
+      # Check out the release-tagged repo on the runner so
+      # deploy/cloudrun/backend-prod.sh is available (the build step above runs
+      # on a separate VM and does not populate the runner workspace).
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-version.outputs.version }}
+
       - name: Deploy to Cloud Run prod
+        # Prod deploy goes through deploy/cloudrun/backend-prod.sh — a thin
+        # wrapper over the shared backend-dev.sh — so prod and dev use ONE deploy
+        # implementation and prod stops drifting from a hand-maintained bare
+        # `gcloud run deploy`. The wrapper sets the full prod env (ARGO empty =
+        # CRD mode, ELASTICSEARCH_URL → prod ES ILB, OUTBOX_*, K8S_* Workload
+        # Identity, pinned runtime SA) and binds every runtime secret
+        # (DATABREW_TOKEN, DB_PASSWORD, K8S_CA_DATA/B64, COMPONENT_RELEASE_INGEST_TOKEN,
+        # BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL). preserve_all_cloudrun_env_vars in
+        # the shared script keeps any extra vars already on the live service
+        # (JWT_SECRET, ADMIN_TOKEN — see the SECURITY TODO in backend-prod.sh).
+        # The image is prebuilt + pushed on the VM above; reuse it, don't rebuild.
         run: |
-          # --update-env-vars merges into the existing env var set; --set-env-vars
-          # would REPLACE the entire set (gcloud docs: "All existing environment
-          # variables will be removed first"), which would wipe JWT_SECRET,
-          # DATABREW_TOKEN, DB_HOST, and every other prod env var on first run.
-          #
-          # --set-secrets is REPLACE-ALL for secret-backed env vars — every
-          # secret this service needs at runtime must be listed here or it
-          # disappears on the next tag deploy. See the block below.
-          #
-          # Runtime secrets currently required (2026-07-16):
-          #   DATABREW_TOKEN                    → SDK / API bearer for backend
-          #   DB_PASSWORD                       → CloudSQL postgres auth
-          #   K8S_CA_DATA / K8S_CA_B64          → GKE control-plane CA for the
-          #                                       backend's Kubernetes client
-          #                                       (pod exec + runtime config
-          #                                       projection ConfigMap writes)
-          #   COMPONENT_RELEASE_INGEST_TOKEN    → shared secret the
-          #                                       automated-processing-gcloud
-          #                                       Cloud Build presents on
-          #                                       POST /api/v1/pipeline-component-releases/sync
-          #   BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL → batch-job Feishu completion
-          #                                       notifications. Sourced from
-          #                                       the dev-owned secret today
-          #                                       (cross-env by intent; both
-          #                                       envs point at the same
-          #                                       webhook until we split them).
-          gcloud run deploy cyber-databrew-backend-prod \
-            --image="${{ env.IMAGE }}" \
-            --region=${{ env.REGION }} \
-            --project=${{ env.PROJECT_ID }} \
-            --platform=managed \
-            --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }},ADMIN_EMAILS=ruipeng.huang@cyberorigin.ai \
-            --set-secrets=DATABREW_TOKEN=cyber-databrew-prod-databrew-token:latest,DB_PASSWORD=cyber-databrew-prod-postgres-password:latest,K8S_CA_DATA=cyber-databrew-k8s-ca-cert:latest,K8S_CA_B64=cyber-databrew-k8s-ca-cert:latest,COMPONENT_RELEASE_INGEST_TOKEN=cyber-databrew-prod-component-release-ingest-token:latest,BACKFILL_NOTIFY_FEISHU_WEBHOOK_URL=cyber-databrew-dev-backfill-feishu-webhook:latest
+          USE_EXISTING_IMAGE=true \
+          IMAGE="${{ env.IMAGE }}" \
+          DEPLOYMENT_VERSION="${{ env.VERSION }}" \
+          bash deploy/cloudrun/backend-prod.sh
 
   # ─── Atlas migrations (Cloud Run Job) ───────────────────────────────────────
   # Runs BEFORE deploy-backend so the new image deploys against an already-
