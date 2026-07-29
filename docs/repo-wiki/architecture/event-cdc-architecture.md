@@ -422,13 +422,19 @@ flowchart TD
 
 #### Transports: in-process bus, Pub/Sub, Kafka
 
-The in-process bus (`InMemoryBus`) is the default transport. `publish` copies
-the payload, pushes an `internalMessage` (with a 1-buffered `ack` channel) onto
-a buffered Go channel, and returns an `internalReceipt` whose `Get` blocks on the
-ack — mirroring the asynchronous broker contract. The `InternalSubscriber`
-dispatches by `routingWorkerIndex` = `FNV(routing key) % workers`, so all events
-for one asset land on the same worker queue and stay ordered; with `workers<=1`
-it runs a serial loop.
+The in-process bus (`InMemoryBus`) is the default transport. `InMemoryBus` is a
+**fan-out / broadcast bus**: every subscriber receives a copy of every published
+event (the "competing consumer" anti-pattern is avoided at the transport layer,
+so downstream consumers can each filter the full stream without stealing events
+from siblings). Each subscriber holds a private buffered channel; `publisher`
+writes a copy of every `internalMessage` synchronously into each channel, so a
+slow subscriber back-pressures the publisher (intentional — stuck handlers
+surface immediately rather than silently dropping). `publish` returns an
+`internalReceipt` whose `Get` blocks on a 1-buffered `ack`, mirroring the
+asynchronous broker contract. The `InternalSubscriber` dispatches by
+`routingWorkerIndex` = `FNV(routing key) % workers`, so all events for one asset
+land on the same worker queue and stay ordered; with `workers<=1` it runs a
+serial loop.
 
 For production, `Publisher` in `pubsub` mode publishes to a single Pub/Sub topic.
 **Pub/Sub message ordering is intentionally disabled** (`EnableMessageOrdering =
