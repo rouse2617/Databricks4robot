@@ -9,7 +9,7 @@ import {
 	Typography,
 } from "antd";
 import { useCallback, useState } from "react";
-import { type AlgoRun, algoRunsApi } from "../../api/algoRuns";
+import { getPipelineRun, type PipelineRun } from "../../api/pipelineApi";
 import { formatDateTime } from "../../lib/dateTime";
 import {
 	formatBusinessStatusLabel,
@@ -31,7 +31,7 @@ export default function RunIdLink({
 }: RunIdLinkProps) {
 	const [open, setOpen] = useState(false);
 	const [loading, setLoading] = useState(false);
-	const [run, setRun] = useState<AlgoRun | null>(null);
+	const [pipelineRun, setPipelineRun] = useState<PipelineRun | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 
 	const id = runId?.trim() ?? "";
@@ -39,11 +39,11 @@ export default function RunIdLink({
 		setLoading(true);
 		setLoadError(null);
 		try {
-			const row = await algoRunsApi.get(id);
-			setRun(row);
+			const row = await getPipelineRun(id);
+			setPipelineRun(row);
 		} catch {
-			setRun(null);
-			setLoadError("未找到已登记的 run，或暂无权限访问");
+			setPipelineRun(null);
+			setLoadError("未找到运行记录，或暂无权限访问");
 		} finally {
 			setLoading(false);
 		}
@@ -63,7 +63,7 @@ export default function RunIdLink({
 
 	const handleOpenChange = (next: boolean) => {
 		setOpen(next);
-		if (next && !run) {
+		if (next && !pipelineRun) {
 			void fetchRun();
 		}
 	};
@@ -81,31 +81,29 @@ export default function RunIdLink({
 		<Text type="secondary" className="text-xs">
 			{loadError}
 		</Text>
-	) : run ? (
+	) : pipelineRun ? (
 		<Descriptions column={1} size="small" className="max-w-xs">
-			<Descriptions.Item label="算法">
-				{run.algo_name}@{run.algo_version}
+			<Descriptions.Item label="流水线">
+				{pipelineRun.pipelineName || "—"}
 			</Descriptions.Item>
 			<Descriptions.Item label="状态">
-				<Tag color={resolveBusinessStatusTagColor(run.status)}>
-					{formatBusinessStatusLabel(run.status)}
+				<Tag color={resolveBusinessStatusTagColor(pipelineRun.status)}>
+					{formatBusinessStatusLabel(pipelineRun.status)}
 				</Tag>
 			</Descriptions.Item>
-			<Descriptions.Item label="触发方">{run.triggered_by}</Descriptions.Item>
-			{run.started_at ? (
+			{pipelineRun.startedAt ? (
 				<Descriptions.Item label="开始">
-					{formatDateTime(run.started_at)}
+					{formatDateTime(pipelineRun.startedAt)}
 				</Descriptions.Item>
 			) : null}
-			{run.finished_at ? (
+			{pipelineRun.finishedAt ? (
 				<Descriptions.Item label="结束">
-					{formatDateTime(run.finished_at)}
+					{formatDateTime(pipelineRun.finishedAt)}
 				</Descriptions.Item>
 			) : null}
-			{run.assets_processed != null ? (
-				<Descriptions.Item label="处理统计">
-					{run.assets_succeeded ?? 0} 成功 / {run.assets_failed ?? 0} 失败 /{" "}
-					{run.assets_processed} 总计
+			{pipelineRun.assetCount != null ? (
+				<Descriptions.Item label="处理资产">
+					{pipelineRun.assetCount}
 				</Descriptions.Item>
 			) : null}
 			<Descriptions.Item label="run_id">
@@ -135,7 +133,7 @@ export default function RunIdLink({
 				title={
 					<span className="inline-flex items-center gap-1">
 						<LinkOutlined />
-						算法运行
+						运行
 					</span>
 				}
 				content={

@@ -17,9 +17,6 @@ const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const AssetsWorkbenchPage = lazy(() => import("./pages/AssetsWorkbenchPage"));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
-const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
-const AlgoRunsPage = lazy(() => import("./pages/AlgoRunsPage"));
-const AlgoRunDetailPage = lazy(() => import("./pages/AlgoRunDetailPage"));
 const DeliveriesPage = lazy(() => import("./pages/DeliveriesPage"));
 const DeliveryDetailPage = lazy(() => import("./pages/DeliveryDetailPage"));
 const RegistryCenterPage = lazy(() => import("./pages/RegistryCenterPage"));
@@ -63,9 +60,18 @@ function ProtectedRoutes() {
 						<Route path="/assets" element={<AssetsWorkbenchPage />} />
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
-						<Route path="/algo" element={<AlgoProcessingPage />} />
-						<Route path="/algo-runs" element={<AlgoRunsPage />} />
-						<Route path="/algo-runs/:run_id" element={<AlgoRunDetailPage />} />
+						{/* CYB-4451: legacy /algo + /algo-runs routes were CF-era algorithm
+						  views; concept now subsumed by pipeline runs. Redirect
+						  bookmarks to the canonical /runs surface. */}
+						<Route path="/algo" element={<Navigate to="/runs" replace />} />
+						<Route
+							path="/algo-runs"
+							element={<Navigate to="/runs" replace />}
+						/>
+						<Route
+							path="/algo-runs/:run_id"
+							element={<Navigate to="/runs/:run_id" replace />}
+						/>
 						<Route path="/deliveries" element={<DeliveriesPage />} />
 						<Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
 						<Route

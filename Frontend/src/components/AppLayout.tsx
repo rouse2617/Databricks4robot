@@ -5,12 +5,10 @@ import {
 	FileOutlined,
 	ForkOutlined,
 	FundProjectionScreenOutlined,
-	HistoryOutlined,
 	KeyOutlined,
 	LogoutOutlined,
 	MenuFoldOutlined,
 	MenuUnfoldOutlined,
-	RobotOutlined,
 	SendOutlined,
 	SettingOutlined,
 	UnorderedListOutlined,
@@ -44,9 +42,6 @@ const menuItems = [
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
-	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "算法运行" },
-	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
-	{ type: "divider" as const },
 	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
@@ -73,8 +68,6 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
 	if (pathname.startsWith("/runs")) return "/pipeline";
 	if (pathname.startsWith("/workflows")) return "/pipeline";
-	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
-	if (pathname.startsWith("/algo")) return "/algo";
 	if (pathname.startsWith("/api-keys")) return "/api-keys";
 	return "/assets";
 }
@@ -98,9 +91,6 @@ function resolvePageContainerClass(pathname: string): string {
 	}
 	if (pathname.startsWith("/settings")) {
 		return "page-container page-container--form";
-	}
-	if (pathname.startsWith("/algo") && !pathname.startsWith("/algo-runs")) {
-		return "page-container page-container--matrix";
 	}
 	return "page-container page-container--table";
 }
