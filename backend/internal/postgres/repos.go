@@ -1421,7 +1421,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
 	return nil
 }
 
-func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error) {
+func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState, owner, mcapFileID string) ([]*models.McapFile, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -1443,6 +1443,12 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState
 	if owner != "" {
 		where += fmt.Sprintf(" AND owner ILIKE $%d", argIdx)
 		args = append(args, "%"+owner+"%")
+		argIdx++
+	}
+	// CYB-4445: exact-match filter on mcap_file_id (primary key, O(log n) lookup).
+	if mcapFileID != "" {
+		where += fmt.Sprintf(" AND mcap_file_id = $%d", argIdx)
+		args = append(args, mcapFileID)
 		argIdx++
 	}
 

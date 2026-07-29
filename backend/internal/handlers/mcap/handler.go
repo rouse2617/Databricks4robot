@@ -424,8 +424,16 @@ func (h *Handler) ListFiles(c *gin.Context) {
 
 	ingestState := c.Query("ingest_state")
 	owner := c.Query("owner")
+	// CYB-4445: optional exact-match filter. Empty string means "no filter";
+	// any non-empty value must be exactly 8 alphanumeric characters (matches
+	// the schema CHECK and the CmdKSearch ID-shape on the frontend).
+	mcapFileID := c.Query("mcap_file_id")
+	if mcapFileID != "" && !id.ValidateMcapFileID(mcapFileID) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "mcap_file_id must be exactly 8 alphanumeric characters", nil)
+		return
+	}
 
-	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, ingestState, owner)
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, ingestState, owner, mcapFileID)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

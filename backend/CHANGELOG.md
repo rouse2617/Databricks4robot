@@ -10,6 +10,7 @@
 - **版本检测通知系统** — `useVersionCheck` hook 每 60s 轮询 `version.json`，版本变更时显示右上角通知，用户点击"刷新"即可无缝更新。Vite 构建时自动生成 `version.json`（含 version、buildRef、timestamp）。
 - **资产 ID 一键导出** — 批量任务详情页新增"导出资产 ID"按钮（Dropdown 菜单），支持复制到剪贴板（Clipboard API + execCommand 兜底）和下载 CSV。
 - **DataBrew 品牌图标** — 新增灯笼火焰 SVG 图标（黄色 `#F4B740` + 深黄 `#D4841A`），替换 favicon 和导航栏 logo。
+- **MCAP 文件列表 ID 搜索** — `/mcap-files` 页新增「按文件 ID 搜索（8 位）」输入框（CYB-4445）。与现有 owner / 状态过滤 AND 组合；输入非 8 位字母数字时不下推，避免半输入空结果。匹配后端 `GET /api/v1/mcap-files?mcap_file_id=<id>`。
 
 #### Changed
 - **批量任务表格设计** — 行高从 8-10px 提升到 16px；列对齐标准化（数值右对齐、文本左对齐、状态居中）；对比度提升（`#1F2937` 文本 + `#E5E7EB` 边框）；表头 `#f3f4f6` 背景 + 大写字间距。
@@ -25,6 +26,7 @@
 
 ### Added
 - **Asset PATCH 乐观锁** — `postgres.AssetRepo.Set` 增加版本 CAS（`WHERE assets.version = EXCLUDED.version - 1`），并发更新冲突时返回 `repository.ErrOptimisticLock`，handler 映射到 `409 CONCURRENT_CONFLICT`。
+- **MCAP 文件列表按 ID 过滤 (CYB-4445)** — `GET /api/v1/mcap-files` 新增 `mcap_file_id` query 参数（精确匹配，等值 SQL）；`mcap_file_id` 必须为 8 位字母数字（与服务端 `chk_mcap_file_id_format` 与前端 `CmdKSearch.isAssetId` 一致），非空非匹配返回 `400 INVALID_ARGUMENT`。与现有 `ingest_state` / `owner` AND 组合；接口 `McapFileRepository.List` 同步新增末位参数，影响 `mockMcapRepo` 等 5 个测试桩签名。
 
 ### Changed
 - **本地 Postgres 首次初始化** — 仅跑 `backend/migrations/*.sql` 的 DDL；原 `002_seed.sql` 改为 `scripts/postgres/dev_seed.sql`，需时执行 `make local-dev-seed`（或 `bash backend/scripts/apply_dev_seed.sh`），避免清卷后仍出现固定演示行。

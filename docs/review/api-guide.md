@@ -1832,6 +1832,40 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
 
 > `segment_count`（CYB-3285）：该 MCAP 的**子 segment 数** —— `asset_type='segment'` 且同 `mcap_file_id` 的非删资产数（派生字段，非存储列，`List` 与 `Get` 均返回）。前端 MCAP 文件列表以此列取代旧的「通道数 / 分块数」两列。
 
+#### 5.2.1 按文件 ID 精确过滤（CYB-4445）
+
+`mcap_file_id` query 参数对列表做**精确等值**过滤；校验规则与 `chk_mcap_file_id_format` / 前端 `CmdKSearch.isAssetId` 一致（`^[A-Za-z0-9]{8}$`）。
+
+| 行为 | 输入 | 结果 |
+|------|------|------|
+| 不下推 | 缺省 / 空字符串 / 不足 8 位 | 不下推该参数；列表保持原样（避免半输入出现意外"空结果"） |
+| 精确命中 | 8 位字母数字 | 列表收敛到 1 条（`total=1`）或 0 条（不存在） |
+| 校验失败 | 非空且长度 ≠ 8 或包含非字母数字 | `400 INVALID_ARGUMENT`，错误消息 `mcap_file_id must be exactly 8 alphanumeric characters` |
+
+`owner`（ILIKE 子串）与 `ingest_state`（精确枚举）和 `mcap_file_id` 用 AND 组合，`total` 反映交集。
+
+```bash
+# Happy — 精确命中
+curl "$BASE/api/v1/mcap-files?mcap_file_id=LEMpjOmB" \
+  -H "X-Databrew-Token: $TOKEN"
+# → 200；items 长度 ≤ 1
+
+# 与 owner 组合（AND 交集）
+curl "$BASE/api/v1/mcap-files?mcap_file_id=LEMpjOmB&owner=grace-pu&ingest_state=summarized" \
+  -H "X-Databrew-Token: $TOKEN"
+# → 200；同时满足 ID、owner 子串、状态三条才出现在 items 中
+
+# 长度不合法
+curl -o /dev/null -w '%{http_code}\n' \
+  "$BASE/api/v1/mcap-files?mcap_file_id=SHORT" \
+  -H "X-Databrew-Token: $TOKEN"
+# → 400
+```
+
+#### 5.2.2 URL 直跳详情抽屉（保留）
+
+`/mcap-files?mcap_file_id=<id>` 在前端依然支持：URL 上的 `mcap_file_id` 会触发 `mcapFilesApi.get(id)` 并打开 `McapDetailDrawer`，与本节 list filter 独立。该行为不受本节过滤参数语义变更影响。
+
 ### 5.3 获取单个 MCAP 文件
 
 ```bash

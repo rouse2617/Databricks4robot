@@ -34,7 +34,11 @@ type McapFileRepository interface {
 	Get(ctx context.Context, mcapFileID string) (*models.McapFile, error)
 	Set(ctx context.Context, f *models.McapFile) error
 	UpdateIngestState(ctx context.Context, mcapFileID string, state models.IngestState) error
-	List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error)
+	// List returns a paginated list of mcap files, optionally filtered by
+	// ingestState, owner (substring), and mcapFileID (exact match). An empty
+	// filter value means "no filter on that dimension"; non-empty filters
+	// combine with AND. CYB-4445 added mcapFileID.
+	List(ctx context.Context, page, pageSize int, ingestState, owner, mcapFileID string) ([]*models.McapFile, int64, error)
 }
 
 // DeliveryRepository defines persistence operations for delivery records/indexes.

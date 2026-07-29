@@ -2103,7 +2103,7 @@ func TestMcapFileRepo_List_ReadsRealColumns(t *testing.T) {
 	}
 	repo := &McapFileRepo{c: &Client{db: db}}
 
-	files, total, err := repo.List(ctx, 1, 20, "", "")
+	files, total, err := repo.List(ctx, 1, 20, "", "", "")
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -2148,7 +2148,7 @@ func TestMcapFileRepo_List_FiltersByRealColumns(t *testing.T) {
 	}
 	repo := &McapFileRepo{c: &Client{db: db}}
 
-	files, total, err := repo.List(ctx, 1, 20, "summarized", "dave")
+	files, total, err := repo.List(ctx, 1, 20, "summarized", "dave", "m-filt-1")
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -2165,7 +2165,7 @@ func TestMcapFileRepo_List_CountError(t *testing.T) {
 	db := &fakeDB{queryRow: &fakeRow{err: errors.New("count fail")}}
 	repo := &McapFileRepo{c: &Client{db: db}}
 
-	_, _, err := repo.List(ctx, 1, 20, "", "")
+	_, _, err := repo.List(ctx, 1, 20, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "count") {
 		t.Fatalf("expected count error, got %v", err)
 	}
@@ -2179,7 +2179,7 @@ func TestMcapFileRepo_List_QueryError(t *testing.T) {
 	}
 	repo := &McapFileRepo{c: &Client{db: db}}
 
-	_, _, err := repo.List(ctx, 1, 20, "", "")
+	_, _, err := repo.List(ctx, 1, 20, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "query") {
 		t.Fatalf("expected query error, got %v", err)
 	}
@@ -2193,7 +2193,7 @@ func TestMcapFileRepo_List_ScanError(t *testing.T) {
 	}
 	repo := &McapFileRepo{c: &Client{db: db}}
 
-	_, _, err := repo.List(ctx, 1, 20, "", "")
+	_, _, err := repo.List(ctx, 1, 20, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "scan") {
 		t.Fatalf("expected scan error, got %v", err)
 	}
@@ -2787,13 +2787,13 @@ func TestAssetRepoDurationDistribution(t *testing.T) {
 	// come back from the second Query. The repo must pad the other eight.
 	db := &fakeDB{
 		queryRow: &fakeRow{values: []any{
-			int64(15),          // total_assets
-			int64(15_250_000),  // total_ms
-			int64(1_016_666),   // mean_ms
-			int64(500),         // min_ms
-			int64(6_500_000),   // max_ms
-			int64(850_000),     // p50_ms
-			int64(2_900_000),   // p90_ms
+			int64(15),         // total_assets
+			int64(15_250_000), // total_ms
+			int64(1_016_666),  // mean_ms
+			int64(500),        // min_ms
+			int64(6_500_000),  // max_ms
+			int64(850_000),    // p50_ms
+			int64(2_900_000),  // p90_ms
 		}},
 		rows: &fakeRows{data: [][]any{
 			{"<1m", int64(12), int64(250_000)},
@@ -2894,7 +2894,7 @@ func TestAssetRepoDurationDistribution(t *testing.T) {
 	}
 }
 
-// Empty assetType must still flow through the SQL as $1='' so the filter
+// Empty assetType must still flow through the SQL as $1=” so the filter
 // short-circuits and every asset is counted.
 func TestAssetRepoDurationDistributionEmptyAssetType(t *testing.T) {
 	ctx := context.Background()

@@ -26,7 +26,7 @@ func (m *mockMcapRepoForAsset) Set(context.Context, *models.McapFile) error { re
 func (m *mockMcapRepoForAsset) UpdateIngestState(context.Context, string, models.IngestState) error {
 	return nil
 }
-func (m *mockMcapRepoForAsset) List(context.Context, int, int, string, string) ([]*models.McapFile, int64, error) {
+func (m *mockMcapRepoForAsset) List(context.Context, int, int, string, string, string) ([]*models.McapFile, int64, error) {
 	return nil, 0, nil
 }
 

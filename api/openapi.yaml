@@ -5234,6 +5234,14 @@ paths:
     get:
       tags: [MCAPFiles]
       summary: List MCAP files
+      description: |
+        Paginated list of MCAP file metadata. Filter dimensions combine
+        with AND. Pagination does not change between calls.
+
+        CYB-4445 adds `mcap_file_id` as an exact-match filter (no prefix
+        or substring matches). When provided, the server validates that
+        the value is exactly 8 alphanumeric ASCII characters; empty
+        means "no filter on that dimension".
       parameters:
         - in: query
           name: page
@@ -5241,12 +5249,37 @@ paths:
         - in: query
           name: page_size
           schema: { type: integer, default: 20 }
+        - in: query
+          name: ingest_state
+          schema:
+            type: string
+            enum: [pending, summarized, failed]
+        - in: query
+          name: owner
+          schema: { type: string }
+          description: Substring (ILIKE %x%) match on `owner`.
+        - in: query
+          name: mcap_file_id
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9]{8}$'
+            example: LEMpjOmB
+          description: |
+            CYB-4445. Exact-match filter on `mcap_file_id`. Must be 8
+            alphanumeric characters (matches the SQL CHECK constraint
+            `chk_mcap_file_id_format`). When set, the list converges to
+            the single matching row (or empty).
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: { $ref: '#/components/schemas/McapFileListResponse' }
+        '400':
+          description: Invalid query parameter (e.g. `mcap_file_id` not 8 alphanumeric)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/mcap-files/{id}:
     get:
       tags: [MCAPFiles]

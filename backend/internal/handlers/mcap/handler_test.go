@@ -22,6 +22,7 @@ type mockMcapRepo struct {
 	getFn               func(ctx context.Context, mcapFileID string) (*models.McapFile, error)
 	setFn               func(ctx context.Context, f *models.McapFile) error
 	updateIngestStateFn func(ctx context.Context, mcapFileID string, state models.IngestState) error
+	listFn              func(ctx context.Context, page, pageSize int, ingestState, owner, mcapFileID string) ([]*models.McapFile, int64, error)
 }
 
 func (m *mockMcapRepo) Get(ctx context.Context, mcapFileID string) (*models.McapFile, error) {
@@ -42,7 +43,10 @@ func (m *mockMcapRepo) UpdateIngestState(ctx context.Context, mcapFileID string,
 	}
 	return nil
 }
-func (m *mockMcapRepo) List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error) {
+func (m *mockMcapRepo) List(ctx context.Context, page, pageSize int, ingestState, owner, mcapFileID string) ([]*models.McapFile, int64, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, page, pageSize, ingestState, owner, mcapFileID)
+	}
 	return []*models.McapFile{}, 0, nil
 }
 
@@ -426,6 +430,73 @@ func TestGetFileAndStaticEndpoints(t *testing.T) {
 	w = doMcapReq(t, r, http.MethodGet, "/mcap-files", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// CYB-4445: mcap_file_id query param is rejected when not 8 alphanumeric and
+// forwarded to repo.List when valid. Combined with owner filter via AND.
+func TestListFiles_McapFileIDFilter(t *testing.T) {
+	repo := &mockMcapRepo{}
+	var (
+		gotID      string
+		gotOwner   string
+		gotResults []*models.McapFile
+	)
+	repo.listFn = func(_ context.Context, _, _ int, _, owner, mcapFileID string) ([]*models.McapFile, int64, error) {
+		gotID = mcapFileID
+		gotOwner = owner
+		gotResults = []*models.McapFile{{McapFileID: mcapFileID}}
+		return gotResults, int64(len(gotResults)), nil
+	}
+	h := New(repo)
+	r := setupMcapRouter(http.MethodGet, "/mcap-files", h.ListFiles)
+
+	// happy exact match
+	w := doMcapReq(t, r, http.MethodGet, "/mcap-files?mcap_file_id=LEMpjOmB", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("happy: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if gotID != "LEMpjOmB" {
+		t.Fatalf("happy: expected mcapFileID forwarded LEMpjOmB, got %q", gotID)
+	}
+	if gotOwner != "" {
+		t.Fatalf("happy: expected owner empty, got %q", gotOwner)
+	}
+
+	// combined: id + owner filter passes both through unchanged
+	gotID, gotOwner = "", ""
+	w = doMcapReq(t, r, http.MethodGet, "/mcap-files?mcap_file_id=abcd1234&owner=grace-pu", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("combined: expected 200, got %d", w.Code)
+	}
+	if gotID != "abcd1234" || gotOwner != "grace-pu" {
+		t.Fatalf("combined: expected id=abcd1234 owner=grace-pu, got id=%q owner=%q", gotID, gotOwner)
+	}
+
+	// omit → empty string, no filter applied
+	gotID = ""
+	w = doMcapReq(t, r, http.MethodGet, "/mcap-files", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("omit: expected 200, got %d", w.Code)
+	}
+	if gotID != "" {
+		t.Fatalf("omit: expected empty forwarded id, got %q", gotID)
+	}
+
+	// bad length → 400, repo never called
+	repo.listFn = func(context.Context, int, int, string, string, string) ([]*models.McapFile, int64, error) {
+		t.Fatalf("repo.List should not be called when validation fails")
+		return nil, 0, nil
+	}
+	w = doMcapReq(t, r, http.MethodGet, "/mcap-files?mcap_file_id=SHORT", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad length: expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// non-alphanumeric 8-char value → 400
+	w = doMcapReq(t, r, http.MethodGet, "/mcap-files?mcap_file_id=ABCD_EFG", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-alphanumeric: expected 400, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 

@@ -72,6 +72,12 @@ export default function McapFilesPage() {
 	const [stateFilter, setStateFilter] = useState("");
 	const [ownerFilter, setOwnerFilter] = useState("");
 	const [debouncedOwnerFilter, setDebouncedOwnerFilter] = useState("");
+	// CYB-4445: 8-char alphanumeric ID filter (mirrors CmdKSearch.isAssetId).
+	// Below 8 chars, debouncedMcapFileIdFilter is reset to "" so the param is
+	// not sent — avoids "empty result" surprise while typing.
+	const [mcapFileIdFilter, setMcapFileIdFilter] = useState("");
+	const [debouncedMcapFileIdFilter, setDebouncedMcapFileIdFilter] =
+		useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
@@ -83,10 +89,18 @@ export default function McapFilesPage() {
 		return () => window.clearTimeout(timer);
 	}, [ownerFilter]);
 
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			const v = mcapFileIdFilter.trim();
+			setDebouncedMcapFileIdFilter(/^[A-Za-z0-9]{8}$/.test(v) ? v : "");
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [mcapFileIdFilter]);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: filter change triggers page reset
 	useEffect(() => {
 		setPage(1);
-	}, [debouncedOwnerFilter, stateFilter]);
+	}, [debouncedOwnerFilter, debouncedMcapFileIdFilter, stateFilter]);
 
 	const load = useCallback(
 		async (p = page) => {
@@ -98,6 +112,7 @@ export default function McapFilesPage() {
 					page_size: 20,
 					ingest_state: stateFilter || undefined,
 					owner: debouncedOwnerFilter || undefined,
+					mcap_file_id: debouncedMcapFileIdFilter || undefined,
 				});
 				setFiles(data.items ?? []);
 				setTotal(data.total ?? 0);
@@ -109,7 +124,7 @@ export default function McapFilesPage() {
 				setLoading(false);
 			}
 		},
-		[page, stateFilter, debouncedOwnerFilter],
+		[page, stateFilter, debouncedOwnerFilter, debouncedMcapFileIdFilter],
 	);
 
 	useEffect(() => {
@@ -280,12 +295,26 @@ export default function McapFilesPage() {
 						display: "grid",
 						gridTemplateColumns: isNarrow
 							? "minmax(0, 1fr) minmax(0, 1fr)"
-							: "140px 130px auto",
+							: "140px 140px 130px auto",
 						gap: 8,
 						width: isNarrow ? "100%" : "auto",
 						minWidth: 0,
 					}}
 				>
+					<Input
+						id="mcap-id-filter"
+						placeholder="按文件 ID 搜索（8 位）"
+						value={mcapFileIdFilter}
+						maxLength={8}
+						onChange={(e) => setMcapFileIdFilter(e.target.value)}
+						onPressEnter={() => {
+							const v = mcapFileIdFilter.trim();
+							setDebouncedMcapFileIdFilter(/^[A-Za-z0-9]{8}$/.test(v) ? v : "");
+							setPage(1);
+						}}
+						style={{ width: "100%" }}
+						allowClear
+					/>
 					<Input
 						id="mcap-owner-filter"
 						placeholder="搜索所属方"

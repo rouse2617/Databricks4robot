@@ -90,7 +90,7 @@ func (r *reindexMcapRepo) Set(context.Context, *models.McapFile) error          
 func (r *reindexMcapRepo) UpdateIngestState(context.Context, string, models.IngestState) error {
 	return nil
 }
-func (r *reindexMcapRepo) List(context.Context, int, int, string, string) ([]*models.McapFile, int64, error) {
+func (r *reindexMcapRepo) List(context.Context, int, int, string, string, string) ([]*models.McapFile, int64, error) {
 	return nil, 0, nil
 }
 

@@ -94,7 +94,7 @@ func (s *stubMcapRepo) Set(context.Context, *models.McapFile) error { return nil
 func (s *stubMcapRepo) UpdateIngestState(context.Context, string, models.IngestState) error {
 	return nil
 }
-func (s *stubMcapRepo) List(context.Context, int, int, string, string) ([]*models.McapFile, int64, error) {
+func (s *stubMcapRepo) List(context.Context, int, int, string, string, string) ([]*models.McapFile, int64, error) {
 	return nil, 0, nil
 }
 

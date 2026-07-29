@@ -10,7 +10,7 @@ Collapse batch lookups behind a single "批量查询" tab that hosts a preset pi
 
 ### Tab strip (outer)
 
-Before: `资产列表 | 时长批量查询 | 成本查询`  
+Before: `资产列表 | 时长批量查询 | 成本查询`
 After:  `资产列表 | 批量查询`
 
 ### Inside the 批量查询 tab
