@@ -2109,6 +2109,30 @@ curl -sS -X PATCH "$BASE/api/v1/internal/mcap-files/$MCAP_ID/grace-video-id" \
 
 回填后 mcap 详情页与资产详情页两处均显示 Grace Video ID；`filter=grace_video_id:eq:<uuid>` 可命中。
 
+### 7.2.2c Internal：回填 mcap 的派生 URL（转码 mp4 / 派生 mcap，CYB-4271）
+
+> mcap 没有通用 update 端点（re-POST 同 md5 → 409），CYB-4011 的 grace-video-id 只能改一个字段。此内部路由把 Grace 侧派生 URL（转码 mp4 变体、派生 mcap URI）**merge** 进已存在 mcap 的 `metadata.derived_uris`，并镜像到镜像 raw_mcap 资产的 `files` map，发 `asset_updated` 触发 ES 重建。merge 语义：**只增不覆盖无关 metadata 键**；**幂等**（值已存在则不写库、不发事件、直接 200）；仅 admin。字段全部可选，至少传一个非空值。鉴权同 `X-Databrew-Token`（生产另需 `X-Admin-Token`）。
+
+```bash
+curl -sS -X PATCH "$BASE/api/v1/internal/mcap-files/$MCAP_ID/derived-uris" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+        "raw_mcap_uri":       "gs://bucket/raw/<md5>.mcap",
+        "forward_stereo_mp4": "gs://bucket/forward_stereo/<md5>.mp4",
+        "mezzanine_mp4":      "gs://bucket/mezzanine/<md5>.mp4",
+        "watermark_mp4":      "oss://bucket/watermark/<md5>.mp4",
+        "imu_mcap_uri":       "gs://bucket/imu/<md5>.mcap"
+      }' | jq .
+```
+
+字段来源（Grace `storage_meta`）：`raw_mcap_uri`=`gcs.video`、`forward_stereo_mp4`=`gcs.algo_inputs.mcap.uri`、`mezzanine_mp4`=`gcs.annot_inputs.right.uri`、`watermark_mp4`=aliyun oss、`imu_mcap_uri`=`gcs.imu`（存在者）。
+
+- `200` — 返回更新后的 mcap（`metadata.derived_uris` 已 merge；重复 patch 相同值也返回 200 但不写库）。
+- `400 INVALID_ARGUMENT` — body 为空或所有值均为空白。
+- `404 MCAP_FILE_NOT_FOUND` — mcap 不存在。
+
+回填后资产详情页「文件」区可见对应转码 mp4 / 派生 mcap URL。
+
 ### 7.2.3 Internal：硬删除 assets / mcap_files
 
 > ⚠️ 这是**物理删除**接口，与公共 `DELETE /api/v1/assets/:id`（soft delete）行为不同。仅在导入失控、需要彻底清理时使用。

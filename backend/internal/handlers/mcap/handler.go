@@ -554,3 +554,159 @@ func (h *Handler) BackfillGraceVideoID(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, f)
 }
+
+// derivedURIKeys is the closed set of Grace-derived URL fields this endpoint
+// accepts. Order is fixed so the merged map stays deterministic across calls.
+// CYB-4271.
+var derivedURIKeys = []string{
+	"raw_mcap_uri",       // storage_meta.gcs.video — the raw .mcap
+	"forward_stereo_mp4", // storage_meta.gcs.algo_inputs.mcap.uri — transcoded mp4
+	"mezzanine_mp4",      // storage_meta.gcs.annot_inputs.right.uri — 540p mp4
+	"watermark_mp4",      // aliyun oss watermark 540p mp4
+	"imu_mcap_uri",       // storage_meta.gcs.imu — imu .mcap (when present)
+}
+
+// PatchDerivedURIs merges Grace-derived asset URLs (transcoded mp4 variants and
+// derived mcap URIs) into an existing mcap file's metadata.derived_uris object,
+// mirrors them onto the raw_mcap asset's files map, and emits an asset_updated
+// event so the ES document reindexes. CYB-4271: mcap has no general update
+// endpoint (re-POST of the same md5 → 409), and CYB-4011's grace-video-id route
+// only touches one column — so imported rows (owner=grace-pull-demo) that carry
+// only the raw mcap can't be backfilled with the transcoded/derived URLs Grace
+// holds. This is a deliberately narrow window: it only writes the derived_uris
+// sub-object and never overwrites unrelated metadata keys. Additive; idempotent.
+//
+// PATCH /api/v1/internal/mcap-files/:id/derived-uris
+//
+//	{ "forward_stereo_mp4": "...", "mezzanine_mp4": "...", ... }  (all optional, ≥1 required)
+func (h *Handler) PatchDerivedURIs(c *gin.Context) {
+	mcapFileID := c.Param("id")
+	var req struct {
+		RawMcapURI       string `json:"raw_mcap_uri"`
+		ForwardStereoMP4 string `json:"forward_stereo_mp4"`
+		MezzanineMP4     string `json:"mezzanine_mp4"`
+		WatermarkMP4     string `json:"watermark_mp4"`
+		ImuMcapURI       string `json:"imu_mcap_uri"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	// Collect non-empty values keyed by the canonical derived-uri names.
+	byKey := map[string]string{
+		"raw_mcap_uri":       strings.TrimSpace(req.RawMcapURI),
+		"forward_stereo_mp4": strings.TrimSpace(req.ForwardStereoMP4),
+		"mezzanine_mp4":      strings.TrimSpace(req.MezzanineMP4),
+		"watermark_mp4":      strings.TrimSpace(req.WatermarkMP4),
+		"imu_mcap_uri":       strings.TrimSpace(req.ImuMcapURI),
+	}
+	incoming := make(map[string]string, len(byKey))
+	for _, k := range derivedURIKeys {
+		if v := byKey[k]; v != "" {
+			incoming[k] = v
+		}
+	}
+	if len(incoming) == 0 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "at least one derived uri is required", nil)
+		return
+	}
+
+	ctx := c.Request.Context()
+	f, err := h.repo.Get(ctx, mcapFileID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if f == nil {
+		httpresp.NotFound(c, "MCAP_FILE_NOT_FOUND", "mcap file not found")
+		return
+	}
+
+	// Compute the merged derived_uris and decide whether anything changes, so an
+	// idempotent re-PATCH skips the write and the event.
+	merged := map[string]any{}
+	if f.Metadata != nil {
+		if cur, ok := f.Metadata["derived_uris"].(map[string]any); ok {
+			for k, v := range cur {
+				merged[k] = v
+			}
+		}
+	}
+	changed := false
+	for k, v := range incoming {
+		if cur, ok := merged[k].(string); !ok || cur != v {
+			changed = true
+		}
+		merged[k] = v
+	}
+	if !changed {
+		// Idempotent: values already present; no write, no event.
+		c.JSON(http.StatusOK, f)
+		return
+	}
+
+	err = h.withTx(ctx, func(txCtx context.Context) error {
+		// 1) source of truth: mcap_files.metadata.derived_uris. Set is an upsert
+		// that round-trips every column read by Get, so only the derived_uris
+		// sub-object changes; sibling metadata keys (env/task/…) are preserved.
+		if f.Metadata == nil {
+			f.Metadata = map[string]interface{}{}
+		}
+		f.Metadata["derived_uris"] = merged
+		if err := h.repo.Set(txCtx, f); err != nil {
+			return err
+		}
+		// 2) mirror onto the raw_mcap asset (asset_id == mcap_file_id) if it
+		// still exists. FilesJSON is the map AssetRepo.Set marshals after a Get
+		// (Files is only consulted when FilesJSON is nil), so merge into
+		// FilesJSON and keep Files in sync for the response/consumers.
+		if h.assetRepo != nil {
+			a, gerr := h.assetRepo.Get(txCtx, mcapFileID)
+			if gerr != nil {
+				return gerr
+			}
+			if a != nil {
+				if a.FilesJSON == nil {
+					a.FilesJSON = map[string]interface{}{}
+				}
+				if a.Files == nil {
+					a.Files = map[string]string{}
+				}
+				for k, v := range incoming {
+					a.FilesJSON[k] = v
+					a.Files[k] = v
+				}
+				if serr := h.assetRepo.Set(txCtx, a); serr != nil {
+					return serr
+				}
+				// 3) emit asset_updated so the ES subscriber rebuilds the doc.
+				if h.eventRepo != nil {
+					body, _ := json.Marshal(map[string]any{
+						"asset_id":     a.AssetID,
+						"derived_uris": incoming,
+					})
+					if aerr := h.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+						EventType:            "asset_updated",
+						AggregateType:        "asset",
+						PayloadSchemaVersion: "v1",
+						AssetID:              a.AssetID,
+						McapFileID:           a.McapFileID,
+						TenantID:             a.TenantID,
+						ProjectID:            a.ProjectID,
+						EventSource:          "backend",
+						RequestID:            c.GetHeader("X-Request-ID"),
+						EventPayload:         body,
+					}); aerr != nil {
+						return aerr
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, f)
+}

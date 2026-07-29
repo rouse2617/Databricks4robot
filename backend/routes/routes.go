@@ -432,6 +432,7 @@ func RegisterAll(
 		if adminRoutesEnabled {
 			internalMcap := api.Group("/internal", adminAuth)
 			internalMcap.PATCH("/mcap-files/:id/grace-video-id", mcapHandler.BackfillGraceVideoID)
+			internalMcap.PATCH("/mcap-files/:id/derived-uris", mcapHandler.PatchDerivedURIs)
 		}
 
 		// API key management (issue/list/revoke keys for SDK/API callers).

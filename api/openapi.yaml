@@ -1382,6 +1382,18 @@ components:
           example: { validation: "passed", indexing: "pending" }
         tenant_id: { type: string, example: "tenant-cyberorigin" }
         project_id: { type: string, example: "project-autonomous-v1" }
+    McapDerivedURIsRequest:
+      type: object
+      description: >
+        CYB-4271: Grace-derived URLs merged into mcap_files.metadata.derived_uris
+        and mirrored onto the raw_mcap asset's files map. All fields optional; at
+        least one non-empty value is required.
+      properties:
+        raw_mcap_uri: { type: string, example: "gs://bucket/raw/<md5>.mcap", description: "Raw .mcap (Grace storage_meta.gcs.video)." }
+        forward_stereo_mp4: { type: string, example: "gs://bucket/forward_stereo/<md5>.mp4", description: "Transcoded forward-stereo mp4 (Grace storage_meta.gcs.algo_inputs.mcap.uri)." }
+        mezzanine_mp4: { type: string, example: "gs://bucket/mezzanine/<md5>.mp4", description: "Mezzanine 540p mp4 (Grace storage_meta.gcs.annot_inputs.right.uri)." }
+        watermark_mp4: { type: string, example: "oss://bucket/watermark/<md5>.mp4", description: "Watermark 540p mp4 (Grace aliyun oss)." }
+        imu_mcap_uri: { type: string, example: "gs://bucket/imu/<md5>.mcap", description: "IMU .mcap (Grace storage_meta.gcs.imu), when present." }
     McapFinalizeUploadRequest:
       type: object
       required: [mcap_file_id]
@@ -6067,6 +6079,50 @@ paths:
               schema: { $ref: '#/components/schemas/McapFile' }
         '400':
           description: grace_video_id missing/empty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: mcap file not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/internal/mcap-files/{id}/derived-uris:
+    patch:
+      tags: [Internal]
+      summary: Merge Grace-derived URLs into an existing mcap file
+      description: >
+        CYB-4271: merges Grace-derived asset URLs (transcoded mp4 variants and
+        derived mcap URIs) into the mcap file's metadata.derived_uris object,
+        mirrors them onto the mirrored raw_mcap asset's files map, and emits an
+        asset_updated event so the ES document reindexes. There is no general
+        mcap update endpoint (re-POST of the same md5 → 409); this narrow
+        internal route backfills the transcoded/derived URLs onto rows imported
+        with only the raw mcap. The merge is additive — it never overwrites
+        unrelated metadata keys — and idempotent. All fields are optional; at
+        least one non-empty value is required.
+      security:
+        - DatabrewToken: []
+        - AdminToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: mcap_file_id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McapDerivedURIsRequest' }
+      responses:
+        '200':
+          description: Updated (or unchanged if all values already present)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McapFile' }
+        '400':
+          description: no derived uri supplied (empty/blank body)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

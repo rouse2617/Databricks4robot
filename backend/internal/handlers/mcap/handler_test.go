@@ -597,3 +597,123 @@ func TestBackfillGraceVideoID(t *testing.T) {
 		t.Fatalf("expected one asset_updated event, got %#v", eventTypes)
 	}
 }
+
+func TestPatchDerivedURIs(t *testing.T) {
+	const (
+		fwd  = "gs://bucket/forward_stereo/md5-1.mp4"
+		mezz = "gs://bucket/mezzanine/md5-1.mp4"
+	)
+
+	// build wires an mcap that already carries an unrelated metadata key so we
+	// can assert the merge is additive (env survives).
+	build := func() (*Handler, *mockMcapRepo, *stubAssetRepo, *mcapEventRepo) {
+		repo := &mockMcapRepo{
+			getFn: func(_ context.Context, id string) (*models.McapFile, error) {
+				return &models.McapFile{
+					McapFileID: id,
+					RawHashMD5: "md5-1",
+					Metadata:   map[string]interface{}{"env": "prod"},
+				}, nil
+			},
+		}
+		asset := &stubAssetRepo{
+			getFn: func(_ context.Context, id string) (*models.Asset, error) {
+				return &models.Asset{AssetID: id, McapFileID: id, AssetType: "raw_mcap", Version: 1}, nil
+			},
+		}
+		ev := &mcapEventRepo{}
+		h := New(repo)
+		h.SetAssetRepo(asset)
+		h.SetEventRepo(ev)
+		return h, repo, asset, ev
+	}
+
+	route := func(h *Handler) *gin.Engine {
+		return setupMcapRouter(http.MethodPatch, "/internal/mcap-files/:id/derived-uris", h.PatchDerivedURIs)
+	}
+
+	// empty body (no derived uris) -> 400
+	h, _, _, _ := build()
+	w := doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/derived-uris", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body: expected 400, got %d", w.Code)
+	}
+
+	// blank values only -> still 400 (nothing to merge)
+	h, _, _, _ = build()
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/derived-uris", map[string]any{"forward_stereo_mp4": "   "})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("blank value: expected 400, got %d", w.Code)
+	}
+
+	// not found -> 404
+	h, repo, _, _ := build()
+	repo.getFn = func(context.Context, string) (*models.McapFile, error) { return nil, nil }
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/derived-uris", map[string]any{"forward_stereo_mp4": fwd})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("not found: expected 404, got %d", w.Code)
+	}
+
+	// happy path: mcap metadata.derived_uris merged (env preserved), asset files
+	// mirrored, one asset_updated event.
+	h, repo, asset, ev := build()
+	var savedMcap *models.McapFile
+	var savedAsset *models.Asset
+	var eventTypes []string
+	repo.setFn = func(_ context.Context, f *models.McapFile) error { savedMcap = f; return nil }
+	asset.setFn = func(_ context.Context, a *models.Asset) error { savedAsset = a; return nil }
+	ev.appendFn = func(_ context.Context, in repository.AssetEventAppendInput) error {
+		eventTypes = append(eventTypes, in.EventType)
+		return nil
+	}
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/derived-uris",
+		map[string]any{"forward_stereo_mp4": fwd, "mezzanine_mp4": mezz})
+	if w.Code != http.StatusOK {
+		t.Fatalf("happy: expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	if savedMcap == nil {
+		t.Fatal("mcap Set not called")
+	}
+	if savedMcap.Metadata["env"] != "prod" {
+		t.Fatalf("sibling metadata key dropped: %#v", savedMcap.Metadata)
+	}
+	du, ok := savedMcap.Metadata["derived_uris"].(map[string]any)
+	if !ok {
+		t.Fatalf("derived_uris not a map: %#v", savedMcap.Metadata["derived_uris"])
+	}
+	if du["forward_stereo_mp4"] != fwd || du["mezzanine_mp4"] != mezz {
+		t.Fatalf("derived_uris not merged: %#v", du)
+	}
+	if savedAsset == nil || savedAsset.FilesJSON["forward_stereo_mp4"] != fwd || savedAsset.Files["mezzanine_mp4"] != mezz {
+		t.Fatalf("asset files mirror not written: %#v / %#v", savedAsset.FilesJSON, savedAsset.Files)
+	}
+	if len(eventTypes) != 1 || eventTypes[0] != "asset_updated" {
+		t.Fatalf("expected one asset_updated event, got %#v", eventTypes)
+	}
+
+	// idempotent: mcap already carries the same derived_uris -> no write, no event.
+	h, repo, asset, ev = build()
+	repo.getFn = func(_ context.Context, id string) (*models.McapFile, error) {
+		return &models.McapFile{
+			McapFileID: id,
+			RawHashMD5: "md5-1",
+			Metadata: map[string]interface{}{
+				"env":          "prod",
+				"derived_uris": map[string]any{"forward_stereo_mp4": fwd},
+			},
+		}, nil
+	}
+	setCalls := 0
+	eventCalls := 0
+	repo.setFn = func(context.Context, *models.McapFile) error { setCalls++; return nil }
+	asset.setFn = func(context.Context, *models.Asset) error { setCalls++; return nil }
+	ev.appendFn = func(context.Context, repository.AssetEventAppendInput) error { eventCalls++; return nil }
+	w = doMcapReq(t, route(h), http.MethodPatch, "/internal/mcap-files/abcd1234/derived-uris",
+		map[string]any{"forward_stereo_mp4": fwd})
+	if w.Code != http.StatusOK {
+		t.Fatalf("idempotent: expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	if setCalls != 0 || eventCalls != 0 {
+		t.Fatalf("idempotent re-patch should not write/emit: setCalls=%d eventCalls=%d", setCalls, eventCalls)
+	}
+}

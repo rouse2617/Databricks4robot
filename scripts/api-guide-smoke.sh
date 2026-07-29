@@ -146,10 +146,44 @@ put_json() {
 	echo "$RESP_BODY"
 }
 
+patch_json() {
+	local name="$1" path="$2" data="$3"
+	local raw
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X PATCH "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	RESP_CODE=$(echo "$raw" | tail -n1)
+	RESP_BODY=$(echo "$raw" | sed '$d')
+	if [[ "$RESP_CODE" =~ ^2 ]]; then
+		_pass
+		echo "  OK  $name" >&3
+	else
+		_fail
+		echo "  FAIL $name (HTTP ${RESP_CODE})" >&3
+		echo "$RESP_BODY" | head -c 400 >&3
+		echo >&3
+	fi
+	echo "$RESP_BODY"
+}
+
 expect_code_post() {
 	local name="$1" path="$2" data="$3" expected="$4"
 	local raw code body
 	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	code=$(echo "$raw" | tail -n1)
+	body=$(echo "$raw" | sed '$d')
+	RESP_CODE="$code"
+	RESP_BODY="$body"
+	if [[ "$code" == "$expected" ]]; then
+		ok "$name"
+	else
+		bad "$name (expected ${expected})"
+	fi
+	echo "$body"
+}
+
+expect_code_patch() {
+	local name="$1" path="$2" data="$3" expected="$4"
+	local raw code body
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X PATCH "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
 	code=$(echo "$raw" | tail -n1)
 	body=$(echo "$raw" | sed '$d')
 	RESP_CODE="$code"
@@ -648,6 +682,19 @@ EOF
 	GVID_FILTER=$(post "POST queries/run filter=grace_video_id (CYB-4011)" "/api/v1/queries/run" "{\"schema_version\":\"v1\",\"mode\":\"structured\",\"scope\":{\"resource\":\"assets\"},\"where\":{\"pred\":{\"field\":\"grace_video_id\",\"op\":\"eq\",\"value\":\"${GRACE_VID}\"}},\"page\":{\"page\":1,\"page_size\":5}}")
 	GVID_HIT=$(echo "$GVID_FILTER" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('1' if any(i.get('grace_video_id')=='${GRACE_VID}' or i.get('asset_id')=='${MCAP_ID}' for i in items) else '0')" 2>/dev/null || echo "0")
 	if [[ "$GVID_HIT" == "1" ]]; then ok "grace_video_id filter returns the mirrored asset"; else bad "grace_video_id filter did not return the mirrored asset"; fi
+	# CYB-4271: PATCH derived-uris merges transcoded mp4 / derived mcap URLs into
+	# metadata.derived_uris on the existing mcap (internal admin route; in dev the
+	# databrew token passes AdminTokenAuth's static-token fallback).
+	DERIVED_FWD="gs://api-guide-smoke/forward_stereo/${MCAP_ID}.mp4"
+	patch_json "PATCH mcap-files/{id}/derived-uris (CYB-4271)" "/api/v1/internal/mcap-files/${MCAP_ID}/derived-uris" "{\"forward_stereo_mp4\":\"${DERIVED_FWD}\",\"mezzanine_mp4\":\"gs://api-guide-smoke/mezzanine/${MCAP_ID}.mp4\"}" >/dev/null
+	# read back: metadata.derived_uris.forward_stereo_mp4 round-trips on mcap get.
+	MCAP_GET2=$(get "GET mcap-files/{id} (CYB-4271 derived_uris)" "/api/v1/mcap-files/${MCAP_ID}")
+	GOT_DERIVED=$(echo "$MCAP_GET2" | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('metadata') or {}).get('derived_uris',{}).get('forward_stereo_mp4',''))" 2>/dev/null || echo "")
+	if [[ "$GOT_DERIVED" == "$DERIVED_FWD" ]]; then ok "mcap metadata.derived_uris round-trips"; else bad "derived_uris.forward_stereo_mp4 expected ${DERIVED_FWD}, got ${GOT_DERIVED:-<empty>}"; fi
+	# idempotent: same PATCH again still 200.
+	patch_json "PATCH mcap-files/{id}/derived-uris idempotent (CYB-4271)" "/api/v1/internal/mcap-files/${MCAP_ID}/derived-uris" "{\"forward_stereo_mp4\":\"${DERIVED_FWD}\"}" >/dev/null
+	# empty body -> 400.
+	expect_code_patch "PATCH derived-uris empty -> 400 (CYB-4271)" "/api/v1/internal/mcap-files/${MCAP_ID}/derived-uris" "{}" "400" >/dev/null
 	ASSET_JSON=$(cat <<EOF
 {
   "mcap_file_id": "${MCAP_ID}",
