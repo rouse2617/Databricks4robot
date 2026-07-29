@@ -90,6 +90,11 @@ type Usecase struct {
 	// PauseJob stop-cleanup) are deterministic.
 	spawn func(func())
 
+	// convergeSettle overrides the pause/cancel convergence loop's inter-round
+	// delay (default convergeSettleDefault). Tests set a tiny value so the loop
+	// runs without a real wall-clock wait.
+	convergeSettle time.Duration
+
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
 
@@ -944,40 +949,75 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions
 		// actual per-run Stop calls happen asynchronously below.
 		result.StoppedCount = len(targets)
 		if len(targets) > 0 {
-			// CYB-3572: stopping in-flight runs is best-effort cleanup — the job is
-			// already marked "paused" above, so dispatch has already halted. Doing
-			// N sequential per-run Stop calls inside the request handler blew the
-			// 60s gateway timeout (→ 504) on large / slow (cross-cluster) batches.
-			// Detach it: respond immediately and stop the runs in the background
-			// with a fresh, request-independent context.
+			// CYB-3572: detach — N sequential per-run Stop calls inside the request
+			// blew the 60s gateway timeout on large / cross-cluster batches.
+			// Bugfix: a single snapshot also missed runs the submitter's in-flight
+			// cycle created just after the "paused" flip ("paused but keeps
+			// spawning"), so converge in a background loop until no running /
+			// submitted item remains. Resumable: stopped items go back to
+			// "pending" so ResumeJob re-dispatches them.
 			uc.spawnFn()(func() {
-				bg, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				bg, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 				defer cancel()
-				for _, t := range targets {
-					stopCtx, stopCancel := context.WithTimeout(bg, 30*time.Second)
-					err := uc.pipelineUC.StopRun(stopCtx, t.runID)
-					stopCancel()
-					if err != nil {
-						slog.Warn("PauseJob: async stop run failed", "jobID", id, "runID", t.runID, "err", err)
-						continue
-					}
-					// Stopping removes the workflow from Argo; reset the item to
-					// "pending" and drop its run link so a later resume re-submits it
-					// cleanly. Leaving it "running" with a stale run both hides it from
-					// ResumeJob (ClaimNextItem only claims "pending") and trips
-					// executeItem's dedup guard — that stranded items after
-					// pause→resume.
-					if err := uc.repo.UpdateItemPipelineRun(bg, t.itemID, "", "", "pending"); err != nil {
-						slog.Warn("PauseJob: async reset stopped item to pending failed", "jobID", id, "itemID", t.itemID, "err", err)
-					}
-				}
-				_ = uc.syncJobProgress(bg, id)
-				slog.Info("PauseJob: async stop-cleanup complete", "jobID", id, "stopped", len(targets))
+				uc.convergePauseStop(bg, id)
 			})
 		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
 	return result, nil
+}
+
+// convergePauseStop repeatedly stops in-flight runs and resets their item to
+// "pending" until no running/submitted item remains. The job is already
+// "paused" so the submitter won't claim new pending items, but its in-flight
+// cycle can create runs just after the flip; looping absorbs that race.
+// Resumable: items return to "pending" (not "cancelled") so ResumeJob
+// re-dispatches them.
+func (uc *Usecase) convergePauseStop(ctx context.Context, jobID string) {
+	const maxRounds = 20
+	total := 0
+	for round := 0; round < maxRounds; round++ {
+		items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "submitted"})
+		if err != nil {
+			slog.Warn("convergePauseStop: list in-flight failed", "jobID", jobID, "err", err)
+			return
+		}
+		var withRun []models.BackfillItem
+		for _, it := range items {
+			if it.PipelineRunID != nil && strings.TrimSpace(*it.PipelineRunID) != "" {
+				withRun = append(withRun, it)
+			}
+		}
+		if len(withRun) == 0 {
+			_ = uc.syncJobProgress(ctx, jobID)
+			slog.Info("convergePauseStop: converged", "jobID", jobID, "rounds", round, "stopped", total)
+			return
+		}
+		for _, it := range withRun {
+			runID := strings.TrimSpace(*it.PipelineRunID)
+			stopCtx, stopCancel := context.WithTimeout(ctx, 30*time.Second)
+			err := uc.pipelineUC.StopRun(stopCtx, runID)
+			stopCancel()
+			if err != nil {
+				slog.Warn("convergePauseStop: stop run failed", "jobID", jobID, "runID", runID, "err", err)
+				continue
+			}
+			// Reset to "pending" + drop run link so ResumeJob re-submits cleanly
+			// (ClaimNextItem only claims "pending"; a stale run trips executeItem's
+			// dedup guard).
+			if err := uc.repo.UpdateItemPipelineRun(ctx, it.ID, "", "", "pending"); err != nil {
+				slog.Warn("convergePauseStop: reset item pending failed", "jobID", jobID, "itemID", it.ID, "err", err)
+			}
+			total++
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(uc.settleDelay()):
+		}
+	}
+	slog.Warn("convergePauseStop: not fully converged after maxRounds", "jobID", jobID, "maxRounds", maxRounds)
+	_ = uc.syncJobProgress(ctx, jobID)
 }
 
 // spawnFn returns the background-job runner, defaulting to a real goroutine.
@@ -1006,6 +1046,150 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 	// effect immediately.
 	uc.KickSubmitter()
 	return nil
+}
+
+// convergeSettleDefault is the pause/cancel convergence loop's inter-round
+// delay: long enough to let the submitter's in-flight cycle drain before the
+// next sweep, short relative to the 30-minute background budget.
+const convergeSettleDefault = 3 * time.Second
+
+func (uc *Usecase) settleDelay() time.Duration {
+	if uc.convergeSettle > 0 {
+		return uc.convergeSettle
+	}
+	return convergeSettleDefault
+}
+
+// CancelJobResult is returned after cancelling (terminating) a batch job.
+type CancelJobResult struct {
+	Status string `json:"status"`
+	// InFlightCount is a snapshot of running/submitted items (with a run) that
+	// will be terminated in the background. PendingCount is not-yet-submitted
+	// items that will be cancelled. Both are best-effort snapshots for the UI.
+	InFlightCount int `json:"inFlightCount,omitempty"`
+	PendingCount  int `json:"pendingCount,omitempty"`
+}
+
+// CancelJob permanently terminates a batch job. Unlike PauseJob (resumable),
+// cancel is terminal: dispatch halts, every non-terminal item moves to the
+// terminal 'cancelled' state (so a later Resume cannot revive it), and every
+// in-flight workflow is terminated in Argo.
+//
+// Flipping the job to 'cancelled' immediately drops it from the submitter's
+// FindSubmittableJobs query (which selects only running / pilot_running), so no
+// NEW item gets claimed. But the submitter's currently in-flight cycle can
+// still create runs for items it already locked before the flip — that is the
+// "stopped the batch but it keeps spawning" race. The actual terminate+cancel
+// work therefore runs in a background convergence loop that repeats until no
+// non-terminal item remains.
+func (uc *Usecase) CancelJob(ctx context.Context, id string) (*CancelJobResult, error) {
+	job, err := uc.repo.FindJobByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrNotFound
+	}
+	// Terminal status first: halts the submitter for this job.
+	if err := uc.repo.UpdateJobStatus(ctx, id, "cancelled"); err != nil {
+		return nil, err
+	}
+	result := &CancelJobResult{Status: "cancelled"}
+	if inflight, e := uc.repo.FindItemsByJobIDWithStatuses(ctx, id, []string{"running", "submitted"}); e == nil {
+		for _, it := range inflight {
+			if it.PipelineRunID != nil && strings.TrimSpace(*it.PipelineRunID) != "" {
+				result.InFlightCount++
+			}
+		}
+	}
+	if pending, e := uc.repo.FindItemsByJobIDWithStatuses(ctx, id, []string{"pending"}); e == nil {
+		result.PendingCount = len(pending)
+	}
+	// Detached convergence: terminating N runs sequentially inside the request
+	// would blow the gateway timeout on large batches (same reason PauseJob
+	// detaches, CYB-3572).
+	if uc.pipelineUC != nil {
+		uc.spawnFn()(func() {
+			bg, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			uc.convergeCancel(bg, id)
+		})
+	}
+	_ = uc.syncJobProgress(ctx, id)
+	return result, nil
+}
+
+// convergeCancel repeatedly terminates in-flight runs and cancels remaining
+// items until the job has no non-terminal (pending/submitted/running) item.
+// It loops because the submitter's in-flight cycle can create new runs just
+// after the status flip; each round both (a) terminates any run that appeared
+// and (b) cancels pending items so the submitter's LockPendingItem sees them
+// non-pending and skips. A quiet round (nothing left) ends it.
+func (uc *Usecase) convergeCancel(ctx context.Context, jobID string) {
+	const maxRounds = 20
+	for round := 0; round < maxRounds; round++ {
+		inflight, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "submitted"})
+		if err != nil {
+			slog.Warn("convergeCancel: list in-flight failed", "jobID", jobID, "err", err)
+			return
+		}
+		pending, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"pending"})
+		if err != nil {
+			slog.Warn("convergeCancel: list pending failed", "jobID", jobID, "err", err)
+			return
+		}
+		if len(inflight) == 0 && len(pending) == 0 {
+			_ = uc.syncJobProgress(ctx, jobID)
+			slog.Info("convergeCancel: converged", "jobID", jobID, "rounds", round)
+			return
+		}
+		uc.terminateItems(ctx, inflight)
+		for _, it := range pending {
+			if err := uc.repo.AdvanceItemAndCountAtomic(ctx, it.ID, "cancelled", "", "cancelled: batch stopped by user"); err != nil {
+				slog.Warn("convergeCancel: cancel pending item failed", "jobID", jobID, "itemID", it.ID, "err", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			slog.Warn("convergeCancel: context done before convergence", "jobID", jobID)
+			return
+		case <-time.After(uc.settleDelay()):
+		}
+	}
+	slog.Warn("convergeCancel: not fully converged after maxRounds", "jobID", jobID, "maxRounds", maxRounds)
+	_ = uc.syncJobProgress(ctx, jobID)
+}
+
+// terminateItems terminates the Argo workflow for each in-flight item (bounded
+// concurrency) and moves the item to the terminal 'cancelled' state. Best
+// effort: a failed terminate still cancels the item so convergence proceeds; a
+// stray running pod is caught by a later round or the run watcher.
+func (uc *Usecase) terminateItems(ctx context.Context, items []models.BackfillItem) {
+	const workers = 8
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for i := range items {
+		it := items[i]
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if it.PipelineRunID != nil {
+				if runID := strings.TrimSpace(*it.PipelineRunID); runID != "" {
+					tctx, tcancel := context.WithTimeout(ctx, 30*time.Second)
+					if err := uc.pipelineUC.TerminateRun(tctx, runID); err != nil {
+						slog.Warn("terminateItems: terminate run failed", "runID", runID, "itemID", it.ID, "err", err)
+					}
+					tcancel()
+				}
+			}
+			if err := uc.repo.AdvanceItemAndCountAtomic(ctx, it.ID, "cancelled", "", "cancelled: batch stopped by user"); err != nil {
+				slog.Warn("terminateItems: cancel item failed", "itemID", it.ID, "err", err)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // RetryFailed retries all failed items for a backfill job.
@@ -1634,8 +1818,11 @@ func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, fo
 	if latestJob == nil {
 		return nil
 	}
-	if latestJob.Status == "paused" {
-		return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, "paused")
+	// paused and cancelled are user-set states that progress recompute must not
+	// clobber: paused is resumable, cancelled is terminal (CancelJob). Refresh
+	// the counts but keep the user's status.
+	if latestJob.Status == "paused" || latestJob.Status == "cancelled" {
+		return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, latestJob.Status)
 	}
 	if latestJob.PilotPhase == "running" && latestJob.PilotCount > 0 {
 		attemptedPilot := summary.Completed + summary.Failed

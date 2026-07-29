@@ -164,6 +164,23 @@ func (h *Handler) PauseJob(c *gin.Context) {
 	c.JSON(200, result)
 }
 
+// CancelJob handles POST /api/v1/backfill/:id/cancel — permanently terminate a
+// batch: halt dispatch, cancel all non-terminal items, terminate in-flight
+// workflows. Not resumable (unlike PauseJob).
+func (h *Handler) CancelJob(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.uc.CancelJob(c.Request.Context(), id)
+	if err != nil {
+		mapBackfillError(c, err)
+		return
+	}
+	c.JSON(200, result)
+}
+
 // ResumeJob handles POST /api/v1/backfill/:id/resume.
 func (h *Handler) ResumeJob(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

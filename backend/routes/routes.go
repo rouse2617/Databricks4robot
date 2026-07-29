@@ -618,6 +618,7 @@ func RegisterAll(
 			api.PUT("/dispatcher/clusters/:cluster", backfillHandler.PutDispatcherConfig)
 			api.DELETE("/dispatcher/clusters/:cluster", backfillHandler.DeleteDispatcherConfig)
 			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
+			api.POST("/backfill/:id/cancel", backfillHandler.CancelJob)
 			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
 			api.POST("/backfill/:id/rerun", backfillHandler.Rerun)
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)

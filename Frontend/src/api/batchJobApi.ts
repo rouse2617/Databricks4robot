@@ -173,6 +173,21 @@ export function resumeBatchJob(id: string): Promise<void> {
 	);
 }
 
+export interface CancelBatchJobResult {
+	status: string;
+	// in-flight runs being terminated + not-yet-submitted items being cancelled
+	// (snapshot at request time; convergence completes in the background).
+	inFlightCount?: number;
+	pendingCount?: number;
+}
+
+// cancelBatchJob permanently terminates a batch: halts dispatch, cancels every
+// non-terminal item, and terminates in-flight workflows. Not resumable (unlike
+// pauseBatchJob).
+export function cancelBatchJob(id: string): Promise<CancelBatchJobResult> {
+	return request<CancelBatchJobResult>("POST", `/backfill/${id}/cancel`, {});
+}
+
 export function retryFailedBatchItems(id: string): Promise<void> {
 	return request<{ status: string }>(
 		"POST",

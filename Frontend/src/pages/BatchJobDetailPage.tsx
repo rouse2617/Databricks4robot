@@ -36,6 +36,7 @@ import {
 	type BatchNodeSummary,
 	type BatchNodeSummaryNode,
 	batchJobProgress,
+	cancelBatchJob,
 	continueFullBatchJob,
 	deriveBatchJobStatus,
 	getBatchJob,
@@ -490,6 +491,7 @@ export default function BatchJobDetailPage() {
 	const [rerunPreviewLoading, setRerunPreviewLoading] = useState(false);
 	const [pauseModalOpen, setPauseModalOpen] = useState(false);
 	const [pauseStopRunning, setPauseStopRunning] = useState(false);
+	const [cancelModalOpen, setCancelModalOpen] = useState(false);
 	const [subtaskNodeFilter, setSubtaskNodeFilter] =
 		useState<SubtaskNodeFilter | null>(null);
 	jobRef.current = job;
@@ -648,6 +650,26 @@ export default function BatchJobDetailPage() {
 			await refresh({ force: true });
 		} catch (err) {
 			message.error(`停止失败：${String(err)}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const submitCancel = async () => {
+		if (!job) return;
+		setActionLoading("cancel");
+		try {
+			const result = await cancelBatchJob(job.id);
+			const inflight = result.inFlightCount ?? 0;
+			if (inflight > 0) {
+				message.success(`已终止批次，正在停止 ${inflight} 条运行中的子任务`);
+			} else {
+				message.success("已终止批次");
+			}
+			setCancelModalOpen(false);
+			await refresh({ force: true });
+		} catch (err) {
+			message.error(`终止失败：${String(err)}`);
 		} finally {
 			setActionLoading(null);
 		}
@@ -875,6 +897,17 @@ export default function BatchJobDetailPage() {
 								onClick={() => void runAction("resume")}
 							>
 								继续
+							</Button>
+						) : null}
+						{actualStatus === "running" || actualStatus === "paused" ? (
+							<Button
+								danger
+								type="primary"
+								icon={<PoweroffOutlined />}
+								loading={actionLoading === "cancel"}
+								onClick={() => setCancelModalOpen(true)}
+							>
+								终止
 							</Button>
 						) : null}
 						{job.failedCount > 0 ? (
@@ -1587,6 +1620,30 @@ export default function BatchJobDetailPage() {
 				>
 					两种都可稍后点「继续」恢复。「全部停止」对运行中的子任务发送 Argo
 					优雅停止信号（非删除），恢复时这些子任务从头重新下发。
+				</Text>
+			</Modal>
+
+			<Modal
+				title="终止批次"
+				open={cancelModalOpen}
+				onCancel={() => setCancelModalOpen(false)}
+				onOk={() => void submitCancel()}
+				okText="确认终止"
+				cancelText="取消"
+				okButtonProps={{ danger: true }}
+				confirmLoading={actionLoading === "cancel"}
+				destroyOnHidden
+			>
+				<Text>
+					终止会<strong>永久停止</strong>整个批次，且<strong>不可恢复</strong>：
+				</Text>
+				<ul style={{ marginTop: 8, paddingLeft: 20 }}>
+					<li>停止下发所有未开始的子任务</li>
+					<li>终止所有运行中的子任务（Argo terminate，杀掉在跑的 pod）</li>
+					<li>所有未完成子任务置为「已取消」终态</li>
+				</ul>
+				<Text type="secondary" style={{ fontSize: 12 }}>
+					已完成/已失败的子任务不受影响。如只想暂停并保留恢复能力，请改用「停止」。
 				</Text>
 			</Modal>
 		</div>

@@ -1120,6 +1120,54 @@ func TestPauseJob_StopRunning_DefersStopsToBackground(t *testing.T) {
 	deferred()
 }
 
+// CancelJob is terminal (not resumable): dispatch halts (job→cancelled), the
+// in-flight run is terminated, and BOTH the in-flight item and the
+// not-yet-submitted pending item move to the terminal "cancelled" state so a
+// later Resume cannot revive them. Exercised with an inline spawn + tiny settle
+// so the background convergence loop runs deterministically.
+func TestCancelJob_TerminatesInFlightAndCancelsAllItems(t *testing.T) {
+	runID := "run-1"
+	repo := &mockBackfillRepo{
+		jobs: map[string]*models.BackfillJob{
+			"job-1": {ID: "job-1", Status: "running", TotalCount: 2},
+		},
+		items: []models.BackfillItem{
+			{ID: "item-run", JobID: "job-1", AssetID: "a1", Status: "running", PipelineRunID: &runID},
+			{ID: "item-pending", JobID: "job-1", AssetID: "a2", Status: "pending"},
+		},
+	}
+	runRepo := &syncTestRunRepo{byID: map[string]*models.PipelineRun{
+		runID: {ID: runID, WorkflowName: "wf-1", Status: "Running", ArgoNamespace: "default"},
+	}}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+	uc.spawn = func(f func()) { f() }    // run convergence inline
+	uc.convergeSettle = time.Millisecond // no real wall-clock wait between rounds
+
+	result, err := uc.CancelJob(context.Background(), "job-1")
+	if err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if result.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", result.Status)
+	}
+	if result.InFlightCount != 1 {
+		t.Fatalf("InFlightCount = %d, want 1", result.InFlightCount)
+	}
+	if result.PendingCount != 1 {
+		t.Fatalf("PendingCount = %d, want 1", result.PendingCount)
+	}
+	if repo.jobs["job-1"].Status != "cancelled" {
+		t.Fatalf("job status = %q, want cancelled", repo.jobs["job-1"].Status)
+	}
+	for i := range repo.items {
+		if repo.items[i].Status != "cancelled" {
+			t.Fatalf("item %s status = %q, want cancelled", repo.items[i].ID, repo.items[i].Status)
+		}
+	}
+}
+
 // CYB-3491 P2 — the claim/reaper/worker-pool queue (and its P0 pool-recovery
 // stopgap) is deleted; dispatch is owned by the submitter (see submitter.go
 // and submitter_test.go).
