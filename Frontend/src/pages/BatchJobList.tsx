@@ -111,6 +111,21 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			.map((t) => ({ value: t.id, label: t.name }));
 	}, [jobs, templates]);
 
+	// CYB-4470 A.1: column-level filter options for the "资源池" column — only
+	// targets that actually appear in the current data set, mirroring the
+	// templateOptions pattern. The column's `filters` prop expects
+	// `{value, text}` rather than `{value, label}`.
+	const targetFilterOptions = useMemo(() => {
+		const used = new Set<string>();
+		for (const j of jobs) {
+			const tid = batchTargetId(j.filterJson);
+			if (tid) used.add(tid);
+		}
+		return targets
+			.filter((t) => used.has(t.id))
+			.map((t) => ({ value: t.id, text: t.name }));
+	}, [jobs, targets]);
+
 	const filteredJobs = useMemo(() => {
 		const q = nameFilter.trim().toLowerCase();
 		return jobs.filter((job) => {
@@ -197,10 +212,10 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "批次名称",
 			dataIndex: "name",
 			key: "name",
-			width: 320,
+			width: 340,
 			ellipsis: true,
 			render: (name: string, record: BatchJob) => (
-				<div style={{ minWidth: 0, maxWidth: 320 }}>
+				<div style={{ minWidth: 0, maxWidth: 340 }}>
 					<Text strong ellipsis={{ tooltip: name }}>
 						{name}
 					</Text>
@@ -288,6 +303,44 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			},
 		},
 		{
+			// CYB-4470 A.1: 资源池列 — exposes the pool name as a colored Tag so a
+			// 1920px+ view shows the pool at a glance. status drives the color
+			// (available → success, unavailable → error, disabled → default) and
+			// hover surfaces the cluster + namespace. `filters` is the column-level
+			// dropdown; `sorter` orders rows by target name (locale-aware).
+			title: "资源池",
+			key: "target",
+			width: 160,
+			filterMultiple: true,
+			filters: targetFilterOptions,
+			onFilter: (value, record) => batchTargetId(record.filterJson) === value,
+			sorter: (a, b) => {
+				const nameA =
+					targetMap.get(batchTargetId(a.filterJson) ?? "")?.name ?? "";
+				const nameB =
+					targetMap.get(batchTargetId(b.filterJson) ?? "")?.name ?? "";
+				return nameA.localeCompare(nameB, "zh");
+			},
+			render: (_: unknown, record: BatchJob) => {
+				const tid = batchTargetId(record.filterJson);
+				const target = tid ? targetMap.get(tid) : undefined;
+				if (!target) {
+					return <Text type="secondary">N/A</Text>;
+				}
+				const color =
+					target.status === "unavailable"
+						? "error"
+						: target.enabled === false
+							? "default"
+							: "success";
+				return (
+					<Tooltip title={`cluster=${target.cluster} · ns=${target.namespace}`}>
+						<Tag color={color}>{target.name}</Tag>
+					</Tooltip>
+				);
+			},
+		},
+		{
 			title: "优先级",
 			key: "priority",
 			width: 90,
@@ -335,7 +388,11 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			width: 180,
 			render: (_: unknown, record: BatchJob) => {
 				const finished = batchJobCompletionAt(record);
-				return finished ? dayjs(finished).format("YYYY-MM-DD HH:mm:ss") : "—";
+				return finished ? (
+					dayjs(finished).format("YYYY-MM-DD HH:mm:ss")
+				) : (
+					<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+				);
 			},
 		},
 		{
@@ -345,10 +402,14 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				</Tooltip>
 			),
 			key: "duration",
-			width: 100,
+			width: 80,
 			render: (_: unknown, record: BatchJob) => {
 				const secs = batchJobRunDurationSeconds(record);
-				return secs === null ? "—" : formatDurationSeconds(secs);
+				return secs === null ? (
+					<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+				) : (
+					formatDurationSeconds(secs)
+				);
 			},
 		},
 		{
@@ -364,16 +425,32 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 				(a.totalDurationMs ?? 0) - (b.totalDurationMs ?? 0),
 			render: (_: unknown, record: BatchJob) => {
 				const ms = record.totalDurationMs ?? 0;
-				return ms > 0 ? formatDurationMs(ms) : "—";
+				return ms > 0 ? (
+					formatDurationMs(ms)
+				) : (
+					<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+				);
 			},
 		},
 		{
 			title: "所属用户",
 			dataIndex: "createdBy",
 			key: "createdBy",
-			width: 160,
+			width: 140,
 			ellipsis: true,
-			render: (value?: string) => value || "—",
+			// CYB-4470 A.2: ellipsis alone hides truncated email addresses; wrap
+			// in a Tooltip so hover always surfaces the full string, and dim
+			// the empty state to match the rest of the row's placeholders.
+			render: (value?: string) =>
+				value ? (
+					<Tooltip title={value}>
+						<Text ellipsis={{ tooltip: value }} style={{ maxWidth: 140 }}>
+							{value}
+						</Text>
+					</Tooltip>
+				) : (
+					<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+				),
 		},
 		{
 			title: "操作",
