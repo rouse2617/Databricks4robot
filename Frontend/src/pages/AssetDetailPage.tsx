@@ -29,13 +29,12 @@ import {
 	type EvalResultItem,
 	evalApi,
 } from "../api/eval";
-import type { AlgoEvent, AlgoStatus, Asset, AssetEvent } from "../api/types";
+import type { Asset, AssetEvent } from "../api/types";
 import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
 
 const ActionsTimelineTab = lazy(
 	() => import("../components/asset-detail/ActionsTimelineTab"),
 );
-const AlgoTab = lazy(() => import("../components/asset-detail/AlgoTab"));
 const AssetEventsTab = lazy(
 	() => import("../components/asset-detail/AssetEventsTab"),
 );
@@ -78,7 +77,6 @@ const { useBreakpoint } = Grid;
 // CYB-3294: valid tab keys for ?tab= URL sync (must match tabItems keys below).
 const ASSET_DETAIL_TAB_KEYS = new Set([
 	"overview",
-	"algo",
 	"events",
 	"eval-metrics",
 	"actions",
@@ -88,35 +86,6 @@ const ASSET_DETAIL_TAB_KEYS = new Set([
 	"runs",
 	"files",
 ]);
-
-/** Parse algo_results map into structured algo info list. */
-function parseAlgoResults(algoResults: Record<string, string> | undefined) {
-	if (!algoResults) return [];
-	const algos = new Map<string, Record<string, string>>();
-	for (const [k, v] of Object.entries(algoResults)) {
-		const colonIdx = k.indexOf(":");
-		if (colonIdx === -1) continue;
-		const algoKey = k.substring(0, colonIdx);
-		const field = k.substring(colonIdx + 1);
-		if (!algos.has(algoKey)) algos.set(algoKey, {});
-		const next = algos.get(algoKey);
-		if (next) {
-			next[field] = v;
-		}
-	}
-	return Array.from(algos.entries()).map(([key, fields]) => ({
-		key,
-		name: key.split("@")[0],
-		version: key.split("@")[1] ?? "",
-		status: (fields.status ?? "pending") as AlgoStatus,
-		started_at: fields.started_at ?? fields.at,
-		finished_at: fields.finished_at,
-		method: fields.method,
-		run_id: fields.run_id,
-		output_uri: fields.output_uri,
-		reason: fields.reason,
-	}));
-}
 
 export default function AssetDetailPage() {
 	const screens = useBreakpoint();
@@ -150,9 +119,6 @@ export default function AssetDetailPage() {
 	const [asset, setAsset] = useState<Asset | null>(null);
 	const [assetError, setAssetError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [algoEvents, setAlgoEvents] = useState<AlgoEvent[]>([]);
-	const [algoEventsCursor, setAlgoEventsCursor] = useState<number | null>(null);
-	const [algoEventsLoading, setAlgoEventsLoading] = useState(false);
 	const [allEvents, setAllEvents] = useState<AssetEvent[]>([]);
 	const [allEventsCursor, setAllEventsCursor] = useState<number | null>(null);
 	const [allEventsLoading, setAllEventsLoading] = useState(false);
@@ -234,26 +200,6 @@ export default function AssetDetailPage() {
 		[id, msg, navigate],
 	);
 
-	const loadAlgoEvents = useCallback(
-		(cursor?: number) => {
-			if (!id) return;
-			setAlgoEventsLoading(true);
-			assetsApi
-				.listAlgoEvents(id, undefined, cursor, 20)
-				.then((resp) => {
-					setAlgoEvents((prev) =>
-						cursor ? [...prev, ...(resp.items ?? [])] : (resp.items ?? []),
-					);
-					setAlgoEventsCursor(resp.next_cursor ?? null);
-				})
-				.catch(() => {
-					if (!cursor) setAlgoEvents([]);
-				})
-				.finally(() => setAlgoEventsLoading(false));
-		},
-		[id],
-	);
-
 	const loadAllEvents = useCallback(
 		(cursor?: number) => {
 			if (!id) return;
@@ -276,7 +222,6 @@ export default function AssetDetailPage() {
 
 	const refresh = useCallback(() => {
 		loadAsset({ background: false });
-		loadAlgoEvents();
 		loadAllEvents();
 		if (id) {
 			setEvalLoading(true);
@@ -291,7 +236,7 @@ export default function AssetDetailPage() {
 				})
 				.finally(() => setEvalLoading(false));
 		}
-	}, [id, loadAlgoEvents, loadAllEvents, loadAsset]);
+	}, [id, loadAllEvents, loadAsset]);
 
 	const refreshAfterTagUpdate = useCallback(() => {
 		loadAsset({ background: true });
@@ -302,8 +247,6 @@ export default function AssetDetailPage() {
 		setDidInitialLoad(false);
 		setAsset(null);
 		setAssetError(null);
-		setAlgoEvents([]);
-		setAlgoEventsCursor(null);
 		setAllEvents([]);
 		setAllEventsCursor(null);
 		setEvalResults([]);
@@ -343,36 +286,13 @@ export default function AssetDetailPage() {
 		return <Empty description="资产未找到" />;
 	}
 
-	const algoList = parseAlgoResults(asset.algo_results);
-
 	const tabItems = [
 		{
 			key: "overview",
 			label: "概览",
 			children: <OverviewTab asset={asset} />,
 		},
-		{
-			key: "algo",
-			label: algoEventsLoading
-				? "算法处理 (...)"
-				: `算法处理 (${algoList.length})`,
-			children: (
-				<Suspense fallback={TAB_FALLBACK}>
-					<AlgoTab
-						assetId={asset.asset_id}
-						algoList={algoList}
-						events={algoEvents}
-						eventsLoading={algoEventsLoading}
-						hasMoreEvents={algoEventsCursor !== null}
-						onLoadMoreEvents={() => {
-							if (algoEventsCursor !== null) loadAlgoEvents(algoEventsCursor);
-						}}
-						onRefresh={refresh}
-						onJumpToPreviewTime={jumpToPreviewTime}
-					/>
-				</Suspense>
-			),
-		},
+
 		{
 			key: "events",
 			label: allEventsLoading
@@ -478,7 +398,7 @@ export default function AssetDetailPage() {
 			// answer without an assets-table round trip; falls back to the
 			// short asset_id for assets that don't have a grace mirror.
 			key: "runs",
-			label: "运行历史",
+			label: "运行记录",
 			children: (
 				<Suspense fallback={TAB_FALLBACK}>
 					<RunsTab assetId={asset.grace_video_id || asset.asset_id} />
