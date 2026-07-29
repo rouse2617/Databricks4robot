@@ -66,9 +66,12 @@ served by Nginx (`Frontend/`, port `80`) — are packaged and shipped through:
 - **Kubernetes / GKE** (`deploy/k8s/`) — Kustomize bases and overlays for backend,
   frontend, in-cluster dev dependencies, Gateway API routing, jobs, lakehouse, and
   monitoring, applied to the `cyber-databrew-dev` and `cyber-databrew-prod` namespaces.
-- **Cloud Run dev scripts** (`deploy/cloudrun/`) — a non-breaking migration path that
+- **Cloud Run scripts** (`deploy/cloudrun/`) — a non-breaking migration path that
   deploys selected services (backend, frontend, mcap-preview) to managed Cloud Run, often
-  sourcing env from the existing GKE ConfigMap/Secret.
+  sourcing env from the existing GKE ConfigMap/Secret. `backend-dev.sh` is the canonical
+  deployer; `backend-prod.sh` (CYB-4427) is a thin wrapper that exports prod overrides and
+  `exec`s it, so both environments share one code path. See
+  [Cloud Run](../operations/cloud-run.md) for the full env-override contract.
 - **Terraform IaC** (`deploy/iac/terraform/`) — Layer A infrastructure whose lifecycle is
   independent of application releases (Google service accounts, IAM, Workload Identity).
 - **Tekton Pipelines-as-Code** (`.tekton/`) — CI/CD that builds backend/frontend images
@@ -102,6 +105,9 @@ manifests own the application (Layer B), as documented in the Terraform README.
   ConfigMap with an in-cluster `ELASTICSEARCH_URL`.
 - `deploy/k8s/dev-deps/` — in-cluster Postgres + Elasticsearch `StatefulSet`s and an
   internal LoadBalancer exposing ES to VPC callers such as Cloud Run.
+- `deploy/k8s/prod-deps/` (CYB-4427) — the prod equivalent, **Elasticsearch only** (prod
+  Postgres is CloudSQL): ES `StatefulSet` + headless `Service` + internal LoadBalancer,
+  pinned to namespace `cyber-databrew-prod`.
 - `deploy/k8s/frontend/` — frontend `Deployment` + `Service` + `Ingress` + Nginx ConfigMap.
 - `deploy/k8s/gateway/` — Gateway API `HTTPRoute`s, `ReferenceGrant`, and `GCPBackendPolicy`
   manifests bound to a shared `developer-gateway`.

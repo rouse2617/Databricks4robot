@@ -116,6 +116,14 @@ Kustomize target applied with `kubectl apply -k <dir>`.
   paths. Grafana dashboards are loaded via a `configMapGenerator`.
 - **`dev-deps/`** — PostgreSQL and Elasticsearch `StatefulSet`s (with PVCs) plus
   an internal `LoadBalancer` (`elasticsearch-ilb`) for VPC callers.
+- **`prod-deps/`** (CYB-4427) — the prod counterpart of `dev-deps/`, but
+  **Elasticsearch only** (prod Postgres is CloudSQL, not in-cluster): the ES
+  `StatefulSet` + headless `Service` + internal `LoadBalancer` (`elasticsearch-ilb`,
+  IP `10.2.0.33`, which `backend-prod.sh` sets as `ELASTICSEARCH_URL`). Its
+  `kustomization.yaml` pins `namespace: cyber-databrew-prod`, so
+  `kubectl apply -k deploy/k8s/prod-deps/` lands it there. Prod ES was never
+  deployed before CYB-4427 — asset search silently fell back to the Postgres
+  count until it existed.
 - **`jobs/`** — one-off `Job`/`Pod` manifests that initialise, backfill, and
   build the BigLake Iceberg lakehouse tables, and run smoke/seed tasks.
 - **`namespaces.yaml`** — the two namespaces.

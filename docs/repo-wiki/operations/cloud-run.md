@@ -143,6 +143,46 @@ calls `gcloud run deploy` on port 8080, printing the resulting `status.url`.
 - [deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh#L80-L141)
 - [deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh#L263-L308)
 
+#### `backend-prod.sh` — backend prod deploy (CYB-4427)
+
+`backend-prod.sh` is a thin wrapper over `backend-dev.sh`: it exports the
+prod-specific overrides and `exec`s the shared script, so there is exactly one
+deploy implementation and prod cannot drift from dev's logic. `deploy-prod.yml`
+checks out the release-tagged ref and runs `USE_EXISTING_IMAGE=true IMAGE=<tag>
+bash deploy/cloudrun/backend-prod.sh` (image is prebuilt + pushed on the build
+VM). Before CYB-4427 prod used a bare `gcloud run deploy` that set only two env
+vars, so prod env had to be hand-maintained; the wrapper now sets it in code.
+
+Key prod overrides: `SERVICE_NAME=cyber-databrew-backend-prod`,
+`SOURCE_K8S_ENV=false` (prod has no in-cluster ConfigMap to merge), prod DB
+(`172.27.160.9` / `cyber_databrew_prod`), `ELASTICSEARCH_URL=http://10.2.0.33:9200`
+(prod ES internal LB), `ARGO_SERVER_URL` left empty so the default-cluster
+fallback resolves to **CRD mode** (same as dev), Grace sync disabled, and a
+pinned runtime `SERVICE_ACCOUNT=cyber-databrew-cloudrun-prod@…` — the identity
+the K8s/Argo CRD client authenticates as.
+
+To support this without forking logic, `backend-dev.sh` gained four additive,
+default-noop hooks — `EXTRA_ENV_VARS`, `EXTRA_SECRET_MAPPINGS`,
+`SERVICE_ACCOUNT`, and `DRY_RUN` (renders the resolved env + gcloud args and
+exits without deploying) — and five disable-able defaults switched from
+`${V:-default}` to `${V-default}` so an explicit empty override actually
+disables the feature (dev never sets them, so dev is unchanged). Prod
+deliberately does NOT set `PIPELINE_RESOURCE_MAX_*` (dev's ceilings would reject
+larger prod pipeline requests).
+
+> **Prod K8s identity note.** Unlike dev — whose Cloud Run GSA maps via Workload
+> Identity to the KSA `cyber-databrew-backend-argo` — the prod Cloud Run GSA
+> (`cyber-databrew-cloudrun-prod`) authenticates to the GKE API **as the GSA
+> email itself**, so prod's workflow / pod-log / elasticquota / configmap-list
+> RBAC is granted directly to that email (hand-applied during the 2026-07-29
+> CRD cutover; codifying it in Terraform + manifests is a CYB-4427 follow-up).
+
+**Section sources**
+- [deploy/cloudrun/backend-prod.sh](file://deploy/cloudrun/backend-prod.sh)
+- [deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh#L200-L201) (EXTRA_* hooks)
+- [deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh#L682-L694) (DRY_RUN)
+- [.github/workflows/deploy-prod.yml](file://.github/workflows/deploy-prod.yml)
+
 #### `frontend-dev.sh` — frontend dev deploy
 
 The frontend script always rebuilds two images: a SPA **base** image
