@@ -81,6 +81,15 @@ export ARGO_RUN_WEBHOOK_URL_OVERRIDE="${ARGO_RUN_WEBHOOK_URL_OVERRIDE:-https://c
 # Prod has no run-webhook token secret today (anonymous webhook). Do not bind one.
 export ARGO_RUN_WEBHOOK_TOKEN_SECRET="${ARGO_RUN_WEBHOOK_TOKEN_SECRET:-}"
 
+# ── Argo workflow CR retention (TTL after completion) ────────────────────────
+# Delivery generates ~1.6k workflows/day. The transpiler code default is 30d
+# (transpiler.DefaultTTLSecondsAfterCompletion), which piled up ~19k Succeeded
+# workflow CRs and grows the controller's in-memory cache. 24h keeps the backlog
+# to roughly one day. backend-dev.sh defaults this override to 3d (259200); prod
+# pins 24h explicitly. Applies to NEW workflows only — existing CRs keep the TTL
+# baked into their spec at creation time.
+export ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-86400}"
+
 # ── Kubernetes client (same cyber-clust cluster; Workload Identity token) ────
 export K8S_API_ENDPOINT_OVERRIDE="${K8S_API_ENDPOINT_OVERRIDE:-https://34.59.48.233}"
 export K8S_AUDIENCE_OVERRIDE="${K8S_AUDIENCE_OVERRIDE:-https://34.59.48.233}"
