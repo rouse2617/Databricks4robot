@@ -1,4 +1,6 @@
 import {
+	CopyOutlined,
+	EyeOutlined,
 	HistoryOutlined,
 	LockOutlined,
 	MoreOutlined,
@@ -58,6 +60,7 @@ import {
 import { deleteWorkflow, type WorkflowSummary } from "../api/workflowApi";
 import AssetIdLink from "../components/common/AssetIdLink";
 import { DurationPanel } from "../components/common/DurationPanel";
+import { HoverActionBar, type HoverAction } from "../components/common/HoverActionBar";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
 import { isCanonicalAssetId, isUUID } from "../lib/assetId";
 import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
@@ -470,6 +473,34 @@ const formatVideoDurationSec = (sec?: number): string => {
 	return `${s}秒`;
 };
 
+// CYB-4477 P2-2：行 hover 快捷操作"复制 ID" 复用 navigator.clipboard；
+// 老浏览器或非安全上下文可能不可用 —— 失败时静默回退到 textarea + execCommand
+// 让操作在本地也能跑通（test 环境没 clipboard API 时同样能 resolve(false)）。
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+	if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch {
+			// fall through to legacy fallback
+		}
+	}
+	if (typeof document === "undefined") return false;
+	try {
+		const textarea = document.createElement("textarea");
+		textarea.value = text;
+		textarea.style.position = "fixed";
+		textarea.style.opacity = "0";
+		document.body.appendChild(textarea);
+		textarea.select();
+		const ok = document.execCommand("copy");
+		document.body.removeChild(textarea);
+		return ok;
+	} catch {
+		return false;
+	}
+};
+
 const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 	const labels = labelsForRun(run);
 	return {
@@ -664,6 +695,11 @@ export function WorkflowExecutionList({
 	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [compareOpen, setCompareOpen] = useState(false);
 	const [compareItems, setCompareItems] = useState<ExecutionRecord[]>([]);
+	// CYB-4477 P2-2：行 hover 快捷操作栏 —— 记录当前 hover 行的 executionKey，
+	// 配合 <Table onRow> 的 mouse enter/leave 控制 HoverActionBar 的可见性。
+	const [hoveredExecutionKey, setHoveredExecutionKey] = useState<string | null>(
+		null,
+	);
 	const [pendingOperation, setPendingOperation] = useState<{
 		record: ExecutionRecord;
 		operation: WorkflowOperationConfig;
@@ -1552,8 +1588,13 @@ export function WorkflowExecutionList({
 				dataIndex: "owner",
 				key: "owner",
 				width: 160,
+				// CYB-4477 P2-4：按 owner locale-aware 排序 —— 中文用户也走 "zh"
+				// 排序规则，中英混排时按拼音首字母归位，比裸 localeCompare 更稳定。
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-					((a as any).owner ?? "").localeCompare((b as any).owner ?? ""),
+					((a as ExecutionRecord).owner ?? "").localeCompare(
+						(b as ExecutionRecord).owner ?? "",
+						"zh",
+					),
 				render: (owner: string) =>
 					owner ? (
 						// CYB-4470 B.1：复制图标 hover 才显现。
@@ -1729,6 +1770,49 @@ export function WorkflowExecutionList({
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
+				// CYB-4477 P2-2：行 hover 快捷操作栏 — 在"操作"列前面加一列紧凑
+				// 的 hover-only 操作组（查看详情 / 复制 ID）。默认 opacity:0，
+				// 鼠标进入该行时浮现，无需移动到右侧操作列也能直接命中高频动作。
+				title: "快捷操作",
+				key: "quickActions",
+				width: 90,
+				render: (_: unknown, record: ExecutionRecord) => {
+					const executionKey = executionKeyForRecord(record);
+					const hovered = hoveredExecutionKey === executionKey;
+					// 复制 ID：runId 优先，回退到 name（与名称列 copyId 同口径）。
+					const copyId = record.runId ?? record.name;
+					const actions: HoverAction[] = [
+						{
+							key: "open-detail",
+							label: "查看详情",
+							icon: <EyeOutlined />,
+							onClick: (event) => {
+								event.stopPropagation();
+								openWorkflowDetail(record);
+							},
+						},
+						{
+							key: "copy-id",
+							label: "复制 ID",
+							icon: <CopyOutlined />,
+							onClick: (event) => {
+								event.stopPropagation();
+								void copyTextToClipboard(copyId).then((ok) => {
+									if (ok) {
+										messageApiRef.current.success("已复制");
+									} else {
+										messageApiRef.current.error("复制失败，请检查浏览器权限");
+									}
+								});
+							},
+						},
+					];
+					return (
+						<HoverActionBar actions={actions} hovered={hovered} />
+					);
+				},
+			},
+			{
 				// CYB-4470 B.7：操作列清理 — "模板 / 查看" 按钮移除（批次名称承担
 				// 查看入口，操作 ⁝ 下拉收纳次要动作），仅保留 batch scope 必需的执行
 				// 历史快捷按钮。列宽相应从 110 → 100。
@@ -1835,6 +1919,8 @@ export function WorkflowExecutionList({
 		messageApi,
 		navigate,
 		resolvedDurationByUUID,
+		// CYB-4477 P2-2：hover 状态变化需重建 columns 让快捷操作栏拿到最新值。
+		hoveredExecutionKey,
 	]);
 
 	const showSkeleton = !initializedOnce;
@@ -2075,6 +2161,11 @@ export function WorkflowExecutionList({
 								}
 								openWorkflowDetail(record);
 							},
+							// CYB-4477 P2-2：记录当前 hover 行的 executionKey，
+							// 供"快捷操作"列的 HoverActionBar 控制 opacity 0/1。
+							onMouseEnter: () =>
+								setHoveredExecutionKey(executionKeyForRecord(record)),
+							onMouseLeave: () => setHoveredExecutionKey(null),
 							style: { cursor: "pointer" },
 						})}
 						pagination={{

@@ -20,7 +20,6 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
-import { BatchProgressCell } from "../components/pipeline/BatchProgressCell";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -39,12 +38,18 @@ import {
 	listPipelines,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
+import {
+	type BatchAction,
+	BatchActionBar,
+} from "../components/pipeline/BatchActionBar";
+import { BatchProgressCell } from "../components/pipeline/BatchProgressCell";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import {
 	type BatchExportStatusFilter,
 	batchJobCompletionAt,
 	batchJobCreatedAtMs,
 	batchJobRunDurationSeconds,
+	batchJobTotalWaitSeconds,
 	copyAssetIdsToClipboard,
 	exportAssetIdsCsv,
 	fetchAssetIdsForBatches,
@@ -86,6 +91,11 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	// CYB-3800: batches selected for the multi-batch asset-id export.
 	const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
 	const [exportBusy, setExportBusy] = useState(false);
+	// CYB-4477 P2-1: shared busy flag for the floating BatchActionBar's
+	// retry/cancel/pause waves. Kept separate from `exportBusy` because the
+	// "export" path in the bar reuses the existing fetchAssetIdsForBatches
+	// pipeline (which owns `exportBusy`) and reuses the exportDropdown's logic.
+	const [batchActionBusy, setBatchActionBusy] = useState(false);
 
 	const templateNameById = Object.fromEntries(
 		templates.map((item) => [item.id, item.name]),
@@ -165,6 +175,71 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			void refresh();
 		}
 	}, [active, refresh]);
+
+	// CYB-4477 P2-1: derived selected-list — BatchActionBar needs the full
+	// records (status / failedCount per row decide which buttons to enable);
+	// IDs are passed separately into `handleBatchAction` from inside the bar.
+	const selectedJobs = useMemo(
+		() =>
+			selectedRowKeys
+				.map((id) => jobs.find((j) => j.id === id))
+				.filter((j): j is BatchJob => Boolean(j)),
+		[selectedRowKeys, jobs],
+	);
+
+	// CYB-4477 P2-1: bulk action dispatcher — loops per-job and reuses the
+	// same per-job API as the row's "操作" column so error semantics stay
+	// identical. Modal 二次确认 is intentionally deferred (see PR notes).
+	const handleBatchAction = useCallback(
+		async (action: BatchAction, ids: string[]) => {
+			if (ids.length === 0) return;
+			// "export" routes through the existing dropdown flow — we
+			// intentionally re-use the same fetchAssetIdsForBatches pipeline so
+			// the multi-batch progress toast / status-filter submenu keeps
+			// working. The bar's `export` button is a shortcut, not a new flow.
+			if (action === "export") {
+				setExportBusy(true);
+				try {
+					const idsOut = await fetchAssetIdsForBatches(ids, {
+						status: statusFilterServerValue("all"),
+						filterFn: statusFilterPredicate("all"),
+					});
+					if (idsOut.length === 0) {
+						message.info("所选批次没有可导出的资产 ID");
+						return;
+					}
+					exportAssetIdsCsv(idsOut, `batch-multi-${ids.length}`);
+					message.success(
+						`已导出 ${idsOut.length} 个资产 ID（来自 ${ids.length} 个批次）`,
+					);
+				} catch (err) {
+					message.error(`拉取资产 ID 失败：${String(err)}`);
+				} finally {
+					setExportBusy(false);
+				}
+				return;
+			}
+			setBatchActionBusy(true);
+			try {
+				for (const id of ids) {
+					if (action === "retry") await retryFailedBatchItems(id);
+					if (action === "pause")
+						await pauseBatchJob(id, { stopRunning: false });
+					if (action === "cancel")
+						await pauseBatchJob(id, { stopRunning: true });
+				}
+				const label =
+					action === "retry" ? "重试" : action === "pause" ? "暂停" : "取消";
+				message.success(`${label} ${ids.length} 个批次已提交`);
+				await refresh();
+			} catch (err) {
+				message.error(`批量操作失败：${String(err)}`);
+			} finally {
+				setBatchActionBusy(false);
+			}
+		},
+		[message, refresh],
+	);
 
 	// Auto-refresh when there are running/paused jobs — but only while the tab
 	// is visible (CYB-3486): a backgrounded list used to poll every 10s.
@@ -264,6 +339,11 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "进度",
 			key: "progress",
 			width: 200,
+			// CYB-4477 P2-4: sort by failedCount so operators can pin
+			// all-failed / high-failure rows to the top of the list — far more
+			// actionable than the default createdAt ordering when triaging.
+			sorter: (a, b) => (a.failedCount || 0) - (b.failedCount || 0),
+			sortDirections: ["descend", "ascend"],
 			render: (_: unknown, record: BatchJob) => (
 				<BatchProgressCell job={record} />
 			),
@@ -397,18 +477,41 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		},
 		{
 			title: (
-				<Tooltip title="运行耗时:首个子任务开始 → 最后一个子任务完成,不含提交排队与暂停等待">
+				<Tooltip title="执行耗时 · 含等待时间（创建→完成减去执行）">
 					<span>耗时</span>
 				</Tooltip>
 			),
 			key: "duration",
-			width: 80,
+			width: 100,
+			sorter: (a, b) => {
+				// `?? -1` pushes running / spanless jobs (null duration) to the
+				// top of an ascending sort — same shape as the "总时长" sorter,
+				// where running jobs sort as 0 seconds.
+				const ra = batchJobRunDurationSeconds(a) ?? -1;
+				const rb = batchJobRunDurationSeconds(b) ?? -1;
+				return ra - rb;
+			},
+			sortDirections: ["descend", "ascend"],
 			render: (_: unknown, record: BatchJob) => {
-				const secs = batchJobRunDurationSeconds(record);
-				return secs === null ? (
-					<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
-				) : (
-					formatDurationSeconds(secs)
+				// CYB-4477 P2-3: surface the queue/pause wait time as a hover
+				// tooltip next to the actual run duration so users can
+				// distinguish a 5-minute "ran fast" from a 5-minute "took a
+				// long time but mostly waited". Wait is never shown when null
+				// (running / no subtask span / older rows missing createdAt).
+				const real = batchJobRunDurationSeconds(record);
+				if (real === null) {
+					return (
+						<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+					);
+				}
+				const wait = batchJobTotalWaitSeconds(record);
+				const tip = wait
+					? `${formatDurationSeconds(real)} (等待 ${formatDurationSeconds(wait)})`
+					: formatDurationSeconds(real);
+				return (
+					<Tooltip title={tip}>
+						<span>{formatDurationSeconds(real)}</span>
+					</Tooltip>
 				);
 			},
 		},
@@ -438,6 +541,13 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			key: "createdBy",
 			width: 140,
 			ellipsis: true,
+			// CYB-4477 P2-4: locale-aware sort so a Chinese display name
+			// ("张三") and a Latin email ("alice@…") both land in the
+			// expected bucket; null/undefined clustered at one end by the
+			// empty-string default. Mirrors the "资源池" column's sorter.
+			sorter: (a, b) =>
+				(a.createdBy ?? "").localeCompare(b.createdBy ?? "", "zh"),
+			sortDirections: ["descend", "ascend"],
 			// CYB-4470 A.2: ellipsis alone hides truncated email addresses; wrap
 			// in a Tooltip so hover always surfaces the full string, and dim
 			// the empty state to match the rest of the row's placeholders.
@@ -722,30 +832,42 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			) : jobs.length === 0 ? (
 				<Empty description="暂无批量任务。在「运行流水线」弹窗中选择 2 个及以上资产后会自动创建。" />
 			) : (
-				<Table
-					rowKey="id"
-					loading={loading}
-					columns={columns}
-					dataSource={filteredJobs}
-					scroll={{ x: 1270 }}
-					pagination={{ pageSize: 20, showSizeChanger: true }}
-					// CYB-3800: multi-select drives the bulk export button above.
-					rowSelection={{
-						selectedRowKeys,
-						onChange: (keys) => setSelectedRowKeys(keys as string[]),
-					}}
-					onRow={(record) => ({
-						// The row-level click drills into the batch detail. The
-						// checkbox is rendered outside the row's onClick target so
-						// selecting doesn't navigate; explicit action buttons in
-						// the operation column stop propagation themselves.
-						onClick: () =>
-							navigate(`/pipeline/batch/${record.id}`, {
-								state: batchJobDetailLocationState(),
-							}),
-						style: { cursor: "pointer" },
-					})}
-				/>
+				<>
+					{/* CYB-4477 P2-1: floating batch action bar — renders nothing
+						unless ≥ 1 row is ticked. `busy` covers both
+						export-busy (the bar's own `export` action reuses the
+						existing export pipeline) and the bar's own
+						retry/pause/cancel wave. */}
+					<BatchActionBar
+						selectedJobs={selectedJobs}
+						busy={batchActionBusy || exportBusy}
+						onAction={handleBatchAction}
+					/>
+					<Table
+						rowKey="id"
+						loading={loading}
+						columns={columns}
+						dataSource={filteredJobs}
+						scroll={{ x: 1270 }}
+						pagination={{ pageSize: 20, showSizeChanger: true }}
+						// CYB-3800: multi-select drives the bulk export button above.
+						rowSelection={{
+							selectedRowKeys,
+							onChange: (keys) => setSelectedRowKeys(keys as string[]),
+						}}
+						onRow={(record) => ({
+							// The row-level click drills into the batch detail. The
+							// checkbox is rendered outside the row's onClick target so
+							// selecting doesn't navigate; explicit action buttons in
+							// the operation column stop propagation themselves.
+							onClick: () =>
+								navigate(`/pipeline/batch/${record.id}`, {
+									state: batchJobDetailLocationState(),
+								}),
+							style: { cursor: "pointer" },
+						})}
+					/>
+				</>
 			)}
 		</div>
 	);
