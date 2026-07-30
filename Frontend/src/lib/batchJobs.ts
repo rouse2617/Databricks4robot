@@ -63,6 +63,23 @@ export function batchJobRunDurationSeconds(job: BatchJob): number | null {
 	return secs >= 0 ? secs : null;
 }
 
+/**
+ * Wait time in seconds = wall-clock (creation → runFinishedAt) minus real run
+ * span. Captures the time spent in queue / submit / pause not actually
+ * executing subtasks. Null when the batch lacks either a run span or a
+ * creation timestamp, or when the wait would be negative (which would only
+ * happen with a malformed backend timestamp).
+ *
+ * Used by the BatchJobList "耗时（含等待）" column to surface the wait time in
+ * a Tooltip next to the actual run duration (CYB-4477).
+ */
+export function batchJobTotalWaitSeconds(job: BatchJob): number | null {
+	const real = batchJobRunDurationSeconds(job);
+	if (real === null || !job.createdAt || !job.runFinishedAt) return null;
+	const wall = dayjs(job.runFinishedAt).diff(dayjs(job.createdAt), "second");
+	return wall > real ? wall - real : null;
+}
+
 export function formatDurationSeconds(secs: number): string {
 	if (secs < 60) return `${secs}s`;
 	const m = Math.floor(secs / 60);
