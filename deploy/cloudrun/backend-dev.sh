@@ -97,8 +97,10 @@ DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
 # default-cluster env fallback (factory.go configForCluster) resolves to CRD
 # mode; set ARGO_SERVER_URL_OVERRIDE only to fall back to argo-server.
 ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-}"
-# Completed Argo workflow CR retention (secondsAfterCompletion). Default 30 days.
-ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-2592000}"
+# Completed Argo workflow CR retention (secondsAfterCompletion). 24h keeps the
+# argo controller's in-memory cache small — the 30d transpiler default piled up
+# ~19k Succeeded CRs on the delivery backend. Applies to new workflows only.
+ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE="${ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION_OVERRIDE:-86400}"
 # Argo run status push webhook (CYB-3058). ENABLED: the container curl exit hook
 # is injected into every backend-initiated workflow and pokes this URL on
 # terminal phase; DataBrew re-reads authoritative state from Argo. Validated
