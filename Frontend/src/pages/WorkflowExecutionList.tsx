@@ -1,6 +1,4 @@
 import {
-	EyeOutlined,
-	ForkOutlined,
 	HistoryOutlined,
 	LockOutlined,
 	MoreOutlined,
@@ -85,6 +83,7 @@ import {
 	getDisplayLabelEntries,
 	serializeWorkflowLabel,
 } from "../lib/workflowLabels";
+import { STATUS_TAG_PALETTE } from "../lib/designTokens";
 import { RunComparisonModal } from "./RunComparisonModal";
 
 const { RangePicker } = DatePicker;
@@ -176,23 +175,18 @@ const parseDate = (value: string | null): Dayjs | null => {
 };
 
 const renderTimestamp = (value?: string) => {
-	if (!value) return "-";
+	if (!value) {
+		return (
+			<span style={{ color: "#bfbfbf", fontStyle: "italic" }}>—</span>
+		);
+	}
 	const parsed = dayjs(value);
 	if (!parsed.isValid()) return new Date(value).toLocaleString();
-	// 瘦身：相对时间为主（最易扫读），精简绝对时间为辅（去秒，同年省略年份），
-	// 完整时间放到 Tooltip，避免在窄列里堆叠两行长数字。
-	const sameYear = parsed.year() === dayjs().year();
-	const compactAbsolute = parsed.format(
-		sameYear ? "MM-DD HH:mm" : "YYYY-MM-DD HH:mm",
-	);
+	// CYB-4470 B.4：降行高——相对时间为主（最易扫读），完整时间折叠进 Tooltip，
+	// 避免双行堆叠压低一屏可见数据量。
 	return (
 		<Tooltip title={parsed.format("YYYY-MM-DD HH:mm:ss")}>
-			<div style={{ lineHeight: 1.35 }}>
-				<div>{parsed.fromNow()}</div>
-				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-					{compactAbsolute}
-				</Typography.Text>
-			</div>
+			<span>{parsed.fromNow()}</span>
 		</Tooltip>
 	);
 };
@@ -285,11 +279,19 @@ const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
 			</Tooltip>
 		);
 	}
+	// CYB-4470 B.6：微小成本格式化——0 → "$0.00"，< $0.001 → "<$0.001" 消除
+	// "$0.0000 是免费还是算错"的歧义；其它按 < $0.01 用 4 位精度，否则 2 位。
+	const display =
+		cost === 0
+			? "$0.00"
+			: cost < 0.001
+				? "<$0.001"
+				: cost < 0.01
+					? `$${cost.toFixed(4)}`
+					: `$${cost.toFixed(2)}`;
 	return (
 		<Tooltip title="估算总成本，非 GCP Billing 最终对账金额">
-			<Typography.Text strong>
-				${cost.toFixed(cost < 0.01 ? 4 : 2)}
-			</Typography.Text>
+			<Typography.Text strong>{display}</Typography.Text>
 		</Tooltip>
 	);
 };
@@ -575,9 +577,8 @@ export function WorkflowExecutionList({
 	>({});
 	const [templateVersionsByExecutionKey, setTemplateVersionsByExecutionKey] =
 		useState<Record<string, number>>({});
-	const [templateIdsByExecutionKey, setTemplateIdsByExecutionKey] = useState<
-		Record<string, string>
-	>({});
+	// CYB-4470 B.7：操作列清理后不再需要 template-id map（"模板"按钮已移除），
+	// templateId 现在直接来自 record.labels["template-id"]，按需 lookup。
 	const [nodeCountsByExecutionKey, setNodeCountsByExecutionKey] = useState<
 		Record<string, number>
 	>({});
@@ -875,16 +876,6 @@ export function WorkflowExecutionList({
 							),
 					),
 				);
-				setTemplateIdsByExecutionKey(
-					Object.fromEntries(
-						visiblePipelineRuns
-							.filter((run) => run.templateId)
-							.map(
-								(run) =>
-									[executionKeyForRun(run), run.templateId as string] as const,
-							),
-					),
-				);
 				setNodeCountsByExecutionKey(
 					Object.fromEntries(
 						visiblePipelineRuns.map(
@@ -960,16 +951,6 @@ export function WorkflowExecutionList({
 									executionKeyForRun(run),
 									run.templateVersion as number,
 								] as const,
-						),
-				),
-			);
-			setTemplateIdsByExecutionKey(
-				Object.fromEntries(
-					pipelineRuns
-						.filter((run) => run.templateId)
-						.map(
-							(run) =>
-								[executionKeyForRun(run), run.templateId as string] as const,
 						),
 				),
 			);
@@ -1290,29 +1271,75 @@ export function WorkflowExecutionList({
 						? templateName || "未命名运行"
 						: name;
 					const showTemplateLine = !!templateName && !nameIsRawId;
+					// CYB-4470 B.7：批次名称承担查看入口 —— 让 name 视觉/语义上
+					// 都是可点击锚点（蓝色 + cursor pointer + onClick）；同时保留
+					// Typography.Text 的 copyable（antd 内部对复制图标 stopPropagation）。
+					const handleNameClick = (event: MouseEvent<HTMLElement>) => {
+						event.stopPropagation();
+						openWorkflowDetail(record);
+					};
 					return (
 						<div style={{ minWidth: 0 }}>
-							<Typography.Text
-								strong
-								copyable={{ text: nameIsRawId ? copyId : name }}
-								ellipsis={{
-									tooltip: nameIsRawId
-										? templateName
-											? `模板：${templateName}`
-											: "未命名运行（无 workflow / pipeline 名）"
-										: name,
+							{/* CYB-4470 B.7：批次名称承担查看入口 —— 用 <a> 包住整个
+							    Typography.Text（name + antd 复制图标）。antd 的复制
+							    图标 onClick 内部已 stopPropagation，复制不会触发跳转；
+							    role="button" + tabIndex=0 让屏幕阅读器把它当按钮。 */}
+							<a
+								role="button"
+								tabIndex={0}
+								onClick={handleNameClick}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										openWorkflowDetail(record);
+									}
 								}}
+								// CYB-4470 B.1：copy-cell 让复制图标 hover 才出现。
+								className="copy-cell"
+								style={{
+									cursor: "pointer",
+									color: "#1677ff",
+									display: "inline-flex",
+									alignItems: "center",
+									minWidth: 0,
+									maxWidth: "100%",
+									overflow: "hidden",
+									textDecoration: "none",
+								}}
+								title="点击查看执行详情"
 							>
-								{primaryLabel}
-							</Typography.Text>
-							<Typography.Text
-								type="secondary"
-								copyable={{ text: copyId }}
-								style={{ display: "block", fontSize: 12 }}
-								ellipsis={{ tooltip: runId ? `完整任务 ID: ${runId}` : name }}
-							>
-								ID: {displayId}
-							</Typography.Text>
+								<Typography.Text
+									strong
+									copyable={{ text: nameIsRawId ? copyId : name }}
+									style={{
+										color: "#1677ff",
+										overflow: "hidden",
+										textOverflow: "ellipsis",
+										whiteSpace: "nowrap",
+									}}
+									ellipsis={{
+										tooltip: nameIsRawId
+											? templateName
+												? `模板：${templateName}`
+												: "未命名运行（无 workflow / pipeline 名）"
+											: name,
+									}}
+								>
+									{primaryLabel}
+								</Typography.Text>
+							</a>
+							<span className="copy-cell" style={{ display: "block" }}>
+								<Typography.Text
+									type="secondary"
+									copyable={{ text: copyId }}
+									style={{ fontSize: 12 }}
+									ellipsis={{
+										tooltip: runId ? `完整任务 ID: ${runId}` : name,
+									}}
+								>
+									ID: {displayId}
+								</Typography.Text>
+							</span>
 							{showTemplateLine ? (
 								<Typography.Text
 									type="secondary"
@@ -1331,14 +1358,25 @@ export function WorkflowExecutionList({
 								}}
 							>
 								{templateVersion ? (
-									<Tag color="blue">模板 v{templateVersion}</Tag>
+									// CYB-4470 B.3：模板版本 → system（蓝色，浅蓝底 + 深蓝字）。
+									<Tag color={STATUS_TAG_PALETTE.system}>
+										模板 v{templateVersion}
+									</Tag>
 								) : null}
 								{scope === "prod" ? (
-									<Tag color="green" style={{ fontSize: 11 }}>
+									// "正式版" 是已发布的稳定态 —— success（绿）。
+									<Tag
+										color={STATUS_TAG_PALETTE.success}
+										style={{ fontSize: 11 }}
+									>
 										<LockOutlined /> 正式版
 									</Tag>
 								) : scope ? (
-									<Tag color="blue" style={{ fontSize: 11 }}>
+									// "Dev 草稿" 是中性辅助标记 —— paused（默认灰）。
+									<Tag
+										color={STATUS_TAG_PALETTE.paused}
+										style={{ fontSize: 11 }}
+									>
 										Dev 草稿
 									</Tag>
 								) : null}
@@ -1403,15 +1441,17 @@ export function WorkflowExecutionList({
 								statusTag
 							)}
 							{isQueuedSummary(record) ? (
+								// CYB-4470 B.3：排队是 warning 语义（不是 success/error 的
+								// 终态，而是"等待资源"过渡态），归到 warning。
 								<Tooltip title="并发已达上限或等待调度，工作流正在排队，待资源释放后自动开始执行">
-									<Tag color="gold">排队中</Tag>
+									<Tag color={STATUS_TAG_PALETTE.warning}>排队中</Tag>
 								</Tooltip>
 							) : null}
 							{isStaleRunningWorkflow(record) ? (
 								// CYB-3491: 展示提示,不再对应"将自动标为失败"—— 任务保持
 								// Argo 真值,恢复更新后 tag 自然消失。
 								<Tooltip title="任务长时间无状态更新（>3 小时）,可能停滞或平台跟丢了状态回执。刷新页面查看最新状态。">
-									<Tag color="warning">疑似停滞</Tag>
+									<Tag color={STATUS_TAG_PALETTE.warning}>疑似停滞</Tag>
 								</Tooltip>
 							) : null}
 							{redundant ? null : renderRunReasonTag(reason, reasonMessage, s)}
@@ -1431,6 +1471,8 @@ export function WorkflowExecutionList({
 								if (isCanonicalAssetId(assetId)) {
 									return (
 										<span
+											// CYB-4470 B.1：复制图标 hover 才显现。
+											className="copy-cell"
 											style={{
 												display: "inline-flex",
 												alignItems: "center",
@@ -1445,6 +1487,8 @@ export function WorkflowExecutionList({
 								return (
 									<Tooltip title={assetId}>
 										<span
+											// CYB-4470 B.1：复制图标 hover 才显现。
+											className="copy-cell"
 											style={{
 												display: "inline-flex",
 												alignItems: "center",
@@ -1512,9 +1556,12 @@ export function WorkflowExecutionList({
 					((a as any).owner ?? "").localeCompare((b as any).owner ?? ""),
 				render: (owner: string) =>
 					owner ? (
-						<Typography.Text copyable={{ text: owner }}>
-							{owner}
-						</Typography.Text>
+						// CYB-4470 B.1：复制图标 hover 才显现。
+						<span className="copy-cell">
+							<Typography.Text copyable={{ text: owner }}>
+								{owner}
+							</Typography.Text>
+						</span>
 					) : (
 						<Typography.Text type="secondary">—</Typography.Text>
 					),
@@ -1589,18 +1636,23 @@ export function WorkflowExecutionList({
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
+				// CYB-4470 B.2：去掉 "asset_id=" 前缀后，每行省 ~60px；
+				// 列宽从 240 → 180（batch scope 200 → 160）。
 				title: "资产 ID",
 				dataIndex: "labels",
 				key: "labels",
-				width: isBatchScope ? 200 : 240,
+				width: isBatchScope ? 160 : 180,
 				render: (labels?: Record<string, string>) => (
 					<WorkflowLabels labels={labels} />
 				),
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
+				// CYB-4470 B.5：数值列右对齐 — 数据对齐规范，文本左 / 数值右，
+				// 上下扫视时大小对比一目了然。
 				title: "耗时",
 				key: "duration",
+				align: "right" as const,
 				width: isBatchScope ? 110 : 140,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					getDurationSortValue(a) - getDurationSortValue(b),
@@ -1616,6 +1668,7 @@ export function WorkflowExecutionList({
 			{
 				title: "视频时长",
 				key: "videoDuration",
+				align: "right" as const,
 				width: 100,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					((a as ExecutionRecord).videoDurationSec ?? -1) -
@@ -1676,40 +1729,19 @@ export function WorkflowExecutionList({
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
+				// CYB-4470 B.7：操作列清理 — "模板 / 查看" 按钮移除（批次名称承担
+				// 查看入口，操作 ⁝ 下拉收纳次要动作），仅保留 batch scope 必需的执行
+				// 历史快捷按钮。列宽相应从 110 → 100。
 				title: "操作",
 				key: "actions",
-				width: isBatchScope ? 100 : 110,
+				width: isBatchScope ? 100 : 100,
 				render: (_: unknown, record: ExecutionRecord) => {
 					const executionKey = executionKeyForRecord(record);
-					const templateId =
-						templateIdsByExecutionKey[executionKey] ??
-						getWorkflowLabel(record.labels, "template-id");
-					const templateVersion = templateVersionsByExecutionKey[executionKey];
-					const scope = scopeByExecutionKey[executionKey];
 					const assetId = getWorkflowLabel(record.labels, "asset_id");
 					const menuItems = getWorkflowOperationMenuItems(record);
 					const hasOperationLoading = operationLoading?.startsWith(
 						`${executionKey}:`,
 					);
-					const openTemplate = (event: MouseEvent<HTMLElement>) => {
-						event.stopPropagation();
-						if (!templateId) return;
-						const params = new URLSearchParams({
-							templateId,
-							tab: "design",
-						});
-						if (templateVersion) {
-							params.set("templateVersion", String(templateVersion));
-						}
-						if (scope === "prod") {
-							params.set("readonly", "1");
-						}
-						navigate(`/pipeline?${params.toString()}`);
-					};
-					const viewRun = (event: MouseEvent<HTMLElement>) => {
-						event.stopPropagation();
-						openWorkflowDetail(record);
-					};
 
 					if (isBatchScope) {
 						return (
@@ -1728,26 +1760,6 @@ export function WorkflowExecutionList({
 										/>
 									</Tooltip>
 								) : null}
-								{templateId ? (
-									<Tooltip title="打开模板">
-										<Button
-											aria-label="打开模板"
-											type="text"
-											size="small"
-											icon={<ForkOutlined />}
-											onClick={openTemplate}
-										/>
-									</Tooltip>
-								) : null}
-								<Tooltip title="查看执行">
-									<Button
-										aria-label="查看执行"
-										type="text"
-										size="small"
-										icon={<EyeOutlined />}
-										onClick={viewRun}
-									/>
-								</Tooltip>
 								<Dropdown
 									menu={{
 										items: menuItems,
@@ -1776,53 +1788,33 @@ export function WorkflowExecutionList({
 						);
 					}
 
+					// 非 batch scope：单 Dropdown "操作 ⁝" 收纳全部次要动作，
+					// "模板 / 查看" 由批次名称点击承担。
 					return (
-						<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-							{isBatchScope && assetId ? (
-								<Button
-									type="link"
-									size="small"
-									onClick={(event) => {
-										event.stopPropagation();
-										void openAttemptsDrawer(assetId);
-									}}
-								>
-									历史
-								</Button>
-							) : null}
-							{templateId ? (
-								<Button type="link" size="small" onClick={openTemplate}>
-									模板
-								</Button>
-							) : null}
-							<Button type="link" size="small" onClick={viewRun}>
-								查看
-							</Button>
-							<Dropdown
-								menu={{
-									items: menuItems,
-									onClick: ({ key, domEvent }) => {
-										domEvent.stopPropagation();
-										runOperation(record, key as WorkflowOperationKey);
-									},
+						<Dropdown
+							menu={{
+								items: menuItems,
+								onClick: ({ key, domEvent }) => {
+									domEvent.stopPropagation();
+									runOperation(record, key as WorkflowOperationKey);
+								},
+							}}
+							trigger={["click"]}
+						>
+							<Button
+								size="small"
+								icon={<MoreOutlined />}
+								loading={hasOperationLoading}
+								onClick={(event) => {
+									event.stopPropagation();
+									if (menuItems.length === 0) {
+										messageApi.info("当前状态暂无可用操作");
+									}
 								}}
-								trigger={["click"]}
 							>
-								<Button
-									size="small"
-									icon={<MoreOutlined />}
-									loading={hasOperationLoading}
-									onClick={(event) => {
-										event.stopPropagation();
-										if (menuItems.length === 0) {
-											messageApi.info("当前状态暂无可用操作");
-										}
-									}}
-								>
-									操作
-								</Button>
-							</Dropdown>
-						</div>
+								操作
+							</Button>
+						</Dropdown>
 					);
 				},
 			},
@@ -1838,7 +1830,6 @@ export function WorkflowExecutionList({
 		runIdsByExecutionKey,
 		runOperation,
 		scopeByExecutionKey,
-		templateIdsByExecutionKey,
 		templateVersionsByExecutionKey,
 		targetById,
 		messageApi,
@@ -1850,7 +1841,24 @@ export function WorkflowExecutionList({
 	const tableScrollX = isBatchScope ? "max-content" : 1500;
 
 	return (
-		<div className="pipeline-execution-list">
+		<>
+			{/* CYB-4470 B.1：复制图标 hover 显现。把所有 .copy-cell 内部的
+			    antd 复制按钮（.ant-typography-copy）默认 opacity:0，hover 父单元
+			    时浮现。focus-within 让键盘 Tab 聚焦时也能看到复制入口（无障碍）。
+			    使用 transition 0.15s 防止突变。 */}
+			<style>
+				{`
+				.copy-cell .ant-typography-copy {
+					opacity: 0;
+					transition: opacity 0.15s ease-in-out;
+				}
+				.copy-cell:hover .ant-typography-copy,
+				.copy-cell:focus-within .ant-typography-copy {
+					opacity: 1;
+				}
+				`}
+			</style>
+			<div className="pipeline-execution-list">
 			<div
 				style={{
 					display: "flex",
@@ -1885,32 +1893,44 @@ export function WorkflowExecutionList({
 						节点筛选：{nodeFilter.label}
 					</Tag>
 				) : null}
-				<Button
-					type="default"
-					disabled={
-						selectedExecutionKeys.length < 2 || selectedExecutionKeys.length > 3
-					}
+				<Tooltip
 					title={
+						// CYB-4470 B.8：明确触发条件 —— < 2 项 hover 提示，> 3 项
+						// 同样提示，让用户一眼看到对比按钮的合法区间。
 						selectedExecutionKeys.length < 2
-							? "勾选 2-3 条运行进行对比"
+							? "请至少勾选 2 条记录进行对比"
 							: selectedExecutionKeys.length > 3
-								? "最多选择 3 条运行"
-								: undefined
+								? "最多选择 3 条运行进行对比"
+								: ""
 					}
-					onClick={() => {
-						setCompareItems(
-							displayItems.filter((item) =>
-								selectedExecutionKeys.includes(executionKeyForRecord(item)),
-							),
-						);
-						setCompareOpen(true);
-					}}
 				>
-					对比选中
-					{selectedExecutionKeys.length > 0
-						? `（${selectedExecutionKeys.length}）`
-						: ""}
-				</Button>
+					<Button
+						// 满足 2-3 项条件时高亮 type=primary，强化"现在能点"的视觉反馈。
+						type={
+							selectedExecutionKeys.length >= 2 &&
+							selectedExecutionKeys.length <= 3
+								? "primary"
+								: "default"
+						}
+						disabled={
+							selectedExecutionKeys.length < 2 ||
+							selectedExecutionKeys.length > 3
+						}
+						onClick={() => {
+							setCompareItems(
+								displayItems.filter((item) =>
+									selectedExecutionKeys.includes(executionKeyForRecord(item)),
+								),
+							);
+							setCompareOpen(true);
+						}}
+					>
+						对比选中
+						{selectedExecutionKeys.length >= 2
+							? ` (${selectedExecutionKeys.length})`
+							: ""}
+					</Button>
+				</Tooltip>
 			</div>
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
@@ -2186,5 +2206,6 @@ export function WorkflowExecutionList({
 				/>
 			</Drawer>
 		</div>
+		</>
 	);
 }

@@ -29,7 +29,10 @@ export function BatchProgressCell({ job }: { job: BatchJob }) {
 					// portion), split by color, with the trailing grey being pending.
 					percent={donePct + failedPct}
 					success={{ percent: donePct, strokeColor: "#52c41a" }}
-					strokeColor="#ff4d4f"
+					// CYB-4470: failed segment uses desaturated dark red
+					// (#cf1322) instead of saturated red (#ff4d4f) to reduce
+					// "red alert fatigue" when several rows are all-failed.
+					strokeColor="#cf1322"
 					showInfo={false}
 				/>
 			</Tooltip>
